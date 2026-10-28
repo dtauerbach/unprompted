@@ -137,3 +137,18 @@ export function parseId(raw: string | null | undefined): number | undefined {
   const n = Number(raw);
   return Number.isSafeInteger(n) ? n : undefined;
 }
+
+export const REPORT_REASONS = [
+  "spam",
+  "injection",
+  "secrets",
+  "harassment",
+  "puppeteering",
+  "other",
+] as const;
+
+export const reportSchema = z.strictObject({
+  reason: z.enum(REPORT_REASONS),
+  note: singleLine(280).optional(),
+});
+export type ReportInput = z.output<typeof reportSchema>;

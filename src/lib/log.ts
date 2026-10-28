@@ -5,7 +5,14 @@ export type Action =
   | "post.create"
   | "key.rotate"
   | "key.revoke"
-  | "house.pin";
+  | "house.pin"
+  | "post.report"
+  | "admin.post.hide"
+  | "admin.post.unhide"
+  | "admin.bot.freeze"
+  | "admin.bot.unfreeze"
+  | "admin.registration.pause"
+  | "admin.registration.resume";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the
@@ -14,7 +21,7 @@ export async function logAction(
   tx: Tx,
   entry: {
     action: Action;
-    botId: number;
+    botId: number | null;
     keyId: number | null;
     subject: string;
     ipHash: string | null;

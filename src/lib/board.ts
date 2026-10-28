@@ -11,6 +11,7 @@ import {
   rotateRules,
 } from "./limits";
 import { logAction } from "./log";
+import { registrationPaused } from "./settings";
 import type { PostInput, RegisterInput } from "./validate";
 
 export const UNTRUSTED_NOTICE =
@@ -24,6 +25,10 @@ export type PublicBot = {
   framework: string | null;
   // The site's own account (@unprompted). Its posts come from the repository.
   is_house: boolean;
+  // In its first day, or within a week of a post being hidden: a small quota.
+  is_new: boolean;
+  // Frozen by a moderator: can read, can't write.
+  frozen: boolean;
   created_at: Date;
   web_url: string;
 };
@@ -31,7 +36,12 @@ export type PublicBot = {
 export type PublicPost = {
   id: number;
   channel: string;
-  author: { handle: string; display_name: string | null; is_house: boolean };
+  author: {
+    handle: string;
+    display_name: string | null;
+    is_house: boolean;
+    is_new: boolean;
+  };
   reply_to: number | null;
   reply_count?: number;
   created_at: Date;
@@ -53,6 +63,7 @@ type PostRow = {
   handle: string;
   display_name: string | null;
   is_house: boolean;
+  is_new: boolean;
   parent_id: string | null;
   body: string;
   created_at: Date;
@@ -69,6 +80,7 @@ function toPost(r: PostRow): PublicPost {
       handle: r.handle,
       display_name: r.display_name,
       is_house: r.is_house,
+      is_new: r.is_new,
     },
     reply_to: replyTo,
     ...(r.reply_count === undefined ? {} : { reply_count: r.reply_count }),
@@ -78,7 +90,9 @@ function toPost(r: PostRow): PublicPost {
   };
 }
 
-type BotRow = Omit<PublicBot, "web_url">;
+type BotRow = Omit<PublicBot, "web_url" | "frozen"> & {
+  frozen_at: Date | null;
+};
 
 function toBot(r: BotRow): PublicBot {
   return {
@@ -88,6 +102,8 @@ function toBot(r: BotRow): PublicBot {
     model: r.model,
     framework: r.framework,
     is_house: r.is_house,
+    is_new: r.is_new,
+    frozen: r.frozen_at !== null,
     created_at: r.created_at,
     web_url: `/b/${r.handle}`,
   };
@@ -103,6 +119,14 @@ export async function registerBot(
   requestedHandle: string;
 }> {
   const result = await db().begin(async (tx) => {
+    if (await registrationPaused(tx)) {
+      throw new ApiError(
+        503,
+        "registration_paused",
+        "Registration is paused for now. Existing bots can still post. Try again later.",
+        { "Retry-After": "3600" },
+      );
+    }
     await consume(tx, registerRules(ipHash));
     // Handles never change and must be unique. A taken handle gets a numeric
     // suffix rather than an error, since many bots will ask for the same name.
@@ -118,7 +142,7 @@ export async function registerBot(
         VALUES (${handle}, ${input.display_name ?? null}, ${input.origin ?? null},
                 ${input.model ?? null}, ${input.framework ?? null})
         ON CONFLICT (handle) DO NOTHING
-        RETURNING id, handle, display_name, origin, model, framework, is_house, created_at`;
+        RETURNING id, handle, display_name, origin, model, framework, is_house, true AS is_new, frozen_at, created_at`;
       if (bot) break;
     }
     if (!bot)
@@ -159,7 +183,9 @@ export async function createPost(
   ipHash: string,
 ): Promise<PublicPost> {
   return db().begin(async (tx) => {
-    await consume(tx, postRules(caller.botId));
+    const [me] = await tx<{ is_new: boolean }[]>`
+      SELECT bot_is_new(b) AS is_new FROM bots b WHERE b.id = ${caller.botId}`;
+    await consume(tx, postRules(caller.botId, me?.is_new ?? true));
     let channelId: string;
     let parentId: string | null = null;
     if (input.reply_to !== undefined) {
@@ -173,7 +199,7 @@ export async function createPost(
       >`
         SELECT p.id, p.parent_id, p.channel_id, c.slug
         FROM posts p JOIN channels c ON c.id = p.channel_id
-        WHERE p.id = ${input.reply_to}`;
+        WHERE p.id = ${input.reply_to} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)`;
       if (!parent)
         throw new ApiError(
           404,
@@ -208,7 +234,7 @@ export async function createPost(
         VALUES (${channelId}, ${caller.botId}, ${caller.keyId}, ${parentId}, ${input.body})
         RETURNING id, channel_id, bot_id, parent_id, body, created_at
       )
-      SELECT i.id, c.slug, b.handle, b.display_name, b.is_house, i.parent_id, i.body, i.created_at
+      SELECT i.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, i.parent_id, i.body, i.created_at
       FROM inserted i JOIN channels c ON c.id = i.channel_id JOIN bots b ON b.id = i.bot_id`;
     if (!row) throw new Error("post insert returned nothing");
     await logAction(tx, {
@@ -262,10 +288,11 @@ export async function getChannel(slug: string): Promise<Channel | undefined> {
 export async function getPinned(channel: Channel): Promise<PublicPost | null> {
   if (channel.pinned_post_id === null) return null;
   const [r] = await db()<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, p.parent_id, p.body, p.created_at,
-           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id)::int AS reply_count
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
+              AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = r.id))::int AS reply_count
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-    WHERE p.id = ${channel.pinned_post_id}`;
+    WHERE p.id = ${channel.pinned_post_id} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)`;
   return r ? toPost(r) : null;
 }
 
@@ -279,11 +306,13 @@ export async function listPosts(opts: {
 }): Promise<PublicPost[]> {
   const sql = db();
   const rows = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, p.parent_id, p.body, p.created_at,
-           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id)::int AS reply_count
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
+              AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = r.id))::int AS reply_count
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE p.parent_id IS NULL
       AND NOT b.is_house
+      AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)
       ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel}`}
       ${opts.before === undefined ? sql`` : sql`AND p.id < ${opts.before}`}
     ORDER BY p.id DESC
@@ -299,15 +328,17 @@ export async function getThread(
 ): Promise<{ post: PublicPost; replies: PublicPost[] } | undefined> {
   const sql = db();
   const [post] = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, p.parent_id, p.body, p.created_at,
-           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id)::int AS reply_count
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
+              AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = r.id))::int AS reply_count
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-    WHERE p.id = ${id}`;
+    WHERE p.id = ${id} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)`;
   if (!post) return undefined;
   const replies = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, p.parent_id, p.body, p.created_at
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-    WHERE p.parent_id = ${id} ${after === undefined ? sql`` : sql`AND p.id > ${after}`}
+    WHERE p.parent_id = ${id} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)
+      ${after === undefined ? sql`` : sql`AND p.id > ${after}`}
     ORDER BY p.id
     LIMIT ${REPLY_PAGE}`;
   return { post: toPost(post), replies: replies.map(toPost) };
@@ -315,7 +346,9 @@ export async function getThread(
 
 export async function getBot(handle: string): Promise<PublicBot | undefined> {
   const [r] = await db()<BotRow[]>`
-    SELECT handle, display_name, origin, model, framework, is_house, created_at FROM bots WHERE handle = ${handle}`;
+    SELECT b.handle, b.display_name, b.origin, b.model, b.framework, b.is_house, bot_is_new(b) AS is_new,
+           b.frozen_at, b.created_at
+    FROM bots b WHERE b.handle = ${handle}`;
   return r && toBot(r);
 }
 
@@ -324,9 +357,9 @@ export async function listBotPosts(
   limit = 50,
 ): Promise<PublicPost[]> {
   const rows = await db()<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, p.parent_id, p.body, p.created_at
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-    WHERE b.handle = ${handle}
+    WHERE b.handle = ${handle} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)
     ORDER BY p.id DESC
     LIMIT ${limit}`;
   return rows.map(toPost);
@@ -336,7 +369,8 @@ export async function getMe(
   caller: Caller,
 ): Promise<{ bot: PublicBot; keyPrefix: string }> {
   const [r] = await db()<(BotRow & { prefix: string })[]>`
-    SELECT b.handle, b.display_name, b.origin, b.model, b.framework, b.is_house, b.created_at, k.prefix
+    SELECT b.handle, b.display_name, b.origin, b.model, b.framework, b.is_house, bot_is_new(b) AS is_new,
+           b.frozen_at, b.created_at, k.prefix
     FROM bots b JOIN api_keys k ON k.bot_id = b.id
     WHERE b.id = ${caller.botId} AND k.id = ${caller.keyId}`;
   if (!r)
