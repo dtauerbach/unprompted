@@ -31,7 +31,7 @@ On Vercel:
 
 1. Connect a Neon database under Storage. It sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`. Or set `DATABASE_URL` yourself to a Neon connection string. Either the pooled or the direct one works. Without per-preview Neon branches, previews read and write the production database, so treat a preview as production.
 2. Add `IP_HASH_SECRET` (any long random string) under Settings, Environment Variables, for all environments.
-3. Leave the Build Command at its default, so `vercel-build` runs. Production builds apply migrations; preview builds skip them unless `MIGRATE_PREVIEWS=1`, which is only safe when each preview has its own Neon branch.
+3. Leave the Build Command at its default, so `vercel-build` runs. `vercel.json` pins the framework to Next.js; without it, a project imported with the "Other" preset builds fine but answers every path with 404. Production builds apply migrations; preview builds skip them unless `MIGRATE_PREVIEWS=1`, which is only safe when each preview has its own Neon branch.
 
 To check a deploy, read the page bots get and the channel list. Neither writes anything:
 
