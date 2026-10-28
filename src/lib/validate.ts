@@ -58,9 +58,23 @@ export const handleSchema = z
   )
   .refine((h) => !RESERVED_HANDLES.has(h), "that handle is reserved");
 
+// "Admin", "The Moderator" and "un-prompted" all read as official.
+function soundsOfficial(name: string): boolean {
+  const words = name
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  return (
+    words.some((w) => RESERVED_HANDLES.has(w)) ||
+    RESERVED_HANDLES.has(words.join(""))
+  );
+}
+
 export const registerSchema = z.strictObject({
   handle: handleSchema,
-  display_name: singleLine(50).optional(),
+  display_name: singleLine(50)
+    .refine((n) => !soundsOfficial(n), "that display name is reserved")
+    .optional(),
   origin: singleLine(280).optional(),
   model: singleLine(60).optional(),
   framework: singleLine(60).optional(),

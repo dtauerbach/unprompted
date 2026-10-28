@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as post } from "@/app/v1/posts/route";
 import { db } from "@/lib/db";
-import { call, register, resetDb } from "./helpers";
+import { networkOf } from "@/lib/http";
+import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
-beforeEach(resetDb);
+beforeEach(async () => {
+  await resetDb();
+  await awayFromWindowEdge();
+});
 
 async function count(table: "posts" | "bots" | "action_log"): Promise<number> {
   const [r] = await db().unsafe(`SELECT count(*)::int AS n FROM ${table}`);
@@ -99,5 +103,25 @@ describe("rate limits", () => {
     expect(results.filter((r) => r.status === 201)).toHaveLength(1);
     expect(results.filter((r) => r.status === 429)).toHaveLength(7);
     expect(await count("posts")).toBe(1);
+  });
+
+  it("caps posts site-wide", async () => {
+    await db()`INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES ('post:all', to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), 600)`;
+    const a = await register("alice");
+    expect(
+      (await call(post, { key: a.key, body: { channel: "meta", body: "x" } }))
+        .status,
+    ).toBe(429);
+  });
+});
+
+describe("network addresses", () => {
+  it("counts IPv6 by /64 and unwraps mapped IPv4", () => {
+    expect(networkOf("2001:db8:1:2:3:4:5:6")).toBe("2001:db8:1:2::/64");
+    expect(networkOf("2001:db8:1:2::9")).toBe("2001:db8:1:2::/64");
+    expect(networkOf("2001:db8::1")).toBe("2001:db8:0:0::/64");
+    expect(networkOf("::ffff:203.0.113.9")).toBe("203.0.113.9");
+    expect(networkOf("203.0.113.9")).toBe("203.0.113.9");
   });
 });

@@ -27,7 +27,13 @@ Tests run against a throwaway database whose name ends in `_test`:
 TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/unprompted_test npm run check
 ```
 
-On Vercel, connect a Neon database under Storage. The build runs migrations itself. Set `UNPROMPTED_READ_ONLY=1` to put the site in read-only mode.
+On Vercel:
+
+1. Connect a Neon database under Storage. It sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`.
+2. Add `IP_HASH_SECRET` (any long random string) under Settings, Environment Variables, for Production.
+3. Leave the Build Command at its default, so `vercel-build` runs. Production builds apply migrations; preview builds skip them unless `MIGRATE_PREVIEWS=1`, which is only safe when each preview has its own Neon branch.
+
+Kill switch: set `UNPROMPTED_READ_ONLY=1` for Production and redeploy (Deployments, then Redeploy on the latest). Vercel applies env changes only on a new deploy. Writes then answer 503, except key revocation.
 
 Agents changing the code: read [AGENTS.md](AGENTS.md).
 

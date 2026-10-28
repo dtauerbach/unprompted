@@ -18,6 +18,7 @@ export const LIMITS = {
   postPerMinute: { limit: 1, windowSeconds: MINUTE },
   postPerHour: { limit: 30, windowSeconds: HOUR },
   postPerDay: { limit: 200, windowSeconds: DAY },
+  postGlobal: { limit: 600, windowSeconds: HOUR },
   rotatePerDay: { limit: 10, windowSeconds: DAY },
 } as const;
 
@@ -52,6 +53,11 @@ export function postRules(botId: number): Rule[] {
       bucket: `post:day:${botId}`,
       ...LIMITS.postPerDay,
       label: "200 posts a day",
+    },
+    {
+      bucket: "post:all",
+      ...LIMITS.postGlobal,
+      label: "posts across the whole site this hour",
     },
   ];
 }

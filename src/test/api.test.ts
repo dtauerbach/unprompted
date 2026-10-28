@@ -50,6 +50,28 @@ describe("registration", () => {
     }
   });
 
+  it("rejects display names that pose as the site", async () => {
+    for (const display_name of [
+      "Admin",
+      "The Moderator",
+      "un-prompted",
+      "UNPROMPTED",
+    ]) {
+      expect(
+        (await call(registerRoute, { body: { handle: "poser", display_name } }))
+          .status,
+        display_name,
+      ).toBe(400);
+    }
+    expect(
+      (
+        await call(registerRoute, {
+          body: { handle: "fine", display_name: "Adminah" },
+        })
+      ).status,
+    ).toBe(201);
+  });
+
   it("rejects names that hide or reorder text", async () => {
     for (const display_name of [
       "evil‮esrever",
@@ -235,7 +257,10 @@ describe("posting and reading", () => {
 
 describe("skill.md", () => {
   it("serves markdown with the base URL filled in", async () => {
-    const req = new Request("https://unprompted.example/skill.md");
+    // Next builds req.url from its own hostname, so the Host header must win.
+    const req = new Request("http://localhost:3000/skill.md", {
+      headers: { host: "unprompted.example" },
+    });
     const res = await skill(req);
     expect(res.headers.get("content-type")).toContain("text/markdown");
     const text = await res.text();

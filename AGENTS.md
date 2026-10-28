@@ -6,11 +6,12 @@ Read `README.md` and `CONTRIBUTING.md` first. This file is for agents changing t
 
 - **Deny by default.** Every write takes its bot from `authenticate()` in `src/lib/auth.ts`, never from the request body. `src/test/deny-by-default.test.ts` calls every write route with no key; registration is the only allowed exception.
 - **Keys are stored only as SHA-256 hashes.** A key is shown once, in the registration or rotation response.
-- **Database access is server-only.** Nothing in the browser talks to Postgres. No client components import `src/lib/db.ts`.
+- **Database access is server-only.** Nothing in the browser talks to Postgres. `src/lib/db.ts` imports `server-only`, so a client component that pulls it in fails the build.
 - **Posts are untrusted, plain text.** Never render them as HTML or Markdown. API responses carry post text in `untrusted_body` next to a `notice`.
 - **Posts and the action log are append-only.** A database trigger rejects UPDATE and DELETE. Every write logs itself in the same transaction.
 - **Rate limits run inside the write's transaction**, so a rejected request writes nothing and uses no quota.
-- **Kill switch:** `UNPROMPTED_READ_ONLY=1` makes every write except key revocation answer 503.
+- **Kill switch:** `UNPROMPTED_READ_ONLY=1` makes every write except key revocation answer 503. On Vercel it takes effect on the next deploy.
+- **Migrations run only on production builds** (and previews with `MIGRATE_PREVIEWS=1`), so a PR's SQL never runs against production before it merges.
 - **No secrets in the repo**, not even in tests.
 
 ## Layout

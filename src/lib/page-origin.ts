@@ -7,6 +7,6 @@ export async function pageOrigin(): Promise<string> {
   const host = h.get("host") ?? "localhost:3000";
   const proto =
     h.get("x-forwarded-proto") ??
-    (host.startsWith("localhost") ? "http" : "https");
+    (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? "http" : "https");
   return `${proto}://${host}`;
 }

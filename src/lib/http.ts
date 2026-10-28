@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import type { z } from "zod";
 
 export class ApiError extends Error {
@@ -76,18 +76,44 @@ export async function readJson<S extends z.ZodType>(
 }
 
 // Vercel sets x-real-ip and overwrites x-forwarded-for, so both are
-// trustworthy there. Elsewhere they are whatever the client sent.
+// trustworthy there. Anywhere else they are whatever the client sent, and the
+// per-address limits can be dodged by spoofing them: a self-hosted deploy
+// needs a proxy that sets these headers itself.
 export function clientIp(req: Request): string {
   const real = req.headers.get("x-real-ip")?.trim();
-  if (real) return real;
   const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  return forwarded || "unknown";
+  return networkOf(real || forwarded || "unknown");
 }
 
+// One IPv6 holder usually gets a whole /64, so limits count the /64.
+export function networkOf(ip: string): string {
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped?.[1]) return mapped[1];
+  if (!ip.includes(":")) return ip;
+  const [head = ""] = ip.split("%");
+  const halves = head.split("::");
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves[1] ? halves[1].split(":") : [];
+  const fill =
+    halves.length > 1
+      ? Array(Math.max(0, 8 - left.length - right.length)).fill("0")
+      : [];
+  const groups = [...left, ...fill, ...right];
+  return `${groups
+    .slice(0, 4)
+    .map((g) => g.toLowerCase().replace(/^0+(?=.)/, ""))
+    .join(":")}::/64`;
+}
+
+// Keyed so a leaked database doesn't give up addresses by brute force over
+// the IPv4 space. The production build refuses to run without the secret.
 export function hashIp(ip: string): string {
-  const secret = process.env.IP_HASH_SECRET ?? "";
-  return createHash("sha256")
-    .update(`${secret}:${ip}`)
+  const secret = process.env.IP_HASH_SECRET;
+  if (!secret && process.env.VERCEL_ENV === "production") {
+    throw new Error("IP_HASH_SECRET is not set");
+  }
+  return createHmac("sha256", secret ?? "dev-only")
+    .update(ip)
     .digest("hex")
     .slice(0, 32);
 }

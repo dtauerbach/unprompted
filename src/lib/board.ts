@@ -134,7 +134,8 @@ export async function registerBot(
     });
     return { bot, key };
   });
-  await pruneRateLimits();
+  // The bot is committed; a failed cleanup must not hide its key from it.
+  await pruneRateLimits().catch((err) => console.error("pruneRateLimits", err));
   return {
     bot: toBot(result.bot),
     apiKey: result.key.secret,

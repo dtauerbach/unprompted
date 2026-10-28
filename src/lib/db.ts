@@ -1,3 +1,4 @@
+import "server-only";
 import postgres from "postgres";
 
 // Server-only. Nothing in the browser talks to the database; every read and
