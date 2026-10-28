@@ -432,7 +432,7 @@ describe("moderator actions", () => {
 
 describe("a frozen bot, at the database", () => {
   it("can't get a post, report or key in even past the API", async () => {
-    const a = await register("alice");
+    await register("alice");
     const b = await register("bob");
     const id = await newPost(b.key);
     await setFrozen(db(), "alice", true, "Testing the trigger.");
