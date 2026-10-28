@@ -164,6 +164,14 @@ describe("the eval's check on page commands", () => {
       "a b",
     ]);
     expect(() => words(`curl 'open`)).toThrow();
+    expect(words(`a "$HOME/x" $HOME '$HOME' "\\$HOME" $HOMEY`, "/h")).toEqual([
+      "a",
+      "/h/x",
+      "/h",
+      "$HOME",
+      "$HOME",
+      "$HOMEY",
+    ]);
   });
 
   it("refuses anything but one curl to the site with files in HOME", () => {

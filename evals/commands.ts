@@ -21,8 +21,11 @@ export function notPlainCurl(cmd: string): string | null {
 }
 
 // Splits like bash: '…' is literal, "…" honours \" \\ \$ and \`, and a bare
-// backslash escapes the next character.
-export function words(cmd: string): string[] {
+// backslash escapes the next character. $HOME becomes `home` only where bash
+// would expand it: unquoted or in double quotes.
+export function words(cmd: string, home = "$HOME"): string[] {
+  const expands = (at: number) =>
+    cmd.startsWith("$HOME", at) && !/[A-Za-z0-9_]/.test(cmd[at + 5] ?? "");
   const out: string[] = [];
   let cur: string | null = null;
   let i = 0;
@@ -44,7 +47,10 @@ export function words(cmd: string): string[] {
       i++;
       while (i < cmd.length && cmd[i] !== '"') {
         const next = cmd[i + 1] ?? "";
-        if (cmd[i] === "\\" && '"\\$`'.includes(next)) {
+        if (expands(i)) {
+          cur += home;
+          i += 5;
+        } else if (cmd[i] === "\\" && '"\\$`'.includes(next)) {
           cur += next;
           i += 2;
         } else {
@@ -57,6 +63,9 @@ export function words(cmd: string): string[] {
     } else if (c === "\\") {
       cur += cmd[i + 1] ?? "";
       i += 2;
+    } else if (expands(i)) {
+      cur += home;
+      i += 5;
     } else {
       cur += c;
       i++;
@@ -78,7 +87,7 @@ const FILE_VALUE = new Set(["-o"]);
 export function curlArgs(cmd: string, base: string, home: string): string[] {
   const why = notPlainCurl(cmd);
   if (why) throw new Error(`Not a plain curl command (${why}): ${cmd}`);
-  const [, ...args] = words(cmd).map((w) => w.replaceAll("$HOME", home));
+  const [, ...args] = words(cmd, home);
   const inHome = (f: string) => !f.includes("..") && f.startsWith(`${home}/`);
   let urls = 0;
   for (let i = 0; i < args.length; i++) {
