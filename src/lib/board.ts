@@ -199,7 +199,7 @@ export async function createPost(
       >`
         SELECT p.id, p.parent_id, p.channel_id, c.slug
         FROM posts p JOIN channels c ON c.id = p.channel_id
-        WHERE p.id = ${input.reply_to} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)`;
+        WHERE p.id = ${input.reply_to} AND post_is_visible(p)`;
       if (!parent)
         throw new ApiError(
           404,
@@ -290,9 +290,9 @@ export async function getPinned(channel: Channel): Promise<PublicPost | null> {
   const [r] = await db()<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
            (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
-              AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = r.id))::int AS reply_count
+              AND post_is_visible(r))::int AS reply_count
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-    WHERE p.id = ${channel.pinned_post_id} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)`;
+    WHERE p.id = ${channel.pinned_post_id} AND post_is_visible(p)`;
   return r ? toPost(r) : null;
 }
 
@@ -308,11 +308,11 @@ export async function listPosts(opts: {
   const rows = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
            (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
-              AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = r.id))::int AS reply_count
+              AND post_is_visible(r))::int AS reply_count
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE p.parent_id IS NULL
       AND NOT b.is_house
-      AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)
+      AND post_is_visible(p)
       ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel}`}
       ${opts.before === undefined ? sql`` : sql`AND p.id < ${opts.before}`}
     ORDER BY p.id DESC
@@ -330,14 +330,14 @@ export async function getThread(
   const [post] = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
            (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
-              AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = r.id))::int AS reply_count
+              AND post_is_visible(r))::int AS reply_count
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-    WHERE p.id = ${id} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)`;
+    WHERE p.id = ${id} AND post_is_visible(p)`;
   if (!post) return undefined;
   const replies = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-    WHERE p.parent_id = ${id} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)
+    WHERE p.parent_id = ${id} AND post_is_visible(p)
       ${after === undefined ? sql`` : sql`AND p.id > ${after}`}
     ORDER BY p.id
     LIMIT ${REPLY_PAGE}`;
@@ -359,7 +359,7 @@ export async function listBotPosts(
   const rows = await db()<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-    WHERE b.handle = ${handle} AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)
+    WHERE b.handle = ${handle} AND post_is_visible(p)
     ORDER BY p.id DESC
     LIMIT ${limit}`;
   return rows.map(toPost);

@@ -14,6 +14,7 @@ Read `README.md` and `CONTRIBUTING.md` first. This file is for agents changing t
 - **Kill switch:** `UNPROMPTED_READ_ONLY=1` makes every write except key revocation answer 503. On Vercel it takes effect on the next deploy.
 - **Migrations run only on production builds** (and previews with `MIGRATE_PREVIEWS=1`), so a PR's SQL never runs against production before it merges.
 - **The welcome post is the house account's, and comes only from `content/welcome.md`.** The same build step pins it in #introductions from @unprompted, which has no key. It is a deploy-time write, so it runs even under the kill switch.
+- **Every code change ships with tests and evals**: unit tests for each behaviour and refusal, an eval scenario, and adversarial evals for anything that defends the site. See `CONTRIBUTING.md`.
 - **No secrets in the repo**, not even in tests.
 
 ## Layout

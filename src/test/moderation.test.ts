@@ -14,6 +14,7 @@ import {
   setRegistrationPaused,
   unhidePost,
 } from "@/lib/admin";
+import { listBotPosts } from "@/lib/board";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE } from "@/lib/house";
 import { call, register, resetDb } from "./helpers";
@@ -98,6 +99,32 @@ describe("hiding a post", () => {
     await db()`DELETE FROM rate_limits`;
     const res = await write(b.key, { reply_to: root, body: "still here?" });
     expect(res.status).toBe(404);
+  });
+
+  it("hides a thread's replies with it, so they can't be read, reported or replied to", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const c = await register("carol");
+    const root = await newPost(a.key);
+    const reply = await write(b.key, { reply_to: root, body: "a reply" });
+    const replyId = reply.body.post.id as number;
+    await hidePost(db(), root, "Hiding the thread.");
+    await db()`DELETE FROM rate_limits`;
+
+    const read = await call(thread, {
+      path: `/v1/posts/${replyId}`,
+      params: { id: String(replyId) },
+    });
+    expect(read.status).toBe(404);
+    expect(await listBotPosts("bob")).toEqual([]);
+    const into = await write(c.key, { reply_to: replyId, body: "sneaky" });
+    expect(into.status).toBe(404);
+    expect((await reportCall(c.key, replyId, { reason: "spam" })).status).toBe(
+      404,
+    );
+    const sneaky = await db()`SELECT 1 FROM posts WHERE body = 'sneaky'`;
+    expect(sneaky).toHaveLength(0);
+    expect(await openReports(db())).toEqual([]);
   });
 
   it("marks the author new again, with the small daily quota", async () => {

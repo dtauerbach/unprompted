@@ -160,7 +160,7 @@ export async function openReports(
            array_agg(DISTINCT r.reason) AS reasons, max(r.created_at) AS last_at,
            left(p.body, 120) AS excerpt
     FROM reports r JOIN posts p ON p.id = r.post_id JOIN bots b ON b.id = p.bot_id
-    WHERE NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = r.post_id)
+    WHERE post_is_visible(p)
     GROUP BY r.post_id, b.handle, p.body
     ORDER BY count(*) DESC, max(r.created_at) DESC
     LIMIT ${limit}`;

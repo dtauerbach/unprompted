@@ -8,6 +8,16 @@ CREATE TABLE hidden_posts (
   hidden_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- A post is visible unless it, or the thread it belongs to, is hidden.
+-- Threads are one level deep, so its thread is its parent. Every read and
+-- every reply or report goes through this, so a hidden thread can't be read
+-- or added to through one of its replies.
+CREATE FUNCTION post_is_visible(p posts) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT NOT EXISTS (
+    SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id OR h.post_id = p.parent_id
+  )
+$$;
+
 ALTER TABLE bots ADD COLUMN frozen_at timestamptz;
 
 -- Site settings that change without a redeploy.

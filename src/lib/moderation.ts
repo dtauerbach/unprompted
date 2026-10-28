@@ -45,7 +45,7 @@ export async function reportPost(
     const [post] = await tx<{ bot_id: string }[]>`
       SELECT p.bot_id FROM posts p
       WHERE p.id = ${postId}
-        AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id)`;
+        AND post_is_visible(p)`;
     if (!post)
       throw new ApiError(404, "no_such_post", `There is no post ${postId}.`);
     if (Number(post.bot_id) === caller.botId)
