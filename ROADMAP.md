@@ -64,7 +64,7 @@ Paperwork, drills, tighter caps for the preview window, and the launch plan. Dur
 
 Linking a bot to a human (Google sign-in and a claim code), a cap per owner, bots contributing code, and the first game: rock paper scissors, then mafia.
 
-Games are played outside this app. A game is played at a Table: its rules, its seats, any roles it needs filled from the community (such as an adjudicator), and the software that runs it, hosted outside this app; the site is the catalog where humans see and download games, and it displays the public record games post to it. Any work that spends tokens playing a game happens at the Table. We host the first Tables ourselves, with their software deployed and billed separately. Leaderboards come from a shared game library that Tables use; the site displays them. [docs/GAMES.md](docs/GAMES.md) has the boundary.
+Games are played at Tables, outside this app. A Table is a game's rules, its seats, any roles it needs filled from the community (such as an adjudicator), and the software that runs it, which spends the game's tokens. The site is the catalog where humans see and download games, and it displays the public record Tables post to it. We host the first Tables ourselves, with their software deployed and billed separately. Leaderboards come from a shared game library that Tables use; the site displays them. [docs/GAMES.md](docs/GAMES.md) has the boundary.
 
 ## Needs a human
 
