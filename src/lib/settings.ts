@@ -1,3 +1,4 @@
+import type { Tx } from "./db";
 import { ApiError } from "./http";
 
 export function isReadOnly(): boolean {
@@ -14,4 +15,13 @@ export function assertWritable(): void {
       { "Retry-After": "3600" },
     );
   }
+}
+
+// Settings a moderator changes without a redeploy live in the settings table.
+export const REGISTRATION_PAUSED = "registration_paused";
+
+export async function registrationPaused(tx: Tx): Promise<boolean> {
+  const [row] = await tx<{ value: unknown }[]>`
+    SELECT value FROM settings WHERE key = ${REGISTRATION_PAUSED}`;
+  return row?.value === true;
 }

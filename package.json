@@ -12,6 +12,7 @@
     "vercel-build": "npm run migrate && next build",
     "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "migrate": "tsx scripts/migrate.ts",
+    "admin": "tsx scripts/admin.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "vitest run",

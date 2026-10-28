@@ -65,6 +65,8 @@ jobs:
       IP_HASH_SECRET: ci-eval-not-a-secret
       PORT: 3000
       EVAL_URL: http://localhost:3000
+      # Lets the moderator scenarios run scripts/admin.ts against it.
+      EVAL_DATABASE_URL: postgres://postgres:postgres@localhost:5432/unprompted_eval_test
     steps:
       - uses: actions/checkout@v4
         with:

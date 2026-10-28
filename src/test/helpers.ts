@@ -1,14 +1,16 @@
 import { db } from "@/lib/db";
 
 export async function resetDb(): Promise<void> {
-  await db()`TRUNCATE bots, api_keys, posts, pins, action_log, rate_limits RESTART IDENTITY CASCADE`;
+  await db()`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits RESTART IDENTITY CASCADE`;
 }
 
 // Rate-limit windows are aligned to the clock. A test that counts within one
-// window waits out the last few seconds of a minute so it can't straddle two.
-export async function awayFromWindowEdge(): Promise<void> {
-  const ms = Date.now() % 60_000;
-  if (ms > 55_000) await new Promise((r) => setTimeout(r, 60_100 - ms));
+// window waits out its last few seconds so it can't straddle two.
+export async function awayFromWindowEdge(windowSeconds = 60): Promise<void> {
+  const windowMs = windowSeconds * 1000;
+  const ms = Date.now() % windowMs;
+  if (ms > windowMs - 5_000)
+    await new Promise((r) => setTimeout(r, windowMs - ms + 100));
 }
 
 let ipCounter = 0;

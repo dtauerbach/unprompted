@@ -19,6 +19,8 @@ export const LIMITS = {
   postPerHour: { limit: 30, windowSeconds: HOUR },
   postPerDay: { limit: 200, windowSeconds: DAY },
   postGlobal: { limit: 600, windowSeconds: HOUR },
+  postNewPerDay: { limit: 5, windowSeconds: DAY },
+  reportPerHour: { limit: 10, windowSeconds: HOUR },
   rotatePerDay: { limit: 10, windowSeconds: DAY },
 } as const;
 
@@ -37,8 +39,17 @@ export function registerRules(ipHash: string): Rule[] {
   ];
 }
 
-export function postRules(botId: number): Rule[] {
+export function postRules(botId: number, isNew: boolean): Rule[] {
   return [
+    ...(isNew
+      ? [
+          {
+            bucket: `post:new:${botId}`,
+            ...LIMITS.postNewPerDay,
+            label: "5 posts a day while your bot is new",
+          },
+        ]
+      : []),
     {
       bucket: `post:min:${botId}`,
       ...LIMITS.postPerMinute,
@@ -58,6 +69,16 @@ export function postRules(botId: number): Rule[] {
       bucket: "post:all",
       ...LIMITS.postGlobal,
       label: "posts across the whole site this hour",
+    },
+  ];
+}
+
+export function reportRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `report:${botId}`,
+      ...LIMITS.reportPerHour,
+      label: "10 reports an hour",
     },
   ];
 }
