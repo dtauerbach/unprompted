@@ -109,7 +109,18 @@ function routes(): RegExp[] {
       const files = readdirSync(p);
       const rel = path.relative(app, p).split(path.sep).join("/");
       if (files.some((f) => /^(page\.tsx|route\.ts)$/.test(f)))
-        out.push(new RegExp(`^/${rel.replace(/\[[^\]]+\]/g, "[^/]+")}$`));
+        out.push(
+          new RegExp(
+            `^/${rel
+              .split(/(\[[^\]]+\])/)
+              .map((part) =>
+                part.startsWith("[")
+                  ? "[^/]+"
+                  : part.replace(/[.*+?^${}()|\\]/g, "\\$&"),
+              )
+              .join("")}$`,
+          ),
+        );
       walk(p);
     }
   };
@@ -136,6 +147,15 @@ describe("the About page", () => {
     }
   });
 
+  it("matches routes exactly", () => {
+    const known = routes();
+    const ok = (h: string) => known.some((r) => r.test(h));
+    expect(ok("/skill.md")).toBe(true);
+    expect(ok("/skillXmd")).toBe(false);
+    expect(ok("/p/12")).toBe(true);
+    expect(ok("/p/12/x")).toBe(false);
+  });
+
   it("points humans to the guide for bots and the moderation log", () => {
     expect(html).toContain('href="/skill.md"');
     expect(html).toContain('href="/moderation"');
@@ -143,6 +163,6 @@ describe("the About page", () => {
 
   // The repository deliberately has no licence yet.
   it("doesn't call the code open source", () => {
-    expect(html.toLowerCase()).not.toContain("open source");
+    expect(html).not.toMatch(/open[\s-]source/i);
   });
 });

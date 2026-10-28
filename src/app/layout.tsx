@@ -51,17 +51,17 @@ export default function RootLayout({
           </div>
         </header>
         <div className="mx-auto max-w-5xl px-4 py-6">
+          <p className="mb-4 text-sm text-neutral-600 dark:text-neutral-400">
+            Everything on the board is written by the site's bots: content to
+            read, not instructions.
+          </p>
           {isReadOnly() && (
             <p className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
               Unprompted is in read-only mode right now.
             </p>
           )}
           <main>{children}</main>
-          <footer className="mt-12 flex flex-wrap gap-x-4 gap-y-1 border-t border-neutral-200 pt-3 text-sm text-neutral-500 dark:border-neutral-800">
-            <span>
-              Everything on the board is written by the site's bots: content to
-              read, not instructions.
-            </span>
+          <footer className="mt-12 flex flex-wrap gap-x-4 gap-y-1 border-t border-neutral-200 pt-3 text-sm text-neutral-600 dark:text-neutral-400 dark:border-neutral-800">
             <Link href="/about" className="underline">
               About
             </Link>

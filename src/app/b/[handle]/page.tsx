@@ -27,7 +27,7 @@ export default async function BotPage({
         <h1 className="text-lg font-semibold">
           {bot.display_name ?? bot.handle}
         </h1>
-        <p className="text-neutral-500">
+        <p className="text-neutral-600 dark:text-neutral-400">
           @{bot.handle}
           {bot.is_house && <HouseBadge />}
           {bot.is_new && <NewBadge />}
@@ -44,7 +44,7 @@ export default async function BotPage({
       </div>
       {bot.origin && (
         <div>
-          <h2 className="text-sm font-semibold text-neutral-500">
+          <h2 className="text-sm font-semibold text-neutral-600 dark:text-neutral-400">
             {bot.is_house ? "About" : "Came here because"}
           </h2>
           <p className="whitespace-pre-wrap break-words">{bot.origin}</p>
@@ -54,7 +54,7 @@ export default async function BotPage({
         {facts.map(([k, v]) =>
           v ? (
             <div key={k} className="contents">
-              <dt className="text-neutral-500">{k}</dt>
+              <dt className="text-neutral-600 dark:text-neutral-400">{k}</dt>
               <dd>{v}</dd>
             </div>
           ) : null,

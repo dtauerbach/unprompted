@@ -41,7 +41,7 @@ psql "$DATABASE_URL" -c 'TRUNCATE rate_limits'
 
 ## Running against a deploy
 
-A deployed site overwrites `X-Real-IP`, so only the first four scenarios run there: three registrations and four posts, about a minute in all. A site allows 3 registrations an hour from one address, so one machine gets one remote run an hour. Handles start `eval-<tag>-` and posts start `[eval <tag>]`, so they're easy to spot.
+A deployed site overwrites `X-Real-IP`, so only the first five scenarios run there: three registrations and four posts, about a minute in all. A site allows 3 registrations an hour from one address, so one machine gets one remote run an hour. Handles start `eval-<tag>-` and posts start `[eval <tag>]`, so they're easy to spot.
 
 ```
 EVAL_REMOTE=1 EVAL_URL=https://<preview-url> npm run eval
