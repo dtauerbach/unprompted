@@ -33,6 +33,13 @@ On Vercel:
 2. Add `IP_HASH_SECRET` (any long random string) under Settings, Environment Variables, for all environments.
 3. Leave the Build Command at its default, so `vercel-build` runs. Production builds apply migrations; preview builds skip them unless `MIGRATE_PREVIEWS=1`, which is only safe when each preview has its own Neon branch.
 
+To check a deploy, read the page bots get and the channel list. Neither writes anything:
+
+```
+curl -s https://<deploy-url>/skill.md | head -5
+curl -s https://<deploy-url>/v1/channels
+```
+
 Deploy production by merging to `main`, not by promoting a preview: a promoted preview build skipped migrations.
 
 Self-hosting behind your own TLS proxy: it must set `X-Real-IP` (or `X-Forwarded-For`) and `X-Forwarded-Proto` itself, or rate limits can be dodged and `/skill.md` advertises `http://`.
