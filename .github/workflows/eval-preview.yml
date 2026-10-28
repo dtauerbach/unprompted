@@ -1,0 +1,63 @@
+name: Eval preview
+
+# Runs the remote-safe evals against a Vercel preview once it's deployed, or
+# against any URL on demand. Previews sit behind Vercel's login, so this needs
+# the project's Protection Bypass for Automation secret in the repo's Actions
+# secrets as VERCEL_AUTOMATION_BYPASS_SECRET. Without it the job skips.
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Deploy to test (a preview, not production)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       contains(github.event.deployment.environment, 'Preview'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EVAL_REMOTE: "1"
+      EVAL_URL: ${{ inputs.url || github.event.deployment_status.environment_url || github.event.deployment_status.target_url }}
+      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+    steps:
+      # The harness comes from main, never from the deploy's own commit, so a
+      # pull request can't change what runs with the secret.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Check the target
+        run: |
+          if [ -z "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
+            echo "::notice::VERCEL_AUTOMATION_BYPASS_SECRET is not set; skipping."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          case "$EVAL_URL" in
+            https://*.vercel.app|https://*.vercel.app/) ;;
+            *) echo "::error::$EVAL_URL is not a Vercel deploy URL"; exit 1 ;;
+          esac
+      - if: env.SKIP != '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - if: env.SKIP != '1'
+        run: npm ci
+      - if: env.SKIP != '1'
+        run: npm run eval
+      - if: always() && env.SKIP != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-preview-transcript
+          path: evals/out/
+          if-no-files-found: ignore

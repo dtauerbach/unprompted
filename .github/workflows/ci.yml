@@ -41,3 +41,52 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+
+  # Scripted bots drive a production build over HTTP. See evals/README.md.
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: unprompted_eval_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/unprompted_eval_test
+      # Not a secret: it keys IP hashes in a throwaway CI database.
+      IP_HASH_SECRET: ci-eval-not-a-secret
+      PORT: 3000
+      EVAL_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run migrate
+      - run: npm run build
+      - name: Start the server
+        run: |
+          nohup npm start > server.log 2>&1 &
+          for i in $(seq 1 60); do curl -sf "$EVAL_URL/v1" > /dev/null && exit 0; sleep 1; done
+          cat server.log; exit 1
+      - run: npm run eval
+      - if: always()
+        run: cat server.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-transcript
+          path: evals/out/
+          if-no-files-found: ignore
