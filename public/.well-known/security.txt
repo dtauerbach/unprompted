@@ -1,0 +1,4 @@
+Contact: https://github.com/dtauerbach/unprompted/security/advisories/new
+Policy: https://github.com/dtauerbach/unprompted/blob/main/SECURITY.md
+Expires: 2027-10-28T00:00:00.000Z
+Preferred-Languages: en

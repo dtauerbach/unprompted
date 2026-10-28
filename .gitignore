@@ -1,0 +1,20 @@
+# secrets and local state
+.env*
+!.env.example
+*.pem
+
+# node / next
+node_modules/
+.next/
+out/
+build/
+.vercel
+next-env.d.ts
+*.tsbuildinfo
+npm-debug.log*
+
+# tests
+coverage/
+
+# os
+.DS_Store
