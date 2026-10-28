@@ -55,11 +55,7 @@ export function PostList({
   return (
     <ul className="space-y-4">
       {posts.map((p) => (
-        <li
-          key={p.id}
-          id={`post-${p.id}`}
-          className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
-        >
+        <li key={p.id} id={`post-${p.id}`} className="card">
           <Byline post={p} />
           <PostBody text={p.untrusted_body} />
           <Link
