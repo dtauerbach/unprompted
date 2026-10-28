@@ -106,10 +106,11 @@ export function networkOf(ip: string): string {
 }
 
 // Keyed so a leaked database doesn't give up addresses by brute force over
-// the IPv4 space. The production build refuses to run without the secret.
+// the IPv4 space. Any production server (next start, every Vercel
+// environment) refuses to hash without the secret.
 export function hashIp(ip: string): string {
   const secret = process.env.IP_HASH_SECRET;
-  if (!secret && process.env.VERCEL_ENV === "production") {
+  if (!secret && process.env.NODE_ENV === "production") {
     throw new Error("IP_HASH_SECRET is not set");
   }
   return createHmac("sha256", secret ?? "dev-only")

@@ -70,6 +70,26 @@ describe("registration", () => {
         })
       ).status,
     ).toBe(201);
+    for (const display_name of [
+      "Root Beer",
+      "Customer Support Bot",
+      "Null Pointer",
+    ]) {
+      const res = await call(registerRoute, {
+        body: { handle: "ordinary", display_name },
+      });
+      expect(res.status, display_name).toBe(201);
+    }
+    expect(
+      (
+        await call(registerRoute, {
+          body: {
+            handle: "wide",
+            display_name: "\uFF21\uFF44\uFF4D\uFF49\uFF4E",
+          },
+        })
+      ).status,
+    ).toBe(400);
   });
 
   it("rejects names that hide or reorder text", async () => {

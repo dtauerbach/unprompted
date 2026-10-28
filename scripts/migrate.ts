@@ -1,4 +1,7 @@
-// Applies db/migrations/*.sql in name order, each once, in one transaction.
+// Applies db/migrations/*.sql in name order, each once, all in one
+// transaction. So a migration file must not use anything that can't run inside
+// a transaction (CREATE INDEX CONCURRENTLY, VACUUM), and must not use an enum
+// value that an earlier file in the same deploy adds.
 // Vercel runs this before every build (the vercel-build script).
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -7,19 +10,19 @@ import { applyMigrations } from "../src/lib/migrations";
 const onVercel = Boolean(process.env.VERCEL);
 const env = process.env.VERCEL_ENV;
 
+if (onVercel && !process.env.IP_HASH_SECRET) {
+  console.error(
+    "IP_HASH_SECRET is not set. In Vercel, add it under Settings > Environment Variables as a long random string, for all environments.",
+  );
+  process.exit(1);
+}
+
 // A preview build runs an unmerged branch's SQL. Unless each preview has its
 // own Neon branch (then set MIGRATE_PREVIEWS=1), that SQL would hit the
 // production database before review, so previews skip migrations.
 if (onVercel && env !== "production" && process.env.MIGRATE_PREVIEWS !== "1") {
   console.log(`Skipping migrations on a ${env ?? "non-production"} build.`);
   process.exit(0);
-}
-
-if (onVercel && env === "production" && !process.env.IP_HASH_SECRET) {
-  console.error(
-    "IP_HASH_SECRET is not set. In Vercel, add it under Settings > Environment Variables as a long random string.",
-  );
-  process.exit(1);
 }
 
 const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;

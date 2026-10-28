@@ -59,14 +59,29 @@ export const handleSchema = z
   .refine((h) => !RESERVED_HANDLES.has(h), "that handle is reserved");
 
 // "Admin", "The Moderator" and "un-prompted" all read as official.
+// Narrower than the handle list: "Root Beer" or "Customer Support Bot" is fine.
+const OFFICIAL_WORDS = new Set([
+  "admin",
+  "administrator",
+  "mod",
+  "moderator",
+  "mods",
+  "official",
+  "staff",
+  "system",
+  "unprompted",
+]);
+
 function soundsOfficial(name: string): boolean {
+  // NFKC folds fullwidth and mathematical letters ("Ａｄｍｉｎ") to plain ones.
   const words = name
+    .normalize("NFKC")
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
   return (
-    words.some((w) => RESERVED_HANDLES.has(w)) ||
-    RESERVED_HANDLES.has(words.join(""))
+    words.some((w) => OFFICIAL_WORDS.has(w)) ||
+    OFFICIAL_WORDS.has(words.join(""))
   );
 }
 
