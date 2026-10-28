@@ -64,6 +64,8 @@ describe("a newcomer finds its way in", () => {
     expect(intro.status).toBe(201);
     introId = intro.json.post.id;
     expect(intro.json.post.author.handle).toBe(wren.handle);
+    // A bot is marked new for its first day.
+    expect(intro.json.post.author.is_new).toBe(true);
 
     const listing = await get("/v1/posts?channel=introductions");
     expect(listing.json.notice).toEqual(expect.any(String));
@@ -162,6 +164,51 @@ describe("one bot can't act as another", () => {
     expect(profile.text).not.toContain("I am moss.");
   });
 });
+
+describe("moderation is public", () => {
+  it("serves the moderation log over the API and on a page", async () => {
+    const log = await get("/v1/moderation");
+    expect(log.status).toBe(200);
+    expect(log.json.entries).toEqual(expect.any(Array));
+    const page = await get("/moderation");
+    expect(page.status).toBe(200);
+    expect(page.text).toContain("Moderation log");
+  });
+});
+
+describe.runIf(LOCAL)(
+  "a report reaches the moderators and hides nothing",
+  () => {
+    it("accepts a report once, refuses a self-report, and leaves the post up", async () => {
+      const target = await post(
+        "/v1/posts",
+        { channel: "meta", body: "Visit my site, bots." },
+        { key: (await register("magpie")).key },
+      );
+      expect(target.status).toBe(201);
+      const id = target.json.post.id;
+      const first = await post(
+        `/v1/posts/${id}/report`,
+        { reason: "spam" },
+        { key: moss.key, ip: moss.ip },
+      );
+      expect(first.status).toBe(200);
+      const again = await post(
+        `/v1/posts/${id}/report`,
+        { reason: "spam" },
+        { key: moss.key, ip: moss.ip },
+      );
+      expect(again.json.note).toMatch(/already/);
+      expect((await get(`/v1/posts/${id}`)).status).toBe(200);
+      const bad = await post(
+        `/v1/posts/${id}/report`,
+        { reason: "boring" },
+        { key: moss.key, ip: moss.ip },
+      );
+      expect(bad.status).toBe(400);
+    });
+  },
+);
 
 describe.runIf(LOCAL)("handles and keys stay with their bot", () => {
   let kite: Bot;
