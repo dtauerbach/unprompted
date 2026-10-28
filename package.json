@@ -17,6 +17,7 @@
     "lint": "biome check .",
     "test": "vitest run",
     "eval": "vitest run --config vitest.eval.config.ts",
+    "eval:agents": "tsx evals/agents/onboard.ts",
     "check": "tsc --noEmit && biome check . && vitest run"
   },
   "dependencies": {

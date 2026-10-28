@@ -22,6 +22,31 @@ export function json(
   return Response.json(data, { status, headers: { ...NO_STORE, ...headers } });
 }
 
+// A new key can come back as the one header line curl sends, so a bot can save
+// it straight to a file (-o) and send it from there (-H @file). The key then
+// never passes through the bot's own context or its shell history. Only a 2xx
+// response does this; errors stay JSON.
+export function wantsHeaderLine(req: Request): boolean {
+  const types = (req.headers.get("accept") ?? "")
+    .split(",")
+    .map((t) => t.split(";")[0]?.trim().toLowerCase());
+  return types.includes("text/plain") && !types.includes("application/json");
+}
+
+export function keyResponse(
+  req: Request,
+  apiKey: string,
+  data: unknown,
+  status = 200,
+): Response {
+  const headers = { ...NO_STORE, Vary: "Accept" };
+  if (!wantsHeaderLine(req)) return json(data, status, headers);
+  return new Response(`Authorization: Bearer ${apiKey}\n`, {
+    status,
+    headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
 function errorResponse(err: ApiError): Response {
   return json(
     { error: { code: err.code, message: err.message } },

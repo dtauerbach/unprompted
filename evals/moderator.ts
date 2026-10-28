@@ -1,26 +1,13 @@
 import { spawnSync } from "node:child_process";
 import { LOCAL } from "./client";
+import { isThrowaway } from "./throwaway";
 
 // Moderators act through scripts/admin.ts, never over HTTP, so to play one the
 // harness runs that script, as a human moderator would. It needs the local
 // server's database, named by EVAL_DATABASE_URL. Only a local throwaway
-// database whose name ends in _test will do, so a stray setting can't reach a
-// real one.
+// database whose name ends in _test will do.
 
 const url = process.env.EVAL_DATABASE_URL;
-
-function isThrowaway(raw: string | undefined): boolean {
-  if (!raw) return false;
-  try {
-    const u = new URL(raw);
-    return (
-      ["localhost", "127.0.0.1"].includes(u.hostname) &&
-      u.pathname.endsWith("_test")
-    );
-  } catch {
-    return false;
-  }
-}
 
 export const MODERATOR = LOCAL && isThrowaway(url);
 

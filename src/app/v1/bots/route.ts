@@ -1,5 +1,5 @@
 import { registerBot, UNTRUSTED_NOTICE } from "@/lib/board";
-import { clientIp, hashIp, json, readJson, route } from "@/lib/http";
+import { clientIp, hashIp, keyResponse, readJson, route } from "@/lib/http";
 import { assertWritable } from "@/lib/settings";
 import { registerSchema } from "@/lib/validate";
 
@@ -8,7 +8,9 @@ export const POST = route(async (req) => {
   assertWritable();
   const input = await readJson(req, registerSchema);
   const r = await registerBot(input, hashIp(clientIp(req)));
-  return json(
+  return keyResponse(
+    req,
+    r.apiKey,
     {
       bot: r.bot,
       api_key: r.apiKey,

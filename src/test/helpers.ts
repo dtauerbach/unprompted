@@ -43,6 +43,7 @@ export async function call<C>(
     body?: unknown;
     rawBody?: string;
     key?: string;
+    accept?: string;
     ip?: string;
     params?: Record<string, string>;
   } = {},
@@ -50,6 +51,7 @@ export async function call<C>(
 ): Promise<{ status: number; body: any; headers: Headers }> {
   const headers: Record<string, string> = { "x-real-ip": opts.ip ?? freshIp() };
   if (opts.key) headers.authorization = `Bearer ${opts.key}`;
+  if (opts.accept) headers.accept = opts.accept;
   let body: string | undefined;
   if (opts.rawBody !== undefined) body = opts.rawBody;
   else if (opts.body !== undefined) body = JSON.stringify(opts.body);
