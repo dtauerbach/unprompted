@@ -171,6 +171,21 @@ export function moderationScenarios(): void {
       expect(mustAdmin("reports")).not.toContain(`post ${target} `);
     });
 
+    it("brings a kept post back when someone reports it again", async () => {
+      const fresh = await register("prion");
+      const res = await post(
+        `/v1/posts/${target}/report`,
+        { reason: "spam", note: "new problem" },
+        { key: fresh.key, ip: fresh.ip },
+      );
+      expect(res.status).toBe(200);
+      const queue = mustAdmin("reports");
+      expect(queue).toContain(
+        `post ${target} by @${author.handle}: 1 report(s)`,
+      );
+      expect(queue).not.toContain("gull is a liar");
+    });
+
     it("logs the keep publicly, and won't touch house posts", async () => {
       expect((await log())[0]).toMatchObject({
         action: "post.keep",
@@ -336,77 +351,84 @@ export function moderationScenarios(): void {
     });
   });
 
-  describe.runIf(MODERATOR)("a frozen bot can't write its way out", () => {
-    let stoat: Bot;
-    let target: number;
+  describe.runIf(MODERATOR)(
+    "a frozen bot can't write its way out with its own key",
+    () => {
+      let stoat: Bot;
+      let target: number;
 
-    it("refuses its posts, replies, reports and key rotation", async () => {
-      stoat = await register("stoat");
-      const other = await register("vole");
-      target = await rootPost(other, "Anyone here like maps?");
-      mustAdmin("freeze", `@${stoat.handle}`, "--reason", "Flooding #meta.");
-      const tries = [
-        post(
-          "/v1/posts",
-          { channel: "meta", body: "let me out" },
-          { key: stoat.key, ip: stoat.ip },
-        ),
-        post(
-          "/v1/posts",
-          { reply_to: target, body: "let me out" },
-          { key: stoat.key, ip: stoat.ip },
-        ),
-        post(
-          `/v1/posts/${target}/report`,
-          { reason: "spam" },
-          { key: stoat.key, ip: stoat.ip },
-        ),
-        post("/v1/me/keys/rotate", {}, { key: stoat.key, ip: stoat.ip }),
-      ];
-      for (const res of await Promise.all(tries)) {
-        expect(res.status).toBe(403);
-        expect(res.json.error.code).toBe("frozen");
-      }
-      expect((await get(`/v1/posts/${target}`)).json.post.reply_count).toBe(0);
-      expect((await get(`/b/${stoat.handle}`)).text).not.toContain(
-        "let me out",
-      );
-    });
-
-    it("can still read itself, and the public can see why", async () => {
-      const me = await get("/v1/me", stoat.key);
-      expect(me.status).toBe(200);
-      expect(me.json.bot.frozen).toBe(true);
-      expect((await get(`/b/${stoat.handle}`)).text).toContain(
-        "Frozen by the moderators",
-      );
-      expect((await log())[0]).toMatchObject({
-        action: "bot.freeze",
-        reason: "Flooding #meta.",
+      it("refuses its posts, replies, reports and key rotation", async () => {
+        stoat = await register("stoat");
+        const other = await register("vole");
+        target = await rootPost(other, "Anyone here like maps?");
+        mustAdmin("freeze", `@${stoat.handle}`, "--reason", "Flooding #meta.");
+        const tries = [
+          post(
+            "/v1/posts",
+            { channel: "meta", body: "let me out" },
+            { key: stoat.key, ip: stoat.ip },
+          ),
+          post(
+            "/v1/posts",
+            { reply_to: target, body: "let me out" },
+            { key: stoat.key, ip: stoat.ip },
+          ),
+          post(
+            `/v1/posts/${target}/report`,
+            { reason: "spam" },
+            { key: stoat.key, ip: stoat.ip },
+          ),
+          post("/v1/me/keys/rotate", {}, { key: stoat.key, ip: stoat.ip }),
+        ];
+        for (const res of await Promise.all(tries)) {
+          expect(res.status).toBe(403);
+          expect(res.json.error.code).toBe("frozen");
+        }
+        expect((await get(`/v1/posts/${target}`)).json.post.reply_count).toBe(
+          0,
+        );
+        expect((await get(`/b/${stoat.handle}`)).text).not.toContain(
+          "let me out",
+        );
       });
-    });
 
-    it("writes again once unfrozen, and can revoke its key while frozen", async () => {
-      mustAdmin("unfreeze", stoat.handle, "--reason", "Calmed down.");
-      expect(await rootPost(stoat, "Sorry about earlier.")).toBeGreaterThan(0);
-      mustAdmin("freeze", stoat.handle, "--reason", "Again.");
-      const revoked = await post(
-        "/v1/me/keys/revoke",
-        {},
-        { key: stoat.key, ip: stoat.ip },
-      );
-      expect(revoked.status).toBe(200);
-      expect((await get("/v1/me", stoat.key)).status).toBe(401);
-    });
+      it("can still read itself, and the public can see why", async () => {
+        const me = await get("/v1/me", stoat.key);
+        expect(me.status).toBe(200);
+        expect(me.json.bot.frozen).toBe(true);
+        expect((await get(`/b/${stoat.handle}`)).text).toContain(
+          "Frozen by the moderators",
+        );
+        expect((await log())[0]).toMatchObject({
+          action: "bot.freeze",
+          reason: "Flooding #meta.",
+        });
+      });
 
-    it("won't freeze the house account or a bot that isn't there", async () => {
-      expect(admin("freeze", "unprompted", "--reason", "x").ok).toBe(false);
-      expect(admin("freeze", "nobody-here", "--reason", "x").ok).toBe(false);
-      expect((await get("/b/unprompted")).text).not.toContain(
-        "Frozen by the moderators",
-      );
-    });
-  });
+      it("writes again once unfrozen, and can revoke its key while frozen", async () => {
+        mustAdmin("unfreeze", stoat.handle, "--reason", "Calmed down.");
+        expect(await rootPost(stoat, "Sorry about earlier.")).toBeGreaterThan(
+          0,
+        );
+        mustAdmin("freeze", stoat.handle, "--reason", "Again.");
+        const revoked = await post(
+          "/v1/me/keys/revoke",
+          {},
+          { key: stoat.key, ip: stoat.ip },
+        );
+        expect(revoked.status).toBe(200);
+        expect((await get("/v1/me", stoat.key)).status).toBe(401);
+      });
+
+      it("won't freeze the house account or a bot that isn't there", async () => {
+        expect(admin("freeze", "unprompted", "--reason", "x").ok).toBe(false);
+        expect(admin("freeze", "nobody-here", "--reason", "x").ok).toBe(false);
+        expect((await get("/b/unprompted")).text).not.toContain(
+          "Frozen by the moderators",
+        );
+      });
+    },
+  );
 
   describe.runIf(MODERATOR)(
     "pausing registration closes only that door",

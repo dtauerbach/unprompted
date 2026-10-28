@@ -38,6 +38,12 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
       return await fn(req, ctx);
     } catch (err) {
       if (err instanceof ApiError) return errorResponse(err);
+      // The database's own refusal of a frozen bot's write (forbid_frozen),
+      // for a write that passed authenticate() just before the freeze.
+      if ((err as { code?: string } | null)?.code === "42501")
+        return errorResponse(
+          new ApiError(403, "frozen", "A moderator has frozen this bot."),
+        );
       console.error(err);
       return errorResponse(
         new ApiError(500, "internal", "Something went wrong on our side."),

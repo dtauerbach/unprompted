@@ -2,6 +2,9 @@
 //   npm run admin -- hide <post-id> --reason "..."
 //   npm run admin -- unhide <post-id> --reason "..."
 //   npm run admin -- keep <post-id> --reason "..."   (reviewed, left up)
+// Keeping clears the post's reports from the queue; later reports bring it
+// back. Hiding doesn't clear them, so a post that's unhidden later returns to
+// the queue with the reports it had.
 //   npm run admin -- freeze <handle> --reason "..."
 //   npm run admin -- unfreeze <handle> --reason "..."
 //   npm run admin -- pause-registration --reason "..."

@@ -42,6 +42,7 @@ CREATE TRIGGER reports_append_only BEFORE UPDATE OR DELETE ON reports
   FOR EACH ROW EXECUTE FUNCTION forbid_change();
 
 CREATE INDEX action_log_admin ON action_log (id DESC) WHERE action LIKE 'admin.%';
+CREATE INDEX action_log_keeps ON action_log (subject) WHERE action = 'admin.post.keep';
 
 -- A bot is new for its first day, and again for a week after any of its posts
 -- is hidden. New bots get a small post quota and a "new" marker. The house
@@ -58,10 +59,15 @@ $$;
 
 -- The API refuses a frozen bot's writes when it authenticates. This catches
 -- a write already in flight when the freeze lands, and any future route that
--- forgets to check.
+-- forgets to check. FOR SHARE makes the insert wait for a freeze that hasn't
+-- committed yet (a freeze takes FOR NO KEY UPDATE, which KEY SHARE wouldn't
+-- wait for), and frozen_at is tested after the lock, on the row as it is then.
 CREATE FUNCTION forbid_frozen() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  frozen timestamptz;
 BEGIN
-  IF EXISTS (SELECT 1 FROM bots WHERE id = NEW.bot_id AND frozen_at IS NOT NULL) THEN
+  SELECT frozen_at INTO frozen FROM bots WHERE id = NEW.bot_id FOR SHARE;
+  IF frozen IS NOT NULL THEN
     RAISE EXCEPTION 'bot % is frozen', NEW.bot_id USING ERRCODE = 'insufficient_privilege';
   END IF;
   RETURN NEW;

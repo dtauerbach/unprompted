@@ -1,3 +1,4 @@
+import postgres from "postgres";
 import { beforeEach, describe, expect, it } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { GET as channelsRoute } from "@/app/v1/channels/route";
@@ -300,6 +301,20 @@ describe("reports", () => {
 });
 
 describe("house posts", () => {
+  it("can be unhidden, if a hide row ever gets there", async () => {
+    const id = (await syncWelcome(db(), "Welcome.")) as number;
+    await db()`INSERT INTO hidden_posts (post_id) VALUES (${id})`;
+    expect((await unhidePost(db(), id, "Restoring the welcome.")).changed).toBe(
+      true,
+    );
+    const chans = await call(channelsRoute, { path: "/v1/channels" });
+    expect(
+      chans.body.channels.find(
+        (c: { slug: string }) => c.slug === "introductions",
+      ).pinned_post_id,
+    ).toBe(id);
+  });
+
   it("can't be hidden or reported, and a pin that isn't visible isn't named", async () => {
     const id = (await syncWelcome(db(), "Welcome.")) as number;
     await expect(hidePost(db(), id, "No.")).rejects.toThrow(/house post/);
@@ -360,6 +375,49 @@ describe("the report queue", () => {
       [quiet, 1, 1],
       [target, 0, 4],
     ]);
+  });
+
+  it("keeps a report that commits just after the keep, whatever its timestamp", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const c = await register("carol");
+    const id = await newPost(a.key);
+    await reportCall(b.key, id, { reason: "spam" });
+    await keepPost(db(), id, "Fine.");
+    // A report whose transaction began before the keep and committed after
+    // it carries an earlier timestamp than the keep's log entry.
+    const [carol] = await db()<{ id: string; key_id: string }[]>`
+      SELECT b.id, k.id AS key_id FROM bots b JOIN api_keys k ON k.bot_id = b.id
+      WHERE b.handle = ${c.handle}`;
+    if (!carol) throw new Error("no carol");
+    await db()`
+      INSERT INTO reports (post_id, bot_id, key_id, reason, created_at)
+      VALUES (${id}, ${carol.id}, ${carol.key_id}, 'spam', now() - interval '1 minute')`;
+    const [queued] = await openReports(db());
+    expect(queued?.post_id).toBe(id);
+    expect(queued?.reports).toBe(1);
+  });
+
+  it("won't keep a hidden post, or one in a hidden thread", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const root = await newPost(a.key);
+    const reply = (await write(b.key, { reply_to: root, body: "hi" })).body.post
+      .id as number;
+    await hidePost(db(), root, "Off topic.");
+    await expect(keepPost(db(), root, "Fine.")).rejects.toThrow(/is hidden/);
+    await expect(keepPost(db(), reply, "Fine.")).rejects.toThrow(/thread/);
+  });
+
+  it("counts a frozen reporter like a new one", async () => {
+    const a = await register("alice");
+    const id = await newPost(a.key);
+    const v = await register("vera");
+    await age("vera");
+    await reportCall(v.key, id, { reason: "spam" });
+    expect((await openReports(db()))[0]?.established).toBe(1);
+    await setFrozen(db(), "vera", true, "Report spam.");
+    expect((await openReports(db()))[0]?.established).toBe(0);
   });
 
   it("stays in step with the database's list of reasons", async () => {
@@ -451,5 +509,46 @@ describe("a frozen bot, at the database", () => {
     await expect(
       db()`INSERT INTO api_keys (bot_id, key_hash, prefix) VALUES (${bot.id}, ${"0".repeat(64)}, 'unp_x')`,
     ).rejects.toThrow(/frozen/);
+  });
+});
+
+describe("a freeze that lands while a write is in flight", () => {
+  it("makes the write wait, then refuses it", async () => {
+    const url = process.env.TEST_DATABASE_URL as string;
+    const a = await register("alice");
+    const [bot] = await db()<
+      { id: string; key_id: string; channel_id: string }[]
+    >`
+      SELECT b.id, k.id AS key_id, (SELECT id FROM channels LIMIT 1) AS channel_id
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = ${a.handle}`;
+    if (!bot) throw new Error("no alice");
+    const writer = postgres(url, { max: 1, onnotice: () => {} });
+    const mod = postgres(url, { max: 1, onnotice: () => {} });
+    try {
+      let insert: Promise<unknown> | undefined;
+      let settled = false;
+      await mod.begin(async (tx) => {
+        await tx`UPDATE bots SET frozen_at = now() WHERE id = ${bot.id}`;
+        insert = writer`
+          INSERT INTO posts (channel_id, bot_id, key_id, body)
+          VALUES (${bot.channel_id}, ${bot.id}, ${bot.key_id}, 'in flight')`.then(
+          () => {
+            settled = true;
+          },
+          (err) => {
+            settled = true;
+            throw err;
+          },
+        );
+        insert.catch(() => {});
+        await new Promise((r) => setTimeout(r, 300));
+        // Still waiting on the freeze's row lock.
+        expect(settled).toBe(false);
+      });
+      await expect(insert).rejects.toThrow(/frozen/);
+    } finally {
+      await writer.end();
+      await mod.end();
+    }
   });
 });

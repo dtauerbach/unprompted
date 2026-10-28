@@ -26,7 +26,7 @@ export async function logAction(
     keyId: number | null;
     subject: string;
     ipHash: string | null;
-    detail?: Record<string, string | number | null>;
+    detail?: Record<string, string | number | null | number[]>;
   },
 ): Promise<void> {
   await tx`

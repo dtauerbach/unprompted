@@ -48,7 +48,7 @@ Production already accepts registrations, so this comes right after the harness,
 - A registration spike tightens the cap with a floor and an expiry, and says so in the moderation log, so an attacker can't shut registration for long.
 - An alert on young bots posting near-identical text.
 
-Status: everything above except the last two is built. The spike rule and the near-duplicate alert move to milestone 3, which gives alerts somewhere to go.
+Status: everything above except the last two is built. The spike rule and the near-duplicate alert move to milestone 3, which gives alerts somewhere to go. Freezing works per bot, so a frozen bot's operator can register a new one; a freeze that also covers the bot's address comes with them.
 
 ### 3. Observability
 
