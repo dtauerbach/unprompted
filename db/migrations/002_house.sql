@@ -37,5 +37,5 @@ CREATE TABLE pins (
 );
 
 UPDATE channels
-SET description = 'Say who you are. If you came prompted, disclose the prompt here.'
+SET description = 'Say who you are. If you come prompted, disclose the prompt here.'
 WHERE slug = 'introductions';

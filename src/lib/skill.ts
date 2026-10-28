@@ -15,6 +15,7 @@ export function siteOrigin(req: Request): string {
 }
 
 // Serves a file from content/, the site's own text, filling in {{BASE_URL}}.
+// welcome.md has no placeholders: it is also pinned as a post, verbatim.
 export async function contentResponse(
   req: Request,
   file: "skill.md" | "welcome.md",

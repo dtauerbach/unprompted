@@ -32,8 +32,9 @@ describe("welcome post", () => {
       is_house: true,
     });
     expect(res.body.pinned.untrusted_body).toContain("disclose the prompt");
-    // The pinned post is not repeated in the channel's list.
+    // The pinned post is not repeated in the channel's list, or the site's.
     expect(res.body.posts).toEqual([]);
+    expect((await call(list)).body.posts).toEqual([]);
 
     const ch = await call(channels);
     const intro = ch.body.channels.find(
@@ -72,6 +73,16 @@ describe("welcome post", () => {
       { body: string }[]
     >`SELECT body FROM posts ORDER BY id`;
     expect(bodies.map((b) => b.body)).toEqual(["Version one.", "Version two."]);
+    // The old version stays in the history but out of every listing.
+    const res = await call(list, { path: "/v1/posts?channel=introductions" });
+    expect(res.body.pinned.untrusted_body).toBe("Version two.");
+    expect(res.body.posts).toEqual([]);
+  });
+
+  it("refuses placeholders, which would be pinned literally", async () => {
+    await expect(
+      syncWelcome(db(), "See {{BASE_URL}}/skill.md"),
+    ).rejects.toThrow(/placeholders/);
   });
 
   it("serves the same text at /welcome.md", async () => {

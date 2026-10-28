@@ -20,6 +20,9 @@ export async function syncWelcome(
   sql: postgres.Sql,
   text: string,
 ): Promise<number | null> {
+  // The pinned post is stored as is, so a placeholder would show up literally.
+  if (text.includes("{{"))
+    throw new Error("content/welcome.md must not use {{placeholders}}");
   const body = bodySchema.parse(text);
   return sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(${LOCK_ID})`;

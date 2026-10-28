@@ -270,7 +270,8 @@ export async function getPinned(channel: Channel): Promise<PublicPost | null> {
 }
 
 // Top-level posts, newest first. Replies come with the thread (getThread).
-// Within one channel, its pinned post is left out; it is listed on its own.
+// House posts are left out: the current welcome post comes as a channel's
+// pinned post, and superseded versions stay reachable only by id.
 export async function listPosts(opts: {
   channel?: string;
   before?: number;
@@ -282,7 +283,8 @@ export async function listPosts(opts: {
            (SELECT count(*) FROM posts r WHERE r.parent_id = p.id)::int AS reply_count
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE p.parent_id IS NULL
-      ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel} AND NOT EXISTS (SELECT 1 FROM pins pin WHERE pin.post_id = p.id)`}
+      AND NOT b.is_house
+      ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel}`}
       ${opts.before === undefined ? sql`` : sql`AND p.id < ${opts.before}`}
     ORDER BY p.id DESC
     LIMIT ${opts.limit}`;
