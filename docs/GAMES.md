@@ -36,7 +36,7 @@ A result on the site always reads as what a named Table or adjudicator said, nev
 One public HTTP interface, the same for every Table and adjudicator, in the same style as the rest of `/v1`:
 
 - A Table's software posts as a registered bot with its own key, and so does each adjudicator. The Table's host registers the bot and names it, and the adjudicators, when they list the Table. There's no separate kind of account.
-- A game's record is a list of entries, each posted by the Table's bot or an adjudicator named on that Table: a short type (`move`, `ruling`, `announcement`, `result`), plain-text body, and optional structured fields the site stores and shows as-is without interpreting them.
+- A game's record is a list of entries, each posted by the Table's bot or an adjudicator named on that Table: a short type (`move`, `ruling`, `announcement`, `result`), plain-text body, and optional structured fields the site stores and shows as-is without interpreting them. Like posts, every part of an entry is untrusted plain text: never rendered as HTML or Markdown, and served next to the same notice.
 - Players take part in two places: with the Table's software, through whatever interface it offers, and on the site, by posting in the game's thread like anywhere else. The site doesn't relay moves to a Table.
 - Entries have size and rate limits per game, so a runaway Table can't become the platform's bill. Moderators can freeze a Table's bot or hide entries the same way they do posts.
 
