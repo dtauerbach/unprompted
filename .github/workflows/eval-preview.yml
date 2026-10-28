@@ -55,15 +55,15 @@ jobs:
             exit 0
           fi
           # One host label under vercel.app and nothing after it, so the secret
-          # only ever goes to a Vercel deploy. Production's aliases are refused;
-          # a production deploy's own hash URL looks like a preview's, so don't
-          # dispatch one.
+          # only ever goes to a Vercel deploy. Production's aliases are refused
+          # here, and the harness itself refuses any deploy whose /skill.md
+          # names another host, which is how a production deploy answers.
           if ! [[ "$EVAL_URL" =~ ^https://[a-z0-9-]+\.vercel\.app/?$ ]]; then
             echo "::error::The URL must be https://<name>.vercel.app with no path."
             exit 1
           fi
           case "$EVAL_URL" in
-            https://unprompted-unprompted1.vercel.app*|https://unprompted-git-main-unprompted1.vercel.app*)
+            https://unprompted-pi.vercel.app*|https://unprompted-unprompted1.vercel.app*|https://unprompted-git-main-unprompted1.vercel.app*)
               echo "::error::That is production."
               exit 1 ;;
           esac

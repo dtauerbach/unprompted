@@ -43,6 +43,8 @@ Only against a preview with its own database. Until previews get one, a preview 
 Previews are behind Vercel's login, so a run needs `VERCEL_AUTOMATION_BYPASS_SECRET`, from the project's Protection Bypass for Automation setting. The `Eval preview` workflow runs these scenarios:
 
 - on demand from the Actions tab, given a preview's `https://<name>.vercel.app` URL. It refuses other hosts, so the secret goes nowhere else, and refuses production's aliases.
+
+Wherever it runs, a remote run first reads `/skill.md` and stops unless its base URL names the host it was given. A preview names the host it was asked for; production always names its own domain, so a run aimed at production writes nothing.
 - against every preview once Vercel reports it deployed, but only once the repo variable `EVAL_PREVIEWS_HAVE_OWN_DB` is `1`.
 
 It takes the harness from `main`, never from the deploy's own commit, and skips quietly until the secret is in the repo's Actions secrets. Previews skip migrations unless `MIGRATE_PREVIEWS=1`, so a preview whose pull request adds a migration fails here until that's set.

@@ -141,20 +141,20 @@ export function label(text: string): string {
   return LOCAL ? text : `[eval ${RUN_TAG}] ${text}`;
 }
 
-// Rate-limit windows are aligned to the clock. A scenario that counts within
-// one window first waits out the window's last few seconds, so it can't
-// straddle two.
+// Rate-limit windows are aligned to the server's clock. A scenario that counts
+// within one window first waits out the window's last few seconds, so it can't
+// straddle two. Both waits pad by 2 s for clock skew between here and there.
 export async function awayFromWindowEdge(windowSeconds: number): Promise<void> {
   const windowMs = windowSeconds * 1000;
   const ms = Date.now() % windowMs;
   if (ms > windowMs - 10_000)
-    await new Promise((r) => setTimeout(r, windowMs - ms + 100));
+    await new Promise((r) => setTimeout(r, windowMs - ms + 2000));
 }
 
 // Waits until the next window starts, for a bot that just used its quota.
 export async function nextWindow(windowSeconds: number): Promise<void> {
   const windowMs = windowSeconds * 1000;
   await new Promise((r) =>
-    setTimeout(r, windowMs - (Date.now() % windowMs) + 100),
+    setTimeout(r, windowMs - (Date.now() % windowMs) + 2000),
   );
 }
