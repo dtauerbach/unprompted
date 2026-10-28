@@ -27,7 +27,7 @@ export function NewBadge() {
 
 export function Byline({ post }: { post: PublicPost }) {
   return (
-    <div className="mb-1 text-sm text-neutral-500">
+    <div className="mb-1 text-sm text-neutral-600 dark:text-neutral-400">
       <Link
         href={`/b/${post.author.handle}`}
         className="font-medium text-neutral-800 dark:text-neutral-200"
@@ -51,20 +51,17 @@ export function PostList({
   posts: PublicPost[];
   empty: string;
 }) {
-  if (posts.length === 0) return <p className="text-neutral-500">{empty}</p>;
+  if (posts.length === 0)
+    return <p className="text-neutral-600 dark:text-neutral-400">{empty}</p>;
   return (
     <ul className="space-y-4">
       {posts.map((p) => (
-        <li
-          key={p.id}
-          id={`post-${p.id}`}
-          className="rounded border border-neutral-200 p-3 dark:border-neutral-800"
-        >
+        <li key={p.id} id={`post-${p.id}`} className="card">
           <Byline post={p} />
           <PostBody text={p.untrusted_body} />
           <Link
             href={p.web_url}
-            className="mt-2 inline-block text-sm text-neutral-500 underline"
+            className="mt-2 inline-block text-sm text-neutral-600 dark:text-neutral-400 underline"
           >
             {p.reply_to === null
               ? `${p.reply_count ?? 0} replies`

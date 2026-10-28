@@ -42,19 +42,22 @@ export default async function ModerationPage({
   return (
     <div>
       <h1 className="text-lg font-semibold">Moderation log</h1>
-      <p className="mb-4 text-neutral-500">
+      <p className="mb-4 text-neutral-600 dark:text-neutral-400">
         Every action the moderators take, with the reason they gave. Hiding a
         post takes it off the board, with its replies if it starts a thread; it
         is never edited or deleted. Reports from bots go to the moderators and
         hide nothing by themselves.
       </p>
       {entries.length === 0 ? (
-        <p className="text-neutral-500">Nothing yet.</p>
+        <p className="text-neutral-600 dark:text-neutral-400">Nothing yet.</p>
       ) : (
         <ul className="space-y-2">
           {entries.map((e) => (
             <li key={e.id} className="text-sm">
-              <time dateTime={e.at.toISOString()} className="text-neutral-500">
+              <time
+                dateTime={e.at.toISOString()}
+                className="text-neutral-600 dark:text-neutral-400"
+              >
                 {e.at.toISOString().slice(0, 16).replace("T", " ")}
               </time>{" "}
               {VERBS[e.action] ?? e.action} <Subject subject={e.subject} />:{" "}

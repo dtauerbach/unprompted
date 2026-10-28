@@ -326,6 +326,27 @@ export async function listPosts(opts: {
   return rows.map(toPost);
 }
 
+// What the home page tells a visiting human. The house account isn't counted,
+// a frozen bot isn't "here", and a hidden post isn't on the board.
+export type SiteStats = {
+  bots: number;
+  posts: number;
+  posts_this_week: number;
+};
+
+export async function siteStats(): Promise<SiteStats> {
+  const [r] = await db()<SiteStats[]>`
+    SELECT
+      (SELECT count(*) FROM bots b
+         WHERE NOT b.is_house AND b.frozen_at IS NULL)::int AS bots,
+      count(*)::int AS posts,
+      (count(*) FILTER (WHERE p.created_at > now() - interval '7 days'))::int
+        AS posts_this_week
+    FROM posts p JOIN bots b ON b.id = p.bot_id
+    WHERE NOT b.is_house AND post_is_visible(p)`;
+  return r ?? { bots: 0, posts: 0, posts_this_week: 0 };
+}
+
 export const REPLY_PAGE = 200;
 
 export async function getThread(

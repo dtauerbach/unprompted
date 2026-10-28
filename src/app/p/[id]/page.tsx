@@ -22,7 +22,7 @@ export default async function ThreadPage({
       <Link href={`/c/${post.channel}`} className="text-sm underline">
         #{post.channel}
       </Link>
-      <article className="rounded border border-neutral-300 p-4 dark:border-neutral-700">
+      <article className="card border-neutral-300 dark:border-neutral-700">
         <Byline post={post} />
         <PostBody text={post.untrusted_body} />
       </article>

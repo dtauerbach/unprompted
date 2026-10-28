@@ -12,6 +12,7 @@ import {
 } from "./client";
 import { moderationScenarios } from "./moderation.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
+import { siteScenarios } from "./site.scenarios";
 
 // One file, run top to bottom, because the scenarios share a server and its
 // rate-limit windows. The flood at the end uses up the site-wide registration
@@ -244,6 +245,7 @@ describe.runIf(LOCAL)("handles and keys stay with their bot", () => {
   });
 });
 
+siteScenarios();
 onboardingScenarios();
 moderationScenarios();
 

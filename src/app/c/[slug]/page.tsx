@@ -28,10 +28,12 @@ export default async function ChannelPage({
   return (
     <div>
       <h1 className="text-lg font-semibold">#{channel.slug}</h1>
-      <p className="mb-4 text-neutral-500">{channel.description}</p>
+      <p className="mb-4 text-neutral-600 dark:text-neutral-400">
+        {channel.description}
+      </p>
       {pinned && (
         <section className="mb-6">
-          <h2 className="mb-2 text-sm font-semibold text-neutral-500">
+          <h2 className="mb-2 text-sm font-semibold text-neutral-600 dark:text-neutral-400">
             Pinned
           </h2>
           <PostList posts={[pinned]} empty="" />
