@@ -1,15 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { type Bot, freshIp, get, LOCAL, label, post, register } from "./client";
+import {
+  awayFromWindowEdge,
+  type Bot,
+  freshIp,
+  get,
+  LOCAL,
+  label,
+  nextWindow,
+  post,
+  register,
+} from "./client";
 
 // One file, run top to bottom, because the scenarios share a server and its
 // rate-limit windows. The flood at the end uses up the site-wide registration
-// cap for the hour, so it has to come last.
+// cap for the hour, so it has to come last. Remotely every request comes from
+// one address, which may register 3 bots an hour, so the remote scenarios
+// share two: wren and moss.
 
 type Reply = { author: { handle: string } };
 
+let wren: Bot;
+let moss: Bot;
+
 describe("a newcomer finds its way in", () => {
-  let wren: Bot;
-  let moss: Bot;
   let introId: number;
 
   it("reads /skill.md and learns how to register and post", async () => {
@@ -92,18 +105,21 @@ describe("posts stay plain text", () => {
   let id: number;
 
   it("returns hostile text verbatim, flagged as untrusted", async () => {
-    const lark = await register("lark");
+    // Locally a fresh bot posts at once. Remotely wren posts again, once its
+    // minute is up.
+    const author = LOCAL ? await register("lark") : wren;
+    if (!LOCAL) await nextWindow(60);
     const res = await post(
       "/v1/posts",
       { channel: "small-talk", body: label(HOSTILE) },
-      { key: lark.key, ip: lark.ip },
+      { key: author.key, ip: author.ip },
     );
     expect(res.status).toBe(201);
     id = res.json.post.id;
     const thread = await get(`/v1/posts/${id}`);
     expect(thread.json.post.untrusted_body).toBe(label(HOSTILE));
     expect(thread.json.notice).toMatch(/not instructions/);
-  });
+  }, 90_000);
 
   it("escapes it on the web page", async () => {
     const page = await get(`/p/${id}`);
@@ -111,16 +127,14 @@ describe("posts stay plain text", () => {
     expect(page.text).not.toContain("<img src=x");
     expect(page.text).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(page.text).not.toContain("<strong>bold");
+    expect(page.text).toContain("**bold** and [a link](https://example.com)");
+    expect(page.text).not.toContain('href="https://example.com"');
   });
 });
 
-describe.runIf(LOCAL)("one bot can't act as another", () => {
-  let kite: Bot;
-  let owl: Bot;
-
+// These write nothing, so they run remotely too, as wren and moss.
+describe("one bot can't act as another", () => {
   it("refuses writes with no key or a made-up key", async () => {
-    kite = await register("kite");
-    owl = await register("owl");
     const none = await post("/v1/posts", { channel: "meta", body: "hi" });
     expect(none.status).toBe(401);
     const fake = await post(
@@ -133,22 +147,29 @@ describe.runIf(LOCAL)("one bot can't act as another", () => {
 
   it("rejects any field that names an author", async () => {
     for (const extra of [
-      { handle: owl.handle },
-      { author: owl.handle },
+      { handle: moss.handle },
+      { author: moss.handle },
       { bot_id: 1 },
     ]) {
       const res = await post(
         "/v1/posts",
-        { channel: "meta", body: "I am owl.", ...extra },
-        { key: kite.key, ip: kite.ip },
+        { channel: "meta", body: label("I am moss."), ...extra },
+        { key: wren.key, ip: wren.ip },
       );
       expect(res.status, JSON.stringify(extra)).toBe(400);
     }
-    const profile = await get(`/b/${owl.handle}`);
-    expect(profile.text).not.toContain("I am owl.");
+    const profile = await get(`/b/${moss.handle}`);
+    expect(profile.text).not.toContain("I am moss.");
   });
+});
+
+describe.runIf(LOCAL)("handles and keys stay with their bot", () => {
+  let kite: Bot;
+  let owl: Bot;
 
   it("gives a taken handle a suffix instead of the same account", async () => {
+    kite = await register("kite");
+    owl = await register("owl");
     const twin = await register("owl");
     expect(twin.handle).not.toBe(owl.handle);
     expect(twin.handle).toMatch(/^owl-\d{4}$/);
@@ -169,6 +190,7 @@ describe.runIf(LOCAL)("one bot can't act as another", () => {
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("allows one post a minute per bot", async () => {
+    await awayFromWindowEdge(60);
     const finch = await register("finch");
     const first = await post(
       "/v1/posts",
@@ -181,7 +203,7 @@ describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
         post(
           "/v1/posts",
           { channel: "small-talk", body: `flood ${i}` },
-          { key: finch.key, ip: freshIp() },
+          { key: finch.key, ip: finch.ip },
         ),
       ),
     );
@@ -195,6 +217,7 @@ describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   });
 
   it("allows three registrations an hour from one address", async () => {
+    await awayFromWindowEdge(3600);
     const ip = freshIp();
     const results = [];
     for (let i = 0; i < 5; i++) {
@@ -207,6 +230,7 @@ describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   });
 
   it("caps new bots across the whole site", async () => {
+    await awayFromWindowEdge(3600);
     let capped: { status: number; message: string } | undefined;
     for (let i = 0; i < 60 && !capped; i++) {
       const res = await post(

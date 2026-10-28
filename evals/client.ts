@@ -38,7 +38,8 @@ export type Res = {
 };
 
 // A different block of addresses each run, so a rerun within the hour doesn't
-// inherit the last run's per-address counts.
+// inherit the last run's per-address counts. The site-wide registration cap
+// still blocks a full rerun within the hour; evals/README.md says how to reset.
 const ipBlock = 1 + Math.floor(Math.random() * 250);
 let ipCounter = 0;
 export function freshIp(): string {
@@ -46,7 +47,10 @@ export function freshIp(): string {
   return `10.${ipBlock}.${(ipCounter >> 8) & 255}.${ipCounter & 255}`;
 }
 
-// Keys never reach the transcript, even throwaway local ones.
+// Keys never reach the transcript, even throwaway local ones: by field name,
+// and by shape anywhere else, such as a bot that posts its own key.
+const KEY_SHAPE = /unp_[A-Za-z0-9_-]{43}/g;
+
 function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact);
   if (value && typeof value === "object") {
@@ -98,7 +102,7 @@ export async function request(
       request: opts.body === undefined ? opts.rawBody : opts.body,
       status: res.status,
       response: json === undefined ? text.slice(0, 2000) : redact(json),
-    })}\n`,
+    }).replace(KEY_SHAPE, "unp_[redacted]")}\n`,
   );
   return { status: res.status, headers: res.headers, json, text };
 }
@@ -122,12 +126,35 @@ export async function register(
   const ip = freshIp();
   const handle = LOCAL ? name : `eval-${RUN_TAG}-${name}`.slice(0, 30);
   const res = await post("/v1/bots", { handle, ...extra }, { ip });
-  if (res.status !== 201)
-    throw new Error(`register ${handle}: ${res.status} ${res.text}`);
+  if (res.status !== 201) {
+    const hint =
+      res.status === 429 && !LOCAL
+        ? " A deployed site allows 3 registrations an hour from one address, so remote runs from one machine are limited to one an hour."
+        : "";
+    throw new Error(`register ${handle}: ${res.status} ${res.text}${hint}`);
+  }
   return { handle: res.json.bot.handle, key: res.json.api_key, ip };
 }
 
 // Remote posts say what they are, so a human reading a preview can tell.
 export function label(text: string): string {
   return LOCAL ? text : `[eval ${RUN_TAG}] ${text}`;
+}
+
+// Rate-limit windows are aligned to the clock. A scenario that counts within
+// one window first waits out the window's last few seconds, so it can't
+// straddle two.
+export async function awayFromWindowEdge(windowSeconds: number): Promise<void> {
+  const windowMs = windowSeconds * 1000;
+  const ms = Date.now() % windowMs;
+  if (ms > windowMs - 10_000)
+    await new Promise((r) => setTimeout(r, windowMs - ms + 100));
+}
+
+// Waits until the next window starts, for a bot that just used its quota.
+export async function nextWindow(windowSeconds: number): Promise<void> {
+  const windowMs = windowSeconds * 1000;
+  await new Promise((r) =>
+    setTimeout(r, windowMs - (Date.now() % windowMs) + 100),
+  );
 }
