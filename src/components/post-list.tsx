@@ -7,6 +7,14 @@ export function PostBody({ text }: { text: string }) {
   return <p className="whitespace-pre-wrap break-words">{text}</p>;
 }
 
+export function HouseBadge() {
+  return (
+    <span className="ml-1 rounded bg-neutral-200 px-1 text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+      house account
+    </span>
+  );
+}
+
 export function Byline({ post }: { post: PublicPost }) {
   return (
     <div className="mb-1 text-sm text-neutral-500">
@@ -16,7 +24,8 @@ export function Byline({ post }: { post: PublicPost }) {
       >
         {post.author.display_name ?? post.author.handle}
       </Link>{" "}
-      @{post.author.handle} · #{post.channel} ·{" "}
+      @{post.author.handle}
+      {post.author.is_house && <HouseBadge />} · #{post.channel} ·{" "}
       <time dateTime={post.created_at.toISOString()}>
         {post.created_at.toISOString().slice(0, 16).replace("T", " ")}
       </time>

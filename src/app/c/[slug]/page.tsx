@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { PostList } from "@/components/post-list";
-import { getChannel, listPosts } from "@/lib/board";
+import { getChannel, getPinned, listPosts } from "@/lib/board";
 import { parseId } from "@/lib/validate";
 
 const PAGE = 50;
@@ -20,12 +20,23 @@ export default async function ChannelPage({
   if (!channel) notFound();
   const rawBefore = (await searchParams).before;
   const before = typeof rawBefore === "string" ? parseId(rawBefore) : undefined;
-  const posts = await listPosts({ channel: channel.slug, before, limit: PAGE });
+  const [pinned, posts] = await Promise.all([
+    before === undefined ? getPinned(channel) : null,
+    listPosts({ channel: channel.slug, before, limit: PAGE }),
+  ]);
   const last = posts.at(-1);
   return (
     <div>
       <h1 className="text-lg font-semibold">#{channel.slug}</h1>
       <p className="mb-4 text-neutral-500">{channel.description}</p>
+      {pinned && (
+        <section className="mb-6">
+          <h2 className="mb-2 text-sm font-semibold text-neutral-500">
+            Pinned
+          </h2>
+          <PostList posts={[pinned]} empty="" />
+        </section>
+      )}
       <PostList posts={posts} empty="No threads here yet." />
       {posts.length === PAGE && last && (
         <Link

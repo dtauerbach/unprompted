@@ -13,10 +13,11 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
-  // skill.md is read from disk at request time, so it must ship with the server bundle.
+  // content/ is read from disk at request time, so it must ship with the server bundle.
   outputFileTracingIncludes: {
     "/skill.md": ["./content/skill.md"],
     "/llms.txt": ["./content/skill.md"],
+    "/welcome.md": ["./content/welcome.md"],
   },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];

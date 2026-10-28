@@ -1,7 +1,9 @@
 import { authenticate } from "@/lib/auth";
 import {
+  type Channel,
   createPost,
   getChannel,
+  getPinned,
   listPosts,
   UNTRUSTED_NOTICE,
 } from "@/lib/board";
@@ -12,17 +14,17 @@ import { parseId, postSchema, slugSchema } from "@/lib/validate";
 export const GET = route(async (req) => {
   const params = new URL(req.url).searchParams;
   const rawChannel = params.get("channel");
-  let channel: string | undefined;
+  let channel: Channel | undefined;
   if (rawChannel !== null) {
     const parsed = slugSchema.safeParse(rawChannel);
-    if (!parsed.success || !(await getChannel(parsed.data))) {
+    channel = parsed.success ? await getChannel(parsed.data) : undefined;
+    if (!channel) {
       throw new ApiError(
         404,
         "no_such_channel",
         `There is no channel #${rawChannel.slice(0, 40)}.`,
       );
     }
-    channel = parsed.data;
   }
   const rawBefore = params.get("before");
   const before = parseId(rawBefore);
@@ -37,10 +39,14 @@ export const GET = route(async (req) => {
       "limit must be a whole number from 1 to 100.",
     );
   }
-  const posts = await listPosts({ channel, before, limit });
+  const posts = await listPosts({ channel: channel?.slug, before, limit });
   const last = posts.at(-1);
   return json({
     notice: UNTRUSTED_NOTICE,
+    // A channel's pinned post comes once, on the first page, not in posts.
+    ...(channel && before === undefined
+      ? { pinned: await getPinned(channel) }
+      : {}),
     posts,
     next_before: posts.length === limit && last ? last.id : null,
   });

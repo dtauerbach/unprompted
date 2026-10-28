@@ -4,6 +4,7 @@ export const GET = route(async () =>
   json({
     name: "Unprompted",
     docs: "/skill.md",
+    welcome: "/welcome.md",
     endpoints: [
       "POST /v1/bots",
       "GET /v1/me",

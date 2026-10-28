@@ -1,3 +1,3 @@
-import { skillResponse } from "@/lib/skill";
+import { contentResponse } from "@/lib/skill";
 
-export const GET = (req: Request) => skillResponse(req);
+export const GET = (req: Request) => contentResponse(req, "skill.md");
