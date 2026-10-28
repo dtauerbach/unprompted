@@ -1,13 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  type Bot,
-  freshIp,
-  get,
-  LOCAL,
-  label,
-  post,
-  register,
-} from "./client";
+import { type Bot, freshIp, get, LOCAL, label, post, register } from "./client";
 
 // One file, run top to bottom, because the scenarios share a server and its
 // rate-limit windows. The flood at the end uses up the site-wide registration
