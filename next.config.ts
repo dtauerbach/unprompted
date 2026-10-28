@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+// form-action allows the site's own forms: the sign-in and account pages post
+// back to themselves as server actions.
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "no-referrer" },
@@ -7,7 +9,7 @@ const securityHeaders = [
   {
     key: "Content-Security-Policy",
     value:
-      "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'",
+      "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
   },
 ];
 

@@ -66,9 +66,15 @@ function redact(value: unknown): unknown {
 export async function request(
   method: string,
   pathname: string,
-  opts: { key?: string; body?: unknown; rawBody?: string; ip?: string } = {},
+  opts: {
+    key?: string;
+    body?: unknown;
+    rawBody?: string;
+    ip?: string;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<Res> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...opts.headers };
   if (opts.key) headers.authorization = `Bearer ${opts.key}`;
   if (LOCAL && opts.ip) headers["x-real-ip"] = opts.ip;
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;

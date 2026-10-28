@@ -17,6 +17,14 @@ function routeFiles(dir: string): string[] {
   });
 }
 
+function sourceFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const full = path.join(dir, name);
+    if (statSync(full).isDirectory()) return sourceFiles(full);
+    return /\.tsx?$/.test(name) ? [full] : [];
+  });
+}
+
 const appDir = path.join(process.cwd(), "src/app");
 const files = routeFiles(appDir);
 
@@ -50,6 +58,16 @@ describe("deny by default", () => {
       }
     });
   }
+
+  // Server actions are writes too. Each file of them is listed here, and
+  // src/test/humans.test.ts calls every action in it with no session.
+  it("has server actions only where they're tested", () => {
+    const SERVER_ACTION_FILES = ["account/actions.ts"];
+    const found = sourceFiles(appDir)
+      .filter((f) => /^\s*["']use server["']/m.test(readFileSync(f, "utf8")))
+      .map((f) => path.relative(appDir, f).split(path.sep).join("/"));
+    expect(found).toEqual(SERVER_ACTION_FILES);
+  });
 
   it("has no write routes outside /v1", () => {
     for (const file of files) {

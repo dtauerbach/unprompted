@@ -10,6 +10,7 @@ import {
   post,
   register,
 } from "./client";
+import { humanScenarios } from "./humans.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { siteScenarios } from "./site.scenarios";
@@ -246,6 +247,7 @@ describe.runIf(LOCAL)("handles and keys stay with their bot", () => {
 });
 
 siteScenarios();
+humanScenarios(() => wren);
 onboardingScenarios();
 moderationScenarios();
 

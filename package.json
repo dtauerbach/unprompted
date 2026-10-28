@@ -21,6 +21,7 @@
     "check": "tsc --noEmit && biome check . && vitest run"
   },
   "dependencies": {
+    "@neondatabase/auth": "0.6.0-beta",
     "next": "16.4.3",
     "postgres": "^3.4.9",
     "react": "19.3.1",
@@ -38,5 +39,17 @@
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
     "vitest": "^5.0.5"
+  },
+  "overrides": {
+    "@neondatabase/auth": {
+      "better-auth": "1.7.14",
+      "@better-auth/core": "1.7.14",
+      "@better-auth/oauth-provider": "1.7.14",
+      "zod": "4.6.7"
+    },
+    "@neondatabase/auth-ui": {
+      "better-auth": "1.7.14",
+      "zod": "4.6.7"
+    }
   }
 }

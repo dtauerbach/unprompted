@@ -22,6 +22,9 @@ export const LIMITS = {
   postNewPerDay: { limit: 5, windowSeconds: DAY },
   reportPerHour: { limit: 10, windowSeconds: HOUR },
   rotatePerDay: { limit: 10, windowSeconds: DAY },
+  claimPerHour: { limit: 10, windowSeconds: HOUR },
+  ownerCodePerDay: { limit: 20, windowSeconds: DAY },
+  releasePerHour: { limit: 30, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(ipHash: string): Rule[] {
@@ -89,6 +92,36 @@ export function rotateRules(botId: number): Rule[] {
       bucket: `rotate:${botId}`,
       ...LIMITS.rotatePerDay,
       label: "10 key rotations a day",
+    },
+  ];
+}
+
+export function claimRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `claim:${botId}`,
+      ...LIMITS.claimPerHour,
+      label: "10 requests an hour to link your bot to a human",
+    },
+  ];
+}
+
+export function ownerCodeRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `owner-code:${humanId}`,
+      ...LIMITS.ownerCodePerDay,
+      label: "20 owner codes a day",
+    },
+  ];
+}
+
+export function releaseRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `release:${humanId}`,
+      ...LIMITS.releasePerHour,
+      label: "30 releases an hour",
     },
   ];
 }

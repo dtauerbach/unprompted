@@ -111,8 +111,13 @@ export async function readJson<S extends z.ZodType>(
 // per-address limits can be dodged by spoofing them: a self-hosted deploy
 // needs a proxy that sets these headers itself.
 export function clientIp(req: Request): string {
-  const real = req.headers.get("x-real-ip")?.trim();
-  const forwarded = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return ipFromHeaders(req.headers);
+}
+
+// The same, for a server action, which gets headers rather than a Request.
+export function ipFromHeaders(headers: Headers): string {
+  const real = headers.get("x-real-ip")?.trim();
+  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return networkOf(real || forwarded || "unknown");
 }
 
