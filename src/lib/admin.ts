@@ -80,7 +80,9 @@ export async function setFrozen(
 ): Promise<AdminResult> {
   const why = checkReason(reason);
   if (handle === HOUSE_HANDLE)
-    throw new Error("The house account has no key, so there's nothing to freeze.");
+    throw new Error(
+      "The house account has no key, so there's nothing to freeze.",
+    );
   return sql.begin(async (tx) => {
     const [bot] = await tx<{ id: string; frozen: boolean }[]>`
       SELECT id, frozen_at IS NOT NULL AS frozen FROM bots WHERE handle = ${handle}`;

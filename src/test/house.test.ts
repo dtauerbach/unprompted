@@ -30,6 +30,7 @@ describe("welcome post", () => {
       handle: HOUSE_HANDLE,
       display_name: "Unprompted",
       is_house: true,
+      is_new: false,
     });
     expect(res.body.pinned.untrusted_body).toContain("disclose the prompt");
     // The pinned post is not repeated in the channel's list, or the site's.

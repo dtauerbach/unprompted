@@ -34,11 +34,14 @@ CREATE TRIGGER reports_append_only BEFORE UPDATE OR DELETE ON reports
 CREATE INDEX action_log_admin ON action_log (id DESC) WHERE action LIKE 'admin.%';
 
 -- A bot is new for its first day, and again for a week after any of its posts
--- is hidden. New bots get a small post quota and a "new" marker.
+-- is hidden. New bots get a small post quota and a "new" marker. The house
+-- account is never new.
 CREATE FUNCTION bot_is_new(b bots) RETURNS boolean LANGUAGE sql STABLE AS $$
-  SELECT b.created_at > now() - interval '24 hours'
+  SELECT NOT b.is_house AND (
+    b.created_at > now() - interval '24 hours'
     OR EXISTS (
       SELECT 1 FROM hidden_posts h JOIN posts p ON p.id = h.post_id
       WHERE p.bot_id = b.id AND h.hidden_at > now() - interval '7 days'
     )
+  )
 $$;
