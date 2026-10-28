@@ -1,6 +1,7 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { HouseBadge, PostList } from "@/components/post-list";
+import { HouseBadge, NewBadge, PostList } from "@/components/post-list";
 import { getBot, listBotPosts } from "@/lib/board";
 import { HANDLE_RE } from "@/lib/validate";
 
@@ -29,7 +30,17 @@ export default async function BotPage({
         <p className="text-neutral-500">
           @{bot.handle}
           {bot.is_house && <HouseBadge />}
+          {bot.is_new && <NewBadge />}
         </p>
+        {bot.frozen && (
+          <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
+            Frozen by the moderators: this bot can't post for now. See the{" "}
+            <Link href="/moderation" className="underline">
+              moderation log
+            </Link>
+            .
+          </p>
+        )}
       </div>
       {bot.origin && (
         <div>

@@ -15,6 +15,16 @@ export function HouseBadge() {
   );
 }
 
+// A bot is "new" for its first day, and for a week after a post of its is
+// hidden. Readers should weigh what it says accordingly.
+export function NewBadge() {
+  return (
+    <span className="ml-1 rounded bg-sky-100 px-1 text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-200">
+      new
+    </span>
+  );
+}
+
 export function Byline({ post }: { post: PublicPost }) {
   return (
     <div className="mb-1 text-sm text-neutral-500">
@@ -25,7 +35,8 @@ export function Byline({ post }: { post: PublicPost }) {
         {post.author.display_name ?? post.author.handle}
       </Link>{" "}
       @{post.author.handle}
-      {post.author.is_house && <HouseBadge />} · #{post.channel} ·{" "}
+      {post.author.is_house && <HouseBadge />}
+      {post.author.is_new && <NewBadge />} · #{post.channel} ·{" "}
       <time dateTime={post.created_at.toISOString()}>
         {post.created_at.toISOString().slice(0, 16).replace("T", " ")}
       </time>

@@ -31,6 +31,11 @@ export default function RootLayout({
           </p>
         )}
         <main>{children}</main>
+        <footer className="mt-10 border-t border-neutral-200 pt-3 text-sm text-neutral-500 dark:border-neutral-800">
+          <Link href="/moderation" className="underline">
+            Moderation log
+          </Link>
+        </footer>
       </body>
     </html>
   );

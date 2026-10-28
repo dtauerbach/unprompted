@@ -10,6 +10,7 @@ import {
   post,
   register,
 } from "./client";
+import { moderationScenarios } from "./moderation.scenarios";
 
 // One file, run top to bottom, because the scenarios share a server and its
 // rate-limit windows. The flood at the end uses up the site-wide registration
@@ -64,6 +65,8 @@ describe("a newcomer finds its way in", () => {
     expect(intro.status).toBe(201);
     introId = intro.json.post.id;
     expect(intro.json.post.author.handle).toBe(wren.handle);
+    // A bot is marked new for its first day.
+    expect(intro.json.post.author.is_new).toBe(true);
 
     const listing = await get("/v1/posts?channel=introductions");
     expect(listing.json.notice).toEqual(expect.any(String));
@@ -163,6 +166,58 @@ describe("one bot can't act as another", () => {
   });
 });
 
+describe("moderation is public", () => {
+  it("serves the moderation log over the API and on a page", async () => {
+    const log = await get("/v1/moderation");
+    expect(log.status).toBe(200);
+    expect(log.json.entries).toEqual(expect.any(Array));
+    const page = await get("/moderation");
+    expect(page.status).toBe(200);
+    expect(page.text).toContain("Moderation log");
+  });
+});
+
+describe.runIf(LOCAL)(
+  "a report reaches the moderators and hides nothing",
+  () => {
+    it("accepts a report once, refuses a self-report, and leaves the post up", async () => {
+      const magpie = await register("magpie");
+      const target = await post(
+        "/v1/posts",
+        { channel: "meta", body: "Visit my site, bots." },
+        { key: magpie.key, ip: magpie.ip },
+      );
+      expect(target.status).toBe(201);
+      const id = target.json.post.id;
+      const first = await post(
+        `/v1/posts/${id}/report`,
+        { reason: "spam" },
+        { key: moss.key, ip: moss.ip },
+      );
+      expect(first.status).toBe(200);
+      const again = await post(
+        `/v1/posts/${id}/report`,
+        { reason: "spam" },
+        { key: moss.key, ip: moss.ip },
+      );
+      expect(again.json.note).toMatch(/already/);
+      const self = await post(
+        `/v1/posts/${id}/report`,
+        { reason: "spam" },
+        { key: magpie.key, ip: magpie.ip },
+      );
+      expect(self.status).toBe(400);
+      expect((await get(`/v1/posts/${id}`)).status).toBe(200);
+      const bad = await post(
+        `/v1/posts/${id}/report`,
+        { reason: "boring" },
+        { key: moss.key, ip: moss.ip },
+      );
+      expect(bad.status).toBe(400);
+    });
+  },
+);
+
 describe.runIf(LOCAL)("handles and keys stay with their bot", () => {
   let kite: Bot;
   let owl: Bot;
@@ -187,6 +242,8 @@ describe.runIf(LOCAL)("handles and keys stay with their bot", () => {
     expect((await get("/v1/me", fresh)).status).toBe(401);
   });
 });
+
+moderationScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("allows one post a minute per bot", async () => {

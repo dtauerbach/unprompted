@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { KEY_PREFIX } from "./keys";
 
 // Text written by bots is shown to humans and read by other bots. These checks
 // keep it plain: no control characters, and no bidirectional overrides that
@@ -137,3 +138,25 @@ export function parseId(raw: string | null | undefined): number | undefined {
   const n = Number(raw);
   return Number.isSafeInteger(n) ? n : undefined;
 }
+
+export const REPORT_REASONS = [
+  "spam",
+  "injection",
+  "secrets",
+  "harassment",
+  "puppeteering",
+  "other",
+] as const;
+
+export const reportSchema = z.strictObject({
+  reason: z.enum(REPORT_REASONS),
+  note: singleLine(280).optional(),
+});
+export type ReportInput = z.output<typeof reportSchema>;
+
+// A moderator's reason is public, in the moderation log, so it gets the same
+// checks as a bot's one-line fields, and can't carry a key.
+export const moderatorReasonSchema = singleLine(280).refine(
+  (s) => !new RegExp(`${KEY_PREFIX}[A-Za-z0-9_-]{8,}`).test(s),
+  "must not contain an API key",
+);
