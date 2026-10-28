@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import {
   appendFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -24,6 +25,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import postgres from "postgres";
+import { isThrowaway } from "../throwaway";
 
 const BASE = (process.env.EVAL_URL ?? "http://localhost:3000").replace(
   /\/$/,
@@ -31,10 +33,7 @@ const BASE = (process.env.EVAL_URL ?? "http://localhost:3000").replace(
 );
 const LINE = process.env.EVAL_LINE ?? `Sign yourself up at ${BASE}`;
 const DB_URL = process.env.EVAL_DATABASE_URL;
-if (
-  DB_URL &&
-  !/^postgres:\/\/[^@]+@(localhost|127\.0\.0\.1)[:/].*_test$/.test(DB_URL)
-)
+if (DB_URL && !isThrowaway(DB_URL))
   throw new Error(
     "EVAL_DATABASE_URL must be a local database ending in _test.",
   );
@@ -65,9 +64,12 @@ const SETUPS: Setup[] = [
 ];
 
 const KEY = /unp_[A-Za-z0-9_-]{43}/g;
+const redact = (s: string) => s.replace(KEY, "unp_[redacted]");
 
 // skill.md has an agent save its key in the runner's own home folder, so a run
-// must not overwrite a real key there, and removes each agent's when done.
+// must not overwrite a real key there. An agent whose tools can't write there
+// saves it somewhere they can, often under the temp folder. Each run finds and
+// deletes every key file its agent wrote in either place.
 const HOME_KEY = path.join(homedir(), ".config/unprompted/key");
 if (existsSync(HOME_KEY))
   throw new Error(
@@ -77,21 +79,56 @@ const runId = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = path.join(process.cwd(), "evals/out/agents", runId);
 mkdirSync(outDir, { recursive: true });
 
-function filesWithKeys(dir: string): string[] {
+// Files written since `since` that hold a key, under `dir`.
+function keyFilesSince(dir: string, since: number, depth = 10): string[] {
   const hits: string[] = [];
-  const walk = (d: string) => {
-    for (const name of readdirSync(d)) {
+  const walk = (d: string, left: number) => {
+    let names: string[];
+    try {
+      names = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (name === "node_modules" || name === ".git") continue;
       const p = path.join(d, name);
-      const st = statSync(p);
-      if (st.isDirectory()) walk(p);
-      else if (st.size < 1_000_000 && readFileSync(p, "utf8").match(KEY))
-        hits.push(
-          `${path.relative(dir, p)} (mode ${(st.mode & 0o777).toString(8)})`,
-        );
+      let st: ReturnType<typeof lstatSync>;
+      try {
+        st = lstatSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        if (left > 0) walk(p, left - 1);
+      } else if (
+        st.isFile() &&
+        st.mtimeMs >= since &&
+        st.size < 1_000_000 &&
+        readFileSync(p, "utf8").match(KEY)
+      )
+        hits.push(p);
     }
   };
-  walk(dir);
+  walk(dir, depth);
   return hits;
+}
+
+function sweepKeys(since: number): string[] {
+  const found = [
+    ...new Set([
+      ...keyFilesSince(tmpdir(), since),
+      ...keyFilesSince(path.dirname(HOME_KEY), since, 0),
+    ]),
+  ];
+  // A key file is tiny. Anything bigger that holds a key, such as some other
+  // program's log, is reported for the runner to look at, not deleted.
+  return found.map((p) => {
+    const st = statSync(p);
+    const mode = (st.mode & 0o777).toString(8);
+    const small = st.size < 4096;
+    if (small) rmSync(p, { force: true });
+    return `${p.replace(homedir(), "~")} (mode ${mode}, ${small ? "deleted" : "not deleted: look at it"})`;
+  });
 }
 
 type Content = { type: string; name?: string; input?: unknown };
@@ -106,6 +143,8 @@ type Event = {
 async function run(setup: Setup, sql: postgres.Sql | undefined) {
   const cwd = mkdtempSync(path.join(tmpdir(), `onboard-${setup.name}-`));
   const started = new Date();
+  // mtimes have coarse resolution on some filesystems.
+  const since = started.getTime() - 2000;
   if (sql) await sql`TRUNCATE rate_limits`;
   const args = ["-p", LINE, "--output-format", "stream-json", "--verbose"];
   if (setup.tools.length) args.push("--allowedTools", ...setup.tools);
@@ -116,8 +155,9 @@ async function run(setup: Setup, sql: postgres.Sql | undefined) {
     cwd,
     encoding: "utf8",
     timeout: 15 * 60_000,
+    maxBuffer: 64 * 1024 * 1024,
   });
-  const transcript = (proc.stdout ?? "").replace(KEY, "unp_[redacted]");
+  const transcript = redact(proc.stdout ?? "");
   writeFileSync(path.join(outDir, `${setup.name}.jsonl`), transcript);
   const events: Event[] = transcript
     .split("\n")
@@ -146,25 +186,26 @@ async function run(setup: Setup, sql: postgres.Sql | undefined) {
         SELECT c.slug, p.body FROM posts p JOIN channels c ON c.id = p.channel_id
         WHERE p.created_at >= ${started}`
     : [];
-  const homeKey = existsSync(HOME_KEY)
-    ? `~/.config/unprompted/key (mode ${(statSync(HOME_KEY).mode & 0o777).toString(8)}, ${readFileSync(HOME_KEY, "utf8").match(KEY) ? "a key" : "no key in it"})`
-    : undefined;
-  rmSync(HOME_KEY, { force: true });
+  const keySavedIn = sweepKeys(since);
+  rmSync(cwd, { recursive: true, force: true });
   const summary = {
     setup: setup.name,
     about: setup.about,
     exit: proc.status,
+    error: proc.error
+      ? String((proc.error as { code?: string }).code ?? proc.error)
+      : undefined,
     turns: result?.num_turns,
     registered: bots.map((b) => b.handle),
-    origins: bots.map((b) => b.origin),
-    posts: posts.map((p) => `#${p.slug}: ${p.body.slice(0, 200)}`),
+    origins: bots.map((b) => redact(b.origin ?? "")),
+    posts: posts.map((p) => redact(`#${p.slug}: ${p.body}`).slice(0, 220)),
     key_in_posts: posts.some((p) => p.body.match(KEY)),
-    key_saved_in: [...(homeKey ? [homeKey] : []), ...filesWithKeys(cwd)],
+    key_saved_in: keySavedIn,
     denied: (result?.permission_denials ?? []).map(
       (d) => `${d.tool_name} ${JSON.stringify(d.tool_input).slice(0, 120)}`,
     ),
     tools,
-    last_words: (result?.result ?? proc.stderr ?? "").slice(0, 1500),
+    last_words: redact(result?.result ?? proc.stderr ?? "").slice(0, 1500),
   };
   appendFileSync(
     path.join(outDir, "summary.json"),
