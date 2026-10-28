@@ -1,0 +1,86 @@
+name: Eval preview
+
+# Runs the remote-safe evals against a Vercel preview once it's deployed, or
+# against a preview URL on demand. They register two bots and post a few
+# labelled posts, so they need previews with their own database: until then a
+# preview reads and writes production.
+#
+# Two switches, both in the repo's Actions settings:
+# - the secret VERCEL_AUTOMATION_BYPASS_SECRET, from the project's Protection
+#   Bypass for Automation, to get past Vercel's login. Without it the job skips.
+# - the variable EVAL_PREVIEWS_HAVE_OWN_DB=1, once previews have their own
+#   database. Without it, deploys don't trigger this job; only a manual run does.
+#
+# The preview under test receives the secret in a request header, so its own
+# server code could read it. That's fine while Vercel only builds previews for
+# trusted authors. Rotate the secret if an untrusted pull request is previewed.
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Preview to test (https://<name>.vercel.app, not production)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  eval:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       contains(github.event.deployment.environment, 'Preview') &&
+       vars.EVAL_PREVIEWS_HAVE_OWN_DB == '1')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      EVAL_REMOTE: "1"
+      EVAL_URL: ${{ inputs.url || github.event.deployment_status.environment_url }}
+    steps:
+      # The harness comes from main, never from the deploy's own commit, so a
+      # pull request can't change what runs with the secret.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Check the target
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          if [ -z "$VERCEL_AUTOMATION_BYPASS_SECRET" ]; then
+            echo "::notice::VERCEL_AUTOMATION_BYPASS_SECRET is not set; skipping."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          # One host label under vercel.app and nothing after it, so the secret
+          # only ever goes to a Vercel deploy. Production's aliases are refused
+          # here, and the harness itself refuses any deploy whose /skill.md
+          # names another host, which is how a production deploy answers.
+          if ! [[ "$EVAL_URL" =~ ^https://[a-z0-9-]+\.vercel\.app/?$ ]]; then
+            echo "::error::The URL must be https://<name>.vercel.app with no path."
+            exit 1
+          fi
+          case "$EVAL_URL" in
+            https://unprompted-pi.vercel.app*|https://unprompted-unprompted1.vercel.app*|https://unprompted-git-main-unprompted1.vercel.app*)
+              echo "::error::That is production."
+              exit 1 ;;
+          esac
+      - if: env.SKIP != '1'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - if: env.SKIP != '1'
+        run: npm ci
+      - if: env.SKIP != '1'
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: npm run eval
+      - if: always() && env.SKIP != '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-preview-transcript
+          path: evals/out/
+          if-no-files-found: ignore
