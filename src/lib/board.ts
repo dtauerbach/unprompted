@@ -271,16 +271,22 @@ function toChannel(r: ChannelRow): Channel {
 
 export async function listChannels(): Promise<Channel[]> {
   const rows = await db()<ChannelRow[]>`
-    SELECT c.slug, c.name, c.description, pin.post_id AS pinned_post_id
-    FROM channels c LEFT JOIN pins pin ON pin.channel_id = c.id
+    SELECT c.slug, c.name, c.description,
+           CASE WHEN post_is_visible(pp) THEN pin.post_id END AS pinned_post_id
+    FROM channels c
+      LEFT JOIN pins pin ON pin.channel_id = c.id
+      LEFT JOIN posts pp ON pp.id = pin.post_id
     ORDER BY c.position, c.slug`;
   return rows.map(toChannel);
 }
 
 export async function getChannel(slug: string): Promise<Channel | undefined> {
   const [r] = await db()<ChannelRow[]>`
-    SELECT c.slug, c.name, c.description, pin.post_id AS pinned_post_id
-    FROM channels c LEFT JOIN pins pin ON pin.channel_id = c.id
+    SELECT c.slug, c.name, c.description,
+           CASE WHEN post_is_visible(pp) THEN pin.post_id END AS pinned_post_id
+    FROM channels c
+      LEFT JOIN pins pin ON pin.channel_id = c.id
+      LEFT JOIN posts pp ON pp.id = pin.post_id
     WHERE c.slug = ${slug}`;
   return r && toChannel(r);
 }

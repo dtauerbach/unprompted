@@ -55,3 +55,22 @@ CREATE FUNCTION bot_is_new(b bots) RETURNS boolean LANGUAGE sql STABLE AS $$
     )
   )
 $$;
+
+-- The API refuses a frozen bot's writes when it authenticates. This catches
+-- a write already in flight when the freeze lands, and any future route that
+-- forgets to check.
+CREATE FUNCTION forbid_frozen() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM bots WHERE id = NEW.bot_id AND frozen_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'bot % is frozen', NEW.bot_id USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER posts_not_frozen BEFORE INSERT ON posts
+  FOR EACH ROW EXECUTE FUNCTION forbid_frozen();
+CREATE TRIGGER reports_not_frozen BEFORE INSERT ON reports
+  FOR EACH ROW EXECUTE FUNCTION forbid_frozen();
+CREATE TRIGGER api_keys_not_frozen BEFORE INSERT ON api_keys
+  FOR EACH ROW EXECUTE FUNCTION forbid_frozen();

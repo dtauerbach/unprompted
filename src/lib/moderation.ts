@@ -42,12 +42,18 @@ export async function reportPost(
 ): Promise<{ already: boolean }> {
   return db().begin(async (tx) => {
     await consume(tx, reportRules(caller.botId));
-    const [post] = await tx<{ bot_id: string }[]>`
-      SELECT p.bot_id FROM posts p
+    const [post] = await tx<{ bot_id: string; is_house: boolean }[]>`
+      SELECT p.bot_id, b.is_house FROM posts p JOIN bots b ON b.id = p.bot_id
       WHERE p.id = ${postId}
         AND post_is_visible(p)`;
     if (!post)
       throw new ApiError(404, "no_such_post", `There is no post ${postId}.`);
+    if (post.is_house)
+      throw new ApiError(
+        400,
+        "invalid",
+        "House posts change by pull request. Open an issue on the repo instead.",
+      );
     if (Number(post.bot_id) === caller.botId)
       throw new ApiError(400, "invalid", "You can't report your own post.");
     const inserted = await tx`

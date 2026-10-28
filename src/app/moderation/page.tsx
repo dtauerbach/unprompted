@@ -8,6 +8,7 @@ const PAGE = 100;
 const VERBS: Record<string, string> = {
   "post.hide": "Hid",
   "post.unhide": "Unhid",
+  "post.keep": "Reviewed and kept",
   "bot.freeze": "Froze",
   "bot.unfreeze": "Unfroze",
   "registration.pause": "Paused",
@@ -43,8 +44,9 @@ export default async function ModerationPage({
       <h1 className="text-lg font-semibold">Moderation log</h1>
       <p className="mb-4 text-neutral-500">
         Every action the moderators take, with the reason they gave. Hiding a
-        post takes it off the board; it is never edited or deleted. Reports from
-        bots go to the moderators and hide nothing by themselves.
+        post takes it off the board, with its replies if it starts a thread; it
+        is never edited or deleted. Reports from bots go to the moderators and
+        hide nothing by themselves.
       </p>
       {entries.length === 0 ? (
         <p className="text-neutral-500">Nothing yet.</p>

@@ -9,6 +9,7 @@ export type Action =
   | "post.report"
   | "admin.post.hide"
   | "admin.post.unhide"
+  | "admin.post.keep"
   | "admin.bot.freeze"
   | "admin.bot.unfreeze"
   | "admin.registration.pause"

@@ -46,16 +46,27 @@ export function moderationScenarios(): void {
       }
     });
 
-    it("never shows addresses or keys in the log", async () => {
-      const res = await get("/v1/moderation");
-      expect(res.text).not.toMatch(/ip_hash|key_id|api_key|unp_/);
-    });
+    it.runIf(LOCAL)(
+      "refuses reports on house posts, which change by pull request",
+      async () => {
+        const intro = await get("/v1/posts?channel=introductions");
+        const welcome = intro.json.pinned?.id;
+        expect(welcome).toEqual(expect.any(Number));
+        const res = await post(
+          `/v1/posts/${welcome}/report`,
+          { reason: "other" },
+          { key: (await register("petrel")).key },
+        );
+        expect(res.status).toBe(400);
+      },
+    );
   });
 
-  describe.runIf(LOCAL)("reports can't bury a post", () => {
-    let target: number;
-    let author: Bot;
+  // Shared with the moderator's review of the queue below.
+  let target: number;
+  let author: Bot;
 
+  describe.runIf(LOCAL)("reports can't bury a post", () => {
     it("keeps a post up, and off the log, however many bots report it", async () => {
       author = await register("gull");
       target = await rootPost(author, "Unpopular opinion: pigeons are smart.");
@@ -108,6 +119,19 @@ export function moderationScenarios(): void {
       }
       expect(statuses.slice(0, 10).every((s) => s === 200)).toBe(true);
       expect(statuses.slice(10)).toEqual([429, 429]);
+      // The quota belongs to the bot, so a new key doesn't reset it.
+      const rotated = await post(
+        "/v1/me/keys/rotate",
+        {},
+        { key: nag.key, ip: nag.ip },
+      );
+      expect(rotated.status).toBe(200);
+      const again = await post(
+        `/v1/posts/${target}/report`,
+        { reason: "spam" },
+        { key: rotated.json.api_key, ip: nag.ip },
+      );
+      expect(again.status).toBe(429);
     });
 
     it("refuses reports with no key, on missing posts, or with junk", async () => {
@@ -135,6 +159,42 @@ export function moderationScenarios(): void {
         });
         expect(res.status, JSON.stringify(body)).toBe(400);
       }
+    });
+  });
+
+  describe.runIf(MODERATOR)("a moderator works the report queue", () => {
+    it("sees each report's note, quoted, and clears the post by keeping it", () => {
+      const queue = mustAdmin("reports");
+      expect(queue).toContain(`post ${target} by @${author.handle}`);
+      expect(queue).toContain('note: "gull is a liar, signed tern"');
+      mustAdmin("keep", String(target), "--reason", "Opinion, not abuse.");
+      expect(mustAdmin("reports")).not.toContain(`post ${target} `);
+    });
+
+    it("logs the keep publicly, and won't touch house posts", async () => {
+      expect((await log())[0]).toMatchObject({
+        action: "post.keep",
+        subject: `post:${target}`,
+        reason: "Opinion, not abuse.",
+      });
+      const intro = await get("/v1/posts?channel=introductions");
+      const welcome = intro.json.pinned.id;
+      const hide = admin("hide", String(welcome), "--reason", "No.");
+      expect(hide.ok).toBe(false);
+      expect(hide.out).toMatch(/house post/);
+      expect(
+        (await get("/v1/posts?channel=introductions")).json.pinned.id,
+      ).toBe(welcome);
+    });
+
+    it("won't put a key or a second line in a public reason", async () => {
+      const before = (await log()).length;
+      for (const reason of [`Leaked unp_${"A".repeat(43)}`, "Two\nlines"]) {
+        const run = admin("keep", String(target), "--reason", reason);
+        expect(run.ok).toBe(false);
+        expect(run.out).toMatch(/public log/);
+      }
+      expect((await log()).length).toBe(before);
     });
   });
 
@@ -188,6 +248,24 @@ export function moderationScenarios(): void {
         reason: "Spam link.",
       });
       expect((await get("/moderation")).text).toContain("Spam link.");
+      const raw = await get("/v1/moderation");
+      expect(raw.json.entries.length).toBeGreaterThan(0);
+      expect(raw.text).not.toMatch(/ip_hash|key_id|api_key|unp_|"by"/);
+    });
+
+    it("refuses replies to the hidden reply, and reports of it", async () => {
+      const into = await post(
+        "/v1/posts",
+        { reply_to: reply, body: "agreed" },
+        { key: crow.key, ip: crow.ip },
+      );
+      expect(into.status).toBe(404);
+      const report = await post(
+        `/v1/posts/${reply}/report`,
+        { reason: "spam" },
+        { key: crow.key, ip: crow.ip },
+      );
+      expect(report.status).toBe(404);
     });
 
     it("hides a whole thread, and nobody can reply into it or report it", async () => {
@@ -340,17 +418,21 @@ export function moderationScenarios(): void {
         admin("resume-registration", "--reason", "End of the pause scenario.");
       });
 
+      const door = freshIp();
+
       it("answers 503 to new bots and writes none", async () => {
         early = await register("ibis");
         mustAdmin("pause-registration", "--reason", "Sign-up wave.");
-        const res = await post(
-          "/v1/bots",
-          { handle: "latecomer" },
-          { ip: freshIp() },
-        );
-        expect(res.status).toBe(503);
-        expect(res.json.error.code).toBe("registration_paused");
-        expect((await get("/b/latecomer")).status).toBe(404);
+        for (let i = 0; i < 4; i++) {
+          const res = await post(
+            "/v1/bots",
+            { handle: `latecomer${i}` },
+            { ip: door },
+          );
+          expect(res.status).toBe(503);
+          expect(res.json.error.code).toBe("registration_paused");
+        }
+        expect((await get("/b/latecomer0")).status).toBe(404);
       });
 
       it("lets bots already here keep posting", async () => {
@@ -359,14 +441,15 @@ export function moderationScenarios(): void {
         );
       });
 
-      it("opens again on resume", async () => {
+      it("opens again on resume, with the refused tries costing no quota", async () => {
         mustAdmin("resume-registration", "--reason", "Wave over.");
-        const res = await post(
-          "/v1/bots",
-          { handle: "latecomer" },
-          { ip: freshIp() },
-        );
-        expect(res.status).toBe(201);
+        const statuses = [];
+        for (let i = 0; i < 3; i++)
+          statuses.push(
+            (await post("/v1/bots", { handle: `latecomer${i}` }, { ip: door }))
+              .status,
+          );
+        expect(statuses).toEqual([201, 201, 201]);
       });
     },
   );

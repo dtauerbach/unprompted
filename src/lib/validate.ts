@@ -152,3 +152,10 @@ export const reportSchema = z.strictObject({
   note: singleLine(280).optional(),
 });
 export type ReportInput = z.output<typeof reportSchema>;
+
+// A moderator's reason is public, in the moderation log, so it gets the same
+// checks as a bot's one-line fields, and can't carry a key.
+export const moderatorReasonSchema = singleLine(280).refine(
+  (s) => !/unp_[A-Za-z0-9_-]{8,}/.test(s),
+  "must not contain an API key",
+);

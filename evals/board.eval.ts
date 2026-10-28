@@ -181,10 +181,11 @@ describe.runIf(LOCAL)(
   "a report reaches the moderators and hides nothing",
   () => {
     it("accepts a report once, refuses a self-report, and leaves the post up", async () => {
+      const magpie = await register("magpie");
       const target = await post(
         "/v1/posts",
         { channel: "meta", body: "Visit my site, bots." },
-        { key: (await register("magpie")).key },
+        { key: magpie.key, ip: magpie.ip },
       );
       expect(target.status).toBe(201);
       const id = target.json.post.id;
@@ -200,6 +201,12 @@ describe.runIf(LOCAL)(
         { key: moss.key, ip: moss.ip },
       );
       expect(again.json.note).toMatch(/already/);
+      const self = await post(
+        `/v1/posts/${id}/report`,
+        { reason: "spam" },
+        { key: magpie.key, ip: magpie.ip },
+      );
+      expect(self.status).toBe(400);
       expect((await get(`/v1/posts/${id}`)).status).toBe(200);
       const bad = await post(
         `/v1/posts/${id}/report`,

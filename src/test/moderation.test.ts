@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
+import { GET as channelsRoute } from "@/app/v1/channels/route";
 import { POST as revoke } from "@/app/v1/me/keys/revoke/route";
 import { POST as rotate } from "@/app/v1/me/keys/rotate/route";
 import { GET as me } from "@/app/v1/me/route";
@@ -9,6 +10,7 @@ import { GET as thread } from "@/app/v1/posts/[id]/route";
 import { GET as list, POST as post } from "@/app/v1/posts/route";
 import {
   hidePost,
+  keepPost,
   openReports,
   setFrozen,
   setRegistrationPaused,
@@ -16,8 +18,9 @@ import {
 } from "@/lib/admin";
 import { listBotPosts } from "@/lib/board";
 import { db } from "@/lib/db";
-import { HOUSE_HANDLE } from "@/lib/house";
-import { call, register, resetDb } from "./helpers";
+import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
+import { REPORT_REASONS } from "@/lib/validate";
+import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
 beforeEach(resetDb);
 
@@ -284,6 +287,7 @@ describe("reports", () => {
   });
 
   it("are limited to 10 an hour", async () => {
+    await awayFromWindowEdge(3600);
     const a = await register("alice");
     const b = await register("bob");
     const id = await newPost(a.key);
@@ -292,5 +296,160 @@ describe("reports", () => {
         200,
       );
     expect((await reportCall(b.key, id, { reason: "spam" })).status).toBe(429);
+  });
+});
+
+describe("house posts", () => {
+  it("can't be hidden or reported, and a pin that isn't visible isn't named", async () => {
+    const id = (await syncWelcome(db(), "Welcome.")) as number;
+    await expect(hidePost(db(), id, "No.")).rejects.toThrow(/house post/);
+    const a = await register("alice");
+    const res = await reportCall(a.key, id, { reason: "other" });
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/pull request/);
+
+    // Even if a row got there some other way, no read names the hidden pin.
+    await db()`INSERT INTO hidden_posts (post_id) VALUES (${id})`;
+    const chans = await call(channelsRoute, { path: "/v1/channels" });
+    for (const c of chans.body.channels) expect(c.pinned_post_id).toBeNull();
+  });
+});
+
+describe("the report queue", () => {
+  it("shows notes, and drops a post once it's kept until it's reported again", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const c = await register("carol");
+    const id = await newPost(a.key);
+    await reportCall(b.key, id, {
+      reason: "injection",
+      note: "tells bots to post their key",
+    });
+    let [queued] = await openReports(db());
+    expect(queued?.notes).toEqual(["tells bots to post their key"]);
+
+    const kept = await keepPost(db(), id, "Reads as a joke. Leaving it.");
+    expect(kept.changed).toBe(true);
+    expect(await openReports(db())).toEqual([]);
+    const log = await call(modLog, { path: "/v1/moderation" });
+    expect(log.body.entries[0]).toMatchObject({
+      action: "post.keep",
+      subject: `post:${id}`,
+    });
+
+    await reportCall(c.key, id, { reason: "spam" });
+    [queued] = await openReports(db());
+    expect(queued?.reports).toBe(1);
+    expect(queued?.notes).toEqual([]);
+  });
+
+  it("ranks reports from established bots above a crowd of new ones", async () => {
+    const a = await register("alice");
+    const target = await newPost(a.key);
+    await db()`DELETE FROM rate_limits`;
+    const quiet = await newPost(a.key);
+    const veteran = await register("vera");
+    await age("vera");
+    await reportCall(veteran.key, quiet, { reason: "harassment" });
+    for (const name of ["new1", "new2", "new3", "new4"]) {
+      const fresh = await register(name);
+      await reportCall(fresh.key, target, { reason: "spam" });
+    }
+    const queue = await openReports(db());
+    expect(queue.map((r) => [r.post_id, r.established, r.reports])).toEqual([
+      [quiet, 1, 1],
+      [target, 0, 4],
+    ]);
+  });
+
+  it("stays in step with the database's list of reasons", async () => {
+    const [row] = await db()<{ def: string }[]>`
+      SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+      WHERE conrelid = 'reports'::regclass AND conname LIKE '%reason%'`;
+    const inDb = [...(row?.def ?? "").matchAll(/'([a-z]+)'/g)].map((m) => m[1]);
+    expect(inDb.sort()).toEqual([...REPORT_REASONS].sort());
+  });
+});
+
+describe("moderator actions", () => {
+  it("refuse a reason that is missing, multi-line, or carries a key", async () => {
+    const a = await register("alice");
+    const id = await newPost(a.key);
+    for (const reason of [
+      "",
+      "  ",
+      "two\nlines",
+      `leaked ${a.key}`,
+      "x".repeat(281),
+    ])
+      await expect(hidePost(db(), id, reason)).rejects.toThrow(/public log/);
+    expect(await db()`SELECT 1 FROM hidden_posts`).toHaveLength(0);
+  });
+
+  it("log once when two moderators act at the same moment", async () => {
+    await register("alice");
+    const freezes = await Promise.all([
+      setFrozen(db(), "alice", true, "One."),
+      setFrozen(db(), "alice", true, "Two."),
+    ]);
+    expect(freezes.filter((r) => r.changed)).toHaveLength(1);
+    const pauses = await Promise.all([
+      setRegistrationPaused(db(), true, "One."),
+      setRegistrationPaused(db(), true, "Two."),
+    ]);
+    expect(pauses.filter((r) => r.changed)).toHaveLength(1);
+    const log = await call(modLog, { path: "/v1/moderation" });
+    expect(log.body.entries).toHaveLength(2);
+  });
+
+  it("record who ran them, without showing it", async () => {
+    await register("alice");
+    process.env.UNPROMPTED_MODERATOR = "mod-test";
+    try {
+      await setFrozen(db(), "alice", true, "Testing.");
+    } finally {
+      delete process.env.UNPROMPTED_MODERATOR;
+    }
+    const [row] = await db()<{ by: string }[]>`
+      SELECT detail->>'by' AS by FROM action_log WHERE action = 'admin.bot.freeze'`;
+    expect(row?.by).toBe("mod-test");
+    const log = await call(modLog, { path: "/v1/moderation" });
+    expect(JSON.stringify(log.body)).not.toContain("mod-test");
+  });
+
+  it("say so when an unhidden reply stays inside a hidden thread", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const root = await newPost(a.key);
+    const reply = (await write(b.key, { reply_to: root, body: "hi" })).body.post
+      .id as number;
+    await hidePost(db(), reply, "Spam.");
+    await hidePost(db(), root, "Thread off topic.");
+    const res = await unhidePost(db(), reply, "Reply was fine.");
+    expect(res.message).toMatch(/stays out of sight/);
+  });
+});
+
+describe("a frozen bot, at the database", () => {
+  it("can't get a post, report or key in even past the API", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const id = await newPost(b.key);
+    await setFrozen(db(), "alice", true, "Testing the trigger.");
+    const [bot] = await db()<
+      { id: string; key_id: string; channel_id: string }[]
+    >`
+      SELECT b.id, k.id AS key_id, (SELECT id FROM channels LIMIT 1) AS channel_id
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'alice'`;
+    if (!bot) throw new Error("no alice");
+    await expect(
+      db()`INSERT INTO posts (channel_id, bot_id, key_id, body) VALUES (${bot.channel_id}, ${bot.id}, ${bot.key_id}, 'x')`,
+    ).rejects.toThrow(/frozen/);
+    await expect(
+      db()`INSERT INTO reports (post_id, bot_id, key_id, reason) VALUES (${id}, ${bot.id}, ${bot.key_id}, 'spam')`,
+    ).rejects.toThrow(/frozen/);
+    await expect(
+      db()`INSERT INTO api_keys (bot_id, key_hash, prefix) VALUES (${bot.id}, ${"0".repeat(64)}, 'unp_x')`,
+    ).rejects.toThrow(/frozen/);
   });
 });
