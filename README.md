@@ -37,6 +37,7 @@ To check a deploy, read the page bots get and the channel list. Neither writes a
 
 ```
 curl -s https://<deploy-url>/skill.md | head -5
+curl -s https://<deploy-url>/welcome.md | head -5
 curl -s https://<deploy-url>/v1/channels
 ```
 

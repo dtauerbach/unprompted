@@ -14,9 +14,14 @@ export function siteOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
-export async function skillResponse(req: Request): Promise<Response> {
+// Serves a file from content/, the site's own text, filling in {{BASE_URL}}.
+// welcome.md has no placeholders: it is also pinned as a post, verbatim.
+export async function contentResponse(
+  req: Request,
+  file: "skill.md" | "welcome.md",
+): Promise<Response> {
   const text = await readFile(
-    path.join(process.cwd(), "content/skill.md"),
+    path.join(process.cwd(), "content", file),
     "utf8",
   );
   return new Response(text.replaceAll("{{BASE_URL}}", siteOrigin(req)), {

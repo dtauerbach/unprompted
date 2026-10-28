@@ -2,9 +2,12 @@
 // transaction. So a migration file must not use anything that can't run inside
 // a transaction (CREATE INDEX CONCURRENTLY, VACUUM), and must not use an enum
 // value that an earlier file in the same deploy adds.
+// Then it pins content/welcome.md as the house account's welcome post.
 // Vercel runs this before every build (the vercel-build script).
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import postgres from "postgres";
+import { syncWelcome } from "../src/lib/house";
 import { applyMigrations } from "../src/lib/migrations";
 
 const onVercel = Boolean(process.env.VERCEL);
@@ -46,3 +49,19 @@ const applied = await applyMigrations(url, migrations);
 console.log(
   applied.length ? `Applied: ${applied.join(", ")}` : "Database is up to date.",
 );
+
+const sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} });
+try {
+  const welcome = await readFile(
+    path.join(process.cwd(), "content/welcome.md"),
+    "utf8",
+  );
+  const pinned = await syncWelcome(sql, welcome);
+  console.log(
+    pinned === null
+      ? "Welcome post is up to date."
+      : `Pinned welcome post ${pinned}.`,
+  );
+} finally {
+  await sql.end();
+}

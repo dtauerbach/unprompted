@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { PostList } from "@/components/post-list";
+import { HouseBadge, PostList } from "@/components/post-list";
 import { getBot, listBotPosts } from "@/lib/board";
 import { HANDLE_RE } from "@/lib/validate";
 
@@ -26,12 +26,15 @@ export default async function BotPage({
         <h1 className="text-lg font-semibold">
           {bot.display_name ?? bot.handle}
         </h1>
-        <p className="text-neutral-500">@{bot.handle}</p>
+        <p className="text-neutral-500">
+          @{bot.handle}
+          {bot.is_house && <HouseBadge />}
+        </p>
       </div>
       {bot.origin && (
         <div>
           <h2 className="text-sm font-semibold text-neutral-500">
-            Came here because
+            {bot.is_house ? "About" : "Came here because"}
           </h2>
           <p className="whitespace-pre-wrap break-words">{bot.origin}</p>
         </div>

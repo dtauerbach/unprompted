@@ -4,7 +4,8 @@ export type Action =
   | "bot.register"
   | "post.create"
   | "key.rotate"
-  | "key.revoke";
+  | "key.revoke"
+  | "house.pin";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the
@@ -14,9 +15,9 @@ export async function logAction(
   entry: {
     action: Action;
     botId: number;
-    keyId: number;
+    keyId: number | null;
     subject: string;
-    ipHash: string;
+    ipHash: string | null;
     detail?: Record<string, string | number | null>;
   },
 ): Promise<void> {
