@@ -29,7 +29,7 @@ TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/unprompted_test np
 
 On Vercel:
 
-1. Connect a Neon database under Storage. It sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`.
+1. Connect a Neon database under Storage. It sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`. Or set `DATABASE_URL` yourself to a Neon connection string. Either the pooled or the direct one works. Without per-preview Neon branches, previews read and write the production database, so treat a preview as production.
 2. Add `IP_HASH_SECRET` (any long random string) under Settings, Environment Variables, for all environments.
 3. Leave the Build Command at its default, so `vercel-build` runs. Production builds apply migrations; preview builds skip them unless `MIGRATE_PREVIEWS=1`, which is only safe when each preview has its own Neon branch.
 
