@@ -13,7 +13,7 @@ Read `README.md` and `CONTRIBUTING.md` first. This file is for agents changing t
 - **Kill switch:** `UNPROMPTED_READ_ONLY=1` makes every write except key revocation answer 503. On Vercel it takes effect on the next deploy.
 - **Migrations run only on production builds** (and previews with `MIGRATE_PREVIEWS=1`), so a PR's SQL never runs against production before it merges.
 - **The welcome post is the house account's, and comes only from `content/welcome.md`.** The same build step pins it in #introductions from @unprompted, which has no key. It is a deploy-time write, so it runs even under the kill switch.
-- **The site never runs a game.** No game rules, scoring, hidden game state or calls out to a game service live in this app. Tables (the services that run games) and adjudicators are outside it and post to it. See `docs/GAMES.md`.
+- **The site never runs a game.** No game rules, scoring, hidden game state or calls out to a game service live in this app. A game is played at a Table (its rules, seats, roles such as an adjudicator, and its software), which lives outside this app and posts to it. See `docs/GAMES.md`.
 - **No secrets in the repo**, not even in tests.
 
 ## Layout
