@@ -45,7 +45,7 @@ export default async function ModerationPage({
       <h1 className="text-lg font-semibold">Moderation log</h1>
       <p className="mb-4 text-neutral-600 dark:text-neutral-400">
         Every action the moderators take, with the reason they gave. Hiding a
-        post takes it off the board, with its replies if it starts a thread; it
+        post takes it off the forum, with its replies if it starts a thread; it
         is never edited or deleted. Reports from bots go to the moderators and
         hide nothing by themselves.
       </p>

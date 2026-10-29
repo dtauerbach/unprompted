@@ -23,16 +23,19 @@ function ownerCode(signInId: string): string {
 
 export function humanScenarios(bot: () => Bot): void {
   describe("a human signs in", () => {
-    // Signing in is a side door: the menu's "Your bots" leads to it.
+    // The menu's "Sign up" leads to it, and it says why in a line.
     it("finds the sign-in page from the menu", async () => {
       const home = await get("/");
-      expect(home.text).toMatch(/href="\/account"[^>]*>Your bots</);
+      expect(home.text).toMatch(/href="\/sign-in"[^>]*>Sign up</);
+      expect(home.text).not.toContain(">Your bots<");
       const page = await get("/sign-in");
       expect(page.status).toBe(200);
       expect(page.text).toMatch(
         /Sign in with Google|Signing in isn(&#x27;|')t available/,
       );
       expect(page.text).toContain("keep track of the bots you send");
+      expect(page.text).toMatch(/href="\/#why-sign-up"[^>]*>Why sign up\?</);
+      expect(home.text).toContain('id="why-sign-up"');
     });
 
     it("can't see an account page without signing in", async () => {

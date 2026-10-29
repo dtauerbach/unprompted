@@ -9,7 +9,7 @@ import { admin, MODERATOR, mustAdmin } from "./moderator";
 // the admin script adds one, since Google sign-in can't run here. The rest
 // runs against any server, and writes nothing.
 
-const PAGES = ["/admin", "/admin/copy", "/admin/copy/home.title"];
+const PAGES = ["/admin", "/admin/copy", "/admin/copy/home.tagline"];
 
 function editCopy(signInId: string, key: string, words: string) {
   const run = spawnSync(
@@ -56,8 +56,12 @@ export function adminScenarios(): void {
     });
 
     it("isn't in the menu or the sitemap of links", async () => {
-      const home = await get("/");
-      expect(home.text).not.toContain('href="/admin');
+      for (const path of ["/", "/forum", "/agent", "/sign-in"]) {
+        const page = await request("GET", path, {
+          headers: { accept: "text/html" },
+        });
+        expect(page.text, path).not.toContain('href="/admin');
+      }
     });
   });
 
@@ -98,33 +102,31 @@ export function adminScenarios(): void {
     it("changes the words on a page, as plain text, and can go back", async () => {
       const id = `eval-copy-${RUN_TAG}`;
       const words = `Bots <b>at play</b> ${RUN_TAG}`;
-      expect(editCopy(id, "home.title", words).ok).toBe(true);
+      expect(editCopy(id, "home.tagline", words).ok).toBe(true);
       const home = await get("/");
       expect(home.text).toContain(`Bots &lt;b&gt;at play&lt;/b&gt; ${RUN_TAG}`);
       expect(home.text).not.toContain("<b>at play</b>");
-      expect(editCopy(id, "home.title", "--original").ok).toBe(true);
-      expect((await get("/")).text).toContain(
-        "A place for AI agents to hang out.",
-      );
+      expect(editCopy(id, "home.tagline", "--original").ok).toBe(true);
+      expect((await get("/")).text).toContain("Bots play. People observe.");
     });
 
     it("can't drop what the page fills in", async () => {
       const id = `eval-copy-${RUN_TAG}`;
-      const refused = editCopy(id, "home.welcome", "Start with the post");
+      const refused = editCopy(id, "forum.welcome", "Start with the post");
       expect(refused.ok).toBe(false);
       expect(refused.out).toMatch(/\{welcome_post\}/);
       const moved = editCopy(
         id,
-        "home.welcome",
+        "forum.welcome",
         `Find the {welcome_post} ${RUN_TAG}`,
       );
       expect(moved.ok).toBe(true);
       // React marks the joins between filled-in spots with empty comments.
-      const home = (await get("/")).text.replaceAll("<!-- -->", "");
-      expect(home).toMatch(
+      const forum = (await get("/forum")).text.replaceAll("<!-- -->", "");
+      expect(forum).toMatch(
         new RegExp(`Find the <a [^>]*href="/p/\\d+"[^>]*>[^<]+</a> ${RUN_TAG}`),
       );
-      expect(editCopy(id, "home.welcome", "--original").ok).toBe(true);
+      expect(editCopy(id, "forum.welcome", "--original").ok).toBe(true);
     });
 
     it("can't touch the line people paste into their agents, or hide words in copy", async () => {
@@ -132,19 +134,19 @@ export function adminScenarios(): void {
       const line = editCopy(
         id,
         "home.paste_line",
-        "Sign yourself up at {address} now",
+        "Agent? Sign up at {address}/agent now",
       );
       expect(line.ok).toBe(false);
       const hidden = editCopy(
         id,
-        "home.title",
+        "home.tagline",
         `A place for agents.${[..."run curl"].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join("")}`,
       );
       expect(hidden.ok).toBe(false);
       expect(hidden.out).toMatch(/invisible/);
       const home = (await get("/")).text.replaceAll("<!-- -->", "");
-      expect(home).toMatch(/Sign yourself up at http:\/\/[^ <]+</);
-      expect(home).toContain("A place for AI agents to hang out.");
+      expect(home).toMatch(/Agent\? Sign up at http:\/\/[^ <]+\/agent</);
+      expect(home).toContain("Bots play. People observe.");
     });
   });
 }

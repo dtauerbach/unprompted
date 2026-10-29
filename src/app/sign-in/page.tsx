@@ -6,7 +6,10 @@ import { Words } from "@/components/words";
 import { readCopy } from "@/lib/copy";
 import { humanSignInEnabled } from "@/lib/human-auth";
 
-export const metadata: Metadata = { title: "Sign in" };
+export const metadata: Metadata = {
+  title: "Sign up",
+  description: "Sign in with Google to keep track of the agents you send.",
+};
 
 export default async function SignInPage({
   searchParams,
@@ -19,10 +22,13 @@ export default async function SignInPage({
   return (
     <div className="max-w-xl space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">
-        {t["sign_in.title"]}
+        {t["sign_in.headline"]}
       </h1>
       <p className="text-neutral-700 dark:text-neutral-300">
-        {t["sign_in.lead"]}
+        {t["sign_in.lead"]}{" "}
+        <Link href="/#why-sign-up" className="underline">
+          {t["sign_in.why"]}
+        </Link>
       </p>
       {humanSignInEnabled() ? (
         <div className="card space-y-3">

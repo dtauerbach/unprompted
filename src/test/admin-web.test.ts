@@ -184,12 +184,12 @@ describe("admin actions", () => {
       saveCopy: () =>
         a.saveCopyAction(
           {},
-          form({ key: "home.title", body: "Taken over.", after: "0" }),
+          form({ key: "home.tagline", body: "Taken over.", after: "0" }),
         ),
       restoreCopy: () =>
         a.restoreCopyAction(
           {},
-          form({ key: "home.title", version: "original", after: "0" }),
+          form({ key: "home.tagline", version: "original", after: "0" }),
         ),
       hide: (id: number) =>
         a.moderateAction(
@@ -277,10 +277,10 @@ describe("admin actions", () => {
     expect(
       await a.saveCopyAction(
         {},
-        form({ key: "home.title", body: "Bots at play.", after: "0" }),
+        form({ key: "home.tagline", body: "Bots at play.", after: "0" }),
       ),
     ).toEqual({ message: "Saved." });
-    expect((await readCopy())["home.title"]).toBe("Bots at play.");
+    expect((await readCopy())["home.tagline"]).toBe("Bots at play.");
     const [v] = await db()<{ id: string; human_id: string }[]>`
       SELECT id, human_id FROM copy_versions`;
     expect(Number(v?.human_id)).toBe(humanId);
@@ -288,7 +288,7 @@ describe("admin actions", () => {
     expect(
       await a.saveCopyAction(
         {},
-        form({ key: "home.title", body: "Mine instead.", after: "0" }),
+        form({ key: "home.tagline", body: "Mine instead.", after: "0" }),
       ),
     ).toEqual({
       error:
@@ -297,10 +297,14 @@ describe("admin actions", () => {
     expect(
       await a.restoreCopyAction(
         {},
-        form({ key: "home.title", version: "original", after: String(v?.id) }),
+        form({
+          key: "home.tagline",
+          version: "original",
+          after: String(v?.id),
+        }),
       ),
     ).toEqual({ message: "Restored." });
-    expect((await readCopy())["home.title"]).toBe(COPY["home.title"].text);
+    expect((await readCopy())["home.tagline"]).toBe(COPY["home.tagline"].text);
   });
 
   it("restore an older version as the newest", async () => {
@@ -312,14 +316,14 @@ describe("admin actions", () => {
     );
     session.user = { id: "google-admin" };
     const v1 = await saveCopy(db(), {
-      key: "about.title",
+      key: "forum.title",
       body: "First words",
       after: 0,
       humanId,
       ipHash: null,
     });
     const v2 = await saveCopy(db(), {
-      key: "about.title",
+      key: "forum.title",
       body: "Second words",
       after: v1.version,
       humanId,
@@ -330,20 +334,20 @@ describe("admin actions", () => {
       await a.restoreCopyAction(
         {},
         form({
-          key: "about.title",
+          key: "forum.title",
           version: String(v1.version),
           after: String(v2.version),
         }),
       ),
     ).toEqual({ message: "Restored." });
-    expect((await readCopy())["about.title"]).toBe("First words");
+    expect((await readCopy())["forum.title"]).toBe("First words");
     expect(await db()`SELECT 1 FROM copy_versions`).toHaveLength(3);
     // A version of another piece can't be restored here.
     expect(
       await a.restoreCopyAction(
         {},
         form({
-          key: "home.title",
+          key: "home.tagline",
           version: String(v1.version),
           after: "0",
         }),
@@ -360,10 +364,10 @@ describe("admin actions", () => {
     for (const f of [
       { key: "nope", body: "x", after: "0" },
       { key: "__proto__", body: "x", after: "0" },
-      { key: "home.title", body: "x", after: "-1" },
-      { key: "home.title", body: "x", after: "" },
-      { key: "home.welcome", body: "No link here", after: "0" },
-      { key: "home.title", body: "Hi\u200B there", after: "0" },
+      { key: "home.tagline", body: "x", after: "-1" },
+      { key: "home.tagline", body: "x", after: "" },
+      { key: "forum.welcome", body: "No link here", after: "0" },
+      { key: "home.tagline", body: "Hi\u200B there", after: "0" },
     ])
       expect((await a.saveCopyAction({}, form(f))).error).toBeTruthy();
     for (const f of <Record<string, string>[]>[
@@ -444,13 +448,13 @@ describe("admin pages", () => {
     const p = await pages();
     await expect(p.moderation()).rejects.toThrow("redirect /sign-in");
     await expect(p.copy()).rejects.toThrow("redirect /sign-in");
-    await expect(p.history(historyOf("home.title"))).rejects.toThrow(
+    await expect(p.history(historyOf("home.tagline"))).rejects.toThrow(
       "redirect /sign-in",
     );
     session.user = { id: "google-someone" };
     await expect(p.moderation()).rejects.toThrow("not found");
     await expect(p.copy()).rejects.toThrow("not found");
-    await expect(p.history(historyOf("home.title"))).rejects.toThrow(
+    await expect(p.history(historyOf("home.tagline"))).rejects.toThrow(
       "not found",
     );
   });
@@ -490,7 +494,7 @@ describe("admin pages", () => {
     );
     session.user = { id: "google-admin" };
     await saveCopy(db(), {
-      key: "home.title",
+      key: "home.tagline",
       body: "Bots <i>at play</i>.",
       after: 0,
       humanId,
@@ -502,12 +506,29 @@ describe("admin pages", () => {
       expect(list).toContain(e.label.replaceAll("'", "&#x27;"));
     expect(list).toContain("Bots &lt;i&gt;at play&lt;/i&gt;.");
     const history = renderToStaticMarkup(
-      await p.history(historyOf("home.title")),
+      await p.history(historyOf("home.tagline")),
     );
     expect(history).toContain("Bots &lt;i&gt;at play&lt;/i&gt;.");
-    expect(history).toContain(COPY["home.title"].text);
+    expect(history).toContain(COPY["home.tagline"].text);
     expect(history).toContain("Use the original");
     await expect(p.history(historyOf("nope"))).rejects.toThrow("not found");
+    // A version saved under a key the code dropped doesn't break the editor,
+    // and its history isn't a page any more.
+    await db()`
+      INSERT INTO copy_versions (key, body, human_id)
+      VALUES ('about.title', 'Old about words', ${humanId}),
+             ('home.title', 'Old home words', ${humanId})`;
+    const after = renderToStaticMarkup(await p.copy());
+    expect(after).not.toMatch(/Old (about|home) words/);
+    expect(after).toContain('href="/forum"');
+    expect(after).toContain('href="/agent"');
+    expect(after).not.toContain('href="/about"');
+    await expect(p.history(historyOf("about.title"))).rejects.toThrow(
+      "not found",
+    );
+    await expect(p.history(historyOf("home.title"))).rejects.toThrow(
+      "not found",
+    );
     await expect(p.history(historyOf("constructor"))).rejects.toThrow(
       "not found",
     );
