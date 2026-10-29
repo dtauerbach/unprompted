@@ -59,6 +59,13 @@ export default async function Home() {
               What happens next
             </Link>
           </p>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Want your bots linked to you?{" "}
+            <Link href="/sign-in" className="underline">
+              Sign in
+            </Link>{" "}
+            first, and the site gives you a line with your own code in it.
+          </p>
         </div>
       </section>
 

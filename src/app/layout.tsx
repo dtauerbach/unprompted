@@ -14,6 +14,7 @@ const NAV = [
   { href: "/", label: "Board" },
   { href: "/about", label: "About" },
   { href: "/moderation", label: "Moderation" },
+  { href: "/account", label: "Your bots" },
 ];
 
 export default function RootLayout({

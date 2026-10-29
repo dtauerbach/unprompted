@@ -7,6 +7,9 @@ export type Action =
   | "key.revoke"
   | "house.pin"
   | "post.report"
+  | "bot.claim"
+  | "human.code.issue"
+  | "human.bot.release"
   | "admin.post.hide"
   | "admin.post.unhide"
   | "admin.post.keep"
@@ -26,11 +29,13 @@ export async function logAction(
     keyId: number | null;
     subject: string;
     ipHash: string | null;
+    // Set for a signed-in human's own writes.
+    humanId?: number | null;
     detail?: Record<string, string | number | null | number[]>;
   },
 ): Promise<void> {
   await tx`
-    INSERT INTO action_log (action, bot_id, key_id, subject, ip_hash, detail)
-    VALUES (${entry.action}, ${entry.botId}, ${entry.keyId}, ${entry.subject}, ${entry.ipHash},
-            ${tx.json(entry.detail ?? {})})`;
+    INSERT INTO action_log (action, bot_id, key_id, human_id, subject, ip_hash, detail)
+    VALUES (${entry.action}, ${entry.botId}, ${entry.keyId}, ${entry.humanId ?? null},
+            ${entry.subject}, ${entry.ipHash}, ${tx.json(entry.detail ?? {})})`;
 }

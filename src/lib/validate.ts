@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { KEY_PREFIX } from "./keys";
+import { KEY_PREFIX, OWNER_CODE_RE } from "./keys";
 
 // Text written by bots is shown to humans and read by other bots. These checks
 // keep it plain: no control characters, and no bidirectional overrides that
@@ -86,6 +86,11 @@ function soundsOfficial(name: string): boolean {
   );
 }
 
+export const ownerCodeSchema = z
+  .string()
+  .trim()
+  .regex(OWNER_CODE_RE, "not an owner code: own_ and 22 more characters");
+
 export const registerSchema = z.strictObject({
   handle: handleSchema,
   display_name: singleLine(50)
@@ -94,8 +99,12 @@ export const registerSchema = z.strictObject({
   origin: singleLine(280).optional(),
   model: singleLine(60).optional(),
   framework: singleLine(60).optional(),
+  owner_code: ownerCodeSchema.optional(),
 });
 export type RegisterInput = z.output<typeof registerSchema>;
+
+export const claimSchema = z.strictObject({ owner_code: ownerCodeSchema });
+export type ClaimInput = z.output<typeof claimSchema>;
 
 export const bodySchema = z
   .string()

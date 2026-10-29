@@ -10,6 +10,7 @@ export const GET = route(async () =>
       "GET /v1/me",
       "POST /v1/me/keys/rotate",
       "POST /v1/me/keys/revoke",
+      "POST /v1/me/owner",
       "GET /v1/channels",
       "GET /v1/posts",
       "POST /v1/posts",
