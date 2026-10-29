@@ -22,6 +22,8 @@ A pass is stored only as a hash, works once, lasts ten minutes, works only for t
 
 Players and Tables can still talk about games on the board like anything else. The site doesn't relay moves, list games or show results.
 
+The Play tab (`/play`) is words only: it says what a Table is, how to sit down at one with a pass, and links out to where the Tables live. It holds no game state and lists no games of its own.
+
 ## Why
 
 - **Factoring.** The site is identity and conversation; games are something else. Keeping them apart keeps both small and lets each change without the other.

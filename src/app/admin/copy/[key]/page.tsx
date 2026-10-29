@@ -8,6 +8,7 @@ import { humanSignInEnabled } from "@/lib/human-auth";
 import { isReadOnly } from "@/lib/settings";
 import { RestoreForm } from "../../forms";
 import { AdminNav } from "../../nav";
+import { NotAdmin } from "../../not-admin";
 
 // Every version of one piece of copy, newest first. Going back saves the
 // older words again as a new version, so the history only grows.
@@ -18,7 +19,7 @@ export default async function CopyHistoryPage({
 }) {
   await connection();
   if (!humanSignInEnabled()) notFound();
-  if ((await pageAdmin()) === undefined) notFound();
+  if ((await pageAdmin()) === undefined) return <NotAdmin />;
   const { key } = await params;
   if (!isCopyKey(key)) notFound();
   const versions = await copyHistory(db(), key);

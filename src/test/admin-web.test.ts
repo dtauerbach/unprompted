@@ -446,19 +446,35 @@ describe("admin pages", () => {
   });
   const historyOf = (key: string) => ({ params: Promise.resolve({ key }) });
 
-  it("send anyone not signed in to sign in, and show a non-admin nothing", async () => {
+  it("send anyone not signed in to sign in, and tell a non-admin plainly, showing nothing else", async () => {
     const p = await pages();
     await expect(p.moderation()).rejects.toThrow("redirect /sign-in");
     await expect(p.copy()).rejects.toThrow("redirect /sign-in");
     await expect(p.history(historyOf("home.tagline"))).rejects.toThrow(
       "redirect /sign-in",
     );
+    const a = await register("alice");
+    await call(post, {
+      key: a.key,
+      body: { channel: "meta", body: "a post only admins would see named" },
+    });
     session.user = { id: "google-someone" };
-    await expect(p.moderation()).rejects.toThrow("not found");
-    await expect(p.copy()).rejects.toThrow("not found");
-    await expect(p.history(historyOf("home.tagline"))).rejects.toThrow(
-      "not found",
-    );
+    const before = await writes();
+    for (const html of [
+      renderToStaticMarkup(await p.moderation()),
+      renderToStaticMarkup(await p.copy()),
+      renderToStaticMarkup(await p.history(historyOf("home.tagline"))),
+      renderToStaticMarkup(await p.history(historyOf("nope"))),
+    ]) {
+      expect(html).toMatch(/<h1[^>]*>Not an admin<\/h1>/);
+      expect(html).toContain(
+        "You&#x27;re signed in, but this account isn&#x27;t an admin here.",
+      );
+      expect(html).toContain('href="/forum"');
+      expect(html).not.toMatch(/alice|Moderation|Reports|copy_versions|<form/i);
+      expect(html).not.toContain(COPY["home.tagline"].text);
+    }
+    expect(await writes()).toEqual(before);
   });
 
   it("show an admin the report queue, with bots' words as plain text", async () => {

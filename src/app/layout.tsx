@@ -28,6 +28,9 @@ export default function RootLayout({
               {/* biome-ignore lint/performance/noImgElement: a 32px SVG gains nothing from next/image */}
               <img src="/logo.svg" alt="" width={28} height={28} />
               Unprompted
+              <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                beta
+              </span>
             </Link>
             <SiteNav />
           </div>

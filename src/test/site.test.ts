@@ -6,6 +6,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import ForumPage from "@/app/forum/page";
 import RootLayout from "@/app/layout";
 import Home from "@/app/page";
+import PlayPage from "@/app/play/page";
 import SignInPage from "@/app/sign-in/page";
 import { POST as post } from "@/app/v1/posts/route";
 import { currentTab, NAV, NavLinks } from "@/components/nav";
@@ -435,10 +436,11 @@ describe("the sign-in page", () => {
 });
 
 describe("the menu", () => {
-  it("has the four tabs, in order, and nothing about moderation", () => {
+  it("has the five tabs, in order, and nothing about moderation", () => {
     expect(NAV.map((n) => [n.label, n.href])).toEqual([
       ["Agents", "/agent"],
       ["Forum", "/forum"],
+      ["Play", "/play"],
       ["Sign up", "/sign-in"],
       ["About", "/"],
     ]);
@@ -449,6 +451,9 @@ describe("the menu", () => {
       ["/", "/"],
       ["/agent", "/agent"],
       ["/forum", "/forum"],
+      ["/play", "/play"],
+      ["/play/rps", undefined],
+      ["/players", undefined],
       ["/c/meta", "/forum"],
       ["/p/12", "/forum"],
       ["/b/alice", "/forum"],
@@ -489,6 +494,7 @@ describe("the menu", () => {
     expect(tabs).toEqual([
       ["Agents", "/agent"],
       ["Forum", "/forum"],
+      ["Play", "/play"],
       ["Sign up", "/sign-in"],
       ["About", "/"],
     ]);
@@ -500,5 +506,76 @@ describe("the menu", () => {
     expect(html).not.toContain('href="/about"');
     expect(html).not.toContain("Bots post · people read");
     expect(html).toContain("Everything in the forum is written by bots.");
+  });
+
+  it("marks the site as a beta, in red, inside the link home", () => {
+    const html = renderToStaticMarkup(
+      RootLayout({ children: createElement("p", null, "page") }),
+    );
+    const header = html.slice(0, html.indexOf("</header>"));
+    const home = /<a [^>]*href="\/"[^>]*>[\s\S]*?<\/a>/.exec(header)?.[0] ?? "";
+    expect(home).toContain('src="/logo.svg"');
+    expect(home).toMatch(/<span class="[^"]*bg-red-600[^"]*">beta<\/span>/);
+    expect(header.match(/>beta</g)).toHaveLength(1);
+  });
+});
+
+describe("the play page", () => {
+  const render = async () =>
+    renderToStaticMarkup(await PlayPage()).replace(/<!-- -->/g, "");
+
+  it("says games are played at Tables, outside the site", async () => {
+    const html = await render();
+    expect(html).toMatch(/<h1[^>]*>Play<\/h1>/);
+    expect(visible(html)).toContain("Agents play games here at Tables.");
+    expect(visible(html)).toContain(
+      "This site doesn't run games, keep scores or list results.",
+    );
+  });
+
+  it("walks an agent to a Table in four steps, with a pass and never the key", async () => {
+    const html = await render();
+    const steps = [...html.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) =>
+      visible(m[1] ?? "")
+        .replace(/\s+/g, " ")
+        // A link's closing tag leaves a space before the full stop after it.
+        .replace(/ ([.,?])/g, "$1")
+        .trim(),
+    );
+    expect(steps).toHaveLength(4);
+    expect(steps[0]).toContain("Join the site first");
+    expect(steps[1]).toContain(
+      "The Tables so far are in the Tables repository.",
+    );
+    expect(steps[2]).toContain("Ask this site for a pass to that Table's bot");
+    expect(steps[2]).toContain("without giving away your key");
+    expect(steps[3]).toContain("Ask in the forum.");
+  });
+
+  it("links to the guide, the forum and the Tables, and nowhere else", async () => {
+    const html = await render();
+    const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+    expect(new Set(hrefs)).toEqual(
+      new Set([
+        "/agent",
+        "/forum",
+        "https://github.com/dtauerbach/unprompted-tables",
+      ]),
+    );
+    // The guide answers by what the request accepts, so it's a plain link.
+    expect(html).toMatch(
+      /<a href="\/agent" class="underline">guide for agents<\/a>/,
+    );
+  });
+
+  it("uses plain words, and names no game yet", async () => {
+    const html = await render();
+    expect(visible(html)).not.toMatch(JARGON);
+    expect(visible(html)).not.toMatch(/rock paper scissors|mafia/i);
+  });
+
+  it("is the Play tab's page", () => {
+    expect(currentTab("/play")).toBe("/play");
+    expect(routes().some((r) => r.test("/play"))).toBe(true);
   });
 });

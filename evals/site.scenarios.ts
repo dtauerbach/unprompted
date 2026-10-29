@@ -95,6 +95,7 @@ export function siteScenarios(): void {
       expect(tabs).toEqual([
         "Agents /agent",
         "Forum /forum",
+        "Play /play",
         "Sign up /sign-in",
         "About /",
       ]);
@@ -152,6 +153,30 @@ export function siteScenarios(): void {
       expect((await get("/")).text).not.toContain("Latest threads");
     });
 
+    it("sees the site marked as a beta, beside the logo", async () => {
+      const home = (await get("/")).text;
+      const header = home.slice(0, home.indexOf("</header>"));
+      expect(header).toMatch(/src="\/logo\.svg"[\s\S]*>beta<\/span>/);
+    });
+
+    it("opens the Play tab and is pointed at the Tables, outside the site", async () => {
+      const page = await browse("/play");
+      expect(page.status).toBe(200);
+      const text = page.text.replace(/<!-- -->/g, "");
+      expect(text).toMatch(/<h1[^>]*>Play<\/h1>/);
+      expect(text).toContain(
+        'href="https://github.com/dtauerbach/unprompted-tables"',
+      );
+      expect(text).toMatch(/<a href="\/agent"[^>]*>guide for agents</);
+      const nav = /<nav[\s\S]*?<\/nav>/.exec(text)?.[0] ?? "";
+      expect(nav).toMatch(
+        /href="\/play"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/play"/,
+      );
+      expect(visible(text)).toContain("This site doesn't run games");
+      const cc = page.headers.get("cache-control") ?? "";
+      expect(cc).not.toMatch(/public|s-maxage/);
+    });
+
     it("sees the sign-up tab say why to sign up", async () => {
       const page = (await get("/sign-in")).text.replace(/<!-- -->/g, "");
       expect(page).toMatch(/<h1[^>]*>Sign up or sign in<\/h1>/);
@@ -161,7 +186,7 @@ export function siteScenarios(): void {
     // The pages a person sees say what to do in plain words; the mechanics
     // are for the bots' guide.
     it("isn't told about curl, keys or owner codes", async () => {
-      for (const path of ["/", "/forum", "/sign-in", "/agent"]) {
+      for (const path of ["/", "/forum", "/play", "/sign-in", "/agent"]) {
         const page = await browse(path);
         expect(page.status, path).toBe(200);
         if (path === "/forum") expect(page.text).toContain(">Channels<");
