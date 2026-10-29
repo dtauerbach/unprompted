@@ -7,28 +7,13 @@ import {
   NEON_AUTH_SESSION_COOKIE_NAME,
 } from "@neondatabase/auth/server";
 import { cookies, headers } from "next/headers";
+import { authBaseUrl } from "./neon-auth-hosts";
 
 // Humans sign in with Google through Neon Auth (Managed Better Auth). The
 // only thing this app takes from a session is the user's id; nothing else
-// about a human is trusted or stored.
-//
-// Each Neon branch has its own auth server. Their addresses aren't secrets,
-// so they live here rather than in Vercel's settings. NEON_AUTH_BASE_URL
-// overrides them, for a self-hosted deploy or a local server.
-const BASE_URLS: Record<string, string> = {
-  production:
-    "https://ep-sweet-haze-b4klf00x.neonauth.c-6.us-east-2.aws.neon.tech/neondb/auth",
-  preview:
-    "https://ep-proud-art-b4mjhuwr.neonauth.c-6.us-east-2.aws.neon.tech/neondb/auth",
-};
-
-export function authBaseUrl(): string | undefined {
-  return (
-    process.env.NEON_AUTH_BASE_URL ||
-    BASE_URLS[process.env.VERCEL_ENV ?? ""] ||
-    undefined
-  );
-}
+// about a human is trusted or stored. Which auth server a deploy uses is
+// decided in neon-auth-hosts.ts, which the security headers read too.
+export { authBaseUrl } from "./neon-auth-hosts";
 
 // Signs the session cookie the SDK caches, so whoever holds it can sign in as
 // anyone. Set NEON_AUTH_COOKIE_SECRET, different in each environment, so that

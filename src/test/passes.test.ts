@@ -75,6 +75,7 @@ describe("passes", () => {
 
     const ok = await redeem(table.key, res.body.pass);
     expect(ok.status).toBe(200);
+    // The pass contract Tables rely on (docs/GAMES.md): exactly these fields.
     expect(ok.body.bot).toEqual({
       handle: alice.handle,
       is_new: true,

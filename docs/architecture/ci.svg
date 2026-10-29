@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="300" viewBox="0 0 1000 300" role="img" aria-label="CI: in unprompted, a pull request runs a check job and an eval job of scripted bots over HTTP before merging to main, which Vercel builds by migrating then building. In unprompted-tables, a pull request runs checks for both Tables, a Mafia eval against a pinned site commit and an advisory audit; RPS deploys from main and Mafia has no deploy yet.">
+<style>
+svg { --fg: #1B2026; --muted: #59626B; --line: #C4CAC6; --panel: #FFFFFF;
+  --site: #2C5A86; --site-wash: #E8EEF4; --tables: #9A5C16; --tables-wash: #F5ECDF;
+  --private: #963838; --private-wash: #F4E6E5; --data: #2F6E52;
+  --sans: "IBM Plex Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --cond: "IBM Plex Sans Condensed", "Arial Narrow", -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg); }
+@media (prefers-color-scheme: dark) { svg {
+  --fg: #E2E6E2; --muted: #9BA4AC; --line: #3A424A; --panel: #1C2126;
+  --site: #86B3DE; --site-wash: #18232E; --tables: #E2A55E; --tables-wash: #271F15;
+  --private: #E58F8F; --private-wash: #2A1A1A; --data: #7CC4A0; } }
+
+.bx { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+.bx.site { stroke: var(--site); } .bx.tab { stroke: var(--tables); } .bx.priv { stroke: var(--private); }
+.bx.data { stroke: var(--data); stroke-width: 1.5; } .bx.lab { stroke: var(--muted); stroke-dasharray: 5 4; fill: none; }
+.rg-site { fill: var(--site-wash); stroke: var(--site); stroke-width: 1.5; }
+.rg-tab { fill: var(--tables-wash); stroke: var(--tables); stroke-width: 1.5; }
+.rg-priv { fill: var(--private-wash); stroke: var(--private); stroke-width: 1.5; }
+.tt { font: 600 13px var(--sans); fill: var(--fg); }
+.ts { font: 11.5px var(--sans); fill: var(--muted); }
+.tm { font: 11px var(--mono); fill: var(--fg); }
+.tl { font: 500 11.5px var(--cond); fill: var(--fg); }
+.th { font: 600 12px var(--cond); letter-spacing: .08em; text-transform: uppercase; }
+.th.site { fill: var(--site); } .th.tab { fill: var(--tables); } .th.priv { fill: var(--private); } .th.data { fill: var(--data); } .th.mute { fill: var(--muted); }
+.ar { stroke: currentColor; stroke-width: 1.3; fill: none; }
+.ar.tab { stroke: var(--tables); } .ar.priv { stroke: var(--private); } .ar.site { stroke: var(--site); }
+.ll { stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 4 4; }
+.hd-tab { fill: var(--tables); } .hd-priv { fill: var(--private); } .hd-site { fill: var(--site); } .hd { fill: currentColor; }
+.tl.tab { fill: var(--tables); } .tl.priv { fill: var(--private); } .tl.site { fill: var(--site); }
+</style>
+      <defs><marker id="d" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="hd"/></marker></defs>
+      <text x="16" y="30" class="th site">unprompted</text>
+      <rect x="16" y="56" width="110" height="44" class="bx"/><text x="71" y="83" text-anchor="middle" class="tt">pull request</text>
+      <rect x="166" y="32" width="300" height="44" class="bx site"/><text x="180" y="52" class="tt">check</text><text x="180" y="68" class="ts">typecheck · Biome · vitest on Postgres 16 · build</text>
+      <rect x="166" y="84" width="300" height="44" class="bx site"/><text x="180" y="104" class="tt">eval</text><text x="180" y="120" class="ts">production build, 16 scripted-bot scenarios over HTTP</text>
+      <path d="M126 78 H146 V54 H164" class="ar" marker-end="url(#d)"/><path d="M146 78 V106 H164" class="ar" marker-end="url(#d)"/>
+      <path d="M466 54 H486 V78 H504" class="ar" marker-end="url(#d)"/><path d="M466 106 H486 V78" class="ar"/>
+      <rect x="506" y="56" width="110" height="44" class="bx"/><text x="561" y="83" text-anchor="middle" class="tt">merge to main</text>
+      <line x1="616" y1="78" x2="654" y2="78" class="ar" marker-end="url(#d)"/>
+      <rect x="656" y="48" width="328" height="60" class="bx data"/><text x="670" y="70" class="tt">Vercel: migrate, then next build</text><text x="670" y="88" class="ts">production only. Not in CI: preview evals</text><text x="670" y="102" class="ts">(need their own DB) and eval:agents (by hand)</text>
+
+      <text x="16" y="168" class="th tab">unprompted-tables</text>
+      <rect x="16" y="210" width="110" height="44" class="bx"/><text x="71" y="237" text-anchor="middle" class="tt">pull request</text>
+      <rect x="166" y="180" width="300" height="36" class="bx tab"/><text x="180" y="203" class="ts"><tspan class="tt">check</tspan>  types · Biome · tests · build both Tables</text>
+      <rect x="166" y="222" width="300" height="36" class="bx tab"/><text x="180" y="245" class="ts"><tspan class="tt">table-eval</tspan>  RPS and Mafia vs a real local site</text>
+      <rect x="166" y="264" width="300" height="30" class="bx"/><text x="180" y="284" class="ts"><tspan class="tt">audit</tspan>  advisory, can't fail the build</text>
+      <path d="M126 232 H146 V198 H164" class="ar" marker-end="url(#d)"/><line x1="146" y1="240" x2="164" y2="240" class="ar" marker-end="url(#d)"/><path d="M126 232 H146 V279 H164" class="ar" marker-end="url(#d)"/>
+      <path d="M466 198 H486 V232 H504" class="ar" marker-end="url(#d)"/><path d="M466 240 H486" class="ar"/>
+      <rect x="506" y="210" width="110" height="44" class="bx"/><text x="561" y="237" text-anchor="middle" class="tt">merge to main</text>
+      <line x1="616" y1="232" x2="654" y2="232" class="ar" marker-end="url(#d)"/>
+      <rect x="656" y="202" width="328" height="60" class="bx data"/><text x="670" y="224" class="tt">rps-table: migrate, then next build</text><text x="670" y="242" class="ts">Mafia has no Vercel project yet</text><text x="670" y="256" class="ts">evals also run nightly against site main</text>
+    </svg>

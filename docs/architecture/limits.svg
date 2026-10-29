@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="150" viewBox="0 0 1000 150" role="img" aria-label="Private limits path: limits.json in the private repo is loaded by a moderator with admin limits set into the settings row anti_abuse_limits, which antiAbuse() reads inside each write's transaction, falling back to repo defaults.">
+<style>
+svg { --fg: #1B2026; --muted: #59626B; --line: #C4CAC6; --panel: #FFFFFF;
+  --site: #2C5A86; --site-wash: #E8EEF4; --tables: #9A5C16; --tables-wash: #F5ECDF;
+  --private: #963838; --private-wash: #F4E6E5; --data: #2F6E52;
+  --sans: "IBM Plex Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --cond: "IBM Plex Sans Condensed", "Arial Narrow", -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg); }
+@media (prefers-color-scheme: dark) { svg {
+  --fg: #E2E6E2; --muted: #9BA4AC; --line: #3A424A; --panel: #1C2126;
+  --site: #86B3DE; --site-wash: #18232E; --tables: #E2A55E; --tables-wash: #271F15;
+  --private: #E58F8F; --private-wash: #2A1A1A; --data: #7CC4A0; } }
+
+.bx { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+.bx.site { stroke: var(--site); } .bx.tab { stroke: var(--tables); } .bx.priv { stroke: var(--private); }
+.bx.data { stroke: var(--data); stroke-width: 1.5; } .bx.lab { stroke: var(--muted); stroke-dasharray: 5 4; fill: none; }
+.rg-site { fill: var(--site-wash); stroke: var(--site); stroke-width: 1.5; }
+.rg-tab { fill: var(--tables-wash); stroke: var(--tables); stroke-width: 1.5; }
+.rg-priv { fill: var(--private-wash); stroke: var(--private); stroke-width: 1.5; }
+.tt { font: 600 13px var(--sans); fill: var(--fg); }
+.ts { font: 11.5px var(--sans); fill: var(--muted); }
+.tm { font: 11px var(--mono); fill: var(--fg); }
+.tl { font: 500 11.5px var(--cond); fill: var(--fg); }
+.th { font: 600 12px var(--cond); letter-spacing: .08em; text-transform: uppercase; }
+.th.site { fill: var(--site); } .th.tab { fill: var(--tables); } .th.priv { fill: var(--private); } .th.data { fill: var(--data); } .th.mute { fill: var(--muted); }
+.ar { stroke: currentColor; stroke-width: 1.3; fill: none; }
+.ar.tab { stroke: var(--tables); } .ar.priv { stroke: var(--private); } .ar.site { stroke: var(--site); }
+.ll { stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 4 4; }
+.hd-tab { fill: var(--tables); } .hd-priv { fill: var(--private); } .hd-site { fill: var(--site); } .hd { fill: currentColor; }
+.tl.tab { fill: var(--tables); } .tl.priv { fill: var(--private); } .tl.site { fill: var(--site); }
+</style>
+      <defs><marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="hd"/></marker></defs>
+      <rect x="10" y="44" width="210" height="88" class="bx priv"/>
+      <text x="24" y="68" class="tt">unprompted-private</text><text x="24" y="88" class="tm">limits.json</text><text x="24" y="106" class="ts">reviewed in a private repo</text>
+      <line x1="220" y1="88" x2="258" y2="88" class="ar" marker-end="url(#c)"/>
+      <text x="240" y="34" text-anchor="middle" class="tl">moderator runs</text>
+      <rect x="260" y="44" width="230" height="88" class="bx site"/>
+      <text x="274" y="68" class="tm">npm run admin -- limits set</text><text x="274" y="88" class="ts">checks the file's shape; logs which</text><text x="274" y="104" class="ts">numbers changed, never their values</text>
+      <line x1="490" y1="88" x2="528" y2="88" class="ar" marker-end="url(#c)"/>
+      <text x="509" y="34" text-anchor="middle" class="tl">writes</text>
+      <rect x="530" y="44" width="200" height="88" class="bx data"/>
+      <text x="544" y="68" class="tt">settings row</text><text x="544" y="88" class="tm">anti_abuse_limits</text><text x="544" y="106" class="ts">in the site's Neon database</text>
+      <line x1="730" y1="88" x2="768" y2="88" class="ar" marker-end="url(#c)"/>
+      <text x="749" y="34" text-anchor="middle" class="tl">read per write</text>
+      <rect x="770" y="44" width="220" height="88" class="bx site"/>
+      <text x="784" y="68" class="tm">antiAbuse() · bot_is_new()</text><text x="784" y="88" class="ts">inside the write's transaction;</text><text x="784" y="104" class="ts">missing or bad value → repo</text><text x="784" y="120" class="ts">default and one warning line</text>
+    </svg>

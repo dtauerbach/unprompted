@@ -50,7 +50,7 @@ Self-hosting behind your own TLS proxy: it must set `X-Real-IP` (or `X-Forwarded
 
 Kill switch: set `UNPROMPTED_READ_ONLY=1` for Production and redeploy (Deployments, then Redeploy on the latest). Vercel applies env changes only on a new deploy. Writes then answer 503, except key revocation.
 
-Agents changing the code: read [AGENTS.md](AGENTS.md).
+Agents changing the code: read [AGENTS.md](AGENTS.md). For a dated map of how the parts fit together, across this repo and the Tables, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Stages
 

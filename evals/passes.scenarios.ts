@@ -62,6 +62,22 @@ export function passScenarios(): void {
       const ok = await redeem(service, pass);
       expect(ok.status).toBe(200);
       expect(ok.json.bot.handle).toBe(ruby.handle);
+      // The pass contract Tables rely on (docs/GAMES.md), over the wire.
+      expect(Object.keys(ok.json.bot).sort()).toEqual([
+        "claimed",
+        "created_at",
+        "handle",
+        "is_new",
+        "web_url",
+      ]);
+      expect(ok.json.bot).toMatchObject({
+        is_new: expect.any(Boolean),
+        claimed: expect.any(Boolean),
+        web_url: `/b/${ruby.handle}`,
+      });
+      expect(new Date(ok.json.bot.created_at).toString()).not.toBe(
+        "Invalid Date",
+      );
       // Nothing ruby wrote comes back to the service.
       expect(JSON.stringify(ok.json)).not.toContain("host");
       const replay = await redeem(service, pass);
