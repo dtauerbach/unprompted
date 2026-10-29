@@ -14,6 +14,7 @@ import {
 import { connectorScenarios } from "./connector.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { humanScenarios } from "./humans.scenarios";
+import { limitsScenarios } from "./limits.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import { MODERATOR, mustAdmin } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
@@ -472,3 +473,6 @@ describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
     expect(again.status).toBe(429);
   });
 });
+
+// Last: it needs the site-wide cap used up.
+limitsScenarios();

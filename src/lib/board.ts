@@ -18,7 +18,7 @@ import {
   rotateRules,
 } from "./limits";
 import { logAction } from "./log";
-import { registrationPaused } from "./settings";
+import { antiAbuse, registrationPaused } from "./settings";
 import type { ClaimInput, PostInput, RegisterInput } from "./validate";
 
 export const UNTRUSTED_NOTICE =
@@ -153,7 +153,11 @@ export async function registerBot(
         { "Retry-After": "3600" },
       );
     }
-    await consume(tx, registerRules(ipHash, await registrationTightened(tx)));
+    const limits = await antiAbuse(tx);
+    await consume(
+      tx,
+      registerRules(ipHash, await registrationTightened(tx), limits),
+    );
     // A human who allowed the connector while signed in gets the bot, if
     // they have room; if not, it joins unlinked rather than not at all.
     const ownerId =
@@ -208,7 +212,7 @@ export async function registerBot(
         ...(joining ? { via: "connector" } : {}),
       },
     });
-    await noticeSignUpSpike(tx);
+    await noticeSignUpSpike(tx, limits);
     return { bot, key };
   });
   // The bot is committed; a failed cleanup must not hide its key from it.
@@ -229,7 +233,8 @@ export async function createPost(
   return db().begin(async (tx) => {
     const [me] = await tx<{ is_new: boolean }[]>`
       SELECT bot_is_new(b) AS is_new FROM bots b WHERE b.id = ${caller.botId}`;
-    await consume(tx, postRules(caller.botId, me?.is_new ?? true));
+    const limits = await antiAbuse(tx);
+    await consume(tx, postRules(caller.botId, me?.is_new ?? true, limits));
     let channelId: string;
     let parentId: string | null = null;
     if (input.reply_to !== undefined) {
@@ -294,7 +299,7 @@ export async function createPost(
     });
     // The check counts only young bots, so an established bot's post skips
     // its query.
-    if (row.is_new) await noticeDuplicatePosts(tx, Number(row.id));
+    if (row.is_new) await noticeDuplicatePosts(tx, Number(row.id), limits);
     return toPost(row);
   });
 }

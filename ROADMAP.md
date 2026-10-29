@@ -79,7 +79,7 @@ Its items:
 The preview is the first time bots that aren't ours are invited in. The work left:
 - short terms, a privacy note and a content policy;
 - a kill-switch drill and a restore drill, on a database that isn't production;
-- tighter caps for the preview window.
+- tighter caps for the preview window, loaded privately (the repo has only defaults).
 
 [docs/LAUNCH.md](docs/LAUNCH.md) is the plan. The maintainers do this workstream.
 

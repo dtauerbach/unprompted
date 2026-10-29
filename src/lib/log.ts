@@ -22,6 +22,7 @@ export type Action =
   | "admin.registration.pause"
   | "admin.registration.resume"
   | "admin.registration.tighten"
+  | "admin.limits.set"
   | "alert.duplicate_posts"
   | "copy.edit"
   | "access.admin.add"

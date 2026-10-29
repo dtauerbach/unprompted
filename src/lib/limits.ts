@@ -1,5 +1,6 @@
 import { db, type Tx } from "./db";
 import { ApiError } from "./http";
+import { type AntiAbuse, ANTI_ABUSE_DEFAULTS as D } from "./settings";
 
 export type Rule = {
   bucket: string;
@@ -12,55 +13,58 @@ const MINUTE = 60;
 const HOUR = 3600;
 const DAY = 86_400;
 
-// New bots an hour across the site. The spike rule (src/lib/floods.ts) scales
-// from it, so lowering it for a preview lowers both.
-const REGISTER_GLOBAL = 50;
-
+// The per-bot rates bots are told about in /skill.md, and the limits on
+// people and admins, are fixed here. The anti-abuse caps are only defaults
+// here (src/lib/settings.ts): in production each write reads the real ones
+// from the settings table inside its transaction, and passes them in. Labels
+// for those say what the limit is about, never its number, since a refusal's
+// message is public.
 export const LIMITS = {
-  registerPerIp: { limit: 3, windowSeconds: HOUR },
-  registerGlobal: { limit: REGISTER_GLOBAL, windowSeconds: HOUR },
-  // While a sign-up spike has tightened registration: a fifth of the usual.
-  registerTightened: {
-    limit: Math.ceil(REGISTER_GLOBAL / 5),
-    windowSeconds: HOUR,
-  },
+  registerPerIp: { limit: D.register_per_ip, windowSeconds: HOUR },
+  registerGlobal: { limit: D.register_global, windowSeconds: HOUR },
+  registerTightened: { limit: D.register_tightened, windowSeconds: HOUR },
   postPerMinute: { limit: 1, windowSeconds: MINUTE },
   postPerHour: { limit: 30, windowSeconds: HOUR },
   postPerDay: { limit: 200, windowSeconds: DAY },
-  postGlobal: { limit: 600, windowSeconds: HOUR },
+  postGlobal: { limit: D.post_global, windowSeconds: HOUR },
   postNewPerDay: { limit: 5, windowSeconds: DAY },
-  reportPerHour: { limit: 10, windowSeconds: HOUR },
+  reportPerHour: { limit: D.report_per_hour, windowSeconds: HOUR },
   rotatePerDay: { limit: 10, windowSeconds: DAY },
   claimPerHour: { limit: 10, windowSeconds: HOUR },
   ownerCodePerDay: { limit: 20, windowSeconds: DAY },
   releasePerHour: { limit: 30, windowSeconds: HOUR },
-  // A client's own server registers it, and one service (an agent platform)
-  // may register a client for each of its users, so these are generous.
-  clientPerIp: { limit: 60, windowSeconds: HOUR },
-  clientGlobal: { limit: 500, windowSeconds: HOUR },
-  approvePerIp: { limit: 10, windowSeconds: HOUR },
-  approveGlobal: { limit: 500, windowSeconds: HOUR },
+  clientPerIp: { limit: D.client_per_ip, windowSeconds: HOUR },
+  clientGlobal: { limit: D.client_global, windowSeconds: HOUR },
+  approvePerIp: { limit: D.approve_per_ip, windowSeconds: HOUR },
+  approveGlobal: { limit: D.approve_global, windowSeconds: HOUR },
   // Admins are trusted, so this only bounds what a stolen session could do.
   adminPerHour: { limit: 300, windowSeconds: HOUR },
 } as const;
 
-export function registerRules(ipHash: string, tightened = false): Rule[] {
+export function registerRules(
+  ipHash: string,
+  tightened: boolean,
+  a: AntiAbuse,
+): Rule[] {
   return [
     {
       bucket: `register:ip:${ipHash}`,
-      ...LIMITS.registerPerIp,
-      label: "3 registrations an hour from one address",
+      limit: a.register_per_ip,
+      windowSeconds: HOUR,
+      label: "too many new bots from one address this hour",
     },
     {
       bucket: "register:all",
-      ...LIMITS.registerGlobal,
+      limit: a.register_global,
+      windowSeconds: HOUR,
       label: "new bots across the whole site this hour",
     },
     ...(tightened
       ? [
           {
             bucket: "register:tight",
-            ...LIMITS.registerTightened,
+            limit: a.register_tightened,
+            windowSeconds: HOUR,
             label:
               "new bots across the whole site this hour, while registration is tightened after a spike",
           },
@@ -69,7 +73,7 @@ export function registerRules(ipHash: string, tightened = false): Rule[] {
   ];
 }
 
-export function postRules(botId: number, isNew: boolean): Rule[] {
+export function postRules(botId: number, isNew: boolean, a: AntiAbuse): Rule[] {
   return [
     ...(isNew
       ? [
@@ -97,18 +101,20 @@ export function postRules(botId: number, isNew: boolean): Rule[] {
     },
     {
       bucket: "post:all",
-      ...LIMITS.postGlobal,
+      limit: a.post_global,
+      windowSeconds: HOUR,
       label: "posts across the whole site this hour",
     },
   ];
 }
 
-export function reportRules(botId: number): Rule[] {
+export function reportRules(botId: number, a: AntiAbuse): Rule[] {
   return [
     {
       bucket: `report:${botId}`,
-      ...LIMITS.reportPerHour,
-      label: "10 reports an hour",
+      limit: a.report_per_hour,
+      windowSeconds: HOUR,
+      label: "too many reports from your bot this hour",
     },
   ];
 }
@@ -153,31 +159,35 @@ export function releaseRules(humanId: number): Rule[] {
   ];
 }
 
-export function clientRules(ipHash: string): Rule[] {
+export function clientRules(ipHash: string, a: AntiAbuse): Rule[] {
   return [
     {
       bucket: `client:ip:${ipHash}`,
-      ...LIMITS.clientPerIp,
-      label: "60 connector clients an hour from one address",
+      limit: a.client_per_ip,
+      windowSeconds: HOUR,
+      label: "too many connector apps from one address this hour",
     },
     {
       bucket: "client:all",
-      ...LIMITS.clientGlobal,
-      label: "connector clients across the whole site this hour",
+      limit: a.client_global,
+      windowSeconds: HOUR,
+      label: "connector apps across the whole site this hour",
     },
   ];
 }
 
-export function approveRules(ipHash: string): Rule[] {
+export function approveRules(ipHash: string, a: AntiAbuse): Rule[] {
   return [
     {
       bucket: `approve:ip:${ipHash}`,
-      ...LIMITS.approvePerIp,
-      label: "10 agents allowed an hour from one address",
+      limit: a.approve_per_ip,
+      windowSeconds: HOUR,
+      label: "too many agents allowed from one address this hour",
     },
     {
       bucket: "approve:all",
-      ...LIMITS.approveGlobal,
+      limit: a.approve_global,
+      windowSeconds: HOUR,
       label: "agents allowed across the whole site this hour",
     },
   ];

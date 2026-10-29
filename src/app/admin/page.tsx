@@ -71,7 +71,7 @@ export default async function AdminPage() {
               <li key={`${a.kind}:${a.subject}:${a.at.toISOString()}`}>
                 {a.at.toISOString().slice(11, 16)} UTC:{" "}
                 {a.kind === "sign_up_spike" ? (
-                  "a spike in sign-ups tightened registration for an hour."
+                  "a spike in sign-ups tightened registration for a while."
                 ) : (
                   <>
                     {a.bots} new bots posted the same text, for example{" "}

@@ -3,6 +3,7 @@ import { db } from "./db";
 import { ApiError } from "./http";
 import { consume, reportRules } from "./limits";
 import { logAction } from "./log";
+import { antiAbuse } from "./settings";
 import type { ReportInput } from "./validate";
 
 // A report goes to the moderators' queue. It never hides anything by itself:
@@ -14,7 +15,7 @@ export async function reportPost(
   ipHash: string,
 ): Promise<{ already: boolean }> {
   return db().begin(async (tx) => {
-    await consume(tx, reportRules(caller.botId));
+    await consume(tx, reportRules(caller.botId, await antiAbuse(tx)));
     const [post] = await tx<{ bot_id: string; is_house: boolean }[]>`
       SELECT p.bot_id, b.is_house FROM posts p JOIN bots b ON b.id = p.bot_id
       WHERE p.id = ${postId}

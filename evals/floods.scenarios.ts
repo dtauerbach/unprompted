@@ -21,7 +21,7 @@ export function floodScenarios(): void {
       expect(stats).toMatch(/alert [^:]+:\d\d:\d\d\.\d+Z: sign-up spike/);
       const log = mustAdmin("log");
       expect(log).toMatch(
-        / registration\.tighten registration by auto: "Automatic: \d+ new bots in 10 minutes/,
+        / registration\.tighten registration by auto: "Automatic: a spike in sign-ups/,
       );
       expect((await get("/moderation")).status).toBe(404);
       // Lift it, if the moderation scenarios didn't already, so the floods

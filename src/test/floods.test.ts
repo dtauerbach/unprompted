@@ -84,9 +84,11 @@ describe("a spike in sign-ups", () => {
       subject: "registration",
       detail: { by: "auto" },
     });
-    expect(logged[0]?.detail.reason).toContain(
-      `capped at ${LIMITS.registerTightened.limit} new bots an hour`,
+    // The record names the rule, not its numbers.
+    expect(logged[0]?.detail.reason).toBe(
+      "Automatic: a spike in sign-ups, so registration is tightened for a while.",
     );
+    expect(logged[0]?.detail.reason).not.toMatch(/\d/);
     const [entry] = await moderatorLog(db(), { limit: 5 });
     expect(entry).toMatchObject({
       action: "registration.tighten",

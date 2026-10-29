@@ -5,7 +5,15 @@ import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
-import { REGISTRATION_PAUSED } from "./settings";
+import {
+  ANTI_ABUSE,
+  ANTI_ABUSE_NAMES,
+  type AntiAbuse,
+  type AntiAbuseName,
+  antiAbuse,
+  antiAbuseSchema,
+  REGISTRATION_PAUSED,
+} from "./settings";
 import { moderatorReasonSchema } from "./validate";
 
 // Moderator actions. They run from scripts/admin.ts, by a human with database
@@ -291,6 +299,81 @@ export async function setRegistrationPaused(
           : "Lifted the tightening after a spike; registration is open.",
     };
   });
+}
+
+// Loads the anti-abuse numbers (src/lib/settings.ts) from a values file's
+// contents, replacing the row, so the file is the whole truth: a name it
+// leaves out goes back to its default. The log names which numbers the file
+// sets, never their values, so the record can't leak them.
+export async function setAntiAbuse(
+  sql: postgres.Sql,
+  values: unknown,
+  reason: string,
+): Promise<AdminResult> {
+  const d = detail(reason);
+  const parsed = antiAbuseSchema.safeParse(values);
+  if (!parsed.success) {
+    // Names the fields, never what was in them.
+    const problems = parsed.error.issues.map((i) =>
+      i.code === "unrecognized_keys"
+        ? `unknown ${i.keys.length === 1 ? "name" : "names"} ${i.keys.map((k) => k.slice(0, 40)).join(", ")}`
+        : i.path.length > 0
+          ? `${String(i.path[0])} must be a whole number in its range`
+          : "the file must hold one JSON object",
+    );
+    throw new ApiError(
+      400,
+      "invalid_limits",
+      `The values file doesn't fit: ${[...new Set(problems)].join("; ")}.`,
+    );
+  }
+  const names = ANTI_ABUSE_NAMES.filter((n) => parsed.data[n] !== undefined);
+  return sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO settings (key, value) VALUES (${ANTI_ABUSE}, ${tx.json(parsed.data)})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
+    await logAction(tx, {
+      action: "admin.limits.set",
+      botId: null,
+      keyId: null,
+      subject: "limits",
+      ipHash: null,
+      detail: { ...d, set: names.join(",") },
+    });
+    return {
+      changed: true,
+      message: `Loaded ${names.length} anti-abuse number(s); the rest use their defaults.`,
+    };
+  });
+}
+
+export type AntiAbuseRow = {
+  name: AntiAbuseName;
+  value: number;
+  from: "settings" | "default";
+};
+
+// What each anti-abuse number is right now, and where it came from. For
+// moderators only, at the command line.
+export async function showAntiAbuse(
+  sql: postgres.Sql,
+): Promise<AntiAbuseRow[]> {
+  const [row] = await sql<{ value: unknown }[]>`
+    SELECT value FROM settings WHERE key = ${ANTI_ABUSE}`;
+  const now: AntiAbuse = await antiAbuse(sql);
+  const raw =
+    row && row.value !== null && typeof row.value === "object"
+      ? (row.value as Record<string, unknown>)
+      : {};
+  return ANTI_ABUSE_NAMES.map((name) => ({
+    name,
+    value: now[name],
+    // A value in the row that didn't fit fell back to the default.
+    from:
+      Object.hasOwn(raw, name) && raw[name] === now[name]
+        ? "settings"
+        : "default",
+  }));
 }
 
 export type ModeratorEntry = {

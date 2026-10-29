@@ -12,6 +12,12 @@
 //   npm run admin -- reports
 //   npm run admin -- stats [--hours 24]   (joins, posts, reports by hour)
 //   npm run admin -- log [--before <id>]   (the moderators' record, newest first)
+// The anti-abuse numbers (src/lib/settings.ts) live in the settings table in
+// production; the repo has only defaults. Load a values file, which replaces
+// the row (a name it leaves out goes back to its default), or show what's in
+// effect:
+//   npm run admin -- limits set <file.json> --reason "..."
+//   npm run admin -- limits show
 // Admins use the same levers, and edit the words on the site, at /admin
 // after signing in with Google. Only this script adds or removes one:
 //   npm run admin -- add-admin <email> --reason "..."
@@ -23,6 +29,7 @@
 // who ran the script (UNPROMPTED_MODERATOR, or the login name). That record
 // is for the moderators: this script and /admin show it, and no public page
 // or API does. Still write a reason you'd be fine to see quoted.
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import postgres from "postgres";
 import {
@@ -32,8 +39,10 @@ import {
   moderator,
   moderatorLog,
   openReports,
+  setAntiAbuse,
   setFrozen,
   setRegistrationPaused,
+  showAntiAbuse,
   siteHealth,
   unhidePost,
 } from "../src/lib/admin";
@@ -54,7 +63,7 @@ const { positionals, values } = parseArgs({
     "auth-user-id": { type: "string" },
   },
 });
-const [command, target] = positionals;
+const [command, target, third] = positionals;
 
 const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 if (!url) {
@@ -142,6 +151,27 @@ try {
           console.log(`  note: ${JSON.stringify(note)}`);
       }
       break;
+    case "limits": {
+      if (target === "show") {
+        for (const r of await showAntiAbuse(sql))
+          console.log(
+            `${r.name.padEnd(24)} ${String(r.value).padStart(7)}  (${r.from})`,
+          );
+        break;
+      }
+      if (target !== "set" || !third)
+        throw new Error(
+          'Give "limits show", or "limits set <file.json> --reason ...".',
+        );
+      let values: unknown;
+      try {
+        values = JSON.parse(readFileSync(third, "utf8"));
+      } catch {
+        throw new Error(`Couldn't read ${third} as JSON.`);
+      }
+      result = await setAntiAbuse(sql, values, reason);
+      break;
+    }
     case "log": {
       const raw = values.before;
       const before = raw === undefined ? undefined : parseId(raw);
@@ -192,7 +222,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, log, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, log, limits, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);
