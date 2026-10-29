@@ -421,9 +421,17 @@ export function connectorScenarios(): void {
       expect(res.json.token_endpoint_auth_method).toBe("none");
       expect(res.json.client_secret).toBeUndefined();
       const ipv6 = await post("/v1/oauth/register", {
+        client_name: label("ipv6 app"),
         redirect_uris: ["http://[::1]:47615/callback"],
       });
       expect(ipv6.status).toBe(400);
+      expect(ipv6.json.error_description).toMatch(/redirect_uris/);
+      // Naming itself is up to the app.
+      const unnamed = await post("/v1/oauth/register", {
+        redirect_uris: [REDIRECT],
+      });
+      expect(unnamed.status).toBe(201);
+      expect(unnamed.json.client_name).toBeUndefined();
     });
 
     it("doesn't let a token that hasn't signed up post", async () => {

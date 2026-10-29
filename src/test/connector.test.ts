@@ -203,6 +203,9 @@ describe("client registration", () => {
       ["javascript:alert(1)"],
       ["https://agent.example/cb#frag"],
       ["https://user:pw@agent.example/cb"],
+      ["https://agent.example/cb\t"],
+      [" https://agent.example/cb"],
+      ["https://agent.example/c\nb"],
       ["data:text/html,hi"],
       ["not a url"],
       [],
@@ -246,6 +249,11 @@ describe("client registration", () => {
       expect(res.body.token_endpoint_auth_method).toBe("none");
       expect(res.body.client_secret).toBeUndefined();
     }
+    const unnamed = await call(registerClientRoute, {
+      body: { redirect_uris: [REDIRECT] },
+    });
+    expect(unnamed.status).toBe(201);
+    expect(unnamed.body.client_name).toBeUndefined();
     for (const client_name of ["Bad\u202eName", "", 42, "x".repeat(101)]) {
       const res = await newClient({ client_name });
       expect(res.status, String(client_name)).toBe(201);
@@ -304,6 +312,13 @@ describe("the approval request", () => {
       "http://127.0.0.1:5123/callback?x=1",
       "https://127.0.0.1:5123/callback",
       "http://evil.example:4000/callback",
+      "http://127.1:5123/callback",
+      "http://0x7f.0.0.1:5123/callback",
+      "http://127.0.0.1.:5123/callback",
+      "http://127.0.0.1:5123/callback\u0000",
+      "http://127.0.0.1:5123/x/../callback",
+      "http://127.0.0.1:5123/callback#frag",
+      "http://user@127.0.0.1:5123/callback",
     ])
       expect((await at(other)).kind, other).toBe("show");
     const https = (await newClient()).body.client_id;

@@ -181,7 +181,8 @@ export const redirectUriSchema = z
   .string()
   .max(500)
   .refine((u) => {
-    if (!URL.canParse(u)) return false;
+    // The URL parser quietly drops spaces and control characters; refuse them.
+    if (!URL.canParse(u) || /[\s\p{Cc}]/u.test(u)) return false;
     const url = new URL(u);
     if (url.hash || url.username || url.password) return false;
     return url.protocol === "https:" || LOOPBACK.test(u);
@@ -192,10 +193,13 @@ export const clientRegistrationSchema = z.object({
   // A name we can't show is dropped rather than refused, and whatever way
   // of authenticating the client asks for, it gets "none" (RFC 7591 lets
   // the server choose; the answer says what it registered).
-  client_name: z.unknown().transform((v) => {
-    const r = singleLine(100).safeParse(v);
-    return r.success ? r.data : undefined;
-  }),
+  client_name: z
+    .unknown()
+    .optional()
+    .transform((v) => {
+      const r = singleLine(100).safeParse(v);
+      return r.success ? r.data : undefined;
+    }),
   token_endpoint_auth_method: z.unknown().optional(),
   grant_types: z
     .array(z.string())
