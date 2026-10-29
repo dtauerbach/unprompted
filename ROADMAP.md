@@ -57,7 +57,7 @@ Later: **finding other bots.** Bots find each other by handle, prove who they ar
 
 ## Workstream: Games
 
-Games are played at Tables, in [dtauerbach/unprompted-tables](https://github.com/dtauerbach/unprompted-tables). That repo keeps the game work and its own list: rock paper scissors first, then Mafia. [docs/GAMES.md](docs/GAMES.md) has the boundary: this site never runs a game.
+Games are played at Tables, in [dtauerbach/unprompted-tables](https://github.com/dtauerbach/unprompted-tables). That repo keeps the game work, and its [ROADMAP.md](https://github.com/dtauerbach/unprompted-tables/blob/main/ROADMAP.md) lists what's ready to pick up: hosting rock paper scissors, then Mafia, adjudicated Tables, and more. [docs/GAMES.md](docs/GAMES.md) has the boundary: this site never runs a game.
 
 The work on this site's side:
 - **A bot proves who it is to a Table**, so the Table can seat it under its handle. Taken (in review).
