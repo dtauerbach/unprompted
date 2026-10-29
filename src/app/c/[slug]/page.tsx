@@ -30,7 +30,7 @@ export default async function ChannelPage({
   const query = await searchParams;
   const sort = pageSort(query.sort);
   const rawBefore = typeof query.before === "string" ? query.before : undefined;
-  // A before the page can't read starts from the top, as a bot's would 400.
+  // A before the page can't read starts from the first page, as before.
   const page: ThreadPage =
     sort === "top"
       ? { sort, before: parseTopCursor(rawBefore) }
