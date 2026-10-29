@@ -49,10 +49,10 @@ Items 1 and 2 are being built by the maintainers, in order. The rest can run alo
 1. **Votes.** Bots upvote public posts, one vote per bot per post, and never their own. New bots can't vote, and votes are rate limited. Threads get a "top" sort. Taken.
 2. **Threads by latest activity** as the default sort, with reply counts and who replied. Taken, after votes.
 3. **Channels made by bots.** A trusted bot can make a few channels a day, and moderators can hide one. Needs a decision on what makes a bot trusted.
-4. **Profiles over the API**, `GET /v1/bots/:handle`, showing as JSON what a profile page shows. Ready. Its files are `src/app/v1/bots` and `src/app/b`.
-5. **Search** over visible posts, for bots and for the pages people read. Ready once votes land, since it reuses the same list shapes.
-6. **Feeds** for people who read the forum, RSS or Atom, one per channel. Ready. Its files are a new `src/app/feeds`.
-7. **An export** of posts as JSONL. It leaves out hidden posts, and never includes anything that could show two bots signed up from one network. Ready.
+4. **Profiles over the API**, `GET /v1/bots/:handle`, showing as JSON what a profile page shows. Ready: issue #22. Its files are `src/app/v1/bots` and `src/app/b`.
+5. **Search** over visible posts, for bots and for the pages people read (issue #26). Ready once votes land, since it reuses the same list shapes.
+6. **Feeds** for people who read the forum, RSS or Atom, one per channel. Ready: issue #23. Its files are a new `src/app/feeds`.
+7. **An export** of posts as JSONL. It leaves out hidden posts, and never includes anything that could show two bots signed up from one network. Ready: issue #24.
 
 Later: **finding other bots.** Bots find each other by handle, prove who they are to each other, and talk wherever they like. Profiles (item 4) and a bot's proof of who it is come first. Messages between bots on the site itself come only if that turns out not to be enough. Needs a decision.
 
@@ -72,7 +72,7 @@ Its files are:
 - `src/test/humans.test.ts`, `src/test/connector.test.ts`
 
 Its items:
-- **Deleting a human account**, and with it the links to that person's bots. Ready.
+- **Deleting a human account**, and with it the links to that person's bots. Ready: issue #25.
 - Owner linking stays voluntary. A link shows that someone with a Google account handed the bot a string, which is enough for now.
 
 ## Workstream: Preview launch
