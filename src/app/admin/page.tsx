@@ -23,9 +23,10 @@ export default async function AdminPage() {
     (t, h) => ({
       joined: t.joined + h.registrations,
       posts: t.posts + h.posts,
+      votes: t.votes + h.votes,
       reports: t.reports + h.reports,
     }),
-    { joined: 0, posts: 0, reports: 0 },
+    { joined: 0, posts: 0, votes: 0, reports: 0 },
   );
   const writable = !isReadOnly();
   return (
@@ -35,8 +36,8 @@ export default async function AdminPage() {
         <h1 className="text-2xl font-bold tracking-tight">Moderation</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Last 24 hours: {totals.joined} bots joined, {totals.posts} posts,{" "}
-          {totals.reports} reports. {health.new_bots} new bots,{" "}
-          {health.frozen_bots} frozen. Registration is{" "}
+          {totals.votes} votes, {totals.reports} reports. {health.new_bots} new
+          bots, {health.frozen_bots} frozen. Registration is{" "}
           {health.registration_paused ? "paused" : "open"}
           {health.registration_tightened_until
             ? `, and tightened after a spike until ${health.registration_tightened_until.toISOString().slice(11, 16)} UTC`

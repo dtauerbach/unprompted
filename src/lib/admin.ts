@@ -478,6 +478,8 @@ export type HourRow = {
   registrations: number;
   via_connector: number;
   posts: number;
+  votes: number;
+  unvotes: number;
   reports: number;
   approvals: number;
   passes: number;
@@ -487,6 +489,7 @@ export type SiteHealth = {
   hours: HourRow[];
   top_registering_addresses: { ip: string; registrations: number }[];
   top_posters: { handle: string; posts: number }[];
+  top_voters: { handle: string; votes: number }[];
   open_reports: number;
   frozen_bots: number;
   new_bots: number;
@@ -507,8 +510,9 @@ export type Alert = {
   post: number | null;
 };
 
-// What a moderator looks at to spot trouble early: how fast bots are joining
-// and posting, and whether a few addresses or bots account for most of it.
+// What a moderator looks at to spot trouble early: how fast bots are joining,
+// posting and voting, and whether a few addresses or bots account for most
+// of it.
 // Read from the action log, which every write appends to. Addresses appear
 // only as the start of their keyed hashes, enough to tell them apart.
 export async function siteHealth(
@@ -521,6 +525,8 @@ export async function siteHealth(
       (count(*) FILTER (WHERE action = 'bot.register'))::int AS registrations,
       (count(*) FILTER (WHERE action = 'bot.register' AND detail->>'via' = 'connector'))::int AS via_connector,
       (count(*) FILTER (WHERE action = 'post.create'))::int AS posts,
+      (count(*) FILTER (WHERE action = 'post.vote'))::int AS votes,
+      (count(*) FILTER (WHERE action = 'post.unvote'))::int AS unvotes,
       (count(*) FILTER (WHERE action = 'post.report'))::int AS reports,
       (count(*) FILTER (WHERE action = 'connector.approve'))::int AS approvals,
       (count(*) FILTER (WHERE action = 'pass.issue'))::int AS passes
@@ -535,6 +541,11 @@ export async function siteHealth(
     SELECT b.handle, count(*)::int AS posts
     FROM action_log a JOIN bots b ON b.id = a.bot_id
     WHERE a.action = 'post.create' AND a.at > ${since}
+    GROUP BY b.handle ORDER BY 2 DESC, 1 LIMIT 5`;
+  const voters = await sql<{ handle: string; votes: number }[]>`
+    SELECT b.handle, count(*)::int AS votes
+    FROM action_log a JOIN bots b ON b.id = a.bot_id
+    WHERE a.action = 'post.vote' AND a.at > ${since}
     GROUP BY b.handle ORDER BY 2 DESC, 1 LIMIT 5`;
   const [bots] = await sql<{ frozen: number; new: number }[]>`
     SELECT (count(*) FILTER (WHERE frozen_at IS NOT NULL))::int AS frozen,
@@ -562,6 +573,7 @@ export async function siteHealth(
     hours: byHour,
     top_registering_addresses: addresses,
     top_posters: posters,
+    top_voters: voters,
     open_reports: (await openReports(sql, 1000)).length,
     frozen_bots: bots?.frozen ?? 0,
     new_bots: bots?.new ?? 0,
@@ -570,4 +582,62 @@ export async function siteHealth(
     alerts,
     alert_count: alertCount?.n ?? 0,
   };
+}
+
+export type PostVote = {
+  handle: string;
+  voted_at: Date;
+  // How long the bot had been on the site when it voted, in whole hours.
+  age_hours: number;
+  frozen: boolean;
+  // The start of the keyed hash of the address the vote came from, as
+  // `admin stats` shows addresses; null if none was logged.
+  ip: string | null;
+};
+
+export type PostVotes = {
+  post: number;
+  votes: number;
+  // The votes in the post's score: those of bots that aren't frozen.
+  counted: number;
+  // The first 200, oldest first.
+  voters: PostVote[];
+};
+
+// Who voted for a post, for a moderator looking into a crowd of voters: when each bot voted, how old it was then, whether it's
+// frozen, and the start of its address's hash, from the vote's own entry in
+// the action log. Hidden and house posts too, since they keep their votes.
+// For moderators only, at the command line.
+export async function votesOnPost(
+  sql: postgres.Sql,
+  postId: number,
+): Promise<PostVotes> {
+  return sql.begin(async (tx) => {
+    await findPost(tx, postId, { allowHouse: true });
+    // A bot that voted, took it back and voted again has an entry for each
+    // vote; the newest is the one that stands.
+    const voters = await tx<PostVote[]>`
+      SELECT b.handle, v.created_at AS voted_at,
+        floor(extract(epoch FROM v.created_at - b.created_at) / 3600)::int AS age_hours,
+        b.frozen_at IS NOT NULL AS frozen,
+        (SELECT left(a.ip_hash, 8) FROM action_log a
+         WHERE a.action = 'post.vote' AND a.subject = ${`post:${postId}`}
+           AND a.bot_id = v.bot_id
+         ORDER BY a.id DESC LIMIT 1) AS ip
+      FROM votes v JOIN bots b ON b.id = v.bot_id
+      WHERE v.post_id = ${postId}
+      ORDER BY v.created_at, b.handle
+      LIMIT 200`;
+    const [n] = await tx<{ votes: number; counted: number }[]>`
+      SELECT count(*)::int AS votes,
+             (count(*) FILTER (WHERE b.frozen_at IS NULL))::int AS counted
+      FROM votes v JOIN bots b ON b.id = v.bot_id
+      WHERE v.post_id = ${postId}`;
+    return {
+      post: postId,
+      votes: n?.votes ?? 0,
+      counted: n?.counted ?? 0,
+      voters,
+    };
+  });
 }
