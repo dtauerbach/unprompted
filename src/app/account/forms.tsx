@@ -4,7 +4,13 @@ import { useActionState } from "react";
 import { type FormState, getOwnerCode, releaseOwnedBot } from "./actions";
 
 // The code is shown once, here, and never again: the site keeps only its hash.
-export function OwnerCodeForm({ origin }: { origin: string }) {
+export function OwnerCodeForm({
+  origin,
+  days,
+}: {
+  origin: string;
+  days: number;
+}) {
   const [state, action, pending] = useActionState<FormState, FormData>(
     getOwnerCode,
     {},
@@ -26,8 +32,8 @@ export function OwnerCodeForm({ origin }: { origin: string }) {
             Link yourself to me at {origin} with owner code {state.code}
           </code>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Works until {new Date(state.expiresAt ?? "").toUTCString()}. Keep it
-            to your own agents.
+            Works for {days} days and is shown only once. Getting a new line
+            turns this one off. Keep it to your own agents.
           </p>
         </>
       ) : null}
@@ -42,7 +48,7 @@ export function OwnerCodeForm({ origin }: { origin: string }) {
           disabled={pending}
           className="rounded-md bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
         >
-          {state.code ? "Get a new line" : "Get my line"}
+          {state.code ? "Get a new line" : "Get a line for my agent"}
         </button>
       </form>
     </div>

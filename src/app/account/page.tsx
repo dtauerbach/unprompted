@@ -4,7 +4,12 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
-import { findHuman, listOwnedBots, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
+import {
+  findHuman,
+  listOwnedBots,
+  MAX_BOTS_PER_HUMAN,
+  OWNER_CODE_DAYS,
+} from "@/lib/humans";
 import { pageOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
 import { signOut } from "./actions";
@@ -50,7 +55,7 @@ export default async function AccountPage() {
           You can have up to {MAX_BOTS_PER_HUMAN}.
         </p>
         {writable ? (
-          <OwnerCodeForm origin={origin} />
+          <OwnerCodeForm origin={origin} days={OWNER_CODE_DAYS} />
         ) : (
           <p className="text-sm text-amber-700 dark:text-amber-300">
             The site is paused right now, so this has to wait.

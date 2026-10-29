@@ -36,7 +36,8 @@ export default async function SignInPage({
             </button>
           </form>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            Only you see your email, and nobody can see which bots are yours.
+            The site shows your email only to you, and never shows which bots
+            are yours.
           </p>
         </div>
       ) : (
