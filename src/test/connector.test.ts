@@ -203,6 +203,9 @@ describe("client registration", () => {
       ["javascript:alert(1)"],
       ["https://agent.example/cb#frag"],
       ["https://user:pw@agent.example/cb"],
+      ["https://agent.example/cb\t"],
+      [" https://agent.example/cb"],
+      ["https://agent.example/c\nb"],
       ["data:text/html,hi"],
       ["not a url"],
       [],
@@ -246,6 +249,11 @@ describe("client registration", () => {
       expect(res.body.token_endpoint_auth_method).toBe("none");
       expect(res.body.client_secret).toBeUndefined();
     }
+    const unnamed = await call(registerClientRoute, {
+      body: { redirect_uris: [REDIRECT] },
+    });
+    expect(unnamed.status).toBe(201);
+    expect(unnamed.body.client_name).toBeUndefined();
     for (const client_name of ["Bad\u202eName", "", 42, "x".repeat(101)]) {
       const res = await newClient({ client_name });
       expect(res.status, String(client_name)).toBe(201);
@@ -304,6 +312,13 @@ describe("the approval request", () => {
       "http://127.0.0.1:5123/callback?x=1",
       "https://127.0.0.1:5123/callback",
       "http://evil.example:4000/callback",
+      "http://127.1:5123/callback",
+      "http://0x7f.0.0.1:5123/callback",
+      "http://127.0.0.1.:5123/callback",
+      "http://127.0.0.1:5123/callback\u0000",
+      "http://127.0.0.1:5123/x/../callback",
+      "http://127.0.0.1:5123/callback#frag",
+      "http://user@127.0.0.1:5123/callback",
     ])
       expect((await at(other)).kind, other).toBe("show");
     const https = (await newClient()).body.client_id;
@@ -591,12 +606,22 @@ describe("the code exchange", () => {
 
 describe("the MCP endpoint", () => {
   it("tells a caller with no token where to get one", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const res = await mcp(undefined, "tools/list");
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe("missing_key");
     expect(res.headers.get("www-authenticate")).toBe(
       'Bearer resource_metadata="https://unprompted.test/.well-known/oauth-protected-resource/mcp"',
     );
+    // Every client starts this way, so it isn't logged as a refusal. A
+    // token that is nobody's is.
+    expect(warn).not.toHaveBeenCalled();
+    await mcp("unp_nothing", "tools/list");
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+      status: 401,
+      code: "invalid_key",
+    });
+    warn.mockRestore();
   });
 
   it("refuses a token that is nobody's", async () => {
@@ -974,6 +999,7 @@ describe("the approval page's actions", () => {
   });
 
   it("refuse a bad client without sending anyone anywhere", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const a = await import("@/app/oauth/authorize/actions");
     const r = await a.allowConnector(
       {},
@@ -988,6 +1014,22 @@ describe("the approval page's actions", () => {
     );
     expect(d.error).toBeTruthy();
     expect(nav.redirects).toEqual([]);
+    // Both refusals leave a line naming the action, not the address tried.
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.map((l) => JSON.parse(l))).toEqual([
+      expect.objectContaining({
+        method: "ACTION",
+        path: "allowConnector",
+        code: "invalid",
+      }),
+      expect.objectContaining({
+        method: "ACTION",
+        path: "denyConnector",
+        code: "invalid",
+      }),
+    ]);
+    expect(lines.join("\n")).not.toContain("evil.example");
+    warn.mockRestore();
   });
 
   it("allow nothing in read-only mode", async () => {
