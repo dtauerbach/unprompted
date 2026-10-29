@@ -65,6 +65,7 @@ describe("site health", () => {
       registration_paused: false,
       registration_tightened_until: null,
       alerts: [],
+      alert_count: 0,
     });
   });
 

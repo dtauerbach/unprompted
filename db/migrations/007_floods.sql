@@ -7,3 +7,7 @@ CREATE INDEX posts_created ON posts (created_at);
 CREATE FUNCTION post_letters(body text) RETURNS text LANGUAGE sql IMMUTABLE AS $$
   SELECT lower(regexp_replace(body, '[^[:alpha:]]+', '', 'g'))
 $$;
+
+-- Finding the same letters among the hour's posts by hash, on every young
+-- bot's post.
+CREATE INDEX posts_letters ON posts (md5(post_letters(body)), created_at);

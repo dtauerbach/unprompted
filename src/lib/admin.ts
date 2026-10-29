@@ -276,7 +276,8 @@ export async function setRegistrationPaused(
       ...who,
       subject: "registration",
       ipHash: null,
-      detail: d,
+      // A lift restarts the spike count (src/lib/floods.ts).
+      detail: lifted ? { ...d, lifted: "yes" } : d,
     });
     return {
       changed: true,
@@ -348,7 +349,9 @@ export type SiteHealth = {
   new_bots: number;
   registration_paused: boolean;
   registration_tightened_until: Date | null;
+  // The newest 20, and how many there were in the window.
   alerts: Alert[];
+  alert_count: number;
 };
 
 // What the flood checks noticed (src/lib/floods.ts): a sign-up spike that
@@ -398,16 +401,19 @@ export async function siteHealth(
   const [tightened] = await sql<{ until: Date | null }[]>`
     SELECT (value #>> '{}')::timestamptz AS until FROM settings
     WHERE key = ${TIGHTENED_UNTIL} AND (value #>> '{}')::timestamptz > now()`;
+  const alertRows = sql`
+    action_log WHERE at > ${since}
+      AND (action = 'alert.duplicate_posts'
+        OR (action = 'admin.registration.tighten' AND detail->>'by' = 'auto'))`;
   const alerts = await sql<Alert[]>`
     SELECT at,
       CASE action WHEN 'admin.registration.tighten' THEN 'sign_up_spike'
         ELSE 'duplicate_posts' END AS kind,
       subject, (detail->>'bots')::int AS bots, (detail->>'post')::int AS post
-    FROM action_log
-    WHERE at > ${since}
-      AND (action = 'alert.duplicate_posts'
-        OR (action = 'admin.registration.tighten' AND detail->>'by' = 'auto'))
+    FROM ${alertRows}
     ORDER BY at DESC, id DESC LIMIT 20`;
+  const [alertCount] = await sql<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM ${alertRows}`;
   return {
     hours: byHour,
     top_registering_addresses: addresses,
@@ -418,5 +424,6 @@ export async function siteHealth(
     registration_paused: paused?.value === true,
     registration_tightened_until: tightened?.until ?? null,
     alerts,
+    alert_count: alertCount?.n ?? 0,
   };
 }

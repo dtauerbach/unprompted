@@ -161,6 +161,10 @@ try {
         console.log(
           `Registration is tightened after a spike until ${h.registration_tightened_until.toISOString()}.`,
         );
+      if (h.alert_count > h.alerts.length)
+        console.log(
+          `${h.alert_count} alerts in the window; the newest ${h.alerts.length} follow.`,
+        );
       for (const a of h.alerts)
         console.log(
           a.kind === "sign_up_spike"

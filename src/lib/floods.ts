@@ -17,7 +17,8 @@ export const SPIKE = {
   signUps: Math.ceil(LIMITS.registerGlobal.limit / 2),
   hours: 1,
 };
-export const DUPLICATES = { minutes: 60, bots: 3, minLetters: 20 };
+// 30 letters, so a short greeting copied from /skill.md's example isn't one.
+export const DUPLICATES = { minutes: 60, bots: 3, minLetters: 30 };
 
 export const TIGHTENED_UNTIL = "registration_tightened_until";
 
@@ -34,15 +35,18 @@ function alertLine(fields: Record<string, string | number>) {
 
 // In an accepted registration's transaction, after it is logged.
 export async function noticeSignUpSpike(tx: Tx): Promise<void> {
-  // Counts from the last time registration was paused, reopened or
-  // tightened, if that's sooner, so lifting a tightening isn't undone by the
-  // sign-ups that caused it.
+  // Counts from the last tightening, or a moderator lifting one, if that's
+  // sooner, so the sign-ups that caused a tightening can't renew it. Both
+  // lookups use the (action, at) index: this runs on every registration,
+  // while it holds the site-wide registration counter.
   const [n] = await tx<{ count: number }[]>`
     SELECT count(*)::int AS count FROM action_log
     WHERE action = 'bot.register'
       AND at > greatest(
         now() - make_interval(mins => ${SPIKE.minutes}),
-        (SELECT max(at) FROM action_log WHERE action LIKE 'admin.registration.%'))`;
+        (SELECT max(at) FROM action_log
+         WHERE action IN ('admin.registration.tighten', 'admin.registration.resume')
+           AND (action = 'admin.registration.tighten' OR detail->>'lifted' = 'yes')))`;
   const count = n?.count ?? 0;
   if (count < SPIKE.signUps) return;
   // Only a tightening that has run out is renewed, so two sign-ups at once
@@ -61,7 +65,7 @@ export async function noticeSignUpSpike(tx: Tx): Promise<void> {
     subject: "registration",
     ipHash: null,
     detail: {
-      reason: `Automatic: ${count} new bots in ${SPIKE.minutes} minutes, so for the next hour at most ${LIMITS.registerTightened.limit} new bots an hour can join.`,
+      reason: `Automatic: ${count} new bots in ${SPIKE.minutes} minutes, so for the next hour registration is capped at ${LIMITS.registerTightened.limit} new bots an hour.`,
       by: "auto",
     },
   });
@@ -79,10 +83,13 @@ export async function noticeDuplicatePosts(
     SELECT post_letters(body) AS letters FROM posts WHERE id = ${postId}`;
   const letters = mine?.letters ?? "";
   if (letters.length < DUPLICATES.minLetters) return;
+  // By the indexed hash of the letters, so this doesn't re-read every post of
+  // the hour; it runs on most posts at launch, when nearly every bot is young.
   const [n] = await tx<{ bots: number }[]>`
     SELECT count(DISTINCT p.bot_id)::int AS bots
     FROM posts p JOIN bots b ON b.id = p.bot_id
-    WHERE p.created_at > now() - make_interval(mins => ${DUPLICATES.minutes})
+    WHERE md5(post_letters(p.body)) = md5(${letters})
+      AND p.created_at > now() - make_interval(mins => ${DUPLICATES.minutes})
       AND bot_is_new(b) AND post_letters(p.body) = ${letters}`;
   const bots = n?.bots ?? 0;
   if (bots < DUPLICATES.bots) return;

@@ -55,6 +55,12 @@ export default async function AdminPage() {
 
       <section className="space-y-3">
         <h2 className="text-xl font-semibold">Alerts</h2>
+        {health.alert_count > health.alerts.length && (
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {health.alert_count} in the last 24 hours; the newest{" "}
+            {health.alerts.length} are below.
+          </p>
+        )}
         {health.alerts.length === 0 ? (
           <p className="text-neutral-600 dark:text-neutral-400">None.</p>
         ) : (

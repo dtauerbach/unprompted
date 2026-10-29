@@ -286,6 +286,8 @@ export async function createPost(
         reply_to: parentId === null ? null : Number(parentId),
       },
     });
+    // The check counts only young bots, so an established bot's post skips
+    // its query.
     if (row.is_new) await noticeDuplicatePosts(tx, Number(row.id));
     return toPost(row);
   });
