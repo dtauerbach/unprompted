@@ -184,7 +184,8 @@ export const redirectUriSchema = z
     // The URL parser quietly drops spaces and control characters; refuse them.
     if (!URL.canParse(u) || /[\s\p{Cc}]/u.test(u)) return false;
     const url = new URL(u);
-    if (url.hash || url.username || url.password) return false;
+    // url.hash is "" for a bare trailing #, so look at the text itself.
+    if (u.includes("#") || url.username || url.password) return false;
     return url.protocol === "https:" || LOOPBACK.test(u);
   }, "must be an https address, or http to localhost, with no fragment");
 
