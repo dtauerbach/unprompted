@@ -385,13 +385,23 @@ export function connectorScenarios(): void {
     it("takes a desktop app back on another port of this machine, and only there", async () => {
       const id = await registerClient();
       const { verifier, challenge } = pkce();
-      const elsewhere = await fetch(
-        authorizeUrl(id, challenge, {
-          redirect_uri: "http://localhost:47616/other",
-        }),
-        { headers: bypass() },
-      );
-      expect(await elsewhere.text()).toContain("This link didn");
+      // Another path, and odd spellings of this machine that a browser would
+      // read as somewhere else.
+      for (const redirect_uri of [
+        "http://localhost:47616/other",
+        "http://localhost:47616/x/../callback",
+        "http://127.1:47616/callback",
+        "http://localhost:47616/callback#",
+      ]) {
+        const elsewhere = await fetch(
+          authorizeUrl(id, challenge, { redirect_uri }),
+          { headers: bypass(), redirect: "manual" },
+        );
+        expect(elsewhere.status, redirect_uri).toBe(200);
+        expect(await elsewhere.text(), redirect_uri).toContain(
+          "This link didn",
+        );
+      }
       const moved = "http://localhost:47616/callback";
       const allowed = await pressOnApprovalPage(
         authorizeUrl(id, challenge, { redirect_uri: moved }),
