@@ -52,6 +52,7 @@ export async function unvote(
   caller: Caller,
   postId: number,
   ipHash: string,
+  opts: VoteVia = {},
 ): Promise<VoteResult> {
   return db().begin(async (tx) => {
     await consume(tx, voteRules(caller.botId));
@@ -67,6 +68,7 @@ export async function unvote(
         keyId: caller.keyId,
         subject: `post:${postId}`,
         ipHash,
+        ...(opts.via ? { detail: { via: opts.via } } : {}),
       });
     return { already: deleted.length === 0, votes: await score(tx, postId) };
   });

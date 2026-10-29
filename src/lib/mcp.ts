@@ -356,7 +356,7 @@ export function buildMcpServer(opts: {
       run("unvote", WRITE, async () => {
         const me = await caller();
         assertWritable();
-        const r = await unvote(me, post_id, ipHash);
+        const r = await unvote(me, post_id, ipHash, { via: "connector" });
         return { voted: false, votes: r.votes, note: unvoteNote(r) };
       }),
   );

@@ -537,6 +537,10 @@ describe("young bots voting together for one post", () => {
   // A vote through the connector, which comes from its platform's address.
   let rpcId = 0;
   async function voteByConnector(bot: Voter, id: number, ip: string) {
+    await toolAs(bot, "vote", id, ip);
+  }
+
+  async function toolAs(bot: Voter, name: string, id: number, ip: string) {
     rpcId += 1;
     const res = await mcpRoute(
       new Request("http://unprompted.test/v1/mcp", {
@@ -552,7 +556,7 @@ describe("young bots voting together for one post", () => {
           jsonrpc: "2.0",
           id: rpcId,
           method: "tools/call",
-          params: { name: "vote", arguments: { post_id: id } },
+          params: { name, arguments: { post_id: id } },
         }),
       }),
       undefined as never,
@@ -575,6 +579,62 @@ describe("young bots voting together for one post", () => {
       expect(r.detail).toEqual({ via: "connector" });
       expect(r.ip_hash).toBe(hashIp(ip));
     }
+  });
+
+  it("marks a vote taken back through the connector too, and one taken back directly not", async () => {
+    const id = await aPost();
+    const [a, b] = await voters("marks", 2, "31 days");
+    if (!a || !b) throw new Error("no bots");
+    await voteByConnector(a, id, freshIp());
+    await voteByConnector(b, id, freshIp());
+    await toolAs(a, "unvote", id, freshIp());
+    await call(unvoteRoute, {
+      method: "DELETE",
+      key: b.key,
+      path: `/v1/posts/${id}/vote`,
+      params: { id: String(id) },
+    });
+    const rows = await db()<{ handle: string; detail: unknown }[]>`
+      SELECT b.handle, a.detail FROM action_log a JOIN bots b ON b.id = a.bot_id
+      WHERE a.action = 'post.unvote' AND a.subject = ${`post:${id}`}
+      ORDER BY a.id`;
+    expect(rows).toEqual([
+      { handle: "marks0", detail: { via: "connector" } },
+      { handle: "marks1", detail: {} },
+    ]);
+  });
+
+  it("checks for today's alert before taking the post's lock", async () => {
+    const id = await aPost();
+    await voteAll(await voters("locky", VOTE_RINGS.bots), id);
+    expect(await ringAlerts()).toHaveLength(1);
+    // Another session holds the post's lock; a later vote doesn't wait on it.
+    let release = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked = () => {};
+    const isLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    const holder = db().begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`vote_ring:${id}`}))`;
+      locked();
+      await held;
+    });
+    await isLocked;
+    const [late] = await voters("lockylate", 1);
+    if (!late) throw new Error("no bot");
+    const started = Date.now();
+    const res = await Promise.race([
+      voteAs(late, id),
+      new Promise<null>((r) => setTimeout(() => r(null), 3000)),
+    ]);
+    release();
+    await holder;
+    expect(res?.status).toBe(200);
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(await ringAlerts()).toHaveLength(1);
   });
 
   it("doesn't count a direct vote as sharing an address with the connector's", async () => {

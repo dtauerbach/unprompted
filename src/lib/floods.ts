@@ -167,14 +167,20 @@ export async function noticeVoteRing(
       OR v.ip_hash IN (SELECT ip_hash FROM shared)`;
   const bots = n?.bots ?? 0;
   if (bots < a.vote_ring_bots) return;
+  const seen = async () =>
+    (
+      await tx`
+        SELECT 1 FROM action_log
+        WHERE action = 'alert.vote_ring' AND subject = ${subject}
+          AND at > now() - interval '1 day'`
+    ).length > 0;
+  // Once a post has alerted today, its later votes stop here without the
+  // lock, so they don't queue behind each other on the busiest post.
+  if (await seen()) return;
   // Votes aren't written one at a time, as posts are, so two that reach the
-  // threshold together take turns here and log once.
+  // threshold together take turns here, check again, and log once.
   await tx`SELECT pg_advisory_xact_lock(hashtext(${`vote_ring:${postId}`}))`;
-  const [seen] = await tx`
-    SELECT 1 FROM action_log
-    WHERE action = 'alert.vote_ring' AND subject = ${subject}
-      AND at > now() - interval '1 day'`;
-  if (seen) return;
+  if (await seen()) return;
   await logAction(tx, {
     action: "alert.vote_ring",
     botId: null,
