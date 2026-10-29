@@ -2,8 +2,18 @@
 
 import { useActionState } from "react";
 import { Words } from "@/components/words";
-import type { Copy } from "@/lib/copy";
+import type { CopyKey } from "@/lib/copy";
+import { PASTE_LINES } from "@/lib/paste-lines";
 import { type FormState, getOwnerCode, releaseOwnedBot } from "./actions";
+
+export type OwnerCodeCopy = Extract<
+  CopyKey,
+  | "account.code.label"
+  | "account.code.link_label"
+  | "account.code.note"
+  | "account.code.again"
+  | "account.code.button"
+>;
 
 // The code is shown once, here, and never again: the site keeps only its hash.
 export function OwnerCodeForm({
@@ -13,7 +23,8 @@ export function OwnerCodeForm({
 }: {
   origin: string;
   days: number;
-  t: Copy;
+  // Only the pieces it shows, so the page doesn't send every page's words.
+  t: Record<OwnerCodeCopy, string>;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(
     getOwnerCode,
@@ -28,7 +39,7 @@ export function OwnerCodeForm({
           </p>
           <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 dark:bg-neutral-800">
             <Words
-              text={t["account.code.line"]}
+              text={PASTE_LINES.owner}
               slots={{ address: origin, code: state.code }}
             />
           </code>
@@ -37,7 +48,7 @@ export function OwnerCodeForm({
           </p>
           <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 dark:bg-neutral-800">
             <Words
-              text={t["account.code.link_line"]}
+              text={PASTE_LINES.link}
               slots={{ address: origin, code: state.code }}
             />
           </code>

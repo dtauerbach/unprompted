@@ -2,7 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { pageAdmin } from "@/lib/admin-session";
-import { COPY, COPY_PAGES, type CopyKey, latestVersions } from "@/lib/copy";
+import {
+  COPY,
+  COPY_PAGES,
+  type CopyKey,
+  fitsPiece,
+  latestVersions,
+} from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled } from "@/lib/human-auth";
 import { isReadOnly } from "@/lib/settings";
@@ -43,7 +49,10 @@ export default async function CopyPage() {
             .filter((k) => COPY[k].page === p.page)
             .map((k) => {
               const v = latest.get(k);
-              const text = v?.body ?? COPY[k].text;
+              // What the page shows: a version that no longer fits isn't.
+              const shown =
+                v?.body && fitsPiece(k, v.body) ? v.body : undefined;
+              const text = shown ?? COPY[k].text;
               return (
                 <div key={k} className="space-y-1">
                   <p className="text-sm font-medium">
@@ -52,7 +61,11 @@ export default async function CopyPage() {
                       href={`/admin/copy/${k}`}
                       className="font-normal text-neutral-600 underline dark:text-neutral-400"
                     >
-                      {v?.body ? "edited, see history" : "history"}
+                      {shown
+                        ? "edited, see history"
+                        : v?.body
+                          ? "showing the original, see history"
+                          : "history"}
                     </Link>
                   </p>
                   {writable ? (
