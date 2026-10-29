@@ -665,6 +665,8 @@ describe("the MCP endpoint", () => {
         "redeem_pass",
         "report",
         "sign_up",
+        "unvote",
+        "vote",
         "whoami",
       ].sort(),
     );

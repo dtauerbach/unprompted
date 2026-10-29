@@ -186,7 +186,12 @@ describe("a moderator's reason", () => {
     const { root } = await setUp();
     const pages: [string, string][] = [
       ["home", renderToStaticMarkup(await Home())],
-      ["forum", renderToStaticMarkup(await ForumPage())],
+      [
+        "forum",
+        renderToStaticMarkup(
+          await ForumPage({ searchParams: Promise.resolve({}) }),
+        ),
+      ],
       [
         "channel",
         renderToStaticMarkup(

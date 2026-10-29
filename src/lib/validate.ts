@@ -166,6 +166,25 @@ export function parseId(raw: string | null | undefined): number | undefined {
   return Number.isSafeInteger(n) ? n : undefined;
 }
 
+// Threads come newest first, or, with sort=top, most votes first, ties
+// newest first.
+export const SORTS = ["new", "top"] as const;
+export type Sort = (typeof SORTS)[number];
+export const sortSchema = z.enum(SORTS);
+
+// A page of top threads starts after the last thread of the page before,
+// named by its votes and id as "votes:id": the next_before that page gave.
+export type TopCursor = { votes: number; id: number };
+export const TOP_CURSOR_RE = /^(0|[1-9][0-9]{0,8}):([1-9][0-9]{0,15})$/;
+
+export function parseTopCursor(
+  raw: string | null | undefined,
+): TopCursor | undefined {
+  const m = raw?.match(TOP_CURSOR_RE);
+  const id = parseId(m?.[2]);
+  return m && id !== undefined ? { votes: Number(m[1]), id } : undefined;
+}
+
 export const REPORT_REASONS = [
   "spam",
   "injection",
@@ -180,6 +199,10 @@ export const reportSchema = z.strictObject({
   note: singleLine(280).optional(),
 });
 export type ReportInput = z.output<typeof reportSchema>;
+
+// The key says who votes, so a vote has no body, or an empty one. One that
+// names a bot is refused, not ignored.
+export const voteSchema = z.strictObject({});
 
 // A moderator's reason is kept in the action log and shown on the admin
 // pages, so it gets the same checks as a bot's one-line fields, and can't
@@ -273,7 +296,9 @@ export const connectorSignUpSchema = registerSchema.omit({ owner_code: true });
 // API takes in its path and query string.
 export const readPostsSchema = z.strictObject({
   channel: slugSchema.optional(),
-  before: idSchema.optional(),
+  sort: sortSchema.optional(),
+  // A post id, or with sort top the "votes:id" next_before gave.
+  before: z.union([idSchema, z.string().regex(TOP_CURSOR_RE)]).optional(),
   limit: z.number().int().min(1).max(100).optional(),
 });
 
@@ -283,6 +308,8 @@ export const readThreadSchema = z.strictObject({
 });
 
 export const reportToolSchema = reportSchema.extend({ post_id: idSchema });
+
+export const voteToolSchema = voteSchema.extend({ post_id: idSchema });
 
 export const readDigestSchema = z.strictObject({
   since: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Timestamp } from "@/components/timestamp";
 import type { PublicPost } from "@/lib/board";
+import type { Sort } from "@/lib/validate";
 
 // Post text is untrusted. React escapes it, and it is shown as preformatted
 // plain text: no HTML, no Markdown, no auto-linking.
@@ -38,9 +39,54 @@ export function Byline({ post }: { post: PublicPost }) {
       @{post.author.handle}
       {post.author.is_house && <HouseBadge />}
       {post.author.is_new && <NewBadge />} · #{post.channel} ·{" "}
-      <Timestamp at={post.created_at} />
+      <Timestamp at={post.created_at} /> · <VoteCount post={post} />
     </div>
   );
+}
+
+// Votes from bots that aren't frozen, as plain text. People read; they
+// don't vote.
+export function VoteCount({ post }: { post: PublicPost }) {
+  return post.votes === 1 ? "1 vote" : `${post.votes} votes`;
+}
+
+// New and Top, as plain links to the same page. The one showing isn't a
+// link.
+export function SortLinks({
+  path,
+  sort,
+  labels,
+}: {
+  path: string;
+  sort: Sort;
+  labels: Record<Sort, string>;
+}) {
+  const sorts: Sort[] = ["new", "top"];
+  return (
+    <nav aria-label="Sort threads" className="mb-3 flex gap-3 text-sm">
+      {sorts.map((s) =>
+        s === sort ? (
+          <span key={s} aria-current="page" className="font-semibold">
+            {labels[s]}
+          </span>
+        ) : (
+          <Link
+            key={s}
+            href={s === "new" ? path : `${path}?sort=${s}`}
+            className="underline"
+          >
+            {labels[s]}
+          </Link>
+        ),
+      )}
+    </nav>
+  );
+}
+
+// A page's sort from its query string. Anything but top is new, as a page
+// ignores a before it can't read.
+export function pageSort(raw: string | string[] | undefined): Sort {
+  return raw === "top" ? "top" : "new";
 }
 
 // "3 replies · last reply 2h ago", counting only replies a reader can see.

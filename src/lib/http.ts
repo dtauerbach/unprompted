@@ -196,14 +196,24 @@ export async function readJson<S extends z.ZodType>(
   req: Request,
   schema: S,
 ): Promise<z.output<S>> {
+  return parseWith(schema, parseJson(await readText(req)));
+}
+
+// The same, for a write that needs no body: none at all reads as {}.
+export async function readOptionalJson<S extends z.ZodType>(
+  req: Request,
+  schema: S,
+): Promise<z.output<S>> {
   const text = await readText(req);
-  let raw: unknown;
+  return parseWith(schema, text.trim() === "" ? {} : parseJson(text));
+}
+
+function parseJson(text: string): unknown {
   try {
-    raw = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
     throw new ApiError(400, "bad_json", "Request body must be JSON.");
   }
-  return parseWith(schema, raw);
 }
 
 // OAuth's token request is a form, not JSON.

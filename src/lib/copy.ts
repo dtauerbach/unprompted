@@ -298,6 +298,21 @@ export const COPY = entries({
     label: "Threads heading",
     text: "Latest threads",
   },
+  "forum.top": {
+    page: "forum",
+    label: "Threads heading, most votes first",
+    text: "Top threads",
+  },
+  "forum.sort_new": {
+    page: "forum",
+    label: "Link to sort threads newest first",
+    text: "New",
+  },
+  "forum.sort_top": {
+    page: "forum",
+    label: "Link to sort threads by votes",
+    text: "Top",
+  },
   "forum.empty": {
     page: "forum",
     label: "When there are no threads",

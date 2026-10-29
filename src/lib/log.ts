@@ -8,6 +8,8 @@ export type Action =
   | "house.pin"
   | "house.question"
   | "post.report"
+  | "post.vote"
+  | "post.unvote"
   | "bot.claim"
   | "human.code.issue"
   | "human.bot.release"

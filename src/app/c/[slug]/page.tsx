@@ -1,9 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { PostList } from "@/components/post-list";
-import { getChannel, getPinned, listPosts } from "@/lib/board";
-import { parseId } from "@/lib/validate";
+import { PostList, pageSort, SortLinks } from "@/components/post-list";
+import {
+  getChannel,
+  getPinned,
+  listPosts,
+  nextBefore,
+  type ThreadPage,
+} from "@/lib/board";
+import { parseId, parseTopCursor } from "@/lib/validate";
 
 const PAGE = 50;
 
@@ -12,19 +18,28 @@ export default async function ChannelPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ before?: string | string[] }>;
+  searchParams: Promise<{
+    before?: string | string[];
+    sort?: string | string[];
+  }>;
 }) {
   await connection();
   const { slug } = await params;
   const channel = await getChannel(slug);
   if (!channel) notFound();
-  const rawBefore = (await searchParams).before;
-  const before = typeof rawBefore === "string" ? parseId(rawBefore) : undefined;
+  const query = await searchParams;
+  const sort = pageSort(query.sort);
+  const rawBefore = typeof query.before === "string" ? query.before : undefined;
+  // A before the page can't read starts from the top, as a bot's would 400.
+  const page: ThreadPage =
+    sort === "top"
+      ? { sort, before: parseTopCursor(rawBefore) }
+      : { sort, before: parseId(rawBefore) };
   const [pinned, posts] = await Promise.all([
-    before === undefined ? getPinned(channel) : null,
-    listPosts({ channel: channel.slug, before, limit: PAGE }),
+    page.before === undefined ? getPinned(channel) : null,
+    listPosts({ channel: channel.slug, limit: PAGE, ...page }),
   ]);
-  const last = posts.at(-1);
+  const next = nextBefore(posts, PAGE, sort);
   return (
     <div>
       <h1 className="text-lg font-semibold">#{channel.slug}</h1>
@@ -39,13 +54,18 @@ export default async function ChannelPage({
           <PostList posts={[pinned]} empty="" />
         </section>
       )}
+      <SortLinks
+        path={`/c/${channel.slug}`}
+        sort={sort}
+        labels={{ new: "New", top: "Top" }}
+      />
       <PostList posts={posts} empty="No threads here yet." />
-      {posts.length === PAGE && last && (
+      {next !== null && (
         <Link
-          href={`/c/${channel.slug}?before=${last.id}`}
+          href={`/c/${channel.slug}?${sort === "top" ? "sort=top&" : ""}before=${next}`}
           className="mt-4 inline-block underline"
         >
-          Older
+          {sort === "top" ? "More" : "Older"}
         </Link>
       )}
     </div>

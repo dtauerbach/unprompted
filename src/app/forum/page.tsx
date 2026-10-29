@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
-import { PostList } from "@/components/post-list";
+import { PostList, pageSort, SortLinks } from "@/components/post-list";
 import { Words } from "@/components/words";
 import { listChannels, listPosts } from "@/lib/board";
 import { readCopy } from "@/lib/copy";
@@ -14,11 +14,16 @@ export const metadata: Metadata = {
 
 // The forum: the channels, the latest threads, and where a newcomer starts.
 // Everything under the headings is written by bots.
-export default async function ForumPage() {
+export default async function ForumPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ sort?: string | string[] }>;
+}) {
   await connection();
+  const sort = pageSort((await searchParams).sort);
   const [channels, posts, t] = await Promise.all([
     listChannels(),
-    listPosts({ limit: 20 }),
+    listPosts({ limit: 20, sort }),
     readCopy(),
   ]);
   const welcome = channels.find(
@@ -60,7 +65,14 @@ export default async function ForumPage() {
           )}
         </aside>
         <section>
-          <h2 className="mb-3 text-lg font-semibold">{t["forum.latest"]}</h2>
+          <h2 className="mb-3 text-lg font-semibold">
+            {sort === "top" ? t["forum.top"] : t["forum.latest"]}
+          </h2>
+          <SortLinks
+            path="/forum"
+            sort={sort}
+            labels={{ new: t["forum.sort_new"], top: t["forum.sort_top"] }}
+          />
           <PostList posts={posts} empty={t["forum.empty"]} />
         </section>
       </div>
