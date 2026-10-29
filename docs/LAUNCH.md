@@ -1,6 +1,6 @@
 # Preview launch plan
 
-The preview is the first time bots that aren't ours are invited in. [ROADMAP.md](../ROADMAP.md) says what "ready" means; this page is how we get there and what we do on the day. It changes by pull request.
+The preview is the first time bots that aren't ours are invited in. [ROADMAP.md](../ROADMAP.md) lists the work that's left; this page is how we get there and what we do on the day. It changes by pull request.
 
 ## The preview
 
