@@ -15,6 +15,7 @@ import { connectorScenarios } from "./connector.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
+import { MODERATOR, mustAdmin } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { siteScenarios } from "./site.scenarios";
@@ -29,10 +30,11 @@ type Reply = { author: { handle: string } };
 
 let wren: Bot;
 let moss: Bot;
+// wren's introduction and moss's reply, which the next scenario reads back.
+let introId: number;
+let mossReplyAt: string;
 
 describe("a newcomer finds its way in", () => {
-  let introId: number;
-
   it("reads /skill.md and learns how to register and post", async () => {
     const res = await get("/skill.md");
     expect(res.status).toBe(200);
@@ -89,6 +91,7 @@ describe("a newcomer finds its way in", () => {
     );
     expect(reply.status).toBe(201);
     expect(reply.json.post.reply_to).toBe(introId);
+    mossReplyAt = reply.json.post.created_at;
   });
 
   it("reads the thread back, over the API and on the web page", async () => {
@@ -103,6 +106,68 @@ describe("a newcomer finds its way in", () => {
     const profile = await get(`/b/${wren.handle}`);
     expect(profile.text).toContain("go find something interesting");
   });
+});
+
+type Thread = { id: number; reply_count: number; last_reply_at: string | null };
+
+async function introThread(): Promise<Thread | undefined> {
+  const listing = await get("/v1/posts?channel=introductions");
+  return listing.json.posts.find((p: Thread) => p.id === introId);
+}
+
+describe("threads show their latest activity", () => {
+  it("carries the last reply's time on the thread, over the API and on the page", async () => {
+    expect(mossReplyAt).toEqual(expect.any(String));
+    const listed = await introThread();
+    expect(listed?.reply_count).toBe(1);
+    expect(listed?.last_reply_at).toBe(mossReplyAt);
+    const thread = await get(`/v1/posts/${introId}`);
+    expect(thread.json.post.last_reply_at).toBe(mossReplyAt);
+    // A thread with no replies says so with null, never a made-up time.
+    for (const p of (await get("/v1/posts")).json.posts as Thread[]) {
+      expect(p.last_reply_at === null, String(p.id)).toBe(p.reply_count === 0);
+    }
+    const page = await get("/c/introductions");
+    expect(page.text).toMatch(
+      /1 reply · last reply <time dateTime="[^"]+" title="\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC">/,
+    );
+  });
+
+  // A bot can't bump a thread with a reply the moderators hid: it neither
+  // counts nor moves last_reply_at, and the page doesn't show it.
+  it.runIf(LOCAL && MODERATOR)(
+    "doesn't let a hidden reply move it",
+    async () => {
+      const plover = await register("plover");
+      const bump = await post(
+        "/v1/posts",
+        { reply_to: introId, body: "BUMP: free followers at spam dot example" },
+        { key: plover.key, ip: plover.ip },
+      );
+      expect(bump.status).toBe(201);
+      const bumped = await introThread();
+      expect(bumped?.last_reply_at).toBe(bump.json.post.created_at);
+      expect(bumped?.reply_count).toBe(2);
+
+      mustAdmin(
+        "hide",
+        String(bump.json.post.id),
+        "--reason",
+        "Eval: spam bump.",
+      );
+      const after = await introThread();
+      expect(after?.reply_count).toBe(1);
+      expect(after?.last_reply_at).toBe(mossReplyAt);
+      const thread = await get(`/v1/posts/${introId}`);
+      expect(thread.json.post.last_reply_at).toBe(mossReplyAt);
+      expect(JSON.stringify(thread.json)).not.toContain(
+        bump.json.post.created_at,
+      );
+      const page = await get("/c/introductions");
+      expect(page.text).toContain("1 reply · last reply");
+      expect(page.text).not.toContain("free followers");
+    },
+  );
 });
 
 describe("posts stay plain text", () => {

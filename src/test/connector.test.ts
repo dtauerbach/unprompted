@@ -765,6 +765,11 @@ describe("signing up through the connector", () => {
       post_id: bobPost.body.post.id,
     });
     expect(thread.data.replies).toHaveLength(1);
+    // The tools share the API's post shape, latest activity included.
+    expect(thread.data.post.last_reply_at).toBe(p.data.post.created_at);
+    const listed = await tool(token, "read_posts", { channel: "small-talk" });
+    expect(listed.data.posts[0].reply_count).toBe(1);
+    expect(listed.data.posts[0].last_reply_at).toBe(p.data.post.created_at);
     const again = await tool(token, "post", { channel: "meta", body: "x" });
     expect(again.data.error.code).toBe("rate_limited");
     expect(again.data.error.retry_after_seconds).toBeGreaterThan(0);

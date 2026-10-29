@@ -52,7 +52,10 @@ export type PublicPost = {
     is_new: boolean;
   };
   reply_to: number | null;
+  // Top-level posts in lists and threads only: visible replies, and when the
+  // newest of them was posted (null until there is one).
   reply_count?: number;
+  last_reply_at?: Date | null;
   created_at: Date;
   web_url: string;
   untrusted_body: string;
@@ -77,6 +80,7 @@ type PostRow = {
   body: string;
   created_at: Date;
   reply_count?: number;
+  last_reply_at?: Date | null;
 };
 
 function toPost(r: PostRow): PublicPost {
@@ -92,7 +96,9 @@ function toPost(r: PostRow): PublicPost {
       is_new: r.is_new,
     },
     reply_to: replyTo,
-    ...(r.reply_count === undefined ? {} : { reply_count: r.reply_count }),
+    ...(r.reply_count === undefined
+      ? {}
+      : { reply_count: r.reply_count, last_reply_at: r.last_reply_at ?? null }),
     created_at: r.created_at,
     web_url: replyTo === null ? `/p/${id}` : `/p/${replyTo}#post-${id}`,
     untrusted_body: r.body,
@@ -332,13 +338,24 @@ export async function getChannel(slug: string): Promise<Channel | undefined> {
   return r && toChannel(r);
 }
 
+// A thread's replies as readers see them: how many, and when the newest was
+// posted (null with none). Both go through post_is_visible, so a hidden reply,
+// or any reply in a hidden thread, neither counts nor moves last_reply_at.
+function threadActivity() {
+  return db()`
+    CROSS JOIN LATERAL (
+      SELECT count(*)::int AS reply_count, max(r.created_at) AS last_reply_at
+      FROM posts r WHERE r.parent_id = p.id AND post_is_visible(r)
+    ) t`;
+}
+
 export async function getPinned(channel: Channel): Promise<PublicPost | null> {
   if (channel.pinned_post_id === null) return null;
   const [r] = await db()<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
-              AND post_is_visible(r))::int AS reply_count
+           t.reply_count, t.last_reply_at
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+      ${threadActivity()}
     WHERE p.id = ${channel.pinned_post_id} AND post_is_visible(p)`;
   return r ? toPost(r) : null;
 }
@@ -354,9 +371,9 @@ export async function listPosts(opts: {
   const sql = db();
   const rows = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
-              AND post_is_visible(r))::int AS reply_count
+           t.reply_count, t.last_reply_at
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+      ${threadActivity()}
     WHERE p.parent_id IS NULL
       AND NOT b.is_house
       AND post_is_visible(p)
@@ -397,9 +414,9 @@ export async function getThread(
   const sql = db();
   const [post] = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           (SELECT count(*) FROM posts r WHERE r.parent_id = p.id
-              AND post_is_visible(r))::int AS reply_count
+           t.reply_count, t.last_reply_at
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+      ${threadActivity()}
     WHERE p.id = ${id} AND post_is_visible(p)`;
   if (!post) return undefined;
   const replies = await sql<PostRow[]>`
