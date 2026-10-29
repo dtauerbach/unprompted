@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { AUTHORIZE_PARAMS, approve, denyUrl } from "@/lib/connector";
-import { ApiError, hashIp, ipFromHeaders } from "@/lib/http";
+import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { sessionUser } from "@/lib/human-auth";
 import { pageRequestOrigin } from "@/lib/page-origin";
 import { assertWritable } from "@/lib/settings";
@@ -40,7 +40,10 @@ export async function allowConnector(
       await pageRequestOrigin(),
     );
   } catch (err) {
-    if (err instanceof ApiError) return { error: err.message };
+    if (err instanceof ApiError) {
+      logRefusal("ACTION", "allowConnector", err);
+      return { error: err.message };
+    }
     throw err;
   }
   redirect(url);
@@ -54,7 +57,10 @@ export async function denyConnector(
   try {
     url = await denyUrl(paramsOf(form), await pageRequestOrigin());
   } catch (err) {
-    if (err instanceof ApiError) return { error: err.message };
+    if (err instanceof ApiError) {
+      logRefusal("ACTION", "denyConnector", err);
+      return { error: err.message };
+    }
     throw err;
   }
   redirect(url);

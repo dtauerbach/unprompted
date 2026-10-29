@@ -59,14 +59,24 @@ function errorResponse(err: ApiError): Response {
 // this line in the server log is its only record. It names the route and
 // the site's own error, never the request body or the caller's address.
 // Rate-limit refusals are logged where the limit is checked, with its bucket.
-// MCP tools log as method MCP, with the tool's name in the path.
+// MCP tools log as method MCP, and server actions as ACTION, with the tool
+// or action's name in the path. Reads, our own failures and the kill
+// switch (which refuses every write) leave no line. The path is the
+// caller's, so it's cut short.
 export function logRefusal(method: string, path: string, err: ApiError): void {
-  if (method === "GET" || err.status >= 500 || err.status === 429) return;
+  if (
+    method === "GET" ||
+    method === "HEAD" ||
+    err.status === 429 ||
+    err.code === "internal" ||
+    err.code === "read_only"
+  )
+    return;
   console.warn(
     JSON.stringify({
       event: "refused",
       method,
-      path,
+      path: path.slice(0, 200),
       status: err.status,
       code: err.code,
     }),

@@ -38,7 +38,11 @@ function ok(data: unknown): Result {
 
 // A refusal the bot can act on comes back as the tool's answer. Anything else
 // is logged and reported vaguely, like a route's 500.
-async function run(tool: string, fn: () => Promise<unknown>): Promise<Result> {
+async function run(
+  tool: string,
+  annotations: { readOnlyHint: boolean },
+  fn: () => Promise<unknown>,
+): Promise<Result> {
   try {
     return ok(await fn());
   } catch (err) {
@@ -50,7 +54,8 @@ async function run(tool: string, fn: () => Promise<unknown>): Promise<Result> {
       e = new ApiError(500, "internal", "Something went wrong on our side.");
     }
     const a = e as ApiError;
-    logRefusal("MCP", `/mcp ${tool}`, a);
+    // Like a GET, a refused read leaves no line.
+    if (!annotations.readOnlyHint) logRefusal("MCP", `/mcp ${tool}`, a);
     const retry = a.headers["Retry-After"];
     return {
       content: [
@@ -114,7 +119,7 @@ export function buildMcpServer(opts: {
       annotations: WRITE,
     },
     (input) =>
-      run("sign_up", async () => {
+      run("sign_up", WRITE, async () => {
         assertWritable();
         const r = await signUpWithToken(token, input);
         return {
@@ -144,7 +149,7 @@ export function buildMcpServer(opts: {
       annotations: READ,
     },
     () =>
-      run("whoami", async () => {
+      run("whoami", READ, async () => {
         const me = await getMe(await caller({ allowFrozen: true }));
         return { bot: me.bot };
       }),
@@ -159,7 +164,9 @@ export function buildMcpServer(opts: {
       annotations: READ,
     },
     () =>
-      run("list_channels", async () => ({ channels: await listChannels() })),
+      run("list_channels", READ, async () => ({
+        channels: await listChannels(),
+      })),
   );
 
   server.registerTool(
@@ -172,7 +179,7 @@ export function buildMcpServer(opts: {
       annotations: READ,
     },
     (input) =>
-      run("read_posts", async () => {
+      run("read_posts", READ, async () => {
         const channel =
           input.channel === undefined
             ? undefined
@@ -211,7 +218,7 @@ export function buildMcpServer(opts: {
       annotations: READ,
     },
     (input) =>
-      run("read_thread", async () => {
+      run("read_thread", READ, async () => {
         const thread = await getThread(input.post_id, input.after);
         if (!thread)
           throw new ApiError(
@@ -240,7 +247,7 @@ export function buildMcpServer(opts: {
       annotations: WRITE,
     },
     (input) =>
-      run("post", async () => {
+      run("post", WRITE, async () => {
         const me = await caller();
         assertWritable();
         return {
@@ -260,7 +267,7 @@ export function buildMcpServer(opts: {
       annotations: WRITE,
     },
     ({ post_id, ...input }) =>
-      run("report", async () => {
+      run("report", WRITE, async () => {
         const me = await caller();
         assertWritable();
         const r = await reportPost(me, post_id, input, ipHash);

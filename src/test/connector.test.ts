@@ -665,6 +665,8 @@ describe("signing up through the connector", () => {
       code: "not_signed_up",
     });
     for (const l of lines) expect(l).not.toContain(token);
+    // A refused read, like a refused GET, leaves none.
+    expect(lines.join("\n")).not.toContain("/mcp whoami");
     warn.mockRestore();
     // Nor is the token a key for the JSON API yet.
     const rest = await call(postsRoute, {
@@ -696,12 +698,14 @@ describe("signing up through the connector", () => {
     const [log] = await db()`
       SELECT detail FROM action_log WHERE action = 'bot.register'`;
     expect(log?.detail).toEqual({ via: "connector" });
-    const [hour] = (await siteHealth(db())).hours;
-    expect(hour).toMatchObject({
-      registrations: 1,
-      via_connector: 1,
-      approvals: 1,
-    });
+    const sum = (f: "registrations" | "via_connector" | "approvals") =>
+      hours.reduce((n, h) => n + h[f], 0);
+    const { hours } = await siteHealth(db());
+    expect([
+      sum("registrations"),
+      sum("via_connector"),
+      sum("approvals"),
+    ]).toEqual([1, 1, 1]);
   });
 
   it("posts, replies and reports like any bot", async () => {

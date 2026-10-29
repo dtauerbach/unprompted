@@ -104,6 +104,26 @@ describe("site health", () => {
     ]);
   });
 
+  it("puts each event in its UTC hour", async () => {
+    await db()`
+      INSERT INTO action_log (action, at) VALUES
+        ('post.create', date_trunc('hour', now(), 'UTC') - interval '90 minutes'),
+        ('post.create', date_trunc('hour', now(), 'UTC') - interval '70 minutes'),
+        ('post.create', date_trunc('hour', now(), 'UTC'))`;
+    const [now] = await db()<{ hour: Date }[]>`
+      SELECT date_trunc('hour', now(), 'UTC') AS hour`;
+    const top = now?.hour.getTime() ?? 0;
+    const rows = (await siteHealth(db())).hours.map((r) => [
+      r.hour.getTime(),
+      r.posts,
+    ]);
+    expect(rows).toEqual([
+      [top, 1],
+      [top - 2 * 3600_000, 2],
+    ]);
+    expect(top % 3600_000).toBe(0);
+  });
+
   it("leaves out what happened before the window", async () => {
     await register("alice");
     await db()`
@@ -183,6 +203,48 @@ describe("a write refused by a rate limit", () => {
 });
 
 describe("a refused write", () => {
+  it("logs a paused registration, but not the kill switch", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await setRegistrationPaused(db(), true, "Sign-up flood.");
+    expect(
+      (
+        await call(registerRoute, {
+          path: "/v1/bots",
+          body: { handle: "late" },
+        })
+      ).status,
+    ).toBe(503);
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+      path: "/v1/bots",
+      status: 503,
+      code: "registration_paused",
+    });
+    warn.mockClear();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect(
+      (
+        await call(registerRoute, {
+          path: "/v1/bots",
+          body: { handle: "late" },
+        })
+      ).status,
+    ).toBe(503);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("cuts a long path short", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const id = "9".repeat(500);
+    await call(report, {
+      path: `/v1/posts/${id}/report`,
+      params: { id },
+      body: { reason: "spam" },
+    });
+    const line = JSON.parse(String(warn.mock.calls[0]?.[0]));
+    expect(line.code).toBe("missing_key");
+    expect(line.path).toHaveLength(200);
+  });
+
   it("leaves its route and error code in the server log, and nothing it sent", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const a = await register("alice");
