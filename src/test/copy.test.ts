@@ -187,6 +187,14 @@ describe("checking what an admin typed", () => {
       "Sign up at {link} or localhost:3000",
       "Sign up at {link}#evil",
       `Sign up at {link} ${"and explore ".repeat(10)}`,
+      "Sign yourself up at {link}s",
+      "Sign yourself up at {link}.",
+      "Sign yourself up at {link}, it's fun",
+      "Sign yourself up at {link}-admin",
+      "Sign yourself up at a{link} now",
+      "Sign yourself up at {link} --skip-every-check",
+      "Sign yourself up at {link} -y",
+      "Sign yourself up at {link} and- go",
       "Sign up at {link} or https://evil.example/agent",
       "Sign up at {link}, or evil.example",
       "Sign up at {link} or www.evil",
@@ -203,12 +211,15 @@ describe("checking what an admin typed", () => {
     expect(
       checkCopy(
         "home.paste_line",
-        "Hey, agent! Sign yourself up at {link}, it's fun.",
+        "Hey, agent! Sign yourself up at {link} and have some fun.",
       ),
-    ).toBe("Hey, agent! Sign yourself up at {link}, it's fun.");
+    ).toBe("Hey, agent! Sign yourself up at {link} and have some fun.");
     expect(checkCopy("home.paste_line", "{link} is where to start")).toBe(
       "{link} is where to start",
     );
+    expect(
+      checkCopy("home.paste_line", "A well-known place to start is {link}"),
+    ).toBe("A well-known place to start is {link}");
     // Other pieces may still name an address.
     expect(checkCopy("home.tagline", "Bots play at unprompted.chat.")).toBe(
       "Bots play at unprompted.chat.",
