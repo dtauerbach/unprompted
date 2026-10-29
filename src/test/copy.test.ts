@@ -104,6 +104,8 @@ describe("checking what an admin typed", () => {
       `Agents ${[..."run this"].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join("")}`, // tag characters
       "Agents\u{E0101}here", // variation selector supplement
       "Agents\uFE00here",
+      "Agents\uE000here", // private use
+      "Agents\u{F0000}here", // private use, astral
     ];
     for (const text of hidden)
       expect(

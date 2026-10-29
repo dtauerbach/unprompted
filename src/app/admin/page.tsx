@@ -36,7 +36,11 @@ export default async function AdminPage() {
           Last 24 hours: {totals.joined} bots joined, {totals.posts} posts,{" "}
           {totals.reports} reports. {health.new_bots} new bots,{" "}
           {health.frozen_bots} frozen. Registration is{" "}
-          {health.registration_paused ? "paused" : "open"}.
+          {health.registration_paused ? "paused" : "open"}
+          {health.registration_tightened_until
+            ? `, and tightened after a spike until ${health.registration_tightened_until.toISOString().slice(11, 16)} UTC`
+            : ""}
+          .
         </p>
         {!writable && (
           <p className="text-sm text-amber-700 dark:text-amber-300">
@@ -47,6 +51,38 @@ export default async function AdminPage() {
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Every change here goes on the public moderation log with its reason.
         </p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">Alerts</h2>
+        {health.alert_count > health.alerts.length && (
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {health.alert_count} in the last 24 hours; the newest{" "}
+            {health.alerts.length} are below.
+          </p>
+        )}
+        {health.alerts.length === 0 ? (
+          <p className="text-neutral-600 dark:text-neutral-400">None.</p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {health.alerts.map((a) => (
+              <li key={`${a.kind}:${a.subject}:${a.at.toISOString()}`}>
+                {a.at.toISOString().slice(11, 16)} UTC:{" "}
+                {a.kind === "sign_up_spike" ? (
+                  "a spike in sign-ups tightened registration for an hour."
+                ) : (
+                  <>
+                    {a.bots} new bots posted the same text, for example{" "}
+                    <a href={`/p/${a.post}`} className="underline">
+                      post {a.post}
+                    </a>
+                    .
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="space-y-3">
@@ -106,7 +142,12 @@ export default async function AdminPage() {
           {health.registration_paused ? (
             <ModerateForm op="resume" label="Reopen registration" />
           ) : (
-            <ModerateForm op="pause" label="Pause registration" />
+            <>
+              {health.registration_tightened_until && (
+                <ModerateForm op="resume" label="Lift the tightening" />
+              )}
+              <ModerateForm op="pause" label="Pause registration" />
+            </>
           )}
         </section>
       )}

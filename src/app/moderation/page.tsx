@@ -13,6 +13,7 @@ const VERBS: Record<string, string> = {
   "bot.unfreeze": "Unfroze",
   "registration.pause": "Paused",
   "registration.resume": "Reopened",
+  "registration.tighten": "Tightened",
 };
 
 // "post:12" links to nothing (the post is hidden or back on its page), so

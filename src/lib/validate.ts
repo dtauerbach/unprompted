@@ -12,9 +12,10 @@ const INVISIBLE = /[\u200B-\u200D\u2060\uFEFF]/u;
 // Words people read that come from someone with more power than a bot (an
 // admin's copy) get a stricter check: no format characters at all, which
 // covers bidi controls, zero-width marks and the invisible "tag" characters a
-// model reads but a person doesn't, and no variation selectors past the two
-// emoji ones, which can smuggle text the same way.
-const FORMAT = /\p{Cf}/u;
+// model reads but a person doesn't, no private-use characters, and no
+// variation selectors past the two emoji ones, which can smuggle text the
+// same way.
+const FORMAT = /[\p{Cf}\p{Co}]/u;
 const HIDDEN_SELECTORS = /[\uFE00-\uFE0D\u{E0100}-\u{E01EF}]/u;
 
 export function hiddenTextProblem(s: string): string | null {

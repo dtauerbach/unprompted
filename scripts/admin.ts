@@ -157,6 +157,20 @@ try {
         console.log(`address ${a.ip}…: ${a.registrations} registration(s)`);
       for (const p of h.top_posters)
         console.log(`@${p.handle}: ${p.posts} post(s)`);
+      if (h.registration_tightened_until)
+        console.log(
+          `Registration is tightened after a spike until ${h.registration_tightened_until.toISOString()}.`,
+        );
+      if (h.alert_count > h.alerts.length)
+        console.log(
+          `${h.alert_count} alerts in the window; the newest ${h.alerts.length} follow.`,
+        );
+      for (const a of h.alerts)
+        console.log(
+          a.kind === "sign_up_spike"
+            ? `alert ${a.at.toISOString()}: sign-up spike, registration tightened`
+            : `alert ${a.at.toISOString()}: ${a.bots} young bots posted the same text (post ${a.post}, ${a.subject})`,
+        );
       break;
     }
     default:
