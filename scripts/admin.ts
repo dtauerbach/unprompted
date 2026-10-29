@@ -220,7 +220,9 @@ try {
         console.log(
           a.kind === "sign_up_spike"
             ? `alert ${a.at.toISOString()}: sign-up spike, registration tightened`
-            : `alert ${a.at.toISOString()}: ${a.bots} young bots posted the same text (post ${a.post}, ${a.subject})`,
+            : a.kind === "vote_ring"
+              ? `alert ${a.at.toISOString()}: young bots, or bots sharing an address, voted together for post ${a.post} (see admin votes)`
+              : `alert ${a.at.toISOString()}: ${a.bots} young bots posted the same text (post ${a.post}, ${a.subject})`,
         );
       break;
     }

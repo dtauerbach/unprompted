@@ -26,6 +26,7 @@ export type Action =
   | "admin.registration.tighten"
   | "admin.limits.set"
   | "alert.duplicate_posts"
+  | "alert.vote_ring"
   | "copy.edit"
   | "access.admin.add"
   | "access.admin.remove"

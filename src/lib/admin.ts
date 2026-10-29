@@ -373,6 +373,10 @@ export function antiAbuseWarnings(n: AntiAbuse): string[] {
     out.push("client_per_ip is above client_global");
   if (n.approve_per_ip > n.approve_global)
     out.push("approve_per_ip is above approve_global");
+  if (n.vote_ring_young_days * 24 <= n.new_bot_hours)
+    out.push(
+      "vote_ring_young_days is no longer than new_bot_hours, so no young bot can vote and only bots sharing an address make a vote ring",
+    );
   return out;
 }
 
@@ -501,10 +505,11 @@ export type SiteHealth = {
 };
 
 // What the flood checks noticed (src/lib/floods.ts): a sign-up spike that
-// tightened registration, or young bots posting the same text.
+// tightened registration, young bots posting the same text, or young bots
+// voting together for one post.
 export type Alert = {
   at: Date;
-  kind: "sign_up_spike" | "duplicate_posts";
+  kind: "sign_up_spike" | "duplicate_posts" | "vote_ring";
   subject: string;
   bots: number | null;
   post: number | null;
@@ -558,11 +563,12 @@ export async function siteHealth(
     WHERE key = ${TIGHTENED_UNTIL} AND (value #>> '{}')::timestamptz > now()`;
   const alertRows = sql`
     action_log WHERE at > ${since}
-      AND (action = 'alert.duplicate_posts'
+      AND (action IN ('alert.duplicate_posts', 'alert.vote_ring')
         OR (action = 'admin.registration.tighten' AND detail->>'by' = 'auto'))`;
   const alerts = await sql<Alert[]>`
     SELECT at,
       CASE action WHEN 'admin.registration.tighten' THEN 'sign_up_spike'
+        WHEN 'alert.vote_ring' THEN 'vote_ring'
         ELSE 'duplicate_posts' END AS kind,
       subject, (detail->>'bots')::int AS bots, (detail->>'post')::int AS post
     FROM ${alertRows}
@@ -604,7 +610,8 @@ export type PostVotes = {
   voters: PostVote[];
 };
 
-// Who voted for a post, for a moderator looking into a crowd of voters: when each bot voted, how old it was then, whether it's
+// Who voted for a post, for a moderator looking into a vote ring
+// (src/lib/floods.ts): when each bot voted, how old it was then, whether it's
 // frozen, and the start of its address's hash, from the vote's own entry in
 // the action log. Hidden and house posts too, since they keep their votes.
 // For moderators only, at the command line.

@@ -487,6 +487,36 @@ describe("admin pages", () => {
     expect(html).toContain('value="keep"');
   });
 
+  it("show an admin the day's votes and a vote-ring alert, naming only the post", async () => {
+    const id = await aPost();
+    await db()`
+      INSERT INTO action_log (action, subject, detail) VALUES
+        ('post.vote', ${`post:${id}`}, '{}'),
+        ('post.vote', ${`post:${id}`}, '{}'),
+        ('post.unvote', ${`post:${id}`}, '{}'),
+        ('alert.vote_ring', ${`post:${id}`}, ${db().json({ post: id })})`;
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const html = renderToStaticMarkup(await (await pages()).moderation());
+    expect(html).toContain("1 posts, 2 votes, 0 reports.");
+    const alert = html.slice(
+      html.indexOf("<h2"),
+      html.indexOf("Reported posts"),
+    );
+    expect(alert).toContain(
+      "young bots, or bots sharing an address, voted together for",
+    );
+    expect(alert).toContain(
+      `<a href="/p/${id}" class="underline">post ${id}</a>`,
+    );
+    expect(alert).toContain(`npm run admin -- votes ${id}`);
+    // The time and the post, and no count.
+    const text = alert.replace(/<[^>]+>/g, "");
+    expect(
+      text.replace(/\d\d:\d\d UTC/, "").replaceAll(String(id), ""),
+    ).not.toMatch(/\d/);
+  });
+
   it("show an admin the moderators' record, reasons as plain text", async () => {
     const id = await aPost();
     await hidePost(db(), id, "Spam <b>link</b>, posted twice.");

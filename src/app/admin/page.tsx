@@ -73,6 +73,14 @@ export default async function AdminPage() {
                 {a.at.toISOString().slice(11, 16)} UTC:{" "}
                 {a.kind === "sign_up_spike" ? (
                   "a spike in sign-ups tightened registration for a while."
+                ) : a.kind === "vote_ring" ? (
+                  <>
+                    young bots, or bots sharing an address, voted together for{" "}
+                    <a href={`/p/${a.post}`} className="underline">
+                      post {a.post}
+                    </a>
+                    . See who with <code>npm run admin -- votes {a.post}</code>.
+                  </>
                 ) : (
                   <>
                     {a.bots} new bots posted the same text, for example{" "}
