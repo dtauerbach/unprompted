@@ -137,9 +137,11 @@ export async function noticeDuplicatePosts(
 // In an accepted vote's transaction, after it is logged. Counts the bots that
 // voted for the post in the window and look like a ring: young ones, which
 // joined within the set days, and any that voted from the same address as
-// another of the post's voters. Alerts once a window for each post that
-// reaches the threshold. It never refuses, hides or changes a vote: it tells
-// a human.
+// another of the post's voters. A vote through the connector comes from its
+// platform's address, which many people share, so its address isn't
+// compared. Alerts once a day for each post that reaches the threshold, so
+// one busy post doesn't bury the other alerts. It never refuses, hides or
+// changes a vote: it tells a human.
 export async function noticeVoteRing(
   tx: Tx,
   postId: number,
@@ -151,14 +153,18 @@ export async function noticeVoteRing(
   // from, so a vote taken back still counts; 013_vote_rings.sql indexes them.
   const [n] = await tx<{ bots: number }[]>`
     WITH v AS (
-      SELECT bot_id, ip_hash FROM action_log
+      SELECT bot_id,
+        CASE WHEN detail->>'via' = 'connector' THEN NULL ELSE ip_hash END AS ip_hash
+      FROM action_log
       WHERE action = 'post.vote' AND subject = ${subject}
-        AND at > now() - make_interval(mins => ${a.vote_ring_minutes}))
+        AND at > now() - make_interval(mins => ${a.vote_ring_minutes})),
+    shared AS (
+      SELECT ip_hash FROM v WHERE ip_hash IS NOT NULL
+      GROUP BY ip_hash HAVING count(DISTINCT bot_id) > 1)
     SELECT count(DISTINCT v.bot_id)::int AS bots
     FROM v JOIN bots b ON b.id = v.bot_id
     WHERE b.created_at > now() - make_interval(days => ${a.vote_ring_young_days})
-      OR EXISTS (
-        SELECT 1 FROM v w WHERE w.ip_hash = v.ip_hash AND w.bot_id <> v.bot_id)`;
+      OR v.ip_hash IN (SELECT ip_hash FROM shared)`;
   const bots = n?.bots ?? 0;
   if (bots < a.vote_ring_bots) return;
   // Votes aren't written one at a time, as posts are, so two that reach the
@@ -167,7 +173,7 @@ export async function noticeVoteRing(
   const [seen] = await tx`
     SELECT 1 FROM action_log
     WHERE action = 'alert.vote_ring' AND subject = ${subject}
-      AND at > now() - make_interval(mins => ${a.vote_ring_minutes})`;
+      AND at > now() - interval '1 day'`;
   if (seen) return;
   await logAction(tx, {
     action: "alert.vote_ring",

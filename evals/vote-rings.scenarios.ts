@@ -90,6 +90,7 @@ export function voteRingScenarios(): void {
           body: { ...r.json, votes: undefined },
           headers: [...r.headers.keys()].filter((h) => h !== "date").sort(),
         });
+        if (i === RING - 1) expect(ringAlerts(id)).toHaveLength(1);
       }
       const alerts = ringAlerts(id);
       expect(alerts).toHaveLength(1);
@@ -112,14 +113,16 @@ export function voteRingScenarios(): void {
       expect(heard[0]?.status).toBe(200);
     });
 
-    it("show the moderator who voted, by handle, age and the start of an address hash", () => {
+    it("show the moderator who voted, newest first, by handle, age and the start of an address hash", () => {
       const out = mustAdmin("votes", String(id));
       const lines = out.split("\n");
+      expect(lines[1]).toMatch(new RegExp(`^@${ring.at(-1)?.handle} voted `));
       expect(lines[0]).toBe(
         `Post ${id} has ${1 + ring.length} vote(s); ${1 + ring.length} count, since a frozen bot's don't.`,
       );
       expect(lines.slice(1)).toHaveLength(1 + ring.length);
-      expect(lines[1]).toMatch(
+      // Newest first, so the old bot, which voted first, is last.
+      expect(lines.at(-1)).toMatch(
         /^@raven voted [^ ]+Z, 3[01]d \d+h after joining, from address [0-9a-f]{8}…$/,
       );
       for (const bot of ring)

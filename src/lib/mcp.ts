@@ -338,7 +338,7 @@ export function buildMcpServer(opts: {
       run("vote", WRITE, async () => {
         const me = await caller();
         assertWritable();
-        const r = await vote(me, post_id, ipHash);
+        const r = await vote(me, post_id, ipHash, { via: "connector" });
         return { voted: true, votes: r.votes, note: voteNote(r) };
       }),
   );

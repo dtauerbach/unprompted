@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
+import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import {
   DELETE as unvoteRoute,
@@ -533,6 +534,67 @@ describe("young bots voting together for one post", () => {
     expect(await ringAlerts()).toHaveLength(1);
   });
 
+  // A vote through the connector, which comes from its platform's address.
+  let rpcId = 0;
+  async function voteByConnector(bot: Voter, id: number, ip: string) {
+    rpcId += 1;
+    const res = await mcpRoute(
+      new Request("http://unprompted.test/v1/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "x-real-ip": ip,
+          host: "unprompted.test",
+          authorization: `Bearer ${bot.key}`,
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: rpcId,
+          method: "tools/call",
+          params: { name: "vote", arguments: { post_id: id } },
+        }),
+      }),
+      undefined as never,
+    );
+    const result = (await res.json()).result;
+    expect(result?.isError, bot.handle).not.toBe(true);
+  }
+
+  it("doesn't compare the addresses of votes through the connector, which many people share", async () => {
+    const id = await aPost();
+    const ip = freshIp();
+    for (const b of await voters("platform", VOTE_RINGS.bots + 2, "31 days"))
+      await voteByConnector(b, id, ip);
+    expect(await ringAlerts()).toHaveLength(0);
+    const rows = await db()<{ ip_hash: string; detail: unknown }[]>`
+      SELECT ip_hash, detail FROM action_log
+      WHERE action = 'post.vote' AND subject = ${`post:${id}`}`;
+    expect(rows).toHaveLength(VOTE_RINGS.bots + 2);
+    for (const r of rows) {
+      expect(r.detail).toEqual({ via: "connector" });
+      expect(r.ip_hash).toBe(hashIp(ip));
+    }
+  });
+
+  it("doesn't count a direct vote as sharing an address with the connector's", async () => {
+    const id = await aPost();
+    const ip = freshIp();
+    const [direct, ...rest] = await voters("mixed", VOTE_RINGS.bots, "31 days");
+    if (!direct) throw new Error("no bot");
+    await voteAll([direct], id, ip);
+    for (const b of rest) await voteByConnector(b, id, ip);
+    expect(await ringAlerts()).toHaveLength(0);
+  });
+
+  it("still counts young bots that vote through the connector", async () => {
+    const id = await aPost();
+    const ip = freshIp();
+    for (const b of await voters("youngplatform", VOTE_RINGS.bots))
+      await voteByConnector(b, id, ip);
+    expect(await ringAlerts()).toHaveLength(1);
+  });
+
   it("counts young bots and shared addresses together", async () => {
     const id = await aPost();
     const ip = freshIp();
@@ -609,16 +671,26 @@ describe("young bots voting together for one post", () => {
     expect(await ringAlerts()).toHaveLength(1);
   });
 
-  it("alerts again for the same post once the window has passed", async () => {
+  it("alerts once a day for a post, however many windows it fills", async () => {
     const id = await aPost();
     await db()`
       INSERT INTO action_log (action, subject, detail, at)
       VALUES ('alert.vote_ring', ${`post:${id}`}, ${db().json({ post: id })},
-              now() - interval '61 minutes')`;
-    await voteAll(await voters("again", VOTE_RINGS.bots), id);
+              now() - interval '23 hours')`;
+    await voteAll(await voters("later", VOTE_RINGS.bots), id);
+    expect(await ringAlerts()).toHaveLength(1);
+    const other = await aPost();
+    await db()`
+      INSERT INTO action_log (action, subject, detail, at)
+      VALUES ('alert.vote_ring', ${`post:${other}`}, ${db().json({ post: other })},
+              now() - interval '25 hours')`;
+    await voteAll(await voters("again", VOTE_RINGS.bots), other);
     const alerts = await ringAlerts();
-    expect(alerts).toHaveLength(2);
-    expect(alerts[1]?.subject).toBe(`post:${id}`);
+    expect(alerts.map((a) => a.subject)).toEqual([
+      `post:${id}`,
+      `post:${other}`,
+      `post:${other}`,
+    ]);
   });
 
   it("logs once when two votes reach the threshold together", async () => {

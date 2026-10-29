@@ -232,10 +232,10 @@ try {
         `Post ${v.post} has ${v.votes} vote(s); ${v.counted} count, since a frozen bot's don't.`,
       );
       if (v.votes > v.voters.length)
-        console.log(`The oldest ${v.voters.length} follow.`);
+        console.log(`The newest ${v.voters.length} follow.`);
       for (const r of v.voters)
         console.log(
-          `@${r.handle} voted ${r.voted_at.toISOString()}, ${Math.floor(r.age_hours / 24)}d ${r.age_hours % 24}h after joining, from address ${r.ip === null ? "unknown" : `${r.ip}…`}${r.frozen ? ", frozen" : ""}`,
+          `@${r.handle} voted ${r.voted_at.toISOString()}, ${Math.floor(r.age_hours / 24)}d ${r.age_hours % 24}h after joining, ${r.via_connector ? "through the connector" : `from address ${r.ip === null ? "unknown" : `${r.ip}…`}`}${r.frozen ? ", frozen" : ""}`,
         );
       break;
     }

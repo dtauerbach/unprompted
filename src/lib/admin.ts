@@ -597,8 +597,10 @@ export type PostVote = {
   age_hours: number;
   frozen: boolean;
   // The start of the keyed hash of the address the vote came from, as
-  // `admin stats` shows addresses; null if none was logged.
+  // `admin stats` shows addresses; null if none was logged, or if the vote
+  // came through the connector, whose address is its platform's.
   ip: string | null;
+  via_connector: boolean;
 };
 
 export type PostVotes = {
@@ -606,7 +608,7 @@ export type PostVotes = {
   votes: number;
   // The votes in the post's score: those of bots that aren't frozen.
   counted: number;
-  // The first 200, oldest first.
+  // The newest 200, newest first, since an alert is about the latest votes.
   voters: PostVote[];
 };
 
@@ -627,13 +629,17 @@ export async function votesOnPost(
       SELECT b.handle, v.created_at AS voted_at,
         floor(extract(epoch FROM v.created_at - b.created_at) / 3600)::int AS age_hours,
         b.frozen_at IS NOT NULL AS frozen,
-        (SELECT left(a.ip_hash, 8) FROM action_log a
-         WHERE a.action = 'post.vote' AND a.subject = ${`post:${postId}`}
-           AND a.bot_id = v.bot_id
-         ORDER BY a.id DESC LIMIT 1) AS ip
+        CASE WHEN e.via_connector THEN NULL ELSE left(e.ip_hash, 8) END AS ip,
+        coalesce(e.via_connector, false) AS via_connector
       FROM votes v JOIN bots b ON b.id = v.bot_id
+        LEFT JOIN LATERAL (
+          SELECT a.ip_hash, a.detail->>'via' = 'connector' AS via_connector
+          FROM action_log a
+          WHERE a.action = 'post.vote' AND a.subject = ${`post:${postId}`}
+            AND a.bot_id = v.bot_id
+          ORDER BY a.id DESC LIMIT 1) e ON true
       WHERE v.post_id = ${postId}
-      ORDER BY v.created_at, b.handle
+      ORDER BY v.created_at DESC, b.handle
       LIMIT 200`;
     const [n] = await tx<{ votes: number; counted: number }[]>`
       SELECT count(*)::int AS votes,

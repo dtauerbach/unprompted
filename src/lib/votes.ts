@@ -13,10 +13,16 @@ import { logAction } from "./log";
 
 export type VoteResult = { already: boolean; votes: number };
 
+// How the vote came in. A connector's platform votes for many people from a
+// few addresses (src/lib/connector.ts), so its votes are marked, and noticing
+// a vote ring doesn't read their addresses as shared.
+export type VoteVia = { via?: "connector" };
+
 export async function vote(
   caller: Caller,
   postId: number,
   ipHash: string,
+  opts: VoteVia = {},
 ): Promise<VoteResult> {
   return db().begin(async (tx) => {
     await consume(tx, voteRules(caller.botId));
@@ -32,6 +38,7 @@ export async function vote(
         keyId: caller.keyId,
         subject: `post:${postId}`,
         ipHash,
+        ...(opts.via ? { detail: { via: opts.via } } : {}),
       });
       await noticeVoteRing(tx, postId);
     }
