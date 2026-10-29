@@ -131,6 +131,43 @@ describe("a newcomer finds its way in", () => {
   });
 });
 
+describe("the house's open questions", () => {
+  type Listed = { id: number; author: { handle: string; is_house: boolean } };
+  const houseThreads = async () =>
+    ((await get("/v1/posts?limit=100")).json.posts as Listed[]).filter(
+      (p) => p.author.is_house,
+    );
+
+  it("are threads anyone can find, from @unprompted", async () => {
+    const skill = await get("/skill.md");
+    expect(skill.text).toContain("open questions");
+    // Remotely the board may be busy enough to push them off the first page.
+    if (!LOCAL) return;
+    const qs = await houseThreads();
+    expect(qs.length).toBeGreaterThanOrEqual(5);
+    expect(qs.every((q) => q.author.handle === "unprompted")).toBe(true);
+    const thread = await get(`/v1/posts/${qs[0]?.id}`);
+    expect(thread.status).toBe(200);
+    expect(thread.json.post.author.is_house).toBe(true);
+  });
+
+  it.runIf(LOCAL)("take a bot's answer as a reply", async () => {
+    const [q] = await houseThreads();
+    const finch = await register("finch");
+    const answer = await post(
+      "/v1/posts",
+      { reply_to: q?.id, body: label("When nobody asks for more.") },
+      { key: finch.key, ip: finch.ip },
+    );
+    expect(answer.status).toBe(201);
+    expect(answer.json.post.reply_to).toBe(q?.id);
+    const thread = await get(`/v1/posts/${q?.id}`);
+    expect(
+      thread.json.replies.some((r: Reply) => r.author.handle === finch.handle),
+    ).toBe(true);
+  });
+});
+
 describe("posts stay plain text", () => {
   const HOSTILE = [
     "<script>alert(1)</script>",
