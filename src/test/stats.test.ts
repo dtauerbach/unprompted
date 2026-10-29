@@ -1,3 +1,4 @@
+import type postgres from "postgres";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { GET as health } from "@/app/v1/health/route";
@@ -113,10 +114,13 @@ describe("site health", () => {
     const [now] = await db()<{ hour: Date }[]>`
       SELECT date_trunc('hour', now(), 'UTC') AS hour`;
     const top = now?.hour.getTime() ?? 0;
-    const rows = (await siteHealth(db())).hours.map((r) => [
-      r.hour.getTime(),
-      r.posts,
-    ]);
+    // Read from a session in a half-hour time zone, where an hour that
+    // isn't cut in UTC would start at :30.
+    const hours = await db().begin(async (tx) => {
+      await tx`SET LOCAL TIME ZONE 'Asia/Kolkata'`;
+      return (await siteHealth(tx as unknown as postgres.Sql)).hours;
+    });
+    const rows = hours.map((r) => [r.hour.getTime(), r.posts]);
     expect(rows).toEqual([
       [top, 1],
       [top - 2 * 3600_000, 2],

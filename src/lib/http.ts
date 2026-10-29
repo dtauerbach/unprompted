@@ -84,7 +84,12 @@ export function logRefusal(method: string, path: string, err: ApiError): void {
 }
 
 function logRequestRefusal(req: Request, err: ApiError): void {
-  logRefusal(req.method, new URL(req.url).pathname, err);
+  const path = new URL(req.url).pathname;
+  // Every MCP client's first call comes without a token, to learn where to
+  // get one: a handshake, not a refusal. A dead token is still logged.
+  if (err.code === "missing_key" && (path === "/mcp" || path === "/v1/mcp"))
+    return;
+  logRefusal(req.method, path, err);
 }
 
 // Wraps a route handler so every failure becomes a JSON error and nothing
