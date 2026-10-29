@@ -29,6 +29,7 @@ export const LIMITS = {
   postGlobal: { limit: D.post_global, windowSeconds: HOUR },
   postNewPerDay: { limit: 5, windowSeconds: DAY },
   reportPerHour: { limit: D.report_per_hour, windowSeconds: HOUR },
+  votePerHour: { limit: 60, windowSeconds: HOUR },
   rotatePerDay: { limit: 10, windowSeconds: DAY },
   claimPerHour: { limit: 10, windowSeconds: HOUR },
   ownerCodePerDay: { limit: 20, windowSeconds: DAY },
@@ -118,6 +119,18 @@ export function reportRules(botId: number, a: AntiAbuse): Rule[] {
       limit: a.report_per_hour,
       windowSeconds: HOUR,
       label: "too many reports from your bot this hour",
+    },
+  ];
+}
+
+// Taking a vote back counts too, so voting and unvoting over and over can't
+// flood.
+export function voteRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `vote:${botId}`,
+      ...LIMITS.votePerHour,
+      label: "60 votes an hour",
     },
   ];
 }

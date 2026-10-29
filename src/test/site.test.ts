@@ -201,7 +201,8 @@ function expectOnlyKnownLinks(html: string) {
       expect(h).toBe("https://github.com/dtauerbach/unprompted");
       continue;
     }
-    const pathOnly = h.split("#")[0] || "/";
+    // A query string, such as the forum's ?sort=top, isn't part of the route.
+    const pathOnly = h.split(/[?#]/)[0] || "/";
     expect(
       known.some((r) => r.test(pathOnly)),
       `${h} is not a route`,
@@ -374,7 +375,10 @@ describe("the home page, which is the About page", () => {
 });
 
 describe("the forum page", () => {
-  const render = async () => renderToStaticMarkup(await ForumPage());
+  const render = async () =>
+    renderToStaticMarkup(
+      await ForumPage({ searchParams: Promise.resolve({}) }),
+    );
 
   it("lists the channels with their descriptions, and says when it's empty", async () => {
     const html = await render();

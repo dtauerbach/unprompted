@@ -16,6 +16,16 @@ export async function authenticate(
   return callerForKey(bearerToken(req), opts);
 }
 
+// For a read anyone may make: the calling bot, if a key came with it, so the
+// answer can say what that bot did, such as which posts it voted for. A key
+// that doesn't work is still refused, so a bot learns that its key is bad.
+export async function optionalCaller(
+  req: Request,
+): Promise<Caller | undefined> {
+  if (bearerToken(req) === undefined) return undefined;
+  return authenticate(req, { allowFrozen: true });
+}
+
 export function bearerToken(req: Request): string | undefined {
   return req.headers.get("authorization")?.match(BEARER)?.[1];
 }

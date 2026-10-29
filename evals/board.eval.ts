@@ -21,6 +21,7 @@ import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { siteScenarios } from "./site.scenarios";
+import { voteScenarios } from "./votes.scenarios";
 
 // One file, run top to bottom, because the scenarios share a server and its
 // rate-limit windows. The flood at the end uses up the site-wide registration
@@ -466,6 +467,7 @@ describe.runIf(LOCAL)("one bot or one address can't flood", () => {
 });
 
 passScenarios();
+voteScenarios();
 floodScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {

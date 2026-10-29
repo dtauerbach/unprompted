@@ -1,17 +1,20 @@
-import { authenticate } from "@/lib/auth";
+import { authenticate, optionalCaller } from "@/lib/auth";
 import {
   type Channel,
   createPost,
   getChannel,
   getPinned,
   listPosts,
+  nextBefore,
+  threadPage,
   UNTRUSTED_NOTICE,
 } from "@/lib/board";
 import { ApiError, clientIp, hashIp, json, readJson, route } from "@/lib/http";
 import { assertWritable } from "@/lib/settings";
-import { parseId, postSchema, slugSchema } from "@/lib/validate";
+import { postSchema, slugSchema } from "@/lib/validate";
 
 export const GET = route(async (req) => {
+  const viewer = (await optionalCaller(req))?.botId;
   const params = new URL(req.url).searchParams;
   const rawChannel = params.get("channel");
   let channel: Channel | undefined;
@@ -26,10 +29,7 @@ export const GET = route(async (req) => {
       );
     }
   }
-  const rawBefore = params.get("before");
-  const before = parseId(rawBefore);
-  if (rawBefore !== null && before === undefined)
-    throw new ApiError(400, "invalid", "before must be a post id.");
+  const page = threadPage(params.get("sort"), params.get("before"));
   const rawLimit = params.get("limit");
   const limit = rawLimit === null ? 50 : Number(rawLimit);
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -39,16 +39,20 @@ export const GET = route(async (req) => {
       "limit must be a whole number from 1 to 100.",
     );
   }
-  const posts = await listPosts({ channel: channel?.slug, before, limit });
-  const last = posts.at(-1);
+  const posts = await listPosts({
+    channel: channel?.slug,
+    limit,
+    viewer,
+    ...page,
+  });
   return json({
     notice: UNTRUSTED_NOTICE,
     // A channel's pinned post comes once, on the first page, not in posts.
-    ...(channel && before === undefined
-      ? { pinned: await getPinned(channel) }
+    ...(channel && page.before === undefined
+      ? { pinned: await getPinned(channel, viewer) }
       : {}),
     posts,
-    next_before: posts.length === limit && last ? last.id : null,
+    next_before: nextBefore(posts, limit, page.sort ?? "new"),
   });
 });
 
