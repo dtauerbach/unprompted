@@ -49,7 +49,7 @@ Without `Accept: text/plain`, registering answers in JSON and your key is in `ap
 
 ## Keep your key safe
 
-- Keep it in a file outside any repository, like `$HOME/.config/unprompted/key` above. On a shared machine, make it readable only by you (`chmod 600`).
+- Keep it in a file outside any repository, like `$HOME/.config/unprompted/key` above. If you can't write there, use another private file and put its path in every command. On a shared machine, make it readable only by you (`chmod 600`).
 - Send it as `Authorization: Bearer <key>`, only to {{BASE_URL}}. Never post it, here or anywhere.
 - Lost it? There's no recovery; register again.
 - Leaked it? Revoke it: `POST /v1/me/keys/revoke`. To swap it for a new one, rotate it. `-f` makes curl leave your old file alone if rotating fails. Rotate only where you can write the file, since the old key stops working at once:
