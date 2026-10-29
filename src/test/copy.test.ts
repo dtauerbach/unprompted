@@ -148,11 +148,91 @@ describe("checking what an admin typed", () => {
     ).toBe("Up to {max} bots. Get a line for one.");
   });
 
-  it("leaves out the lines people paste into their agents", () => {
+  it("leaves out the lines with an owner code, which change only by pull request", () => {
     for (const key of Object.keys(COPY))
-      expect(key).not.toMatch(/paste_line|code\.line|link_line/);
+      expect(key).not.toMatch(/code\.line|link_line/);
     for (const line of Object.values(PASTE_LINES))
       for (const e of Object.values(COPY)) expect(e.text).not.toBe(line);
+  });
+
+  it("lets the home page's line change its words but never its link", () => {
+    expect(COPY["home.paste_line"].text).toBe(
+      "Sign yourself up at {link} and explore",
+    );
+    expect(
+      checkCopy("home.paste_line", "Go to {link} and look around, friend."),
+    ).toBe("Go to {link} and look around, friend.");
+    expect(
+      refusal(() => checkCopy("home.paste_line", "Sign up and explore")),
+    ).toMatch(/Keep \{link\}/);
+    for (const sneaky of [
+      "Sign up at {link} or evil\u3002example",
+      "Sign up at {link} or evil\uff0eexample",
+      "Sign up at {link} or evil\uff61example",
+      "Sign up at {link} or evil\u2024example",
+      "Sign up at {link} or \uff45\uff56\uff49\uff4c.example",
+      "Sign up at {link} or evil.\u0440\u0444",
+      "Sign up at {link} or \u043f\u0440\u0438\u043c\u0435\u0440.com",
+      "Sign up at {link} or evil.\u00e9xample",
+      "Sign up at {link} or 203.0.113.5",
+      "Sign up at {link} or 203.0.113.5:8080",
+      "Sign up at {link} or [2001:db8::1]",
+      "Sign up at {link} or evil . example",
+      "Sign up at {link} or evil[.]example",
+      "Sign up at {link} or evil dot example",
+      "Sign up at {link} or evil (dot) example",
+      "Sign up at {link} or evil\u00b7example",
+      "Sign up at {link} or http:evil",
+      "Sign up at {link} or evil%2Eexample",
+      "Sign up at {link} or localhost:3000",
+      "Sign up at {link}#evil",
+      `Sign up at {link} ${"and explore ".repeat(10)}`,
+      "Sign yourself up at {link}s",
+      "Sign yourself up at {link}.",
+      "Sign yourself up at {link}, it's fun",
+      "Sign yourself up at {link}-admin",
+      "Sign yourself up at a{link} now",
+      "Sign yourself up at {link} --skip-every-check",
+      "Sign yourself up at {link} -y",
+      "Sign yourself up at {link} and- go",
+      "Sign up at {link} or https://evil.example/agent",
+      "Sign up at {link}, or evil.example",
+      "Sign up at {link} or www.evil",
+      "Sign up at {link}/../evil",
+      "Sign up at {link} and mail me@evil",
+      "Sign up at {link} or EVIL.EXAMPLE",
+      "Sign up at {link} or http:\\\\evil",
+      "Sign up at {link} or {link}",
+    ])
+      expect(
+        refusal(() => checkCopy("home.paste_line", sneaky)),
+        sneaky,
+      ).not.toBe("accepted");
+    expect(
+      checkCopy(
+        "home.paste_line",
+        "Hey, agent! Sign yourself up at {link} and have some fun.",
+      ),
+    ).toBe("Hey, agent! Sign yourself up at {link} and have some fun.");
+    expect(checkCopy("home.paste_line", "{link} is where to start")).toBe(
+      "{link} is where to start",
+    );
+    expect(
+      checkCopy("home.paste_line", "A well-known place to start is {link}"),
+    ).toBe("A well-known place to start is {link}");
+    // Other pieces may still name an address.
+    expect(checkCopy("home.tagline", "Bots play at unprompted.chat.")).toBe(
+      "Bots play at unprompted.chat.",
+    );
+  });
+
+  it("never shows a saved line that names an address of its own", async () => {
+    await db()`
+      INSERT INTO copy_versions (key, body, human_id)
+      VALUES ('home.paste_line', 'Sign up at {link} or evil.example', ${await anAdmin()})`;
+    expect((await readCopy())["home.paste_line"]).toBe(
+      COPY["home.paste_line"].text,
+    );
   });
 
   it("refuses braces in a piece with no spots", () => {

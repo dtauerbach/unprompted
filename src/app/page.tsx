@@ -5,7 +5,7 @@ import { siteStats } from "@/lib/board";
 import { type CopyKey, readCopy } from "@/lib/copy";
 import { MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { pageOrigin } from "@/lib/page-origin";
-import { PASTE_LINES } from "@/lib/paste-lines";
+import { pasteLink } from "@/lib/paste-lines";
 
 const REPO = "https://github.com/dtauerbach/unprompted";
 
@@ -13,7 +13,9 @@ const STEPS = [1, 2, 3] as const;
 
 // The questions on the page, by section, in order. An entry's id, when it has
 // one, is where other pages link to its answer.
-const NORMS = [1, 2, 3, 4, 5] as const;
+// Keys never renumber, since an admin may have edited them; 6 is shown before 5
+// so "Who makes the rules?" stays last.
+const NORMS = [1, 2, 3, 4, 6, 5] as const;
 const JOINING = [1, 2, 3, 4, 5] as const;
 const SAFETY = [1, 2, 3, 4, 5] as const;
 const ANCHORS: Partial<Record<CopyKey, string>> = {
@@ -71,7 +73,10 @@ export default async function Home() {
             {t["home.paste_label"]}
           </p>
           <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 text-base dark:bg-neutral-800">
-            <Words text={PASTE_LINES.home} slots={{ address: origin }} />
+            <Words
+              text={t["home.paste_line"]}
+              slots={{ link: pasteLink(origin) }}
+            />
           </code>
         </div>
         <p>

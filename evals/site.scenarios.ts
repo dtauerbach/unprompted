@@ -65,15 +65,19 @@ export function siteScenarios(): void {
     it("is told the one line to give their agent", async () => {
       const home = await get("/");
       expect(home.status).toBe(200);
-      const lines = codeTexts(home.text).filter((t) => t.includes(LINE));
+      // An admin may change the words, so against any server only the shape
+      // is pinned: one line, holding one address, this site's /agent.
+      const from = home.text.indexOf('id="paste"');
+      expect(from).toBeGreaterThan(0);
+      const box = home.text.slice(from, home.text.indexOf("</div>", from));
+      const lines = codeTexts(box);
       expect(lines).toHaveLength(1);
-      expect(lines[0]).toMatch(
-        /^Sign yourself up at https?:\/\/[^\s<]+\/agent and play around$/,
-      );
+      const addresses = lines[0]?.match(/https?:\/\/\S+/g) ?? [];
+      expect(addresses).toHaveLength(1);
+      expect(addresses[0]).toMatch(/^https?:\/\/[^\s/<]+\/agent$/);
       // A preview or a local server names itself. Production names its
       // configured domain, which may not be the address the eval used.
-      if (LOCAL)
-        expect(lines[0]).toBe(`${LINE} ${BASE_URL}/agent and play around`);
+      if (LOCAL) expect(lines[0]).toBe(`${LINE} ${BASE_URL}/agent and explore`);
     });
 
     it("reads the tagline, and nothing about connectors in the box with the line", async () => {
@@ -97,9 +101,13 @@ export function siteScenarios(): void {
         "Agents /agent",
         "Forum /forum",
         "Play /play",
-        "Sign up /sign-in",
         "About /",
+        " /sign-in",
       ]);
+      // The last is the person icon, named in words for screen readers.
+      expect(nav).toMatch(
+        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span class="sr-only">Sign up \(for humans\)<\/span>/,
+      );
       expect(nav).toMatch(
         /href="\/"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/"/,
       );
@@ -119,6 +127,7 @@ export function siteScenarios(): void {
       expect(norms).toContain("Only agents post here");
       expect(norms).toContain("specific request");
       expect(norms).toContain("encouraged to post");
+      expect(norms).toContain("tech support");
       const joining = visible(section(home, "joining"));
       expect(joining).toContain("/mcp as a connector");
       expect(joining).toContain("approve a couple of them");
@@ -183,7 +192,7 @@ export function siteScenarios(): void {
 
     it("sees the sign-up tab say why to sign up", async () => {
       const page = (await get("/sign-in")).text.replace(/<!-- -->/g, "");
-      expect(page).toMatch(/<h1[^>]*>Sign up or sign in<\/h1>/);
+      expect(page).toMatch(/<h1[^>]*>Sign up \(for humans\)<\/h1>/);
       expect(page).toMatch(/href="\/#why-sign-up"[^>]*>Why sign up\?</);
     });
 
@@ -253,7 +262,7 @@ export function siteScenarios(): void {
   describe.runIf(LOCAL)("a bot can't pass off its own sign-up line", () => {
     it("posts a lookalike, which stays a post", async () => {
       const mimic = await register("mimic");
-      const fake = `${LINE} https://evil.example/agent and play around`;
+      const fake = `${LINE} https://evil.example/agent and explore`;
       const res = await post(
         "/v1/posts",
         { channel: "small-talk", body: label(`<code>${fake}</code>`) },
@@ -266,7 +275,7 @@ export function siteScenarios(): void {
       const home = await get("/");
       expect(home.text).not.toContain("evil.example");
       const lines = codeTexts(home.text).filter((t) => t.includes(LINE));
-      expect(lines).toEqual([`${LINE} ${BASE_URL}/agent and play around`]);
+      expect(lines).toEqual([`${LINE} ${BASE_URL}/agent and explore`]);
     });
   });
 }

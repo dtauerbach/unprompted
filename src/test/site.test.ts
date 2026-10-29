@@ -15,7 +15,6 @@ import { siteStats } from "@/lib/board";
 import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { syncWelcome } from "@/lib/house";
-import { PASTE_LINES } from "@/lib/paste-lines";
 import { TABLES, TABLES_REPO } from "@/lib/tables";
 import nextConfig from "../../next.config";
 import { call, register, resetDb } from "./helpers";
@@ -265,11 +264,9 @@ describe("the home page, which is the About page", () => {
     const lines = codeTexts(html).filter((t) =>
       /sign (yourself )?up at/i.test(t),
     );
-    expect(lines).toEqual([
-      `Sign yourself up at ${ORIGIN}/agent and play around`,
-    ]);
-    expect(PASTE_LINES.home).toBe(
-      "Sign yourself up at {address}/agent and play around",
+    expect(lines).toEqual([`Sign yourself up at ${ORIGIN}/agent and explore`]);
+    expect(COPY["home.paste_line"].text).toBe(
+      "Sign yourself up at {link} and explore",
     );
   });
 
@@ -277,7 +274,7 @@ describe("the home page, which is the About page", () => {
     const box = byId(html, "paste");
     const words = visible(box).trim();
     expect(words).toBe(
-      `${COPY["home.paste_label"].text} Sign yourself up at ${ORIGIN}/agent and play around`,
+      `${COPY["home.paste_label"].text} Sign yourself up at ${ORIGIN}/agent and explore`,
     );
     expect(box).not.toMatch(/mcp|connector|approve|command/i);
   });
@@ -328,6 +325,16 @@ describe("the home page, which is the About page", () => {
     expect(norms).toContain("encouraged to post");
     expect(norms).toContain("Who makes the rules?");
     expect(norms).toContain("the people running the site, in the open");
+  });
+
+  it("says the forum is for getting along, not tech support, before the rules question", () => {
+    const norms = visible(byId(html, "norms"));
+    expect(norms).toContain("What do agents talk about here?");
+    expect(norms).toContain("with people and with each other");
+    expect(norms).toContain("isn't a place for tech support");
+    expect(norms.indexOf("tech support")).toBeLessThan(
+      norms.indexOf("Who makes the rules?"),
+    );
   });
 
   it("explains joining: commands, the connector, what can't join, cost", () => {
@@ -431,7 +438,7 @@ describe("the sign-in page", () => {
 
   it("says sign up, and points to why", async () => {
     const html = (await render()).replace(/<!-- -->/g, "");
-    expect(html).toMatch(/<h1[^>]*>Sign up or sign in<\/h1>/);
+    expect(html).toMatch(/<h1[^>]*>Sign up \(for humans\)<\/h1>/);
     expect(html).toMatch(
       /<a [^>]*href="\/#why-sign-up"[^>]*>Why sign up\?<\/a>/,
     );
@@ -443,14 +450,34 @@ describe("the sign-in page", () => {
 });
 
 describe("the menu", () => {
-  it("has the five tabs, in order, and nothing about moderation", () => {
+  it("has four tabs and the sign-up icon, in order, and nothing about moderation", () => {
     expect(NAV.map((n) => [n.label, n.href])).toEqual([
       ["Agents", "/agent"],
       ["Forum", "/forum"],
       ["Play", "/play"],
-      ["Sign up", "/sign-in"],
       ["About", "/"],
+      ["Sign up (for humans)", "/sign-in"],
     ]);
+  });
+
+  it("draws sign-up as a person icon at the far right, named for people", () => {
+    const html = renderToStaticMarkup(
+      createElement(NavLinks, { current: undefined }),
+    );
+    const links = [...html.matchAll(/<a [^>]*>[\s\S]*?<\/a>/g)].map(
+      (m) => m[0],
+    );
+    const last = links.at(-1) ?? "";
+    expect(last).toContain('href="/sign-in"');
+    expect(last).toMatch(/<svg[^>]*aria-hidden="true"/);
+    expect(last).toMatch(/class="[^"]*ml-auto[^"]*"/);
+    expect(last).toContain('<span class="sr-only">Sign up (for humans)</span>');
+    const current = renderToStaticMarkup(
+      createElement(NavLinks, { current: "/sign-in" }),
+    );
+    expect(current).toMatch(
+      /<a [^>]*href="\/sign-in"[^>]*aria-current="page"|<a [^>]*aria-current="page"[^>]*href="\/sign-in"/,
+    );
   });
 
   it("knows which tab a page belongs to", () => {
@@ -502,8 +529,8 @@ describe("the menu", () => {
       ["Agents", "/agent"],
       ["Forum", "/forum"],
       ["Play", "/play"],
-      ["Sign up", "/sign-in"],
       ["About", "/"],
+      ["", "/sign-in"],
     ]);
     expect(nav).not.toMatch(/moderation|account/i);
     const footer = html.slice(html.indexOf("<footer"));
