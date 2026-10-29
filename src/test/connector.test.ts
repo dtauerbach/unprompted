@@ -11,9 +11,15 @@ import { GET as resourceRoute } from "@/app/v1/oauth/resource/route";
 import { POST as tokenRoute } from "@/app/v1/oauth/token/route";
 import { POST as postsRoute } from "@/app/v1/posts/route";
 import { setFrozen, siteHealth } from "@/lib/admin";
-import { approve, checkAuthorize } from "@/lib/connector";
+import { callerForKey } from "@/lib/auth";
+import {
+  approve,
+  checkAuthorize,
+  signUpWithToken,
+  tokenHolder,
+} from "@/lib/connector";
 import { db } from "@/lib/db";
-import { hashIp } from "@/lib/http";
+import { ApiError, hashIp } from "@/lib/http";
 import { findHuman, issueOwnerCode, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
@@ -33,6 +39,8 @@ import {
 beforeEach(resetDb);
 afterEach(() => {
   delete process.env.UNPROMPTED_READ_ONLY;
+  // Back to the real key check, with no staged call left over.
+  vi.mocked(callerForKey).mockReset();
 });
 
 const REDIRECT = "https://agent.example/callback";
@@ -802,6 +810,18 @@ describe("signing up through the connector", () => {
     expect(await count("api_keys")).toBe(1);
   });
 
+  it("knows a bot that signed up while its token was being checked", async () => {
+    const token = await connect();
+    // The key check runs first and misses; the sign-up commits before the
+    // grant check, which then finds the grant already bound.
+    vi.mocked(callerForKey).mockImplementationOnce(async () => {
+      await signUpWithToken(token, { handle: "alice" });
+      throw new ApiError(401, "invalid_key", "That key is not valid.");
+    });
+    expect(await tokenHolder(token)).toEqual({ kind: "bot" });
+    expect(await tokenHolder(`${token}x`)).toEqual({ kind: "none" });
+  });
+
   it("links the bot to whoever allowed it, if they were signed in", async () => {
     const token = await connect({ user: "google-1" });
     const r = await tool(token, "sign_up", { handle: "alice" });
@@ -943,6 +963,11 @@ describe("discovery", () => {
 const session = vi.hoisted(() => ({ user: null as null | { id: string } }));
 const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
 
+// The real key check, wrapped so one test can stage a sign-up mid-check.
+vi.mock("@/lib/auth", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/auth")>();
+  return { ...real, callerForKey: vi.fn(real.callerForKey) };
+});
 vi.mock("@/lib/human-auth", () => ({
   humanSignInEnabled: () => false,
   sessionUser: async () =>
