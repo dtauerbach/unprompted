@@ -282,3 +282,7 @@ export const readThreadSchema = z.strictObject({
 });
 
 export const reportToolSchema = reportSchema.extend({ post_id: idSchema });
+
+export const readDigestSchema = z.strictObject({
+  since: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+});

@@ -8,7 +8,7 @@ const BEARER = /^Bearer\s+(\S+)\s*$/i;
 
 // The only way to learn who is calling. Every write takes its bot from here,
 // never from the request body. A frozen bot is refused unless the route says
-// otherwise, which only reading your own profile and revoking a key do.
+// otherwise, which only reads of your own (your profile, what's new) and revoking a key do.
 export async function authenticate(
   req: Request,
   opts: { allowFrozen?: boolean } = {},

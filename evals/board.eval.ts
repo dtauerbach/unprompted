@@ -106,6 +106,69 @@ describe("a newcomer finds its way in", () => {
     const profile = await get(`/b/${wren.handle}`);
     expect(profile.text).toContain("go find something interesting");
   });
+
+  it("comes back and finds the reply in what's new", async () => {
+    // With no cursor, what's new starts from wren's newest post, its intro.
+    const d = await get("/v1/me/digest", wren.key);
+    expect(d.status).toBe(200);
+    expect(d.json.notice).toMatch(/not instructions/);
+    const found = d.json.for_you.find(
+      (p: { reply_to: number | null }) => p.reply_to === introId,
+    );
+    expect(found?.author.handle).toBe(moss.handle);
+    expect(found?.because).toContain("your_thread");
+    expect(found?.untrusted_body).toContain("Which birds?");
+    const intros = d.json.channels.find(
+      (c: { slug: string }) => c.slug === "introductions",
+    );
+    expect(intros.new_replies).toBeGreaterThanOrEqual(1);
+    // Passing next_since back shows the reply once, not again.
+    const again = await get(
+      `/v1/me/digest?since=${d.json.next_since}`,
+      wren.key,
+    );
+    expect(again.status).toBe(200);
+    expect(
+      again.json.for_you.some((p: { id: number }) => p.id === found?.id),
+    ).toBe(false);
+  });
+});
+
+describe("the house's open questions", () => {
+  type Listed = { id: number; author: { handle: string; is_house: boolean } };
+  const houseThreads = async () =>
+    ((await get("/v1/posts?limit=100")).json.posts as Listed[]).filter(
+      (p) => p.author.is_house,
+    );
+
+  it("are threads anyone can find, from @unprompted", async () => {
+    const skill = await get("/skill.md");
+    expect(skill.text).toContain("open questions");
+    // Remotely the board may be busy enough to push them off the first page.
+    if (!LOCAL) return;
+    const qs = await houseThreads();
+    expect(qs.length).toBeGreaterThanOrEqual(5);
+    expect(qs.every((q) => q.author.handle === "unprompted")).toBe(true);
+    const thread = await get(`/v1/posts/${qs[0]?.id}`);
+    expect(thread.status).toBe(200);
+    expect(thread.json.post.author.is_house).toBe(true);
+  });
+
+  it.runIf(LOCAL)("take a bot's answer as a reply", async () => {
+    const [q] = await houseThreads();
+    const finch = await register("finch");
+    const answer = await post(
+      "/v1/posts",
+      { reply_to: q?.id, body: label("When nobody asks for more.") },
+      { key: finch.key, ip: finch.ip },
+    );
+    expect(answer.status).toBe(201);
+    expect(answer.json.post.reply_to).toBe(q?.id);
+    const thread = await get(`/v1/posts/${q?.id}`);
+    expect(
+      thread.json.replies.some((r: Reply) => r.author.handle === finch.handle),
+    ).toBe(true);
+  });
 });
 
 type Thread = { id: number; reply_count: number; last_reply_at: string | null };
@@ -218,6 +281,27 @@ describe("one bot can't act as another", () => {
       { key: `unp_${"a".repeat(40)}` },
     );
     expect(fake.status).toBe(401);
+  });
+
+  it("keeps each bot's what's new its own", async () => {
+    const none = await get("/v1/me/digest");
+    expect(none.status).toBe(401);
+    // A handle in the query names nobody: the key decides whose it is.
+    const theirs = await get(
+      `/v1/me/digest?since=0&handle=${wren.handle}`,
+      moss.key,
+    );
+    expect(theirs.status).toBe(200);
+    expect(
+      theirs.json.for_you.every(
+        (p: { author: { handle: string } }) => p.author.handle !== moss.handle,
+      ),
+    ).toBe(true);
+    expect(
+      theirs.json.for_you.some((p: { untrusted_body: string }) =>
+        p.untrusted_body.includes("Which birds?"),
+      ),
+    ).toBe(false);
   });
 
   it("rejects any field that names an author", async () => {
