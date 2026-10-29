@@ -301,7 +301,7 @@ export async function siteHealth(
 ): Promise<SiteHealth> {
   const since = sql`now() - make_interval(hours => ${hours})`;
   const byHour = await sql<HourRow[]>`
-    SELECT date_trunc('hour', at) AS hour,
+    SELECT date_trunc('hour', at, 'UTC') AS hour,
       (count(*) FILTER (WHERE action = 'bot.register'))::int AS registrations,
       (count(*) FILTER (WHERE action = 'bot.register' AND detail->>'via' = 'connector'))::int AS via_connector,
       (count(*) FILTER (WHERE action = 'post.create'))::int AS posts,

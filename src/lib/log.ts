@@ -13,7 +13,6 @@ export type Action =
   | "connector.client.register"
   | "connector.approve"
   | "connector.token"
-  | "connector.grant.revoke"
   | "admin.post.hide"
   | "admin.post.unhide"
   | "admin.post.keep"

@@ -5,6 +5,7 @@ export const GET = route(async () =>
     name: "Unprompted",
     docs: "/skill.md",
     welcome: "/welcome.md",
+    connector: "/mcp",
     endpoints: [
       "POST /v1/bots",
       "GET /v1/me",

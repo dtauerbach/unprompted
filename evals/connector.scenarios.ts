@@ -3,7 +3,16 @@ import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { describe, expect, it } from "vitest";
-import { BASE_URL, freshIp, get, LOCAL, label, post, RUN_TAG } from "./client";
+import {
+  BASE_URL,
+  freshIp,
+  get,
+  LOCAL,
+  label,
+  post,
+  RUN_TAG,
+  request,
+} from "./client";
 
 // An agent in an app that speaks MCP joins through the connector, driven by
 // the MCP SDK's own client, the way a real app would: it finds the OAuth
@@ -291,6 +300,7 @@ export function connectorScenarios(): void {
       const back = new URL(res.headers.get("location") ?? "");
       expect(`${back.origin}${back.pathname}`).toBe(REDIRECT);
       expect(back.searchParams.get("error")).toBe("invalid_request");
+      expect(back.searchParams.get("iss")).toBe(new URL(BASE_URL).origin);
       expect(back.searchParams.get("code")).toBeNull();
     });
 
@@ -332,10 +342,11 @@ export function connectorScenarios(): void {
       expect(res.status).toBe(303);
       const back = new URL(res.location ?? "");
       expect(back.searchParams.get("error")).toBe("access_denied");
+      expect(back.searchParams.get("iss")).toBe(new URL(BASE_URL).origin);
       expect(back.searchParams.get("code")).toBeNull();
     });
 
-    it("gives a stolen code nothing, and revokes a code used twice", async () => {
+    it("gives a stolen or reused code nothing, and takes nothing away", async () => {
       const id = await registerClient();
       const { verifier, challenge } = pkce();
       const allowed = await pressOnApprovalPage(
@@ -355,14 +366,64 @@ export function connectorScenarios(): void {
       const real = await swap({ ...base, code_verifier: verifier });
       expect(real.status).toBe(200);
       const token = real.json.access_token;
-      const twice = await swap({ ...base, code_verifier: verifier });
-      expect(twice.json.error).toBe("invalid_grant");
-      const res = await post(
-        "/mcp",
-        { jsonrpc: "2.0", id: 1, method: "tools/list" },
-        { key: token },
+      for (const code_verifier of [verifier, pkce().verifier]) {
+        const again = await swap({ ...base, code_verifier });
+        expect(again.status).toBe(400);
+        expect(again.json.error).toBe("invalid_grant");
+        expect(again.json.access_token).toBeUndefined();
+      }
+      // The token still works: a replay can't cut the real app off.
+      const res = await request("POST", "/mcp", {
+        key: token,
+        body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        headers: { accept: "application/json, text/event-stream" },
+      });
+      expect(res.status).toBe(200);
+      expect(res.json.result.tools.length).toBeGreaterThan(0);
+    });
+
+    it("takes a desktop app back on another port of this machine, and only there", async () => {
+      const id = await registerClient();
+      const { verifier, challenge } = pkce();
+      const elsewhere = await fetch(
+        authorizeUrl(id, challenge, {
+          redirect_uri: "http://localhost:47616/other",
+        }),
+        { headers: bypass() },
       );
-      expect(res.status).toBe(401);
+      expect(await elsewhere.text()).toContain("This link didn");
+      const moved = "http://localhost:47616/callback";
+      const allowed = await pressOnApprovalPage(
+        authorizeUrl(id, challenge, { redirect_uri: moved }),
+        "Allow",
+        { ip: freshIp() },
+      );
+      expect(allowed.status).toBe(303);
+      const back = new URL(allowed.location ?? "");
+      expect(`${back.origin}${back.pathname}`).toBe(moved);
+      const swapped = await swap({
+        grant_type: "authorization_code",
+        client_id: id,
+        code: back.searchParams.get("code") ?? "",
+        code_verifier: verifier,
+        redirect_uri: moved,
+      });
+      expect(swapped.status).toBe(200);
+    });
+
+    it("registers an app that asks for a secret, without giving it one", async () => {
+      const res = await post("/v1/oauth/register", {
+        client_name: label("secret app"),
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: "client_secret_post",
+      });
+      expect(res.status).toBe(201);
+      expect(res.json.token_endpoint_auth_method).toBe("none");
+      expect(res.json.client_secret).toBeUndefined();
+      const ipv6 = await post("/v1/oauth/register", {
+        redirect_uris: ["http://[::1]:47615/callback"],
+      });
+      expect(ipv6.status).toBe(400);
     });
 
     it("doesn't let a token that hasn't signed up post", async () => {

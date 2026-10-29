@@ -14,7 +14,7 @@ import type {
   RegisterInput,
   TokenRequest,
 } from "./validate";
-import { authorizeSchema, CLIENT_ID_RE } from "./validate";
+import { authorizeSchema, CLIENT_ID_RE, LOOPBACK_HOSTS } from "./validate";
 
 // The connector: how an agent that can't run commands (a chat app that
 // speaks MCP) joins. It is plain OAuth 2.1 with PKCE, cut down to what that
@@ -110,6 +110,7 @@ export type AuthorizeCheck =
 
 export async function checkAuthorize(
   params: Record<string, string | undefined>,
+  issuer: string,
 ): Promise<AuthorizeCheck> {
   const clientId = params.client_id;
   const client =
@@ -123,7 +124,10 @@ export async function checkAuthorize(
         "This link doesn't come from an app that has set itself up here. Go back to the app and try connecting again.",
     };
   const redirectUri = params.redirect_uri ?? onlyOne(client.redirectUris);
-  if (!redirectUri || !client.redirectUris.includes(redirectUri))
+  if (
+    !redirectUri ||
+    !client.redirectUris.some((r) => redirectMatches(r, redirectUri))
+  )
     return {
       kind: "show",
       message:
@@ -140,9 +144,34 @@ export async function checkAuthorize(
           .join("; ")
           .slice(0, 300),
         state: params.state?.slice(0, 500),
+        iss: issuer,
       }),
     };
   return { kind: "ok", client, input: parsed.data, redirectUri };
+}
+
+// Exact, except that a desktop app's address on this machine may come back
+// on any port (OAuth 2.1 section 8.4.2): it picks a free port each time it
+// runs, but keeps the client it registered once.
+export function redirectMatches(
+  registered: string,
+  requested: string,
+): boolean {
+  if (registered === requested) return true;
+  if (!URL.canParse(registered) || !URL.canParse(requested)) return false;
+  const a = new URL(registered);
+  const b = new URL(requested);
+  return (
+    a.protocol === "http:" &&
+    b.protocol === "http:" &&
+    LOOPBACK_HOSTS.has(a.hostname) &&
+    a.hostname === b.hostname &&
+    a.pathname === b.pathname &&
+    a.search === b.search &&
+    !b.username &&
+    !b.password &&
+    !b.hash
+  );
 }
 
 function onlyOne(uris: string[]): string | undefined {
@@ -169,7 +198,7 @@ export async function approve(
   ipHash: string,
   issuer: string,
 ): Promise<string> {
-  const check = await checkAuthorize(params);
+  const check = await checkAuthorize(params, issuer);
   if (check.kind === "show") throw new ApiError(400, "invalid", check.message);
   if (check.kind === "redirect") return check.url;
   const { client, input, redirectUri } = check;
@@ -200,13 +229,15 @@ export async function approve(
 
 export async function denyUrl(
   params: Record<string, string | undefined>,
+  issuer: string,
 ): Promise<string> {
-  const check = await checkAuthorize(params);
+  const check = await checkAuthorize(params, issuer);
   if (check.kind === "show") throw new ApiError(400, "invalid", check.message);
   if (check.kind === "redirect") return check.url;
   return backTo(check.redirectUri, {
     error: "access_denied",
     state: check.input.state,
+    iss: issuer,
   });
 }
 
@@ -235,15 +266,12 @@ export async function exchangeCode(
         expired: boolean;
         exchanged: boolean;
         revoked: boolean;
-        token_hash: string | null;
-        bot_id: string | null;
       }[]
     >`
       SELECT g.id, c.client_id, g.redirect_uri, g.code_challenge,
              g.code_expires_at <= now() AS expired,
              g.exchanged_at IS NOT NULL AS exchanged,
-             g.revoked_at IS NOT NULL AS revoked,
-             g.token_hash, g.bot_id
+             g.revoked_at IS NOT NULL AS revoked
       FROM connector_grants g JOIN oauth_clients c ON c.id = g.client_id
       WHERE g.code_hash = ${hashKey(req.code)}
       FOR UPDATE OF g`;
@@ -251,27 +279,11 @@ export async function exchangeCode(
       return new OAuthError("invalid_grant", "That code isn't valid.");
     if (g.revoked)
       return new OAuthError("invalid_grant", "That code was revoked.");
-    if (g.exchanged) {
-      // A code used twice may have been stolen, so whatever it gave out stops
-      // working, the bot's key included. This commits; the error is returned.
-      await tx`UPDATE connector_grants SET revoked_at = now() WHERE id = ${g.id}`;
-      if (g.token_hash)
-        await tx`
-          UPDATE api_keys SET revoked_at = now()
-          WHERE key_hash = ${g.token_hash} AND revoked_at IS NULL`;
-      await logAction(tx, {
-        action: "connector.grant.revoke",
-        botId: g.bot_id === null ? null : Number(g.bot_id),
-        keyId: null,
-        subject: `grant:${g.id}`,
-        ipHash,
-        detail: { reason: "code reused" },
-      });
-      return new OAuthError(
-        "invalid_grant",
-        "That code was already used, so its token has been revoked. Connect again.",
-      );
-    }
+    // PKCE means a code is worth nothing without its verifier, so a second
+    // use, whether a client retrying or someone who saw the code, gets
+    // nothing and takes nothing away.
+    if (g.exchanged)
+      return new OAuthError("invalid_grant", "That code was already used.");
     if (g.expired)
       return new OAuthError("invalid_grant", "That code has expired.");
     if (req.redirect_uri !== undefined && req.redirect_uri !== g.redirect_uri)
@@ -353,7 +365,7 @@ async function unboundGrant(
 export async function signUpWithToken(
   token: string,
   input: Omit<RegisterInput, "owner_code">,
-): Promise<{ bot: PublicBot; requestedHandle: string }> {
+): Promise<{ bot: PublicBot; requestedHandle: string; unlinked: boolean }> {
   const grant = await unboundGrant(db(), token);
   if (!grant)
     throw new ApiError(
@@ -379,5 +391,8 @@ export async function signUpWithToken(
         );
     },
   });
-  return { bot: r.bot, requestedHandle: r.requestedHandle };
+  // Whoever allowed it was signed in but already had as many bots as they
+  // can link, so it joined on its own.
+  const unlinked = grant.ownerId !== null && !r.bot.claimed;
+  return { bot: r.bot, requestedHandle: r.requestedHandle, unlinked };
 }

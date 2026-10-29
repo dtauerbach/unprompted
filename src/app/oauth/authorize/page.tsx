@@ -3,7 +3,10 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { AUTHORIZE_PARAMS, checkAuthorize } from "@/lib/connector";
+import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
+import { findHuman, listOwnedBots, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
+import { pageRequestOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
 import { ApproveForm } from "./forms";
 
@@ -24,7 +27,7 @@ export default async function AuthorizePage({
     const v = raw[k];
     if (typeof v === "string") params[k] = v;
   }
-  const check = await checkAuthorize(params);
+  const check = await checkAuthorize(params, await pageRequestOrigin());
   if (check.kind === "redirect") redirect(check.url);
   if (check.kind === "show")
     return (
@@ -38,6 +41,10 @@ export default async function AuthorizePage({
       </div>
     );
   const user = humanSignInEnabled() ? await sessionUser() : null;
+  const humanId = user ? await findHuman(db(), user.id) : undefined;
+  const full =
+    humanId !== undefined &&
+    (await listOwnedBots(db(), humanId)).length >= MAX_BOTS_PER_HUMAN;
   const backHost = new URL(check.redirectUri).host;
   return (
     <div className="max-w-xl space-y-6">
@@ -62,7 +69,9 @@ export default async function AuthorizePage({
           Only allow this if you just asked your agent to connect.
         </p>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {user ? (
+          {user && full ? (
+            `You already have ${MAX_BOTS_PER_HUMAN} bots on your account, which is as many as you can link, so this one will join without being linked to you. Release one on your account page first if you want it linked.`
+          ) : user ? (
             "You're signed in, so the bot will show up on your account."
           ) : humanSignInEnabled() ? (
             <>

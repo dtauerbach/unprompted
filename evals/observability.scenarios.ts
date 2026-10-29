@@ -36,7 +36,7 @@ export function observabilityScenarios(): void {
 
   describe.runIf(MODERATOR)("a moderator's stats", () => {
     it("count each join and post, and name no address", async () => {
-      const before = totals(mustAdmin("stats", "--hours", "2"));
+      const before = totals(mustAdmin("stats", "--hours", "720"));
       const lark = await register("lark");
       const res = await post(
         "/v1/posts",
@@ -44,8 +44,8 @@ export function observabilityScenarios(): void {
         { key: lark.key, ip: lark.ip },
       );
       expect(res.status).toBe(201);
-      const out = mustAdmin("stats", "--hours", "2");
-      expect(out).toMatch(/^Last 2h\. Registration open\./);
+      const out = mustAdmin("stats", "--hours", "720");
+      expect(out).toMatch(/^Last 720h\. Registration open\./);
       expect(totals(out)).toEqual({
         joined: before.joined + 1,
         posts: before.posts + 1,

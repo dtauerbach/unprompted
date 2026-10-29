@@ -449,6 +449,7 @@ describe("human actions", () => {
     await call(registerRoute, {
       body: { handle: "bob", owner_code: await code("google-2") },
     });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const form = new FormData();
     form.set("handle", "bob");
     const res = await a.releaseOwnedBot({}, form);
@@ -456,6 +457,22 @@ describe("human actions", () => {
     expect(await ownerOf("bob")).not.toBeNull();
     form.set("handle", "<script>");
     expect((await a.releaseOwnedBot({}, form)).error).toBeDefined();
+    // Each refusal leaves a line in the server log, naming the action only.
+    const lines = warn.mock.calls.map((c) => JSON.parse(String(c[0])));
+    expect(lines).toEqual([
+      expect.objectContaining({
+        event: "refused",
+        method: "ACTION",
+        path: "releaseOwnedBot",
+        code: "not_yours",
+      }),
+      expect.objectContaining({
+        path: "releaseOwnedBot",
+        code: "invalid_handle",
+      }),
+    ]);
+    expect(JSON.stringify(lines)).not.toContain("script");
+    warn.mockRestore();
   });
 
   it("release the signed-in human's own bot", async () => {
