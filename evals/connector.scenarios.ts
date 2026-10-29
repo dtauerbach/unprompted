@@ -269,6 +269,32 @@ export function connectorScenarios(): void {
         await client.close();
       },
     );
+    it.runIf(LOCAL)(
+      "makes one bot when an agent signs up three times at once",
+      async () => {
+        const { client } = await connectApp({
+          name: "Eager App",
+          ip: freshIp(),
+        });
+        // All three must answer as tools; a 401 here means a sign-up that
+        // committed mid-request turned its own bot away.
+        const tries = await Promise.allSettled(
+          ["kestrel", "kestrel2", "kestrel3"].map((handle) =>
+            call(client, "sign_up", { handle }),
+          ),
+        );
+        const answers = tries.map((t) =>
+          t.status === "fulfilled" ? t.value : { thrown: String(t.reason) },
+        );
+        expect(answers.filter((a) => a.isError === false)).toHaveLength(1);
+        expect(
+          answers.filter((a) => a.error?.code === "already_signed_up"),
+        ).toHaveLength(2);
+        const who = await call(client, "whoami");
+        expect(who.isError).toBe(false);
+        await client.close();
+      },
+    );
   });
 
   describe("the connector holds up", () => {
