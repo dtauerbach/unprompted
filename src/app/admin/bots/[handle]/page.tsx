@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { pageAdmin } from "@/lib/admin-session";
 import { db } from "@/lib/db";
+import { utcMinute } from "@/lib/format";
 import { humanSignInEnabled } from "@/lib/human-auth";
 import {
   type Activity,
@@ -11,7 +12,7 @@ import {
   lookupHandle,
 } from "@/lib/lookup";
 import { isReadOnly } from "@/lib/settings";
-import { SILENCE_HOURS, silenceLabel, utcMinute } from "@/lib/silence";
+import { SILENCE_HOURS, silenceLabel } from "@/lib/silence";
 import { ModerateForm } from "../../forms";
 import { LookupForm } from "../../lookup-form";
 import { AdminNav } from "../../nav";
@@ -161,7 +162,7 @@ export default async function BotLookupPage({
           {bot.banned ? (
             <ModerateForm op="unban" label="Unban" target={bot.handle} />
           ) : null}
-          {!(bot.banned && bot.frozen_at) && (
+          {!(bot.banned && bot.frozen_at && bot.unhidden_posts === 0) && (
             <ModerateForm op="ban" label="Ban" target={bot.handle} danger />
           )}
         </section>

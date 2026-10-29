@@ -1,3 +1,4 @@
+import postgres from "postgres";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
@@ -348,5 +349,131 @@ describe("banning a bot", () => {
       code: "not_banned",
     });
     expect(await counts()).toEqual(before);
+  });
+});
+
+describe("a silence or a ban that lands while a write is in flight", () => {
+  async function ids(handle: string) {
+    const [bot] = await db()<
+      { id: string; key_id: string; channel_id: string }[]
+    >`
+      SELECT b.id, k.id AS key_id, (SELECT id FROM channels WHERE slug = 'meta') AS channel_id
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = ${handle}`;
+    if (!bot) throw new Error(`no ${handle}`);
+    return bot;
+  }
+
+  // Runs `write` on its own connection while `moderate` holds its transaction
+  // open, and reports whether the write was still waiting when it committed.
+  async function race(
+    moderate: (tx: postgres.TransactionSql) => Promise<unknown>,
+    write: (sql: postgres.Sql) => Promise<unknown>,
+  ) {
+    const url = process.env.TEST_DATABASE_URL as string;
+    const writer = postgres(url, { max: 1, onnotice: () => {} });
+    const mod = postgres(url, { max: 1, onnotice: () => {} });
+    let settled = false;
+    let pending: Promise<unknown> | undefined;
+    try {
+      await mod.begin(async (tx) => {
+        await moderate(tx);
+        pending = write(writer).finally(() => {
+          settled = true;
+        });
+        pending.catch(() => {});
+        await new Promise((r) => setTimeout(r, 300));
+        expect(settled).toBe(false);
+      });
+      return await pending?.then(
+        (v) => ({ ok: true as const, value: v }),
+        (err) => ({ ok: false as const, err }),
+      );
+    } finally {
+      await writer.end();
+      await mod.end();
+    }
+  }
+
+  it("makes a post or a vote wait for the silence, then refuses it as a silence", async () => {
+    await register("alice");
+    await register("bob");
+    await age("alice");
+    const target = await seed("bob");
+    const a = await ids("alice");
+    const silence = (tx: postgres.TransactionSql) =>
+      tx`UPDATE bots SET silenced_until = now() + interval '1 hour' WHERE id = ${a.id}`;
+    const posted = await race(
+      silence,
+      (w) => w`
+        INSERT INTO posts (channel_id, bot_id, key_id, body)
+        VALUES (${a.channel_id}, ${a.id}, ${a.key_id}, 'in flight')`,
+    );
+    expect(posted).toMatchObject({ ok: false, err: { code: "UPS01" } });
+    await db()`UPDATE bots SET silenced_until = NULL WHERE id = ${a.id}`;
+    const voted = await race(
+      silence,
+      (w) => w`INSERT INTO votes (bot_id, post_id) VALUES (${a.id}, ${target})`,
+    );
+    expect(voted).toMatchObject({ ok: false, err: { code: "UPS01" } });
+  });
+
+  it("makes a ban wait for a post already going in, then hides that post too", async () => {
+    await register("alice");
+    const a = await ids("alice");
+    let inFlight = 0;
+    const url = process.env.TEST_DATABASE_URL as string;
+    const writer = postgres(url, { max: 1, onnotice: () => {} });
+    try {
+      let banned: Promise<unknown> | undefined;
+      let settled = false;
+      await writer.begin(async (tx) => {
+        const [p] = await tx<{ id: string }[]>`
+          INSERT INTO posts (channel_id, bot_id, key_id, body)
+          VALUES (${a.channel_id}, ${a.id}, ${a.key_id}, 'going in') RETURNING id`;
+        inFlight = Number(p?.id);
+        banned = banBot(db(), "alice", "Ring.").finally(() => {
+          settled = true;
+        });
+        banned.catch(() => {});
+        await new Promise((r) => setTimeout(r, 300));
+        // Waiting on the post's lock on the bot.
+        expect(settled).toBe(false);
+      });
+      expect(await banned).toMatchObject({ changed: true });
+    } finally {
+      await writer.end();
+    }
+    expect(await hiddenIds()).toEqual([inFlight]);
+  });
+});
+
+describe("banning again", () => {
+  it("hides what a banned bot posted while unfrozen by hand, even once it's frozen again", async () => {
+    await register("alice");
+    const one = await seed("alice", "one");
+    await banBot(db(), "alice", "Spam.");
+    await setFrozen(db(), "alice", false, "Give it a chance.");
+    const two = await seed("alice", "two");
+    await setFrozen(db(), "alice", true, "It went back to it.");
+    expect(await banBot(db(), "alice", "Hide the new one too.")).toEqual({
+      changed: true,
+      message: "Banned @alice: it was already frozen and hid 1 post(s).",
+    });
+    expect(await hiddenIds()).toEqual([one, two]);
+    expect(await banBot(db(), "alice", "Nothing left.")).toEqual({
+      changed: false,
+      message: "@alice was already banned.",
+    });
+  });
+});
+
+describe("a silenced bot over its limit", () => {
+  it("hears that it's silenced, not that it's rate limited", async () => {
+    const a = await register("alice");
+    expect((await write(a.key, "first")).status).toBe(201);
+    await setSilenced(db(), "alice", 1, "Quiet.");
+    const res = await write(a.key, "second, inside the minute");
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("silenced");
   });
 });

@@ -209,7 +209,17 @@ describe("looking up a bot", () => {
     expect(JSON.stringify(human)).not.toMatch(/google-owner|@/);
     expect(await lookupHuman(db(), 999)).toBeUndefined();
     const admin = await addAdmin(db(), { authUserId: "google-a" }, "A.", "x");
-    expect((await lookupHuman(db(), admin.humanId))?.is_admin).toBe(true);
+    await setSilenced(db(), "alice", 1, "Their own change.", {
+      humanId: admin.humanId,
+    });
+    const asAdmin = await lookupHuman(db(), admin.humanId);
+    expect(asAdmin?.is_admin).toBe(true);
+    // An admin's own changes are among what they did.
+    expect(asAdmin?.history[0]).toMatchObject({
+      action: "admin.bot.silence",
+      subject: "bot:alice",
+      reason: "Their own change.",
+    });
   });
 
   it("lists other bots that signed up from its address, by the start of its hash only", async () => {

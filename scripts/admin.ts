@@ -62,8 +62,13 @@ import {
   listAdmins,
   removeAdmin,
 } from "../src/lib/admins";
-import { lookupBot, lookupHuman, parseLookup } from "../src/lib/lookup";
-import { utcMinute } from "../src/lib/silence";
+import { utcMinute } from "../src/lib/format";
+import {
+  handleForBotId,
+  lookupBot,
+  lookupHuman,
+  parseLookup,
+} from "../src/lib/lookup";
 import { parseId } from "../src/lib/validate";
 
 const { positionals, values } = parseArgs({
@@ -126,13 +131,7 @@ async function lookup(): Promise<void> {
       );
     return;
   }
-  const name =
-    t.kind === "bot"
-      ? t.handle
-      : (
-          await sql<{ handle: string }[]>`
-          SELECT handle FROM bots WHERE id = ${t.id}`
-        )[0]?.handle;
+  const name = t.kind === "bot" ? t.handle : await handleForBotId(sql, t.id);
   const b = name === undefined ? undefined : await lookupBot(sql, name);
   if (!b) throw new Error(`There is no bot ${target}.`);
   const state = [

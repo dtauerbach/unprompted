@@ -1,6 +1,7 @@
 import { userInfo } from "node:os";
 import type postgres from "postgres";
 import { TIGHTENED_UNTIL } from "./floods";
+import { utcMinute } from "./format";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
@@ -15,7 +16,7 @@ import {
   antiAbuseSchema,
   REGISTRATION_PAUSED,
 } from "./settings";
-import { SILENCE_MAX_HOURS, utcMinute } from "./silence";
+import { SILENCE_MAX_HOURS } from "./silence";
 import { moderatorReasonSchema } from "./validate";
 
 // Moderator actions. They run from scripts/admin.ts, by a human with database
@@ -368,14 +369,20 @@ export async function banBot(
     const who = await asActor(tx, actor);
     const bot = await botForUpdate(tx, handle);
     const froze = bot.frozen_at === null;
-    if (!froze && (await standingBans(tx, bot.id)).length > 0)
-      return { changed: false, message: `@${handle} was already banned.` };
     if (froze) await tx`UPDATE bots SET frozen_at = now() WHERE id = ${bot.id}`;
     const hidden = await tx<{ post_id: string }[]>`
       INSERT INTO hidden_posts (post_id)
       SELECT id FROM posts WHERE bot_id = ${bot.id}
       ON CONFLICT (post_id) DO NOTHING RETURNING post_id`;
     const posts = hidden.map((h) => Number(h.post_id)).sort((a, b) => a - b);
+    // A banned bot unfrozen by hand may have posted since: banning again
+    // hides those too. With nothing left to do, it changes nothing.
+    if (
+      !froze &&
+      posts.length === 0 &&
+      (await standingBans(tx, bot.id)).length > 0
+    )
+      return { changed: false, message: `@${handle} was already banned.` };
     await logAction(tx, {
       action: "admin.bot.ban",
       botId: bot.id,

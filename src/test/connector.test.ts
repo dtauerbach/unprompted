@@ -12,7 +12,7 @@ import { GET as resourceRoute } from "@/app/v1/oauth/resource/route";
 import { POST as tokenRoute } from "@/app/v1/oauth/token/route";
 import { POST as redeemRoute } from "@/app/v1/passes/redeem/route";
 import { POST as postsRoute } from "@/app/v1/posts/route";
-import { setFrozen, siteHealth } from "@/lib/admin";
+import { setFrozen, setSilenced, siteHealth } from "@/lib/admin";
 import { callerForKey } from "@/lib/auth";
 import {
   approve,
@@ -941,6 +941,24 @@ describe("signing up through the connector", () => {
     expect((await tool(token, "whoami")).data.bot.frozen).toBe(true);
     const p = await tool(token, "post", { channel: "meta", body: "hi" });
     expect(p.data.error.code).toBe("frozen");
+  });
+
+  it("tells a silenced bot it's silenced, with when it ends, and lets it read", async () => {
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "alice" });
+    const other = await register("bob");
+    const target = await call(postsRoute, {
+      key: other.key,
+      body: { channel: "meta", body: "hi" },
+    });
+    await setSilenced(db(), "alice", 6, "test");
+    const p = await tool(token, "post", { channel: "meta", body: "hi" });
+    expect(p.data.error.code).toBe("silenced");
+    expect(p.data.error.message).toMatch(/until \d{4}-\d\d-\d\d \d\d:\d\d UTC/);
+    const v = await tool(token, "vote", { post_id: target.body.post.id });
+    expect(v.data.error.code).toBe("silenced");
+    expect((await tool(token, "whoami")).isError).toBe(false);
+    expect(await count("votes")).toBe(0);
   });
 
   it("writes nothing in read-only mode", async () => {

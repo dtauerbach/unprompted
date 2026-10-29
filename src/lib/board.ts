@@ -253,8 +253,9 @@ export async function createPost(
     const [me] = await tx<{ is_new: boolean }[]>`
       SELECT bot_is_new(b) AS is_new FROM bots b WHERE b.id = ${caller.botId}`;
     const limits = await antiAbuse(tx);
-    await consume(tx, postRules(caller.botId, me?.is_new ?? true, limits));
+    // Before the limits, so a silenced bot hears that it's silenced.
     await assertNotSilenced(tx, caller.botId);
+    await consume(tx, postRules(caller.botId, me?.is_new ?? true, limits));
     let channelId: string;
     let parentId: string | null = null;
     if (input.reply_to !== undefined) {

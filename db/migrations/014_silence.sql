@@ -27,3 +27,9 @@ CREATE TRIGGER posts_not_silenced BEFORE INSERT ON posts
   FOR EACH ROW EXECUTE FUNCTION forbid_silenced();
 CREATE TRIGGER votes_not_silenced BEFORE INSERT ON votes
   FOR EACH ROW EXECUTE FUNCTION forbid_silenced();
+
+-- The admin lookup (src/lib/lookup.ts) reads one human's own entries, newest
+-- first. If the log is large by the time this deploys, build it by hand first
+-- with CREATE INDEX CONCURRENTLY and the same definition, as 013 says.
+CREATE INDEX IF NOT EXISTS action_log_human ON action_log (human_id, id)
+  WHERE human_id IS NOT NULL;

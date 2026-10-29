@@ -1,4 +1,5 @@
 import type { Tx } from "./db";
+import { utcMinute } from "./format";
 import { ApiError } from "./http";
 
 // A moderator can silence a bot for a while (setSilenced in src/lib/admin.ts).
@@ -11,10 +12,6 @@ import { ApiError } from "./http";
 // line takes any whole number of hours up to SILENCE_MAX_HOURS.
 export const SILENCE_HOURS = [1, 6, 24, 72, 168] as const;
 export const SILENCE_MAX_HOURS = 24 * 30;
-
-export function utcMinute(at: Date): string {
-  return `${at.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-}
 
 export function silencedError(until?: Date): ApiError {
   return new ApiError(

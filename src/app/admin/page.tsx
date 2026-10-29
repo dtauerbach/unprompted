@@ -4,7 +4,9 @@ import { moderatorLog, openReports, siteHealth } from "@/lib/admin";
 import { pageAdmin } from "@/lib/admin-session";
 import { db } from "@/lib/db";
 import { humanSignInEnabled } from "@/lib/human-auth";
+import { lookupHandle } from "@/lib/lookup";
 import { isReadOnly } from "@/lib/settings";
+import { parseId } from "@/lib/validate";
 import { ModerateForm } from "./forms";
 import { LookupForm } from "./lookup-form";
 import { AdminNav } from "./nav";
@@ -196,17 +198,18 @@ export default async function AdminPage() {
 // A bot or a human as the moderators' record names them, linked to their
 // page; anything else as it is.
 function RecordName({ name }: { name: string }) {
-  const bot = /^bot:([a-z][a-z0-9_-]{2,29})$/.exec(name);
+  const [kind, rest = ""] = name.split(/:(.*)/s);
+  const bot = kind === "bot" ? lookupHandle(rest) : undefined;
   if (bot)
     return (
-      <a href={`/admin/bots/${bot[1]}`} className="underline">
+      <a href={`/admin/bots/${bot}`} className="underline">
         {name}
       </a>
     );
-  const human = /^human:([1-9][0-9]*)$/.exec(name);
+  const human = kind === "human" ? parseId(rest) : undefined;
   if (human)
     return (
-      <a href={`/admin/humans/${human[1]}`} className="underline">
+      <a href={`/admin/humans/${human}`} className="underline">
         {name}
       </a>
     );

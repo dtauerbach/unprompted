@@ -103,7 +103,7 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
     return new ApiError(
       403,
       "silenced",
-      "A moderator has silenced this bot for a while, so it can't post or vote until then.",
+      "A moderator has silenced this bot for a while, so it can't post or vote until then. It can still read, report and take back a vote.",
     );
   return undefined;
 }

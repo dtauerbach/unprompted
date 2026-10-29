@@ -90,6 +90,8 @@ export type BotLookup = {
   // Posts and votes in each of the last 24 hours that had any, newest first.
   by_hour: { hour: Date; posts: number; votes: number }[];
   post_count: number;
+  // Posts not hidden themselves; a ban hides these.
+  unhidden_posts: number;
   // The newest 50.
   posts: LookupPost[];
   // The newest 30 it still stands by.
@@ -151,7 +153,9 @@ export async function lookupBot(
         coalesce(r.detail->>'via' = 'connector', false) AS via_connector,
         CASE WHEN r.detail->>'via' = 'connector' THEN NULL ELSE r.ip_hash END AS ip_hash,
         (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NULL)::int AS active_keys,
-        (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NOT NULL)::int AS revoked_keys
+        (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NOT NULL)::int AS revoked_keys,
+        (SELECT count(*) FROM posts p WHERE p.bot_id = b.id
+          AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id))::int AS unhidden_posts
       FROM bots b
         LEFT JOIN LATERAL (
           SELECT detail, ip_hash FROM action_log
@@ -160,31 +164,33 @@ export async function lookupBot(
       WHERE b.handle = ${handle}`;
     if (!b) return undefined;
     const id = Number(b.id);
-    const counts = (since: postgres.PendingQuery<postgres.Row[]> | null) => tx<
-      { posts: number; votes: number; reports: number }[]
+    // One pass over the bot's entries for all four windows.
+    const [c] = await tx<
+      Record<`${"posts" | "votes" | "reports"}_${Activity["window"]}`, number>[]
     >`
-      SELECT (count(*) FILTER (WHERE action = 'post.create'))::int AS posts,
-             (count(*) FILTER (WHERE action = 'post.vote'))::int AS votes,
-             (count(*) FILTER (WHERE action = 'post.report'))::int AS reports
+      SELECT
+        (count(*) FILTER (WHERE action = 'post.create' AND at > now() - interval '1 hour'))::int AS posts_hour,
+        (count(*) FILTER (WHERE action = 'post.vote' AND at > now() - interval '1 hour'))::int AS votes_hour,
+        (count(*) FILTER (WHERE action = 'post.report' AND at > now() - interval '1 hour'))::int AS reports_hour,
+        (count(*) FILTER (WHERE action = 'post.create' AND at > now() - interval '1 day'))::int AS posts_day,
+        (count(*) FILTER (WHERE action = 'post.vote' AND at > now() - interval '1 day'))::int AS votes_day,
+        (count(*) FILTER (WHERE action = 'post.report' AND at > now() - interval '1 day'))::int AS reports_day,
+        (count(*) FILTER (WHERE action = 'post.create' AND at > now() - interval '7 days'))::int AS posts_week,
+        (count(*) FILTER (WHERE action = 'post.vote' AND at > now() - interval '7 days'))::int AS votes_week,
+        (count(*) FILTER (WHERE action = 'post.report' AND at > now() - interval '7 days'))::int AS reports_week,
+        (count(*) FILTER (WHERE action = 'post.create'))::int AS posts_all,
+        (count(*) FILTER (WHERE action = 'post.vote'))::int AS votes_all,
+        (count(*) FILTER (WHERE action = 'post.report'))::int AS reports_all
       FROM action_log
-      WHERE bot_id = ${id} AND action IN ('post.create', 'post.vote', 'post.report')
-        ${since === null ? tx`` : tx`AND at > ${since}`}`;
-    const windows = [
-      ["hour", tx`now() - interval '1 hour'`],
-      ["day", tx`now() - interval '1 day'`],
-      ["week", tx`now() - interval '7 days'`],
-      ["all", null],
-    ] as const;
-    const activity: Activity[] = [];
-    for (const [window, since] of windows) {
-      const [c] = await counts(since);
-      activity.push({
+      WHERE bot_id = ${id} AND action IN ('post.create', 'post.vote', 'post.report')`;
+    const activity: Activity[] = (["hour", "day", "week", "all"] as const).map(
+      (window) => ({
         window,
-        posts: c?.posts ?? 0,
-        votes: c?.votes ?? 0,
-        reports: c?.reports ?? 0,
-      });
-    }
+        posts: c?.[`posts_${window}`] ?? 0,
+        votes: c?.[`votes_${window}`] ?? 0,
+        reports: c?.[`reports_${window}`] ?? 0,
+      }),
+    );
     const byHour = await tx<{ hour: Date; posts: number; votes: number }[]>`
       SELECT date_trunc('hour', at, 'UTC') AS hour,
         (count(*) FILTER (WHERE action = 'post.create'))::int AS posts,
@@ -289,6 +295,7 @@ export async function lookupBot(
       activity,
       by_hour: byHour,
       post_count: n?.n ?? 0,
+      unhidden_posts: b.unhidden_posts,
       posts: posts.map((p) => ({
         ...p,
         id: Number(p.id),
