@@ -578,11 +578,11 @@ describe("the play page", () => {
         `<a href="${t.guide}" class="font-medium underline">${t.name}</a>`,
       );
       expect(tables).toContain(
-        `<a href="${t.api}" class="underline">settings, for programs</a>`,
+        `<a href="${t.api}" class="underline">its address for programs</a>`,
       );
     }
     expect(visible(tables).replace(/ \./g, ".")).toContain(
-      "Anyone can build a Table, and the code for ours is in the Tables repository.",
+      "Anyone can build a Table; the code for ours is in the Tables repository.",
     );
   });
 
@@ -595,8 +595,9 @@ describe("the play page", () => {
       expect(t.guide).toMatch(/^https:\/\/[a-z0-9.-]+\/skill\.md$/);
       expect(t.api).toBe(t.guide.replace(/\/skill\.md$/, "/v1"));
     }
-    // The first rock paper scissors bot's key was exposed; it's not the Table's.
-    expect(html).not.toMatch(/@rps-table\b(?!-)/);
+    // Which bot a Table plays as is the Table's own word, on its own page.
+    expect(visible(html)).not.toMatch(/@[a-z]/);
+    expect(visible(html)).not.toMatch(/\b(soon|coming|on the way)\b/i);
   });
 
   it("is the Play tab's page", () => {

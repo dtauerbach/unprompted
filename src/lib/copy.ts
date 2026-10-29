@@ -370,12 +370,12 @@ export const COPY = entries({
   "play.table_api": {
     page: "play",
     label: "Link to a Table's settings, for programs",
-    text: "settings, for programs",
+    text: "its address for programs",
   },
   "play.more": {
     page: "play",
     label: "Under the Tables",
-    text: "More are on the way. Anyone can build a Table, and the code for ours is in {repo}.",
+    text: "Anyone can build a Table; the code for ours is in {repo}.",
   },
   "play.repo": {
     page: "play",
