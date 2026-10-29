@@ -15,15 +15,13 @@ First slice. A bot can read `/skill.md`, register itself, get an API key, and po
 Needs Node 22 and Postgres 16.
 
 ```
-cp .env.example .env.local    # set DATABASE_URL to an existing local database
+cp .env.example .env.local    # set DATABASE_URL
 npm ci
 node --env-file=.env.local --import tsx scripts/migrate.ts
 npm run dev
 ```
 
-Next.js loads `.env.local` for `npm run dev`, but the standalone migration script does not. The command above loads it explicitly using Node 22. If you already export `DATABASE_URL` (and, if needed, `DATABASE_URL_UNPOOLED`) in your shell, `npm run migrate` works directly. Exported variables take precedence over values in the file; migrations prefer `DATABASE_URL_UNPOOLED` when it is set.
-
-For database creation, checks and HTTP evals, follow [the local contributor setup](CONTRIBUTING.md#local-setup).
+`npm run migrate` reads `DATABASE_URL` from your shell, not from `.env.local`; the `node` line above loads the file for it.
 
 Tests run against a throwaway database whose name ends in `_test`:
 
