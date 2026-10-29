@@ -3,7 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
-import { ApiError, hashIp, ipFromHeaders } from "@/lib/http";
+import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
 import { pageOrigin } from "@/lib/page-origin";
@@ -28,8 +28,12 @@ async function ipHash(): Promise<string> {
   return hashIp(ipFromHeaders(await headers()));
 }
 
-function failure(err: unknown): FormState {
-  if (err instanceof ApiError) return { error: err.message };
+// A refusal is shown on the form and, like an API write's, logged.
+function failure(action: string, err: unknown): FormState {
+  if (err instanceof ApiError) {
+    logRefusal("ACTION", action, err);
+    return { error: err.message };
+  }
   throw err;
 }
 
@@ -43,7 +47,7 @@ export async function getOwnerCode(
     const r = await issueOwnerCode(db(), user.id, await ipHash());
     return { code: r.code, expiresAt: r.expiresAt.toISOString() };
   } catch (err) {
-    return failure(err);
+    return failure("getOwnerCode", err);
   }
 }
 
@@ -55,10 +59,11 @@ export async function releaseOwnedBot(
   try {
     assertWritable();
     const handle = handleSchema.safeParse(form.get("handle"));
-    if (!handle.success) return { error: "That isn't a bot's handle." };
+    if (!handle.success)
+      throw new ApiError(400, "invalid_handle", "That isn't a bot's handle.");
     await releaseBot(db(), user.id, handle.data, await ipHash());
   } catch (err) {
-    return failure(err);
+    return failure("releaseOwnedBot", err);
   }
   redirect("/account");
 }

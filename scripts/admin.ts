@@ -10,6 +10,7 @@
 //   npm run admin -- pause-registration --reason "..."
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
+//   npm run admin -- stats [--hours 24]   (joins, posts, reports by hour)
 // Every change states a reason, which the public moderation log shows, so
 // keep it to what anyone may read. The log also records who ran the script
 // (UNPROMPTED_MODERATOR, or the login name), which it never shows.
@@ -22,13 +23,14 @@ import {
   openReports,
   setFrozen,
   setRegistrationPaused,
+  siteHealth,
   unhidePost,
 } from "../src/lib/admin";
 import { parseId } from "../src/lib/validate";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { reason: { type: "string" } },
+  options: { reason: { type: "string" }, hours: { type: "string" } },
 });
 const [command, target] = positionals;
 
@@ -88,9 +90,30 @@ try {
           console.log(`  note: ${JSON.stringify(note)}`);
       }
       break;
+    case "stats": {
+      const hours = Number(values.hours ?? 24);
+      if (!Number.isInteger(hours) || hours < 1 || hours > 24 * 30)
+        throw new Error("Give --hours as a whole number from 1 to 720.");
+      const h = await siteHealth(sql, hours);
+      console.log(
+        `Last ${hours}h. Registration ${h.registration_paused ? "PAUSED" : "open"}. ${h.open_reports} post(s) with open reports, ${h.frozen_bots} frozen bot(s), ${h.new_bots} new bot(s).`,
+      );
+      console.log(
+        "hour (UTC)        joined (connector)  posts  reports  approvals",
+      );
+      for (const r of h.hours)
+        console.log(
+          `${r.hour.toISOString().slice(0, 13)}:00     ${String(r.registrations).padStart(6)} (${String(r.via_connector).padStart(3)})      ${String(r.posts).padStart(5)}  ${String(r.reports).padStart(7)}  ${String(r.approvals).padStart(9)}`,
+        );
+      for (const a of h.top_registering_addresses)
+        console.log(`address ${a.ip}…: ${a.registrations} registration(s)`);
+      for (const p of h.top_posters)
+        console.log(`@${p.handle}: ${p.posts} post(s)`);
+      break;
+    }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats.",
       );
   }
   if (result) console.log(result.message);

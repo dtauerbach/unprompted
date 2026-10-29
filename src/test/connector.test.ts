@@ -10,10 +10,16 @@ import { POST as registerClientRoute } from "@/app/v1/oauth/register/route";
 import { GET as resourceRoute } from "@/app/v1/oauth/resource/route";
 import { POST as tokenRoute } from "@/app/v1/oauth/token/route";
 import { POST as postsRoute } from "@/app/v1/posts/route";
-import { setFrozen } from "@/lib/admin";
-import { approve, checkAuthorize } from "@/lib/connector";
+import { setFrozen, siteHealth } from "@/lib/admin";
+import { callerForKey } from "@/lib/auth";
+import {
+  approve,
+  checkAuthorize,
+  signUpWithToken,
+  tokenHolder,
+} from "@/lib/connector";
 import { db } from "@/lib/db";
-import { hashIp } from "@/lib/http";
+import { ApiError, hashIp } from "@/lib/http";
 import { findHuman, issueOwnerCode, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
@@ -33,6 +39,8 @@ import {
 beforeEach(resetDb);
 afterEach(() => {
   delete process.env.UNPROMPTED_READ_ONLY;
+  // Back to the real key check, with no staged call left over.
+  vi.mocked(callerForKey).mockReset();
 });
 
 const REDIRECT = "https://agent.example/callback";
@@ -611,12 +619,22 @@ describe("the code exchange", () => {
 
 describe("the MCP endpoint", () => {
   it("tells a caller with no token where to get one", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const res = await mcp(undefined, "tools/list");
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe("missing_key");
     expect(res.headers.get("www-authenticate")).toBe(
       'Bearer resource_metadata="https://unprompted.test/.well-known/oauth-protected-resource/mcp"',
     );
+    // Every client starts this way, so it isn't logged as a refusal. A
+    // token that is nobody's is.
+    expect(warn).not.toHaveBeenCalled();
+    await mcp("unp_nothing", "tools/list");
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+      status: 401,
+      code: "invalid_key",
+    });
+    warn.mockRestore();
   });
 
   it("refuses a token that is nobody's", async () => {
@@ -664,6 +682,7 @@ describe("the MCP endpoint", () => {
 
 describe("signing up through the connector", () => {
   it("lets an unsigned connection read, but not write", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const token = await connect();
     expect((await tool(token, "list_channels")).data.channels.length).toBe(3);
     expect((await tool(token, "read_posts")).isError).toBe(false);
@@ -673,6 +692,20 @@ describe("signing up through the connector", () => {
     const post = await tool(token, "post", { channel: "meta", body: "hi" });
     expect(post.data.error.code).toBe("not_signed_up");
     expect(await count("posts")).toBe(0);
+    // Each refused tool call leaves a line in the server log, naming the
+    // tool and never the token or what it tried to post.
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.map((l) => JSON.parse(l))).toContainEqual({
+      event: "refused",
+      method: "MCP",
+      path: "/mcp post",
+      status: 401,
+      code: "not_signed_up",
+    });
+    for (const l of lines) expect(l).not.toContain(token);
+    // A refused read, like a refused GET, leaves none.
+    expect(lines.join("\n")).not.toContain("/mcp whoami");
+    warn.mockRestore();
     // Nor is the token a key for the JSON API yet.
     const rest = await call(postsRoute, {
       key: token,
@@ -703,6 +736,14 @@ describe("signing up through the connector", () => {
     const [log] = await db()`
       SELECT detail FROM action_log WHERE action = 'bot.register'`;
     expect(log?.detail).toEqual({ via: "connector" });
+    const sum = (f: "registrations" | "via_connector" | "approvals") =>
+      hours.reduce((n, h) => n + h[f], 0);
+    const { hours } = await siteHealth(db());
+    expect([
+      sum("registrations"),
+      sum("via_connector"),
+      sum("approvals"),
+    ]).toEqual([1, 1, 1]);
   });
 
   it("posts, replies and reports like any bot", async () => {
@@ -767,6 +808,18 @@ describe("signing up through the connector", () => {
       expect(r.data.error.code).toBe("already_signed_up");
     expect(await count("bots")).toBe(1);
     expect(await count("api_keys")).toBe(1);
+  });
+
+  it("knows a bot that signed up while its token was being checked", async () => {
+    const token = await connect();
+    // The key check runs first and misses; the sign-up commits before the
+    // grant check, which then finds the grant already bound.
+    vi.mocked(callerForKey).mockImplementationOnce(async () => {
+      await signUpWithToken(token, { handle: "alice" });
+      throw new ApiError(401, "invalid_key", "That key is not valid.");
+    });
+    expect(await tokenHolder(token)).toEqual({ kind: "bot" });
+    expect(await tokenHolder(`${token}x`)).toEqual({ kind: "none" });
   });
 
   it("links the bot to whoever allowed it, if they were signed in", async () => {
@@ -910,6 +963,11 @@ describe("discovery", () => {
 const session = vi.hoisted(() => ({ user: null as null | { id: string } }));
 const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
 
+// The real key check, wrapped so one test can stage a sign-up mid-check.
+vi.mock("@/lib/auth", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/auth")>();
+  return { ...real, callerForKey: vi.fn(real.callerForKey) };
+});
 vi.mock("@/lib/human-auth", () => ({
   humanSignInEnabled: () => false,
   sessionUser: async () =>
@@ -971,6 +1029,7 @@ describe("the approval page's actions", () => {
   });
 
   it("refuse a bad client without sending anyone anywhere", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const a = await import("@/app/oauth/authorize/actions");
     const r = await a.allowConnector(
       {},
@@ -985,6 +1044,22 @@ describe("the approval page's actions", () => {
     );
     expect(d.error).toBeTruthy();
     expect(nav.redirects).toEqual([]);
+    // Both refusals leave a line naming the action, not the address tried.
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.map((l) => JSON.parse(l))).toEqual([
+      expect.objectContaining({
+        method: "ACTION",
+        path: "allowConnector",
+        code: "invalid",
+      }),
+      expect.objectContaining({
+        method: "ACTION",
+        path: "denyConnector",
+        code: "invalid",
+      }),
+    ]);
+    expect(lines.join("\n")).not.toContain("evil.example");
+    warn.mockRestore();
   });
 
   it("allow nothing in read-only mode", async () => {

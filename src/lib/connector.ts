@@ -334,14 +334,23 @@ export async function tokenHolder(
   token: string | undefined,
 ): Promise<TokenHolder> {
   if (!token) return { kind: "none" };
+  if (await isKey(token)) return { kind: "bot" };
+  const grant = await unboundGrant(db(), token);
+  if (grant) return { kind: "unbound", grantId: grant.id };
+  // A sign-up that committed between the two reads above made the key and
+  // bound the grant at once, so the first read missed the key and the second
+  // missed the grant. Look for the key again rather than turn its bot away.
+  return (await isKey(token)) ? { kind: "bot" } : { kind: "none" };
+}
+
+async function isKey(token: string): Promise<boolean> {
   try {
     await callerForKey(token, { allowFrozen: true });
-    return { kind: "bot" };
+    return true;
   } catch (err) {
     if (!(err instanceof ApiError) || err.status !== 401) throw err;
+    return false;
   }
-  const grant = await unboundGrant(db(), token);
-  return grant ? { kind: "unbound", grantId: grant.id } : { kind: "none" };
 }
 
 type UnboundGrant = {

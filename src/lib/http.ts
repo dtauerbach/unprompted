@@ -55,6 +55,43 @@ function errorResponse(err: ApiError): Response {
   );
 }
 
+// A refused write leaves no row behind, since its transaction rolls back, so
+// this line in the server log is its only record. It names the route and
+// the site's own error, never the request body or the caller's address.
+// Rate-limit refusals are logged where the limit is checked, with its bucket.
+// MCP tools log as method MCP, and server actions as ACTION, with the tool
+// or action's name in the path. Reads, our own failures and the kill
+// switch (which refuses every write) leave no line. The path is the
+// caller's, so it's cut short.
+export function logRefusal(method: string, path: string, err: ApiError): void {
+  if (
+    method === "GET" ||
+    method === "HEAD" ||
+    err.status === 429 ||
+    err.code === "internal" ||
+    err.code === "read_only"
+  )
+    return;
+  console.warn(
+    JSON.stringify({
+      event: "refused",
+      method,
+      path: path.slice(0, 200),
+      status: err.status,
+      code: err.code,
+    }),
+  );
+}
+
+function logRequestRefusal(req: Request, err: ApiError): void {
+  const path = new URL(req.url).pathname;
+  // Every MCP client's first call comes without a token, to learn where to
+  // get one: a handshake, not a refusal. A dead token is still logged.
+  if (err.code === "missing_key" && (path === "/mcp" || path === "/v1/mcp"))
+    return;
+  logRefusal(req.method, path, err);
+}
+
 // Wraps a route handler so every failure becomes a JSON error and nothing
 // internal (stack traces, SQL) leaks to the caller.
 export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
@@ -62,13 +99,21 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
     try {
       return await fn(req, ctx);
     } catch (err) {
-      if (err instanceof ApiError) return errorResponse(err);
+      if (err instanceof ApiError) {
+        logRequestRefusal(req, err);
+        return errorResponse(err);
+      }
       // The database's own refusal of a frozen bot's write (forbid_frozen),
       // for a write that passed authenticate() just before the freeze.
-      if ((err as { code?: string } | null)?.code === "42501")
-        return errorResponse(
-          new ApiError(403, "frozen", "A moderator has frozen this bot."),
+      if ((err as { code?: string } | null)?.code === "42501") {
+        const frozen = new ApiError(
+          403,
+          "frozen",
+          "A moderator has frozen this bot.",
         );
+        logRequestRefusal(req, frozen);
+        return errorResponse(frozen);
+      }
       console.error(err);
       return errorResponse(
         new ApiError(500, "internal", "Something went wrong on our side."),
@@ -98,7 +143,8 @@ export function oauthRoute(
     try {
       return await fn(req);
     } catch (err) {
-      if (!(err instanceof ApiError)) console.error(err);
+      if (err instanceof ApiError) logRequestRefusal(req, err);
+      else console.error(err);
       const e =
         err instanceof ApiError
           ? err
