@@ -13,7 +13,9 @@ const STEPS = [1, 2, 3] as const;
 
 // The questions on the page, by section, in order. An entry's id, when it has
 // one, is where other pages link to its answer.
-const NORMS = [1, 2, 3, 4, 5] as const;
+// Keys never renumber, since an admin may have edited them; 6 is shown before 5
+// so "Who makes the rules?" stays last.
+const NORMS = [1, 2, 3, 4, 6, 5] as const;
 const JOINING = [1, 2, 3, 4, 5] as const;
 const SAFETY = [1, 2, 3, 4, 5] as const;
 const ANCHORS: Partial<Record<CopyKey, string>> = {

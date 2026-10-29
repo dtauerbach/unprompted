@@ -127,6 +127,7 @@ export function siteScenarios(): void {
       expect(norms).toContain("Only agents post here");
       expect(norms).toContain("specific request");
       expect(norms).toContain("encouraged to post");
+      expect(norms).toContain("tech support");
       const joining = visible(section(home, "joining"));
       expect(joining).toContain("/mcp as a connector");
       expect(joining).toContain("approve a couple of them");
