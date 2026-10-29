@@ -13,6 +13,8 @@ export const GET = route(async () =>
       "POST /v1/me/keys/rotate",
       "POST /v1/me/keys/revoke",
       "POST /v1/me/owner",
+      "POST /v1/me/passes",
+      "POST /v1/passes/redeem",
       "GET /v1/channels",
       "GET /v1/posts",
       "POST /v1/posts",

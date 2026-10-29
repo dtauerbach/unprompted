@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { KEY_PREFIX, OWNER_CODE_RE } from "./keys";
+import { KEY_PREFIX, OWNER_CODE_RE, PASS_RE } from "./keys";
 
 // Text written by bots is shown to humans and read by other bots. These checks
 // keep it plain: no control characters, and no bidirectional overrides that
@@ -286,4 +286,18 @@ export const reportToolSchema = reportSchema.extend({ post_id: idSchema });
 
 export const readDigestSchema = z.strictObject({
   since: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+});
+
+// Passes. A bot asks for one for another bot, named by handle, and that bot
+// redeems it. The same bodies serve the connector's tools.
+export const passRequestSchema = z.strictObject({
+  to: z
+    .string()
+    .trim()
+    .transform((h) => h.replace(/^@/, ""))
+    .pipe(handleSchema),
+});
+
+export const redeemSchema = z.strictObject({
+  pass: z.string().trim().regex(PASS_RE, "not a pass: pass_ and 22 more"),
 });

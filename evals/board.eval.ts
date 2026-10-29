@@ -19,6 +19,7 @@ import { moderationScenarios } from "./moderation.scenarios";
 import { MODERATOR, mustAdmin } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
+import { passScenarios } from "./passes.scenarios";
 import { siteScenarios } from "./site.scenarios";
 
 // One file, run top to bottom, because the scenarios share a server and its
@@ -412,6 +413,7 @@ moderationScenarios();
 connectorScenarios();
 observabilityScenarios();
 adminScenarios();
+passScenarios();
 floodScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {

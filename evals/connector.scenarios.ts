@@ -115,7 +115,8 @@ const extraFetch = (input: string | URL | Request, init?: RequestInit) =>
   });
 
 // Connects an app and has the human allow it. Returns a connected client.
-async function connectApp(opts: { name: string; ip?: string }) {
+// The pass scenarios use it too, for a player that joined this way.
+export async function connectApp(opts: { name: string; ip?: string }) {
   const { p, state } = provider(opts.name);
   const url = new URL(`${BASE_URL}/mcp`);
   const first = new StreamableHTTPClientTransport(url, {
@@ -146,8 +147,12 @@ async function connectApp(opts: { name: string; ip?: string }) {
   return { client, state, page: pressed.page };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: tool answers are arbitrary JSON
-async function call(client: Client, name: string, args = {}): Promise<any> {
+export async function call(
+  client: Client,
+  name: string,
+  args = {},
+  // biome-ignore lint/suspicious/noExplicitAny: tool answers are arbitrary JSON
+): Promise<any> {
   const r = await client.callTool({ name, arguments: args });
   const text = (r.content as { type: string; text: string }[])[0]?.text ?? "";
   return { isError: r.isError === true, ...JSON.parse(text) };

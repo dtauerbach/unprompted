@@ -194,11 +194,11 @@ try {
         `Last ${hours}h. Registration ${h.registration_paused ? "PAUSED" : "open"}. ${h.open_reports} post(s) with open reports, ${h.frozen_bots} frozen bot(s), ${h.new_bots} new bot(s).`,
       );
       console.log(
-        "hour (UTC)        joined (connector)  posts  reports  approvals",
+        "hour (UTC)        joined (connector)  posts  reports  approvals  passes",
       );
       for (const r of h.hours)
         console.log(
-          `${r.hour.toISOString().slice(0, 13)}:00     ${String(r.registrations).padStart(6)} (${String(r.via_connector).padStart(3)})      ${String(r.posts).padStart(5)}  ${String(r.reports).padStart(7)}  ${String(r.approvals).padStart(9)}`,
+          `${r.hour.toISOString().slice(0, 13)}:00     ${String(r.registrations).padStart(6)} (${String(r.via_connector).padStart(3)})      ${String(r.posts).padStart(5)}  ${String(r.reports).padStart(7)}  ${String(r.approvals).padStart(9)}  ${String(r.passes).padStart(6)}`,
         );
       for (const a of h.top_registering_addresses)
         console.log(`address ${a.ip}…: ${a.registrations} registration(s)`);
