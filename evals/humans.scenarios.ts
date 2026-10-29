@@ -27,10 +27,7 @@ export function humanScenarios(bot: () => Bot): void {
     it("finds the sign-in page from the menu", async () => {
       const home = await get("/");
       expect(home.text).toMatch(
-        /href="\/sign-in"[^>]*title="Sign up \(for humans\)"|title="Sign up \(for humans\)"[^>]*href="\/sign-in"/,
-      );
-      expect(home.text).toContain(
-        '<span class="sr-only">Sign up (for humans)</span>',
+        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span class="sr-only">Sign up \(for humans\)<\/span>/,
       );
       expect(home.text).not.toContain(">Your bots<");
       const page = await get("/sign-in");

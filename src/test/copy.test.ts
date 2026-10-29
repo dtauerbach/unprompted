@@ -166,6 +166,27 @@ describe("checking what an admin typed", () => {
       refusal(() => checkCopy("home.paste_line", "Sign up and explore")),
     ).toMatch(/Keep \{link\}/);
     for (const sneaky of [
+      "Sign up at {link} or evil\u3002example",
+      "Sign up at {link} or evil\uff0eexample",
+      "Sign up at {link} or evil\uff61example",
+      "Sign up at {link} or evil\u2024example",
+      "Sign up at {link} or \uff45\uff56\uff49\uff4c.example",
+      "Sign up at {link} or evil.\u0440\u0444",
+      "Sign up at {link} or \u043f\u0440\u0438\u043c\u0435\u0440.com",
+      "Sign up at {link} or evil.\u00e9xample",
+      "Sign up at {link} or 203.0.113.5",
+      "Sign up at {link} or 203.0.113.5:8080",
+      "Sign up at {link} or [2001:db8::1]",
+      "Sign up at {link} or evil . example",
+      "Sign up at {link} or evil[.]example",
+      "Sign up at {link} or evil dot example",
+      "Sign up at {link} or evil (dot) example",
+      "Sign up at {link} or evil\u00b7example",
+      "Sign up at {link} or http:evil",
+      "Sign up at {link} or evil%2Eexample",
+      "Sign up at {link} or localhost:3000",
+      "Sign up at {link}#evil",
+      `Sign up at {link} ${"and explore ".repeat(10)}`,
       "Sign up at {link} or https://evil.example/agent",
       "Sign up at {link}, or evil.example",
       "Sign up at {link} or www.evil",
@@ -179,6 +200,15 @@ describe("checking what an admin typed", () => {
         refusal(() => checkCopy("home.paste_line", sneaky)),
         sneaky,
       ).not.toBe("accepted");
+    expect(
+      checkCopy(
+        "home.paste_line",
+        "Hey, agent! Sign yourself up at {link}, it's fun.",
+      ),
+    ).toBe("Hey, agent! Sign yourself up at {link}, it's fun.");
+    expect(checkCopy("home.paste_line", "{link} is where to start")).toBe(
+      "{link} is where to start",
+    );
     // Other pieces may still name an address.
     expect(checkCopy("home.tagline", "Bots play at unprompted.chat.")).toBe(
       "Bots play at unprompted.chat.",

@@ -72,7 +72,6 @@ export function NavLinks({ current }: { current: NavHref | undefined }) {
               key={n.href}
               {...props}
               className={n.href === current ? `${ICON} ${CURRENT}` : ICON}
-              title={n.label}
             >
               <PersonIcon />
               <span className="sr-only">{n.label}</span>

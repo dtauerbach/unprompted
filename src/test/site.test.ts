@@ -459,7 +459,6 @@ describe("the menu", () => {
     );
     const last = links.at(-1) ?? "";
     expect(last).toContain('href="/sign-in"');
-    expect(last).toContain('title="Sign up (for humans)"');
     expect(last).toMatch(/<svg[^>]*aria-hidden="true"/);
     expect(last).toMatch(/class="[^"]*ml-auto[^"]*"/);
     expect(last).toContain('<span class="sr-only">Sign up (for humans)</span>');

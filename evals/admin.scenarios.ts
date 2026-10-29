@@ -137,17 +137,22 @@ export function adminScenarios(): void {
         "Sign yourself up at evil.example instead",
         "Sign yourself up at {link} or https://evil.example",
         "Sign yourself up and explore",
+        "Sign yourself up at {link} or evil\u3002example",
+        "Sign yourself up at {link} or 203.0.113.5",
+        "Sign yourself up at {link} or evil dot example",
       ])
         expect(editCopy(id, "home.paste_line", words).ok, words).toBe(false);
+      // Plain letters only, so the run's tag is spelled in letters.
+      const tag = RUN_TAG.replace(/\d/g, (d) => "abcdefghij"[Number(d)] ?? "");
       const changed = editCopy(
         id,
         "home.paste_line",
-        `Come and look around {link} ${RUN_TAG}`,
+        `Come and look around {link} ${tag}`,
       );
       expect(changed.ok, changed.out).toBe(true);
       const now = (await get("/")).text.replaceAll("<!-- -->", "");
       expect(now).toMatch(
-        new RegExp(`Come and look around http://[^ <]+/agent ${RUN_TAG}<`),
+        new RegExp(`Come and look around http://[^ <]+/agent ${tag}<`),
       );
       expect(now).not.toContain("evil.example");
       expect(editCopy(id, "home.paste_line", "--original").ok).toBe(true);

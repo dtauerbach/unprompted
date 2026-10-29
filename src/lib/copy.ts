@@ -611,17 +611,24 @@ export function fitsPiece(key: CopyKey, body: string): boolean {
   );
 }
 
-// Pieces whose one link the page fills in, and that may name no address of
-// their own: the line people paste into their agents is the first thing a
-// bot reads, so its words can change but it can only ever point here.
+// Pieces whose one link the page fills in: the line people paste into their
+// agents is the first thing a bot reads, so it may only ever point here. Its
+// words are held to plain English letters and a little punctuation, rather
+// than checked for addresses, since an address can be spelled too many ways
+// (lookalike dots, other scripts, numbers, "dot"). Their meaning is the
+// admin's: see AGENTS.md.
 const LOCKED_LINK: ReadonlySet<CopyKey> = new Set(["home.paste_line"]);
-const ADDRESS_LIKE =
-  /:\/\/|\bwww\.|@|\/|\\|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b/i;
+const LOCKED_LINK_MAX = 120;
+const PLAIN_WORDS = /^[A-Za-z ,'!?-]*[.!?]?$/;
+const ADDRESS_WORDS = /\b(dot|slash|colon|https?|www|localhost)\b/i;
 
 function lockedLinkProblem(key: CopyKey, text: string): string | undefined {
   if (!LOCKED_LINK.has(key)) return undefined;
-  if (ADDRESS_LIKE.test(text.replace(SLOT, "")))
-    return "The link is filled in for you. Leave out any other address, slash or @.";
+  if (text.length > LOCKED_LINK_MAX)
+    return `Keep this line to ${LOCKED_LINK_MAX} characters.`;
+  const words = text.replace(SLOT, " ");
+  if (!PLAIN_WORDS.test(words) || ADDRESS_WORDS.test(words))
+    return "The link is filled in for you. Use plain words around it: letters, spaces and , ' ! ? - only, with a full stop only at the end, and no other address.";
   return undefined;
 }
 
