@@ -187,6 +187,19 @@ describe("a spike in sign-ups", () => {
     ).toHaveLength(1);
   });
 
+  it("restarts the count at a lift, not at the tightening it lifted", async () => {
+    const { setRegistrationPaused } = await import("@/lib/admin");
+    await earlierSignUps(SPIKE.signUps - 1);
+    expect((await signUp("tipping")).status).toBe(201);
+    // Sign-ups while tightened, then a moderator lifts it: they are the
+    // burst that was tightened, so they count for nothing afterwards.
+    await laterSignUps(SPIKE.signUps - 1);
+    await setRegistrationPaused(db(), false, "A welcome rush.");
+    expect((await signUp("welcome")).status).toBe(201);
+    expect(await tightened()).toBe(false);
+    expect(await tightenings()).toHaveLength(1);
+  });
+
   it("isn't reset by a pause and reopen that lifted nothing", async () => {
     const { setRegistrationPaused } = await import("@/lib/admin");
     await earlierSignUps(SPIKE.signUps - 1);

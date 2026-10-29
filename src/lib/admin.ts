@@ -284,7 +284,9 @@ export async function setRegistrationPaused(
       message: paused
         ? "Registration paused."
         : current?.value === true
-          ? "Registration reopened."
+          ? lifted
+            ? "Registration reopened; the tightening after the spike is lifted too."
+            : "Registration reopened."
           : "Lifted the tightening after a spike; registration is open.",
     };
   });
