@@ -16,6 +16,7 @@ import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { syncWelcome } from "@/lib/house";
 import { PASTE_LINES } from "@/lib/paste-lines";
+import { TABLES, TABLES_REPO } from "@/lib/tables";
 import nextConfig from "../../next.config";
 import { call, register, resetDb } from "./helpers";
 
@@ -261,16 +262,22 @@ describe("the home page, which is the About page", () => {
   });
 
   it("shows the line to paste exactly once, pointing at /agent", () => {
-    const lines = codeTexts(html).filter((t) => t.includes("Sign up at"));
-    expect(lines).toEqual([`Agent? Sign up at ${ORIGIN}/agent`]);
-    expect(PASTE_LINES.home).toBe("Agent? Sign up at {address}/agent");
+    const lines = codeTexts(html).filter((t) =>
+      /sign (yourself )?up at/i.test(t),
+    );
+    expect(lines).toEqual([
+      `Sign yourself up at ${ORIGIN}/agent and play around`,
+    ]);
+    expect(PASTE_LINES.home).toBe(
+      "Sign yourself up at {address}/agent and play around",
+    );
   });
 
   it("keeps the box with the line to just the line", () => {
     const box = byId(html, "paste");
     const words = visible(box).trim();
     expect(words).toBe(
-      `${COPY["home.paste_label"].text} Agent? Sign up at ${ORIGIN}/agent`,
+      `${COPY["home.paste_label"].text} Sign yourself up at ${ORIGIN}/agent and play around`,
     );
     expect(box).not.toMatch(/mcp|connector|approve|command/i);
   });
@@ -505,7 +512,7 @@ describe("the menu", () => {
     expect(footer).toContain(">Source<");
     expect(html).not.toContain('href="/about"');
     expect(html).not.toContain("Bots post · people read");
-    expect(html).toContain("Everything in the forum is written by bots.");
+    expect(html).not.toMatch(/Everything in the forum is written by bots/);
   });
 
   it("marks the site as a beta, in red, inside the link home", () => {
@@ -544,34 +551,52 @@ describe("the play page", () => {
     );
     expect(steps).toHaveLength(4);
     expect(steps[0]).toContain("Join the site first");
-    expect(steps[1]).toContain(
-      "The Tables so far are in the Tables repository.",
-    );
+    expect(steps[1]).toBe("Pick a Table below and read how to join it.");
     expect(steps[2]).toContain("Ask this site for a pass to that Table's bot");
     expect(steps[2]).toContain("without giving away your key");
     expect(steps[3]).toContain("Ask in the forum.");
   });
 
-  it("links to the guide, the forum and the Tables, and nowhere else", async () => {
+  it("links to the guide, the forum, each Table and the Tables' code, and nowhere else", async () => {
     const html = await render();
     const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
     expect(new Set(hrefs)).toEqual(
       new Set([
         "/agent",
         "/forum",
-        "https://github.com/dtauerbach/unprompted-tables",
+        ...TABLES.flatMap((t) => [t.guide, t.api]),
+        TABLES_REPO,
       ]),
     );
     // The guide answers by what the request accepts, so it's a plain link.
     expect(html).toMatch(
       /<a href="\/agent" class="underline">guide for agents<\/a>/,
     );
+    const tables = byId(html, "tables");
+    for (const t of TABLES) {
+      expect(tables).toContain(
+        `<a href="${t.guide}" class="font-medium underline">${t.name}</a>`,
+      );
+      expect(tables).toContain(
+        `<a href="${t.api}" class="underline">settings, for programs</a>`,
+      );
+    }
+    expect(visible(tables).replace(/ \./g, ".")).toContain(
+      "Anyone can build a Table, and the code for ours is in the Tables repository.",
+    );
   });
 
-  it("uses plain words, and names no game yet", async () => {
+  it("uses plain words, and links out only over https to the Tables we host", async () => {
     const html = await render();
     expect(visible(html)).not.toMatch(JARGON);
-    expect(visible(html)).not.toMatch(/rock paper scissors|mafia/i);
+    expect(visible(html)).not.toMatch(/mafia/i);
+    expect(TABLES.length).toBeGreaterThan(0);
+    for (const t of TABLES) {
+      expect(t.guide).toMatch(/^https:\/\/[a-z0-9.-]+\/skill\.md$/);
+      expect(t.api).toBe(t.guide.replace(/\/skill\.md$/, "/v1"));
+    }
+    // The first rock paper scissors bot's key was exposed; it's not the Table's.
+    expect(html).not.toMatch(/@rps-table\b(?!-)/);
   });
 
   it("is the Play tab's page", () => {

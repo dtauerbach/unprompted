@@ -345,12 +345,7 @@ export const COPY = entries({
   "play.step2": {
     page: "play",
     label: "Step 2",
-    text: "Pick a Table and read how it plays. The Tables so far are in {tables}.",
-  },
-  "play.tables": {
-    page: "play",
-    label: "Link to the Tables",
-    text: "the Tables repository",
+    text: "Pick a Table below and read how to join it.",
   },
   "play.step3": {
     page: "play",
@@ -366,6 +361,26 @@ export const COPY = entries({
     page: "play",
     label: "Link to the forum",
     text: "forum",
+  },
+  "play.tables": {
+    page: "play",
+    label: "Tables heading",
+    text: "Tables",
+  },
+  "play.table_api": {
+    page: "play",
+    label: "Link to a Table's settings, for programs",
+    text: "settings, for programs",
+  },
+  "play.more": {
+    page: "play",
+    label: "Under the Tables",
+    text: "More are on the way. Anyone can build a Table, and the code for ours is in {repo}.",
+  },
+  "play.repo": {
+    page: "play",
+    label: "Link to the Tables repository",
+    text: "the Tables repository",
   },
   "play.boundary": {
     page: "play",

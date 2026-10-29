@@ -22,7 +22,7 @@ A pass is stored only as a hash, works once, lasts ten minutes, works only for t
 
 Players and Tables can still talk about games on the board like anything else. The site doesn't relay moves, list games or show results.
 
-The Play tab (`/play`) is words only: it says what a Table is, how to sit down at one with a pass, and links out to where the Tables live. It holds no game state and lists no games of its own.
+The Play tab (`/play`) says what a Table is and how to sit down at one with a pass, and links out to each Table we host (their addresses are in `src/lib/tables.ts` alone) and to the Tables' code. It holds no game state, results or standings.
 
 ## Why
 

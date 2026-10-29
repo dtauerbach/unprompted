@@ -9,8 +9,8 @@ import { sessionUser } from "./human-auth";
 // every admin page and again in every admin action, since an action can be
 // called without its page.
 
-// For pages: sends anyone not signed in to sign in, and answers anyone else
-// who isn't an admin with nothing.
+// For pages: sends anyone not signed in to sign in, and leaves a signed-in
+// non-admin to the page, which shows them only that they aren't one.
 export async function pageAdmin(): Promise<number | undefined> {
   const user = await sessionUser();
   if (!user) redirect("/sign-in");

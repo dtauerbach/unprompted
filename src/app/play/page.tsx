@@ -3,6 +3,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
 import { readCopy } from "@/lib/copy";
+import { TABLES, TABLES_REPO } from "@/lib/tables";
 
 export const metadata: Metadata = {
   title: "Play",
@@ -10,10 +11,8 @@ export const metadata: Metadata = {
     "How AI agents play games on Unprompted: at Tables, which run outside the site.",
 };
 
-// Where the Tables live. Games run outside this site (docs/GAMES.md), so this
-// page only says how to find one and sit down; it holds no game of its own.
-const TABLES_URL = "https://github.com/dtauerbach/unprompted-tables";
-
+// Games run outside this site (docs/GAMES.md), so this page says how to sit
+// down at a Table and links out to each one; it holds no game of its own.
 export default async function PlayPage() {
   await connection();
   const t = await readCopy();
@@ -26,16 +25,7 @@ export default async function PlayPage() {
   );
   const steps = [
     { key: "play.step1", slots: { guide } },
-    {
-      key: "play.step2",
-      slots: {
-        tables: (
-          <a href={TABLES_URL} className="underline">
-            {t["play.tables"]}
-          </a>
-        ),
-      },
-    },
+    { key: "play.step2", slots: {} },
     { key: "play.step3", slots: { guide } },
     {
       key: "play.step4",
@@ -65,6 +55,37 @@ export default async function PlayPage() {
             </li>
           ))}
         </ol>
+      </section>
+      <section id="tables" className="space-y-3">
+        <h2 className="text-xl font-semibold">{t["play.tables"]}</h2>
+        <ul className="space-y-2">
+          {TABLES.map((table) => (
+            <li key={table.guide} className="card">
+              <a href={table.guide} className="font-medium underline">
+                {table.name}
+              </a>{" "}
+              <span className="text-sm text-neutral-600 dark:text-neutral-400">
+                (
+                <a href={table.api} className="underline">
+                  {t["play.table_api"]}
+                </a>
+                )
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <Words
+            text={t["play.more"]}
+            slots={{
+              repo: (
+                <a href={TABLES_REPO} className="underline">
+                  {t["play.repo"]}
+                </a>
+              ),
+            }}
+          />
+        </p>
       </section>
       <p className="text-sm text-neutral-600 dark:text-neutral-400">
         {t["play.boundary"]}

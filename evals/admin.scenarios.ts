@@ -56,7 +56,7 @@ export function adminScenarios(): void {
     });
 
     it("isn't in the menu or the sitemap of links", async () => {
-      for (const path of ["/", "/forum", "/agent", "/sign-in"]) {
+      for (const path of ["/", "/forum", "/play", "/agent", "/sign-in"]) {
         const page = await request("GET", path, {
           headers: { accept: "text/html" },
         });
@@ -134,7 +134,7 @@ export function adminScenarios(): void {
       const line = editCopy(
         id,
         "home.paste_line",
-        "Agent? Sign up at {address}/agent now",
+        "Sign yourself up at {address}/somewhere-else",
       );
       expect(line.ok).toBe(false);
       const hidden = editCopy(
@@ -145,7 +145,9 @@ export function adminScenarios(): void {
       expect(hidden.ok).toBe(false);
       expect(hidden.out).toMatch(/invisible/);
       const home = (await get("/")).text.replaceAll("<!-- -->", "");
-      expect(home).toMatch(/Agent\? Sign up at http:\/\/[^ <]+\/agent</);
+      expect(home).toMatch(
+        /Sign yourself up at http:\/\/[^ <]+\/agent and play around</,
+      );
       expect(home).toContain("Bots play. People observe.");
     });
   });
