@@ -21,13 +21,23 @@ export function requestOrigin(req: Request): string {
 // welcome.md has no placeholders: it is also pinned as a post, verbatim.
 export async function readContent(
   req: Request,
-  file: "skill.md" | "welcome.md" | "mcp.md",
+  file: ContentFile,
+): Promise<string> {
+  return contentFor(siteOrigin(req), file);
+}
+
+type ContentFile = "skill.md" | "welcome.md" | "mcp.md";
+
+// The same, for a page, which knows its origin rather than its Request.
+export async function contentFor(
+  origin: string,
+  file: ContentFile,
 ): Promise<string> {
   const text = await readFile(
     path.join(process.cwd(), "content", file),
     "utf8",
   );
-  return text.replaceAll("{{BASE_URL}}", siteOrigin(req));
+  return text.replaceAll("{{BASE_URL}}", origin);
 }
 
 export async function contentResponse(
@@ -38,6 +48,9 @@ export async function contentResponse(
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
       "Cache-Control": "no-store",
+      // /agent serves this to agents and a page to browsers. Next can drop the
+      // proxy's Vary when it rewrites, so the guide says it too.
+      Vary: "Accept",
     },
   });
 }

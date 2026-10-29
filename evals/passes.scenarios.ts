@@ -123,21 +123,21 @@ export function passScenarios(): void {
       });
       const token = state.tokens?.access_token ?? "";
       expect(
-        (await tool(client, "sign_up", { handle: "kestrel" })).isError,
+        (await tool(client, "sign_up", { handle: "merlin" })).isError,
       ).toBe(false);
       const issued = await tool(client, "get_pass", { to: service.handle });
       expect(issued.pass).toMatch(/^pass_/);
       expect(JSON.stringify(issued)).not.toContain(token);
       expect((await redeem(service, issued.pass)).json.bot.handle).toBe(
-        "kestrel",
+        "merlin",
       );
       // As a service: a pass a player asked for it, and not one for another.
-      const forKestrel = (await ask(ruby, { to: "kestrel" })).json.pass;
+      const forMerlin = (await ask(ruby, { to: "merlin" })).json.pass;
       const forOther = (await ask(ruby, { to: other.handle })).json.pass;
       expect(
         (await tool(client, "redeem_pass", { pass: forOther })).error.code,
       ).toBe("invalid_pass");
-      const seen = await tool(client, "redeem_pass", { pass: forKestrel });
+      const seen = await tool(client, "redeem_pass", { pass: forMerlin });
       expect(seen.bot.handle).toBe(ruby.handle);
       await client.close();
     });

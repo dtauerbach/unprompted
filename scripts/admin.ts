@@ -11,6 +11,13 @@
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
 //   npm run admin -- stats [--hours 24]   (joins, posts, reports by hour)
+//   npm run admin -- log [--before <id>]   (the moderators' record, newest first)
+// The anti-abuse numbers (src/lib/settings.ts) live in the settings table in
+// production; the repo has only defaults. Load a values file, which replaces
+// the row (a name it leaves out goes back to its default), or show what's in
+// effect:
+//   npm run admin -- limits set <file.json> --reason "..."
+//   npm run admin -- limits show
 // Admins use the same levers, and edit the words on the site, at /admin
 // after signing in with Google. Only this script adds or removes one:
 //   npm run admin -- add-admin <email> --reason "..."
@@ -18,9 +25,11 @@
 //   npm run admin -- admins
 // The person must have signed in once already. Give --auth-user-id <id>
 // instead of an email where Neon Auth isn't in the database.
-// Every change states a reason, which the public moderation log shows, so
-// keep it to what anyone may read. The log also records who ran the script
-// (UNPROMPTED_MODERATOR, or the login name), which it never shows.
+// Every change states a reason, kept with it in the action log, along with
+// who ran the script (UNPROMPTED_MODERATOR, or the login name). That record
+// is for the moderators: this script and /admin show it, and no public page
+// or API does. Still write a reason you'd be fine to see quoted.
+import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 import postgres from "postgres";
 import {
@@ -28,9 +37,12 @@ import {
   hidePost,
   keepPost,
   moderator,
+  moderatorLog,
   openReports,
+  setAntiAbuse,
   setFrozen,
   setRegistrationPaused,
+  showAntiAbuse,
   siteHealth,
   unhidePost,
 } from "../src/lib/admin";
@@ -47,10 +59,11 @@ const { positionals, values } = parseArgs({
   options: {
     reason: { type: "string" },
     hours: { type: "string" },
+    before: { type: "string" },
     "auth-user-id": { type: "string" },
   },
 });
-const [command, target] = positionals;
+const [command, target, third] = positionals;
 
 const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 if (!url) {
@@ -138,6 +151,40 @@ try {
           console.log(`  note: ${JSON.stringify(note)}`);
       }
       break;
+    case "limits": {
+      if (target === "show") {
+        for (const r of await showAntiAbuse(sql))
+          console.log(
+            `${r.name.padEnd(24)} ${String(r.value).padStart(7)}  (${r.from})`,
+          );
+        break;
+      }
+      if (target !== "set" || !third)
+        throw new Error(
+          'Give "limits show", or "limits set <file.json> --reason ...".',
+        );
+      let values: unknown;
+      try {
+        values = JSON.parse(readFileSync(third, "utf8"));
+      } catch {
+        throw new Error(`Couldn't read ${third} as JSON.`);
+      }
+      result = await setAntiAbuse(sql, values, reason);
+      break;
+    }
+    case "log": {
+      const raw = values.before;
+      const before = raw === undefined ? undefined : parseId(raw);
+      if (raw !== undefined && before === undefined)
+        throw new Error("Give --before as an entry id.");
+      // Reasons are a moderator's words, but printed as JSON strings anyway,
+      // like everything else here that came from a form.
+      for (const e of await moderatorLog(sql, { before, limit: 50 }))
+        console.log(
+          `${e.id} ${e.at.toISOString()} ${e.action} ${e.subject} by ${e.by ?? "?"}: ${JSON.stringify(e.reason ?? "")}`,
+        );
+      break;
+    }
     case "stats": {
       const hours = Number(values.hours ?? 24);
       if (!Number.isInteger(hours) || hours < 1 || hours > 24 * 30)
@@ -175,7 +222,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, log, limits, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);

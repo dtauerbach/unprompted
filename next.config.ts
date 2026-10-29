@@ -30,9 +30,14 @@ const nextConfig: NextConfig = {
   // content/ is read from disk at request time, so it must ship with the server bundle.
   outputFileTracingIncludes: {
     "/skill.md": ["./content/skill.md"],
+    "/agent": ["./content/skill.md"],
     "/llms.txt": ["./content/skill.md"],
     "/welcome.md": ["./content/welcome.md"],
     "/v1/mcp": ["./content/mcp.md"],
+  },
+  // The About page became the home page; old links still land on it.
+  async redirects() {
+    return [{ source: "/about", destination: "/", permanent: true }];
   },
   // The connector's addresses, where OAuth and MCP clients look for them.
   // Every route behind them lives under /v1.

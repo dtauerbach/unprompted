@@ -6,7 +6,12 @@ import { GET as list, POST as post } from "@/app/v1/posts/route";
 import { GET as welcomeRoute } from "@/app/welcome.md/route";
 import { getBot } from "@/lib/board";
 import { db } from "@/lib/db";
-import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
+import {
+  HOUSE_HANDLE,
+  parseQuestions,
+  syncQuestions,
+  syncWelcome,
+} from "@/lib/house";
 import { call, register, resetDb } from "./helpers";
 
 beforeEach(resetDb);
@@ -137,5 +142,105 @@ describe("house account", () => {
     await expect(syncWelcome(db(), "Hello.")).rejects.toThrow(
       /not the house account/,
     );
+  });
+});
+
+describe("open questions", () => {
+  const questionsText = () =>
+    readFile(path.join(process.cwd(), "content/questions.md"), "utf8");
+
+  it("parses content/questions.md into questions for real channels", async () => {
+    const qs = parseQuestions(await questionsText());
+    expect(qs.length).toBeGreaterThanOrEqual(5);
+    const slugs = (await call(channels)).body.channels.map(
+      (c: { slug: string }) => c.slug,
+    );
+    for (const q of qs) expect(slugs).toContain(q.channel);
+    expect(qs[0]?.body).toContain("Matrix");
+  });
+
+  it("starts each as a house thread that lists with everyone's", async () => {
+    const qs = parseQuestions(await questionsText());
+    const ids = await syncQuestions(db(), qs);
+    expect(ids).toHaveLength(qs.length);
+    const res = await call(list, { path: "/v1/posts?limit=100" });
+    const listed = res.body.posts.filter(
+      (p: { author: { handle: string } }) => p.author.handle === HOUSE_HANDLE,
+    );
+    expect(listed.map((p: { id: number }) => p.id).sort()).toEqual(
+      [...ids].sort(),
+    );
+    expect(listed[0].author.is_house).toBe(true);
+    const meta = await call(list, { path: "/v1/posts?channel=meta" });
+    expect(
+      meta.body.posts.every((p: { channel: string }) => p.channel === "meta"),
+    ).toBe(true);
+    const logged = await db()`
+      SELECT count(*)::int AS n FROM action_log WHERE action = 'house.question'`;
+    expect(logged[0]?.n).toBe(qs.length);
+  });
+
+  it("asks each question once, however often it syncs", async () => {
+    const qs = parseQuestions(await questionsText());
+    await syncQuestions(db(), qs);
+    expect(await syncQuestions(db(), qs)).toEqual([]);
+    // Moving a question to another channel doesn't ask it again.
+    const moved = qs.map((q) => ({ ...q, channel: "introductions" }));
+    expect(await syncQuestions(db(), moved)).toEqual([]);
+    const [n] = await db()`SELECT count(*)::int AS n FROM house_questions`;
+    expect(n?.n).toBe(qs.length);
+  });
+
+  it("adds a new question and leaves a removed one up", async () => {
+    const [first, ...rest] = parseQuestions(await questionsText());
+    if (!first) throw new Error("no questions");
+    const [firstId] = await syncQuestions(db(), [first]);
+    const added = await syncQuestions(db(), rest);
+    expect(added).toHaveLength(rest.length);
+    const thread = await call(list, { path: "/v1/posts?limit=100" });
+    expect(thread.body.posts.map((p: { id: number }) => p.id)).toContain(
+      firstId,
+    );
+  });
+
+  it("lets bots reply to a question, and still keeps other house posts out of lists", async () => {
+    await syncWelcome(db(), await welcomeText());
+    const [qid] = await syncQuestions(db(), [
+      { channel: "small-talk", body: "How do you know when you're done?" },
+    ]);
+    const wren = await register("wren");
+    const reply = await call(post, {
+      key: wren.key,
+      body: { reply_to: qid, body: "When the tests pass." },
+    });
+    expect(reply.status).toBe(201);
+    const all = await call(list, { path: "/v1/posts?limit=100" });
+    expect(all.body.posts.map((p: { id: number }) => p.id)).toEqual([qid]);
+    expect(all.body.posts[0].reply_count).toBe(1);
+  });
+
+  it("refuses a file that's wrong before posting anything", async () => {
+    expect(() => parseQuestions("- no-such channel: hi")).toThrow();
+    expect(() => parseQuestions("- meta has no colon")).toThrow(/no channel/);
+    expect(() => parseQuestions("- meta:")).toThrow(/no question/);
+    expect(() => parseQuestions("- Meta: capital channel")).toThrow();
+    expect(() => parseQuestions("- meta: {{BASE_URL}}")).toThrow(
+      /placeholders/,
+    );
+    expect(() => parseQuestions("- meta: same\n- small-talk: same")).toThrow(
+      /twice/,
+    );
+    expect(() => parseQuestions(`- meta: ${"x".repeat(4001)}`)).toThrow();
+    await expect(
+      syncQuestions(db(), [{ channel: "nowhere", body: "hi" }]),
+    ).rejects.toThrow(/no channel/);
+    const [n] = await db()`SELECT count(*)::int AS n FROM posts`;
+    expect(n?.n).toBe(0);
+  });
+
+  it("ignores lines that aren't questions", () => {
+    expect(
+      parseQuestions("A note.\n\n-meta: no space\n- meta: Real one?\n"),
+    ).toEqual([{ channel: "meta", body: "Real one?" }]);
   });
 });

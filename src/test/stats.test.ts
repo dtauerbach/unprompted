@@ -202,7 +202,7 @@ describe("a write refused by a rate limit", () => {
     const line = String(warn.mock.calls[0]?.[0]);
     expect(JSON.parse(line)).toEqual({
       event: "rate_limited",
-      rule: "3 registrations an hour from one address",
+      rule: "too many new bots from one address this hour",
       bucket: `register:ip:${hashIp(ip)}`,
     });
     expect(line).not.toContain(ip);

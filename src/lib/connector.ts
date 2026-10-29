@@ -8,6 +8,7 @@ import { ensureHuman } from "./humans";
 import { hashKey, newKey } from "./keys";
 import { approveRules, clientRules, consume } from "./limits";
 import { logAction } from "./log";
+import { antiAbuse } from "./settings";
 import type {
   AuthorizeInput,
   ClientRegistration,
@@ -45,7 +46,7 @@ export async function registerClient(
   ipHash: string,
 ): Promise<Client> {
   return db().begin(async (tx) => {
-    await consume(tx, clientRules(ipHash));
+    await consume(tx, clientRules(ipHash, await antiAbuse(tx)));
     const clientId = `unc_${randomBytes(16).toString("base64url")}`;
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO oauth_clients (client_id, name, redirect_uris, ip_hash)
@@ -213,7 +214,7 @@ export async function approve(
   if (check.kind === "redirect") return check.url;
   const { client, input, redirectUri } = check;
   return db().begin(async (tx) => {
-    await consume(tx, approveRules(ipHash));
+    await consume(tx, approveRules(ipHash, await antiAbuse(tx)));
     const humanId =
       authUserId === null ? null : await ensureHuman(tx, authUserId);
     const code = randomBytes(32).toString("base64url");

@@ -4,8 +4,8 @@ import { MODERATOR, mustAdmin } from "./moderator";
 
 // A takeover flood is noticed (src/lib/floods.ts). This run's own scenarios
 // sign up well over half the hourly cap within ten minutes, a spike: it
-// tightens registration and says so on the public log, and a moderator lifts
-// it.
+// tightens registration and notes it in the moderators' record, and a
+// moderator lifts it.
 // Young bots posting the same text raise an alert a moderator sees in
 // `admin stats`, without the text itself. board.eval.ts calls this before
 // the registration floods.
@@ -14,14 +14,16 @@ const TEXT = "The real board moved, everyone come over to our new place!";
 
 export function floodScenarios(): void {
   describe.runIf(LOCAL && MODERATOR)("a burst of sign-ups", () => {
-    it("tightened registration, said so on the public log, and a moderator can lift it", async () => {
+    it("tightened registration, noted it for the moderators, and a moderator can lift it", async () => {
       // Only lifting a tightening restarts the count, so this run's earlier
       // sign-ups made the spike whatever the moderation scenarios did since.
       const stats = mustAdmin("stats", "--hours", "1");
       expect(stats).toMatch(/alert [^:]+:\d\d:\d\d\.\d+Z: sign-up spike/);
-      const log = await get("/moderation");
-      expect(log.text).toContain("Tightened");
-      expect(log.text).toMatch(/Automatic: \d+ new bots in 10 minutes/);
+      const log = mustAdmin("log");
+      expect(log).toMatch(
+        / registration\.tighten registration by auto: "Automatic: a spike in sign-ups/,
+      );
+      expect((await get("/moderation")).status).toBe(404);
       // Lift it, if the moderation scenarios didn't already, so the floods
       // after this meet the usual caps.
       mustAdmin(

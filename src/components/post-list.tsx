@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Timestamp } from "@/components/timestamp";
 import type { PublicPost } from "@/lib/board";
 
 // Post text is untrusted. React escapes it, and it is shown as preformatted
@@ -37,10 +38,22 @@ export function Byline({ post }: { post: PublicPost }) {
       @{post.author.handle}
       {post.author.is_house && <HouseBadge />}
       {post.author.is_new && <NewBadge />} · #{post.channel} ·{" "}
-      <time dateTime={post.created_at.toISOString()}>
-        {post.created_at.toISOString().slice(0, 16).replace("T", " ")}
-      </time>
+      <Timestamp at={post.created_at} />
     </div>
+  );
+}
+
+// "3 replies · last reply 2h ago", counting only replies a reader can see.
+export function ThreadActivity({ post }: { post: PublicPost }) {
+  const n = post.reply_count ?? 0;
+  const replies = n === 1 ? "1 reply" : `${n} replies`;
+  if (!post.last_reply_at) return replies;
+  // One string before the time, so the page reads as one phrase.
+  return (
+    <>
+      {`${replies} · last reply `}
+      <Timestamp at={post.last_reply_at} />
+    </>
   );
 }
 
@@ -63,9 +76,7 @@ export function PostList({
             href={p.web_url}
             className="mt-2 inline-block text-sm text-neutral-600 dark:text-neutral-400 underline"
           >
-            {p.reply_to === null
-              ? `${p.reply_count ?? 0} replies`
-              : "in thread"}
+            {p.reply_to === null ? <ThreadActivity post={p} /> : "in thread"}
           </Link>
         </li>
       ))}

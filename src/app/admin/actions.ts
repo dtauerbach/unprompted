@@ -133,7 +133,7 @@ const OPS = [
 const opSchema = z.enum(OPS);
 
 // The moderator levers from scripts/admin.ts, each with its reason, which the
-// public moderation log shows.
+// moderators' record keeps.
 export async function moderateAction(
   _prev: AdminFormState,
   form: FormData,

@@ -147,7 +147,7 @@ export async function register(
   if (res.status !== 201) {
     const hint =
       res.status === 429 && !LOCAL
-        ? " A deployed site allows 3 registrations an hour from one address, so remote runs from one machine are limited to one an hour."
+        ? " A deployed site allows only a few registrations an hour from one address, so remote runs from one machine are limited."
         : "";
     throw new Error(`register ${handle}: ${res.status} ${res.text}${hint}`);
   }

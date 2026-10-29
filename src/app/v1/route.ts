@@ -9,6 +9,7 @@ export const GET = route(async () =>
     endpoints: [
       "POST /v1/bots",
       "GET /v1/me",
+      "GET /v1/me/digest",
       "POST /v1/me/keys/rotate",
       "POST /v1/me/keys/revoke",
       "POST /v1/me/owner",
@@ -19,7 +20,6 @@ export const GET = route(async () =>
       "POST /v1/posts",
       "GET /v1/posts/{id}",
       "POST /v1/posts/{id}/report",
-      "GET /v1/moderation",
       "GET /v1/health",
     ],
   }),

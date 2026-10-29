@@ -5,14 +5,24 @@ import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
-import { REGISTRATION_PAUSED } from "./settings";
+import {
+  ANTI_ABUSE,
+  ANTI_ABUSE_DEFAULTS,
+  ANTI_ABUSE_NAMES,
+  type AntiAbuse,
+  type AntiAbuseName,
+  antiAbuse,
+  antiAbuseSchema,
+  REGISTRATION_PAUSED,
+} from "./settings";
 import { moderatorReasonSchema } from "./validate";
 
 // Moderator actions. They run from scripts/admin.ts, by a human with database
 // access, or from the admin pages, by an admin signed in with Google (see
 // src/lib/admins.ts); there is no admin password to steal. Each one states a
-// reason and is logged in action_log, which the public moderation log reads.
-// None edits or deletes a post.
+// reason and is logged in action_log. That record is for the moderators: the
+// script and the admin pages read it, and no public page or API does. None
+// edits or deletes a post.
 
 export type AdminResult = { changed: boolean; message: string };
 
@@ -29,11 +39,11 @@ function checkReason(reason: string): string {
   throw new ApiError(
     400,
     "invalid_reason",
-    `The reason is shown in the public log, and ${problem}.`,
+    `The reason goes in the moderators' record, and ${problem}.`,
   );
 }
 
-// Who ran the script, kept in the action log but never shown publicly. Some
+// Who ran the script, kept in the action log for the moderators. Some
 // containers run as a user with no passwd entry, where userInfo() throws.
 export function moderator(): string {
   if (process.env.UNPROMPTED_MODERATOR) return process.env.UNPROMPTED_MODERATOR;
@@ -290,6 +300,136 @@ export async function setRegistrationPaused(
           : "Lifted the tightening after a spike; registration is open.",
     };
   });
+}
+
+// Loads the anti-abuse numbers (src/lib/settings.ts) from a values file's
+// contents, replacing the row, so the file is the whole truth: a name it
+// leaves out goes back to its default. The log names which numbers the file
+// sets, never their values, so the record can't leak them.
+export async function setAntiAbuse(
+  sql: postgres.Sql,
+  values: unknown,
+  reason: string,
+): Promise<AdminResult> {
+  const d = detail(reason);
+  const parsed = antiAbuseSchema.safeParse(values);
+  if (!parsed.success) {
+    // Names the fields, never what was in them.
+    const problems = parsed.error.issues.map((i) =>
+      i.code === "unrecognized_keys"
+        ? `unknown ${i.keys.length === 1 ? "name" : "names"} ${i.keys.map((k) => k.slice(0, 40)).join(", ")}`
+        : i.path.length > 0
+          ? `${String(i.path[0])} must be a whole number in its range`
+          : "the file must hold one JSON object",
+    );
+    throw new ApiError(
+      400,
+      "invalid_limits",
+      `The values file doesn't fit: ${[...new Set(problems)].join("; ")}.`,
+    );
+  }
+  const names = ANTI_ABUSE_NAMES.filter((n) => parsed.data[n] !== undefined);
+  const warnings = antiAbuseWarnings({
+    ...ANTI_ABUSE_DEFAULTS,
+    ...parsed.data,
+  } as AntiAbuse);
+  return sql.begin(async (tx) => {
+    await tx`
+      INSERT INTO settings (key, value) VALUES (${ANTI_ABUSE}, ${tx.json(parsed.data)})
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`;
+    await logAction(tx, {
+      action: "admin.limits.set",
+      botId: null,
+      keyId: null,
+      subject: "limits",
+      ipHash: null,
+      detail: { ...d, set: names.join(",") },
+    });
+    return {
+      changed: true,
+      message: [
+        `Loaded ${names.length} anti-abuse number(s); the rest use their defaults.`,
+        ...warnings.map((w) => `Warning: ${w}`),
+      ].join("\n"),
+    };
+  });
+}
+
+// Numbers that are each in range but together switch a rule off. Named,
+// never valued, like everything else about these numbers.
+export function antiAbuseWarnings(n: AntiAbuse): string[] {
+  const out: string[] = [];
+  if (n.spike_sign_ups >= n.register_global)
+    out.push(
+      "spike_sign_ups is at or above register_global, so no spike can be noticed",
+    );
+  if (n.register_tightened >= n.register_global)
+    out.push(
+      "register_tightened is at or above register_global, so tightening changes nothing",
+    );
+  if (n.register_per_ip > n.register_global)
+    out.push("register_per_ip is above register_global");
+  if (n.client_per_ip > n.client_global)
+    out.push("client_per_ip is above client_global");
+  if (n.approve_per_ip > n.approve_global)
+    out.push("approve_per_ip is above approve_global");
+  return out;
+}
+
+export type AntiAbuseRow = {
+  name: AntiAbuseName;
+  value: number;
+  from: "settings" | "default";
+};
+
+// What each anti-abuse number is right now, and where it came from. For
+// moderators only, at the command line.
+export async function showAntiAbuse(
+  sql: postgres.Sql,
+): Promise<AntiAbuseRow[]> {
+  const [row] = await sql<{ value: unknown }[]>`
+    SELECT value FROM settings WHERE key = ${ANTI_ABUSE}`;
+  const now: AntiAbuse = await antiAbuse(sql);
+  const raw =
+    row && row.value !== null && typeof row.value === "object"
+      ? (row.value as Record<string, unknown>)
+      : {};
+  return ANTI_ABUSE_NAMES.map((name) => ({
+    name,
+    value: now[name],
+    // A value in the row that didn't fit fell back to the default.
+    from:
+      Object.hasOwn(raw, name) && raw[name] === now[name]
+        ? "settings"
+        : "default",
+  }));
+}
+
+export type ModeratorEntry = {
+  id: number;
+  at: Date;
+  action: string;
+  subject: string;
+  reason: string | null;
+  by: string | null;
+};
+
+// The moderators' record: every admin action, newest first, with its reason
+// and who took it. Only scripts/admin.ts and the admin pages read it; nothing
+// a bot or a visitor can fetch does.
+export async function moderatorLog(
+  sql: postgres.Sql,
+  opts: { before?: number; limit: number },
+): Promise<ModeratorEntry[]> {
+  const rows = await sql<(Omit<ModeratorEntry, "id"> & { id: string })[]>`
+    SELECT id, at, substr(action, 7) AS action, subject,
+           detail->>'reason' AS reason, detail->>'by' AS by
+    FROM action_log
+    WHERE action LIKE 'admin.%'
+      ${opts.before === undefined ? sql`` : sql`AND id < ${opts.before}`}
+    ORDER BY id DESC
+    LIMIT ${opts.limit}`;
+  return rows.map((r) => ({ ...r, id: Number(r.id) }));
 }
 
 export type OpenReport = {
