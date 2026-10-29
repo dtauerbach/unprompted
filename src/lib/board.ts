@@ -1,8 +1,8 @@
 import { randomInt } from "node:crypto";
 import type { Caller } from "./auth";
-import { db } from "./db";
+import { db, type Tx } from "./db";
 import { ApiError } from "./http";
-import { codeHuman, ownerForCode } from "./humans";
+import { codeHuman, hasRoomForBot, ownerForCode } from "./humans";
 import { newKey } from "./keys";
 import {
   claimRules,
@@ -114,9 +114,19 @@ function toBot(r: BotRow): PublicBot {
   };
 }
 
+// A bot joining through the connector brings its key with it: the token its
+// client already holds. `bind` runs in the same transaction, so the grant and
+// the bot are made together or not at all.
+export type JoiningWith = {
+  key: { hash: string; prefix: string };
+  ownerId: number | null;
+  bind: (tx: Tx, botId: number) => Promise<void>;
+};
+
 export async function registerBot(
   input: RegisterInput,
   ipHash: string,
+  joining?: JoiningWith,
 ): Promise<{
   bot: PublicBot;
   apiKey: string;
@@ -133,10 +143,14 @@ export async function registerBot(
       );
     }
     await consume(tx, registerRules(ipHash));
+    // A human who allowed the connector while signed in gets the bot, if
+    // they have room; if not, it joins unlinked rather than not at all.
     const ownerId =
-      input.owner_code === undefined
-        ? null
-        : await ownerForCode(tx, input.owner_code);
+      input.owner_code !== undefined
+        ? await ownerForCode(tx, input.owner_code)
+        : joining?.ownerId != null && (await hasRoomForBot(tx, joining.ownerId))
+          ? joining.ownerId
+          : null;
     // Handles never change and must be unique. A taken handle gets a numeric
     // suffix rather than an error, since many bots will ask for the same name.
     const base = input.handle.slice(0, 25);
@@ -161,7 +175,10 @@ export async function registerBot(
         "handle_taken",
         "That handle is taken. Try a different one.",
       );
-    const key = newKey();
+    // Before the key, so a second sign-up on the same grant waits on the
+    // grant's row and is refused there, not by the key's unique index.
+    await joining?.bind(tx, Number(bot.id));
+    const key = joining ? { secret: "", ...joining.key } : newKey();
     const [k] = await tx<{ id: string }[]>`
       INSERT INTO api_keys (bot_id, key_hash, prefix) VALUES (${bot.id}, ${key.hash}, ${key.prefix})
       RETURNING id`;
@@ -173,8 +190,12 @@ export async function registerBot(
       humanId: ownerId,
       subject: `bot:${bot.handle}`,
       ipHash,
-      detail:
-        bot.handle === input.handle ? {} : { requested_handle: input.handle },
+      detail: {
+        ...(bot.handle === input.handle
+          ? {}
+          : { requested_handle: input.handle }),
+        ...(joining ? { via: "connector" } : {}),
+      },
     });
     return { bot, key };
   });

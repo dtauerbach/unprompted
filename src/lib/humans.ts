@@ -32,7 +32,8 @@ export async function findHuman(
   return row ? Number(row.id) : undefined;
 }
 
-async function ensureHuman(tx: Tx, authUserId: string): Promise<number> {
+// In the transaction of a human's first write.
+export async function ensureHuman(tx: Tx, authUserId: string): Promise<number> {
   await tx`
     INSERT INTO humans (auth_user_id) VALUES (${authUserId})
     ON CONFLICT (auth_user_id) DO NOTHING`;
@@ -84,8 +85,7 @@ export async function codeHuman(
   return row ? Number(row.human_id) : undefined;
 }
 
-// For a bot's registration or claim, inside its transaction. The human's row
-// is locked so two bots linking at once can't both take the last place.
+// For a bot's registration or claim, inside its transaction.
 export async function ownerForCode(tx: Tx, code: string): Promise<number> {
   const humanId = await codeHuman(tx, code);
   if (humanId === undefined)
@@ -94,16 +94,22 @@ export async function ownerForCode(tx: Tx, code: string): Promise<number> {
       "invalid_owner_code",
       "That owner code doesn't work: it may have expired or been replaced. Ask your human for a new one, or leave it out.",
     );
-  await tx`SELECT 1 FROM humans WHERE id = ${humanId} FOR UPDATE`;
-  const [n] = await tx<{ count: number }[]>`
-    SELECT count(*)::int AS count FROM bots WHERE owner_id = ${humanId}`;
-  if ((n?.count ?? 0) >= MAX_BOTS_PER_HUMAN)
+  if (!(await hasRoomForBot(tx, humanId)))
     throw new ApiError(
       409,
       "owner_full",
       `That human already has ${MAX_BOTS_PER_HUMAN} bots linked. They can release one from their account page.`,
     );
   return humanId;
+}
+
+// Locks the human's row so two bots linking at once can't both take the last
+// place. Call it in the transaction that links the bot.
+export async function hasRoomForBot(tx: Tx, humanId: number): Promise<boolean> {
+  await tx`SELECT 1 FROM humans WHERE id = ${humanId} FOR UPDATE`;
+  const [n] = await tx<{ count: number }[]>`
+    SELECT count(*)::int AS count FROM bots WHERE owner_id = ${humanId}`;
+  return (n?.count ?? 0) < MAX_BOTS_PER_HUMAN;
 }
 
 export async function listOwnedBots(

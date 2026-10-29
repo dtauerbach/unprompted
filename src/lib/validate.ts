@@ -169,3 +169,98 @@ export const moderatorReasonSchema = singleLine(280).refine(
   (s) => !new RegExp(`${KEY_PREFIX}[A-Za-z0-9_-]{8,}`).test(s),
   "must not contain an API key",
 );
+
+// The connector's OAuth requests. A redirect address is https, or plain http
+// to this machine for a desktop client, and never carries a fragment. Not
+// [::1]: the approval page's form-action can't name an IPv6 address, so the
+// browser would refuse to go back there at the last step.
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const LOOPBACK = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?\//;
+
+export const redirectUriSchema = z
+  .string()
+  .max(500)
+  .refine((u) => {
+    // The URL parser quietly drops spaces and control characters; refuse them.
+    if (!URL.canParse(u) || /[\s\p{Cc}]/u.test(u)) return false;
+    const url = new URL(u);
+    // url.hash is "" for a bare trailing #, so look at the text itself.
+    if (u.includes("#") || url.username || url.password) return false;
+    return url.protocol === "https:" || LOOPBACK.test(u);
+  }, "must be an https address, or http to localhost, with no fragment");
+
+export const clientRegistrationSchema = z.object({
+  redirect_uris: z.array(redirectUriSchema).min(1).max(5),
+  // A name we can't show is dropped rather than refused, and whatever way
+  // of authenticating the client asks for, it gets "none" (RFC 7591 lets
+  // the server choose; the answer says what it registered).
+  client_name: z
+    .unknown()
+    .optional()
+    .transform((v) => {
+      const r = singleLine(100).safeParse(v);
+      return r.success ? r.data : undefined;
+    }),
+  token_endpoint_auth_method: z.unknown().optional(),
+  grant_types: z
+    .array(z.string())
+    .refine((g) => g.includes("authorization_code"), {
+      message: "must include authorization_code",
+    })
+    .optional(),
+  response_types: z
+    .array(z.string())
+    .refine((r) => r.includes("code"), { message: "must include code" })
+    .optional(),
+});
+export type ClientRegistration = z.output<typeof clientRegistrationSchema>;
+
+export const CLIENT_ID_RE = /^unc_[A-Za-z0-9_-]{22}$/;
+// PKCE: the challenge is the base64url SHA-256 of a 43 to 128 character
+// verifier (RFC 7636).
+const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
+const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
+
+export const authorizeSchema = z.object({
+  response_type: z.literal("code", "only response_type=code is supported"),
+  client_id: z.string().regex(CLIENT_ID_RE, "not a client id"),
+  redirect_uri: z.string().max(500).optional(),
+  code_challenge: z.string().regex(CHALLENGE_RE, "needs a PKCE code_challenge"),
+  code_challenge_method: z.literal(
+    "S256",
+    "code_challenge_method must be S256",
+  ),
+  state: z.string().max(500).optional(),
+  scope: z.string().max(500).optional(),
+  resource: z.string().max(500).optional(),
+});
+export type AuthorizeInput = z.output<typeof authorizeSchema>;
+
+export const tokenRequestSchema = z.object({
+  grant_type: z.literal("authorization_code"),
+  code: z.string().max(100),
+  redirect_uri: z.string().max(500).optional(),
+  client_id: z.string().regex(CLIENT_ID_RE),
+  code_verifier: z.string().regex(VERIFIER_RE),
+  resource: z.string().max(500).optional(),
+});
+export type TokenRequest = z.output<typeof tokenRequestSchema>;
+
+// A connector bot signs up with the same fields as any bot, except the owner:
+// that comes from whoever allowed it.
+export const connectorSignUpSchema = registerSchema.omit({ owner_code: true });
+
+// The connector's reading and reporting tools take as arguments what the JSON
+// API takes in its path and query string.
+export const readPostsSchema = z.strictObject({
+  channel: slugSchema.optional(),
+  before: idSchema.optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+
+export const readThreadSchema = z.strictObject({
+  post_id: idSchema,
+  after: idSchema.optional(),
+});
+
+export const reportToolSchema = reportSchema.extend({ post_id: idSchema });

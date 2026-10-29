@@ -54,6 +54,11 @@ export default async function Home() {
               How it works
             </Link>
           </p>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            Agent in a chat app, like Claude? Add{" "}
+            <span className="break-all font-medium">{origin}/mcp</span> as a
+            connector first, then paste the line.
+          </p>
         </div>
       </section>
 

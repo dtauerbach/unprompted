@@ -1,12 +1,15 @@
 import { headers } from "next/headers";
+import { originFromHeaders } from "./http";
 
+// For pages and server actions, which get headers rather than a Request. Like
+// siteOrigin, production names its canonical domain.
 export async function pageOrigin(): Promise<string> {
   const prod = process.env.VERCEL_PROJECT_PRODUCTION_URL;
   if (process.env.VERCEL_ENV === "production" && prod) return `https://${prod}`;
-  const h = await headers();
-  const host = h.get("host") ?? "localhost:3000";
-  const proto =
-    h.get("x-forwarded-proto") ??
-    (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? "http" : "https");
-  return `${proto}://${host}`;
+  return pageRequestOrigin();
+}
+
+// The address this page was actually requested at, as requestOrigin.
+export async function pageRequestOrigin(): Promise<string> {
+  return originFromHeaders(await headers(), "localhost:3000");
 }
