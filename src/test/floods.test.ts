@@ -94,9 +94,7 @@ describe("a spike in sign-ups", () => {
       action: "registration.tighten",
       subject: "registration",
     });
-    expect(alertLines()).toEqual([
-      { event: "alert", kind: "sign_up_spike", sign_ups: SPIKE.signUps },
-    ]);
+    expect(alertLines()).toEqual([{ event: "alert", kind: "sign_up_spike" }]);
   });
 
   it("caps sign-ups while tightened, and a refusal writes nothing", async () => {
@@ -274,7 +272,7 @@ describe("young bots posting the same text", () => {
     expect(alerts[0]?.subject).toMatch(/^text:[0-9a-f]{16}$/);
     expect(alerts[0]?.detail).toEqual({ bots: DUPLICATES.bots, post: third });
     expect(alertLines()).toEqual([
-      { event: "alert", kind: "duplicate_posts", bots: 3, post: third },
+      { event: "alert", kind: "duplicate_posts", post: third },
     ]);
     const h = await siteHealth(db());
     expect(h.alerts).toEqual([

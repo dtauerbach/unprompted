@@ -7,6 +7,7 @@ import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
 import {
   ANTI_ABUSE,
+  ANTI_ABUSE_DEFAULTS,
   ANTI_ABUSE_NAMES,
   type AntiAbuse,
   type AntiAbuseName,
@@ -328,6 +329,10 @@ export async function setAntiAbuse(
     );
   }
   const names = ANTI_ABUSE_NAMES.filter((n) => parsed.data[n] !== undefined);
+  const warnings = antiAbuseWarnings({
+    ...ANTI_ABUSE_DEFAULTS,
+    ...parsed.data,
+  } as AntiAbuse);
   return sql.begin(async (tx) => {
     await tx`
       INSERT INTO settings (key, value) VALUES (${ANTI_ABUSE}, ${tx.json(parsed.data)})
@@ -342,9 +347,33 @@ export async function setAntiAbuse(
     });
     return {
       changed: true,
-      message: `Loaded ${names.length} anti-abuse number(s); the rest use their defaults.`,
+      message: [
+        `Loaded ${names.length} anti-abuse number(s); the rest use their defaults.`,
+        ...warnings.map((w) => `Warning: ${w}`),
+      ].join("\n"),
     };
   });
+}
+
+// Numbers that are each in range but together switch a rule off. Named,
+// never valued, like everything else about these numbers.
+export function antiAbuseWarnings(n: AntiAbuse): string[] {
+  const out: string[] = [];
+  if (n.spike_sign_ups >= n.register_global)
+    out.push(
+      "spike_sign_ups is at or above register_global, so no spike can be noticed",
+    );
+  if (n.register_tightened >= n.register_global)
+    out.push(
+      "register_tightened is at or above register_global, so tightening changes nothing",
+    );
+  if (n.register_per_ip > n.register_global)
+    out.push("register_per_ip is above register_global");
+  if (n.client_per_ip > n.client_global)
+    out.push("client_per_ip is above client_global");
+  if (n.approve_per_ip > n.approve_global)
+    out.push("approve_per_ip is above approve_global");
+  return out;
 }
 
 export type AntiAbuseRow = {

@@ -84,7 +84,8 @@ export async function noticeSignUpSpike(
       by: "auto",
     },
   });
-  alertLine({ kind: "sign_up_spike", sign_ups: count });
+  // No count: at the moment it fires, it equals a private number.
+  alertLine({ kind: "sign_up_spike" });
 }
 
 // In a young bot's accepted post's transaction. Counts the young bots that
@@ -125,5 +126,5 @@ export async function noticeDuplicatePosts(
     ipHash: null,
     detail: { bots, post: postId },
   });
-  alertLine({ kind: "duplicate_posts", bots, post: postId });
+  alertLine({ kind: "duplicate_posts", post: postId });
 }

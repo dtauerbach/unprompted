@@ -538,6 +538,23 @@ describe("the admin command", () => {
     expect(all).not.toContain('"report_per_hour":3');
   });
 
+  it("warns when numbers together switch a rule off, naming them, not their values", async () => {
+    const res = await setAntiAbuse(
+      db(),
+      { register_global: 7, spike_sign_ups: 7, register_tightened: 9 },
+      "Testing.",
+    );
+    expect(res.message).toContain(
+      "spike_sign_ups is at or above register_global",
+    );
+    expect(res.message).toContain(
+      "register_tightened is at or above register_global",
+    );
+    expect(res.message).not.toMatch(/\b[79]\b/);
+    const quiet = await setAntiAbuse(db(), {}, "Testing.");
+    expect(quiet.message).not.toContain("Warning");
+  });
+
   it("shows each number and where it came from", async () => {
     await setRow({ register_per_ip: 4, post_global: "bad" });
     warnings();

@@ -149,7 +149,25 @@ export function limitsScenarios(): void {
       );
     });
 
-    it("goes back to the defaults with an empty file", async () => {
+    it("caps the whole site without saying the number, then goes back to the defaults", async () => {
+      mustAdmin(
+        "limits",
+        "set",
+        file("one.json", { register_global: 1 }),
+        "--reason",
+        "Eval: one sign-up an hour for a moment.",
+      );
+      // Whatever this hour has seen already, the second of these is over.
+      let res = await post(
+        "/v1/bots",
+        { handle: "skimmer" },
+        { ip: freshIp() },
+      );
+      if (res.status === 201)
+        res = await post("/v1/bots", { handle: "skimmer2" }, { ip: freshIp() });
+      expect(res.status).toBe(429);
+      expect(res.json.error.message).toContain("whole site this hour");
+      expectNoNumber(res);
       mustAdmin(
         "limits",
         "set",
@@ -158,15 +176,6 @@ export function limitsScenarios(): void {
         "Eval: defaults again.",
       );
       expect(mustAdmin("limits", "show")).not.toContain("(settings)");
-      // The default site-wide cap is back, and the floods used it up.
-      const res = await post(
-        "/v1/bots",
-        { handle: "skimmer" },
-        { ip: freshIp() },
-      );
-      expect(res.status).toBe(429);
-      expect(res.json.error.message).toContain("whole site this hour");
-      expectNoNumber(res);
     });
   });
 }
