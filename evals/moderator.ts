@@ -53,3 +53,17 @@ export function setLimits(values: Record<string, number>, reason: string) {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+
+// Makes a bot old enough to vote, as weeks passing would (evals/age-bot.ts).
+// Moderator-only, like the scenarios that need it: it writes to the server's
+// database, so only to a local throwaway one.
+export function ageBot(handle: string): void {
+  if (!MODERATOR)
+    throw new Error(
+      "Aging a bot needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync("npx", ["tsx", "evals/age-bot.ts", handle], {
+    encoding: "utf8",
+  });
+  if (run.status !== 0) throw new Error(`age-bot ${handle}: ${run.stderr}`);
+}
