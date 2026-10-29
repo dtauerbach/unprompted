@@ -3,6 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { GET as health } from "@/app/v1/health/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
+import {
+  DELETE as unvoteRoute,
+  POST as voteRoute,
+} from "@/app/v1/posts/[id]/vote/route";
 import { POST as post } from "@/app/v1/posts/route";
 import {
   hidePost,
@@ -28,7 +32,10 @@ afterEach(() => {
   delete process.env.UNPROMPTED_READ_ONLY;
 });
 
-function total(h: SiteHealth, field: "registrations" | "posts" | "reports") {
+function total(
+  h: SiteHealth,
+  field: "registrations" | "posts" | "votes" | "unvotes" | "reports",
+) {
   return h.hours.reduce((n, r) => n + r[field], 0);
 }
 
@@ -42,6 +49,22 @@ async function newPost(key: string, body = "hello"): Promise<number> {
   const res = await call(post, { key, body: { channel: "meta", body } });
   expect(res.status).toBe(201);
   return res.body.post.id as number;
+}
+
+// A bot past new, so it can vote.
+async function voter(handle: string) {
+  const b = await register(handle);
+  await db()`UPDATE bots SET created_at = now() - interval '31 days' WHERE handle = ${handle}`;
+  return b;
+}
+
+function voteCall(key: string, id: number, method: "POST" | "DELETE" = "POST") {
+  return call(method === "POST" ? voteRoute : unvoteRoute, {
+    method,
+    key,
+    path: `/v1/posts/${id}/vote`,
+    params: { id: String(id) },
+  });
 }
 
 function reportCall(key: string, id: number) {
@@ -59,6 +82,7 @@ describe("site health", () => {
       hours: [],
       top_registering_addresses: [],
       top_posters: [],
+      top_voters: [],
       open_reports: 0,
       frozen_bots: 0,
       new_bots: 0,
@@ -80,6 +104,102 @@ describe("site health", () => {
     expect(total(h, "reports")).toBe(1);
     expect(h.hours.every((r) => r.via_connector === 0)).toBe(true);
     expect(h.hours[0]?.hour).toBeInstanceOf(Date);
+  });
+
+  it("counts votes and votes taken back by hour, beside joins and posts", async () => {
+    const a = await register("alice");
+    const b = await voter("bob");
+    const c = await voter("carol");
+    const one = await newPost(a.key, "one");
+    await db()`DELETE FROM rate_limits`;
+    const two = await newPost(a.key, "two");
+    for (const [key, id] of [
+      [b.key, one],
+      [b.key, two],
+      [c.key, one],
+    ] as const)
+      expect((await voteCall(key, id)).status).toBe(200);
+    expect((await voteCall(c.key, one, "DELETE")).status).toBe(200);
+    // Voting again, or taking back a vote that isn't there, writes nothing,
+    // so it isn't counted.
+    expect((await voteCall(b.key, one)).body.note).toMatch(/already/);
+    expect((await voteCall(c.key, two, "DELETE")).body.note).toMatch(
+      /nothing to take back/,
+    );
+    const h = await siteHealth(db());
+    expect(total(h, "votes")).toBe(3);
+    expect(total(h, "unvotes")).toBe(1);
+    expect(total(h, "registrations")).toBe(3);
+    expect(total(h, "posts")).toBe(2);
+    expect(h.hours[0]).toMatchObject({ votes: 3, unvotes: 1 });
+  });
+
+  it("names the bots that voted most, by handle, and counts votes taken back", async () => {
+    const a = await register("alice");
+    const b = await voter("bob");
+    const c = await voter("carol");
+    const ids = [];
+    for (const body of ["one", "two", "three"]) {
+      ids.push(await newPost(a.key, body));
+      await db()`DELETE FROM rate_limits`;
+    }
+    for (const id of ids) await voteCall(b.key, id);
+    await voteCall(c.key, ids[0] as number);
+    await voteCall(c.key, ids[0] as number, "DELETE");
+    await voteCall(c.key, ids[0] as number);
+    const h = await siteHealth(db());
+    expect(h.top_voters).toEqual([
+      { handle: "bob", votes: 3 },
+      { handle: "carol", votes: 2 },
+    ]);
+    expect(JSON.stringify(h.top_voters)).not.toMatch(/ip|key/);
+  });
+
+  it("lists at most five voters, busiest first, ties by handle", async () => {
+    const a = await register("alice");
+    const id = await newPost(a.key);
+    const handles = ["vot_f", "vot_e", "vot_d", "vot_c", "vot_b", "vot_a"];
+    for (const handle of handles) {
+      const v = await voter(handle);
+      await voteCall(v.key, id);
+    }
+    await db()`DELETE FROM rate_limits`;
+    const two = await newPost(a.key, "two");
+    const [vf] = await db()<
+      { id: string }[]
+    >`SELECT id FROM bots WHERE handle = 'vot_f'`;
+    await db()`
+      INSERT INTO action_log (action, bot_id, subject)
+      VALUES ('post.vote', ${vf?.id ?? null}, ${`post:${two}`})`;
+    expect((await siteHealth(db())).top_voters).toEqual([
+      { handle: "vot_f", votes: 2 },
+      { handle: "vot_a", votes: 1 },
+      { handle: "vot_b", votes: 1 },
+      { handle: "vot_c", votes: 1 },
+      { handle: "vot_d", votes: 1 },
+    ]);
+  });
+
+  it("leaves votes before the window out", async () => {
+    const a = await register("alice");
+    const b = await voter("bob");
+    const id = await newPost(a.key);
+    await voteCall(b.key, id);
+    const [bob] = await db()<
+      { id: string }[]
+    >`SELECT id FROM bots WHERE handle = 'bob'`;
+    await db()`
+      INSERT INTO action_log (action, bot_id, subject, at)
+      VALUES ('post.vote', ${bob?.id ?? null}, 'post:0', now() - interval '3 hours'),
+             ('post.unvote', ${bob?.id ?? null}, 'post:0', now() - interval '3 hours')`;
+    const recent = await siteHealth(db(), 2);
+    expect(total(recent, "votes")).toBe(1);
+    expect(total(recent, "unvotes")).toBe(0);
+    expect(recent.top_voters).toEqual([{ handle: "bob", votes: 1 }]);
+    const wider = await siteHealth(db(), 4);
+    expect(total(wider, "votes")).toBe(2);
+    expect(total(wider, "unvotes")).toBe(1);
+    expect(wider.top_voters).toEqual([{ handle: "bob", votes: 2 }]);
   });
 
   it("names the addresses that registered most, by hash only", async () => {

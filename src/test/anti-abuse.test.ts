@@ -7,11 +7,12 @@ import { POST as registerRoute } from "@/app/v1/bots/route";
 import { GET as me } from "@/app/v1/me/route";
 import { POST as registerClientRoute } from "@/app/v1/oauth/register/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
+import { POST as voteRoute } from "@/app/v1/posts/[id]/vote/route";
 import { POST as post } from "@/app/v1/posts/route";
 import { hidePost, setAntiAbuse, showAntiAbuse } from "@/lib/admin";
 import { approve } from "@/lib/connector";
 import { db } from "@/lib/db";
-import { TIGHTENED_UNTIL } from "@/lib/floods";
+import { TIGHTENED_UNTIL, VOTE_RINGS } from "@/lib/floods";
 import { hashIp } from "@/lib/http";
 import { LIMITS } from "@/lib/limits";
 import {
@@ -162,6 +163,40 @@ describe("reading the anti-abuse numbers", () => {
       expect(fallbackLines(warn)).toHaveLength(1);
       vi.restoreAllMocks();
     }
+  });
+
+  it("falls back for each vote-ring number on its own", async () => {
+    for (const [name, bad] of [
+      ["vote_ring_minutes", 0],
+      ["vote_ring_minutes", 1441],
+      ["vote_ring_bots", 1],
+      ["vote_ring_bots", "5"],
+      ["vote_ring_young_days", 91],
+      ["vote_ring_young_days", 2.5],
+    ] as const) {
+      await setRow({ vote_ring_bots: 9, [name]: bad });
+      const warn = warnings();
+      const got = await antiAbuse(db());
+      expect(got[name], `${name} ${bad}`).toBe(ANTI_ABUSE_DEFAULTS[name]);
+      if (name !== "vote_ring_bots") expect(got.vote_ring_bots).toBe(9);
+      const lines = fallbackLines(warn);
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0] as string).fields).toEqual([name]);
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("keeps the vote-ring defaults as VOTE_RINGS, with sensible ranges", () => {
+    expect(VOTE_RINGS).toEqual({
+      minutes: ANTI_ABUSE_DEFAULTS.vote_ring_minutes,
+      bots: ANTI_ABUSE_DEFAULTS.vote_ring_bots,
+      youngDays: ANTI_ABUSE_DEFAULTS.vote_ring_young_days,
+    });
+    // Young has to outlast new, or no young bot could vote at all.
+    expect(VOTE_RINGS.youngDays * 24).toBeGreaterThan(
+      ANTI_ABUSE_DEFAULTS.new_bot_hours,
+    );
+    expect(VOTE_RINGS.bots).toBeGreaterThanOrEqual(2);
   });
 
   it("keeps a write working with a malformed row, on the defaults", async () => {
@@ -416,6 +451,88 @@ describe("the flood rules read their thresholds from settings", () => {
     warnings();
     expect(await threeSay(LONG)).toHaveLength(1);
   });
+
+  // n bots, past new, `age` old, each voting once for the same post.
+  async function ringOf(n: number, age = "2 days") {
+    const author = await register("author");
+    const id = (
+      await call(post, {
+        key: author.key,
+        body: { channel: "meta", body: "Vote for me." },
+      })
+    ).body.post.id as number;
+    for (let i = 0; i < n; i++) {
+      const b = await register(`voter${i}`);
+      await db()`UPDATE bots SET created_at = now() - ${age}::interval WHERE handle = ${b.handle}`;
+      const res = await call(voteRoute, {
+        method: "POST",
+        key: b.key,
+        path: `/v1/posts/${id}/vote`,
+        params: { id: String(id) },
+      });
+      expect(res.status).toBe(200);
+    }
+    return db()`SELECT 1 FROM action_log WHERE action = 'alert.vote_ring'`;
+  }
+
+  it("vote rings: fewer bots raise the alert when the threshold is lower", async () => {
+    warnings();
+    await setRow({ vote_ring_bots: 2 });
+    expect(await ringOf(2)).toHaveLength(1);
+  });
+
+  it("vote rings: on the defaults, two bots raise nothing", async () => {
+    warnings();
+    expect(await ringOf(2)).toHaveLength(0);
+  });
+
+  it("vote rings: more bots are needed when the threshold is higher", async () => {
+    warnings();
+    await setRow({ vote_ring_bots: VOTE_RINGS.bots + 1 });
+    expect(await ringOf(VOTE_RINGS.bots)).toHaveLength(0);
+  });
+
+  it("vote rings: on the defaults, the default number of bots is enough", async () => {
+    warnings();
+    expect(await ringOf(VOTE_RINGS.bots)).toHaveLength(1);
+  });
+
+  it("vote rings: a bot stops being young after the set days", async () => {
+    warnings();
+    await setRow({ vote_ring_bots: 2, vote_ring_young_days: 2 });
+    expect(await ringOf(2, "3 days")).toHaveLength(0);
+  });
+
+  it("vote rings: a bot stays young for the set days", async () => {
+    warnings();
+    await setRow({ vote_ring_bots: 2, vote_ring_young_days: 30 });
+    expect(await ringOf(2, "20 days")).toHaveLength(1);
+  });
+
+  it("vote rings: counts only within the set minutes", async () => {
+    warnings();
+    const [earlier] = await db()<{ id: string }[]>`
+      INSERT INTO bots (handle, created_at) VALUES ('earlier', now() - interval '2 days')
+      RETURNING id`;
+    // The post will be the first, so its id is 1.
+    await db()`
+      INSERT INTO action_log (action, bot_id, subject, at)
+      VALUES ('post.vote', ${earlier?.id ?? null}, 'post:1', now() - interval '5 minutes')`;
+    await setRow({ vote_ring_bots: 2, vote_ring_minutes: 1 });
+    expect(await ringOf(1)).toHaveLength(0);
+  });
+
+  it("vote rings: and the earlier vote counts when the window is longer", async () => {
+    warnings();
+    const [earlier] = await db()<{ id: string }[]>`
+      INSERT INTO bots (handle, created_at) VALUES ('earlier', now() - interval '2 days')
+      RETURNING id`;
+    await db()`
+      INSERT INTO action_log (action, bot_id, subject, at)
+      VALUES ('post.vote', ${earlier?.id ?? null}, 'post:1', now() - interval '5 minutes')`;
+    await setRow({ vote_ring_bots: 2, vote_ring_minutes: 10 });
+    expect(await ringOf(1)).toHaveLength(1);
+  });
 });
 
 describe("how long a bot counts as new", () => {
@@ -553,6 +670,24 @@ describe("the admin command", () => {
     expect(res.message).not.toMatch(/\b[79]\b/);
     const quiet = await setAntiAbuse(db(), {}, "Testing.");
     expect(quiet.message).not.toContain("Warning");
+  });
+
+  it("warns when no young bot could vote, naming the numbers, not their values", async () => {
+    const res = await setAntiAbuse(
+      db(),
+      { vote_ring_young_days: 3, new_bot_hours: 72 },
+      "Testing.",
+    );
+    expect(res.message).toContain(
+      "Warning: vote_ring_young_days is no longer than new_bot_hours",
+    );
+    expect(res.message).not.toMatch(/\b(3|72)\b/);
+    const fine = await setAntiAbuse(
+      db(),
+      { vote_ring_young_days: 4, new_bot_hours: 72 },
+      "Testing.",
+    );
+    expect(fine.message).not.toContain("Warning");
   });
 
   it("shows each number and where it came from", async () => {

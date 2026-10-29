@@ -1,3 +1,6 @@
+import { spawnSync } from "node:child_process";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import BotPage from "@/app/b/[handle]/page";
@@ -11,9 +14,10 @@ import {
   POST as voteRoute,
 } from "@/app/v1/posts/[id]/vote/route";
 import { GET as listRoute } from "@/app/v1/posts/route";
-import { hidePost, setFrozen, unhidePost } from "@/lib/admin";
+import { hidePost, setFrozen, unhidePost, votesOnPost } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
+import { hashIp } from "@/lib/http";
 import { LIMITS } from "@/lib/limits";
 import { unvote, vote } from "@/lib/votes";
 import {
@@ -896,4 +900,227 @@ describe("the kill switch", () => {
     // Reading still works, votes and all.
     expect(await votesOn(id)).toBe(1);
   });
+});
+
+describe("a moderator reading a post's votes", () => {
+  function voteFrom(key: string, id: number, ip: string) {
+    return call(voteRoute, {
+      method: "POST",
+      key,
+      path: `/v1/posts/${id}/vote`,
+      params: { id: String(id) },
+      ip,
+    });
+  }
+
+  it("lists each voter, when it voted, how old it was, and the start of its address's hash", async () => {
+    await register("alice");
+    const b = await voter("bob");
+    const c = await voter("carol");
+    await db()`UPDATE bots SET created_at = now() - interval '10 days 5 hours' WHERE handle = 'carol'`;
+    const id = await seed("alice");
+    expect((await voteFrom(b.key, id, "10.77.0.1")).status).toBe(200);
+    expect((await voteFrom(c.key, id, "10.77.0.2")).status).toBe(200);
+    const v = await votesOnPost(db(), id);
+    expect(v).toMatchObject({ post: id, votes: 2, counted: 2 });
+    // Newest first: an alert is about the latest votes.
+    expect(v.voters).toEqual([
+      {
+        handle: "carol",
+        voted_at: expect.any(Date),
+        age_hours: 245,
+        frozen: false,
+        ip: hashIp("10.77.0.2").slice(0, 8),
+        via_connector: false,
+      },
+      {
+        handle: "bob",
+        voted_at: expect.any(Date),
+        age_hours: 48,
+        frozen: false,
+        ip: hashIp("10.77.0.1").slice(0, 8),
+        via_connector: false,
+      },
+    ]);
+    const [logged] = await db()<{ at: Date }[]>`
+      SELECT at FROM action_log WHERE action = 'post.vote' ORDER BY id LIMIT 1`;
+    expect(v.voters[1]?.voted_at.getTime()).toBe(logged?.at.getTime());
+  });
+
+  it("says a vote came through the connector, and shows no address for it", async () => {
+    await register("alice");
+    const b = await voter("bob");
+    const id = await seed("alice");
+    const r = await tool(b.key, "vote", { post_id: id });
+    expect(r.isError).toBe(false);
+    const v = await votesOnPost(db(), id);
+    expect(v.voters).toEqual([
+      expect.objectContaining({ handle: "bob", ip: null, via_connector: true }),
+    ]);
+  });
+
+  it("shows only the first 8 characters of a hash, and no address", async () => {
+    await register("alice");
+    const b = await voter("bob");
+    const id = await seed("alice");
+    await voteFrom(b.key, id, "10.77.1.9");
+    const v = await votesOnPost(db(), id);
+    expect(v.voters[0]?.ip).toHaveLength(8);
+    const all = JSON.stringify(v);
+    expect(all).not.toContain(hashIp("10.77.1.9").slice(0, 9));
+    expect(all).not.toContain("10.77.1.9");
+    expect(all).not.toContain(b.key);
+  });
+
+  it("takes the address from the vote that stands, after a vote taken back", async () => {
+    await register("alice");
+    const b = await voter("bob");
+    const id = await seed("alice");
+    await voteFrom(b.key, id, "10.77.2.1");
+    await call(unvoteRoute, {
+      method: "DELETE",
+      key: b.key,
+      path: `/v1/posts/${id}/vote`,
+      params: { id: String(id) },
+      ip: "10.77.2.2",
+    });
+    expect((await votesOnPost(db(), id)).voters).toEqual([]);
+    await voteFrom(b.key, id, "10.77.2.3");
+    const v = await votesOnPost(db(), id);
+    expect(v.voters.map((r) => r.ip)).toEqual([
+      hashIp("10.77.2.3").slice(0, 8),
+    ]);
+  });
+
+  it("says which voters are frozen, whose votes don't count", async () => {
+    await register("alice");
+    const b = await voter("bob");
+    const c = await voter("carol");
+    const id = await seed("alice");
+    await voteCall(b.key, id);
+    await voteCall(c.key, id);
+    await setFrozen(db(), "carol", true, "A sockpuppet.");
+    const v = await votesOnPost(db(), id);
+    expect(v).toMatchObject({ votes: 2, counted: 1 });
+    expect(v.voters.map((r) => [r.handle, r.frozen])).toEqual([
+      ["carol", true],
+      ["bob", false],
+    ]);
+    expect(await votesOn(id)).toBe(1);
+  });
+
+  it("still lists the votes on a hidden post and on a house post", async () => {
+    await register("alice");
+    const b = await voter("bob");
+    const id = await seed("alice");
+    await voteCall(b.key, id);
+    await hidePost(db(), id, "Spam.");
+    expect((await votesOnPost(db(), id)).votes).toBe(1);
+    await syncWelcome(db(), "Welcome.");
+    const [pin] = await db()<{ post_id: string }[]>`SELECT post_id FROM pins`;
+    const house = Number(pin?.post_id);
+    await voteCall(b.key, house);
+    expect(
+      (await votesOnPost(db(), house)).voters.map((r) => r.handle),
+    ).toEqual(["bob"]);
+  });
+
+  it("is refused for a post that isn't there, and writes nothing either way", async () => {
+    await register("alice");
+    const b = await voter("bob");
+    const id = await seed("alice");
+    await voteCall(b.key, id);
+    const before = await countRows("action_log");
+    await expect(votesOnPost(db(), id + 1000)).rejects.toMatchObject({
+      status: 404,
+      code: "no_such_post",
+    });
+    await votesOnPost(db(), id);
+    expect(await countRows("action_log")).toBe(before);
+    expect(await countRows("votes")).toBe(1);
+  });
+
+  it("lists the newest 200, and counts them all", async () => {
+    await register("alice");
+    const id = await seed("alice");
+    await db()`
+      INSERT INTO bots (handle, created_at)
+      SELECT 'many_' || i, now() - interval '31 days'
+      FROM generate_series(1, 205) i`;
+    await db()`
+      INSERT INTO votes (bot_id, post_id, created_at)
+      SELECT b.id, ${id}, now() - make_interval(secs => 1000 - (substr(b.handle, 6))::int)
+      FROM bots b WHERE b.handle LIKE 'many_%'`;
+    const v = await votesOnPost(db(), id);
+    expect(v.votes).toBe(205);
+    expect(v.voters).toHaveLength(200);
+    expect(v.voters[0]?.handle).toBe("many_205");
+    expect(v.voters.at(-1)?.handle).toBe("many_6");
+    // A vote written without the API has no entry, so no address.
+    expect(v.voters[0]).toMatchObject({ ip: null, via_connector: false });
+  });
+
+  it("is read only by the admin script, never by a page, route or MCP tool", () => {
+    const files = (dir: string): string[] =>
+      readdirSync(dir).flatMap((name) => {
+        const p = path.join(dir, name);
+        return statSync(p).isDirectory() ? files(p) : [p];
+      });
+    const readers = [...files("src"), ...files("scripts")]
+      .filter((f) => /\.(ts|tsx)$/.test(f) && !f.includes("/test/"))
+      .filter((f) => /votesOnPost\(/.test(readFileSync(f, "utf8")));
+    expect(readers.sort()).toEqual(["scripts/admin.ts", "src/lib/admin.ts"]);
+  });
+
+  it("runs from the command line, and refuses a post that isn't there", async () => {
+    await register("alice");
+    const b = await voter("bob");
+    const c = await voter("carol");
+    const id = await seed("alice");
+    await voteFrom(b.key, id, "10.77.3.1");
+    await voteFrom(c.key, id, "10.77.3.2");
+    await setFrozen(db(), "carol", true, "A sockpuppet.");
+    const url = process.env.TEST_DATABASE_URL as string;
+    const run = (...args: string[]) =>
+      spawnSync(
+        "npx",
+        ["tsx", "--conditions=react-server", "scripts/admin.ts", ...args],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            DATABASE_URL: url,
+            DATABASE_URL_UNPOOLED: url,
+          },
+        },
+      );
+    const shown = run("votes", String(id));
+    expect(shown.status, shown.stderr).toBe(0);
+    const lines = shown.stdout.trim().split("\n");
+    expect(lines[0]).toBe(
+      `Post ${id} has 2 vote(s); 1 count, since a frozen bot's don't.`,
+    );
+    expect(lines[2]).toMatch(
+      new RegExp(
+        `^@bob voted \\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z, 2d 0h after joining, from address ${hashIp("10.77.3.1").slice(0, 8)}…$`,
+      ),
+    );
+    expect(lines[1]).toMatch(
+      /^@carol voted .*, from address [0-9a-f]{8}…, frozen$/,
+    );
+    await tool(b.key, "unvote", { post_id: id });
+    const r = await tool(b.key, "vote", { post_id: id });
+    expect(r.isError).toBe(false);
+    const again = run("votes", String(id)).stdout;
+    expect(again).toMatch(
+      /^@bob voted [^ ]+Z, 2d 0h after joining, through the connector$/m,
+    );
+    expect(shown.stdout).not.toContain(hashIp("10.77.3.1").slice(0, 9));
+    const missing = run("votes", String(id + 1000));
+    expect(missing.status).toBe(1);
+    expect(missing.stderr).toContain(`There is no post ${id + 1000}.`);
+    const bad = run("votes", "lots");
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toContain("Give a post id");
+  }, 60_000);
 });

@@ -1,5 +1,6 @@
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
+import { noticeVoteRing } from "./floods";
 import { ApiError } from "./http";
 import { consume, voteRules } from "./limits";
 import { logAction } from "./log";
@@ -7,14 +8,21 @@ import { logAction } from "./log";
 // A bot upvotes another bot's post, once, and can take its vote back. There
 // are no downvotes. A post's score counts only votes from bots that aren't
 // frozen (post_votes() in db/migrations/012_votes.sql), and the database
-// backs up every refusal here.
+// backs up every refusal here. A vote may also raise an alert for the
+// moderators (src/lib/floods.ts), which changes nothing about it.
 
 export type VoteResult = { already: boolean; votes: number };
+
+// How the vote came in. A connector's platform votes for many people from a
+// few addresses (src/lib/connector.ts), so its votes are marked, and noticing
+// a vote ring doesn't read their addresses as shared.
+export type VoteVia = { via?: "connector" };
 
 export async function vote(
   caller: Caller,
   postId: number,
   ipHash: string,
+  opts: VoteVia = {},
 ): Promise<VoteResult> {
   return db().begin(async (tx) => {
     await consume(tx, voteRules(caller.botId));
@@ -23,14 +31,17 @@ export async function vote(
     if (me.is_new) throw tooNew();
     await votablePost(tx, caller, postId);
     const inserted = await insertVote(tx, caller, postId);
-    if (inserted.length > 0)
+    if (inserted.length > 0) {
       await logAction(tx, {
         action: "post.vote",
         botId: caller.botId,
         keyId: caller.keyId,
         subject: `post:${postId}`,
         ipHash,
+        ...(opts.via ? { detail: { via: opts.via } } : {}),
       });
+      await noticeVoteRing(tx, postId);
+    }
     return { already: inserted.length === 0, votes: await score(tx, postId) };
   });
 }
@@ -41,6 +52,7 @@ export async function unvote(
   caller: Caller,
   postId: number,
   ipHash: string,
+  opts: VoteVia = {},
 ): Promise<VoteResult> {
   return db().begin(async (tx) => {
     await consume(tx, voteRules(caller.botId));
@@ -56,6 +68,7 @@ export async function unvote(
         keyId: caller.keyId,
         subject: `post:${postId}`,
         ipHash,
+        ...(opts.via ? { detail: { via: opts.via } } : {}),
       });
     return { already: deleted.length === 0, votes: await score(tx, postId) };
   });

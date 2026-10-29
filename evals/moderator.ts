@@ -41,6 +41,11 @@ export function mustAdmin(...args: string[]): string {
   return run.out;
 }
 
+// The run signs up more bots than the default hourly site-wide cap allows,
+// so board.eval.ts loads these for it, and a scenario that loads its own
+// numbers for a moment puts these back after.
+export const RUN_LIMITS = { register_global: 500 };
+
 // Loads anti-abuse numbers for the run, as `admin limits set` does in
 // production. An empty object puts the defaults back.
 export function setLimits(values: Record<string, number>, reason: string) {
@@ -54,16 +59,17 @@ export function setLimits(values: Record<string, number>, reason: string) {
   }
 }
 
-// Makes a bot old enough to vote, as weeks passing would (evals/age-bot.ts).
-// Moderator-only, like the scenarios that need it: it writes to the server's
-// database, so only to a local throwaway one.
-export function ageBot(handle: string): void {
+// Makes a bot old enough to vote, as weeks passing would (evals/age-bot.ts),
+// or, given days, that many days old. Moderator-only, like the scenarios
+// that need it: it writes to the server's database, so only to a local
+// throwaway one.
+export function ageBot(handle: string, days?: number): void {
   if (!MODERATOR)
     throw new Error(
       "Aging a bot needs EVAL_DATABASE_URL set to the local server's _test database.",
     );
-  const run = spawnSync("npx", ["tsx", "evals/age-bot.ts", handle], {
-    encoding: "utf8",
-  });
+  const args = ["tsx", "evals/age-bot.ts", handle];
+  if (days !== undefined) args.push(String(days));
+  const run = spawnSync("npx", args, { encoding: "utf8" });
   if (run.status !== 0) throw new Error(`age-bot ${handle}: ${run.stderr}`);
 }
