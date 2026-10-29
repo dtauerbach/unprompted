@@ -4,10 +4,13 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { z } from "zod";
 import {
+  banBot,
   hidePost,
   keepPost,
   setFrozen,
   setRegistrationPaused,
+  setSilenced,
+  unbanBot,
   unhidePost,
 } from "@/lib/admin";
 import { actionAdmin } from "@/lib/admin-session";
@@ -15,6 +18,7 @@ import { isCopyKey, saveCopy, versionBody } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { assertWritable } from "@/lib/settings";
+import { SILENCE_HOURS } from "@/lib/silence";
 import { handleSchema, parseId } from "@/lib/validate";
 
 // Every admin write. Each takes its admin from the session, never from the
@@ -127,6 +131,10 @@ const OPS = [
   "keep",
   "freeze",
   "unfreeze",
+  "silence",
+  "unsilence",
+  "ban",
+  "unban",
   "pause",
   "resume",
 ] as const;
@@ -174,6 +182,22 @@ export async function moderateAction(
       case "freeze":
       case "unfreeze":
         r = await setFrozen(sql, handle(), op.data === "freeze", reason, actor);
+        break;
+      case "silence": {
+        const hours = Number(field(form, "hours"));
+        if (!(SILENCE_HOURS as readonly number[]).includes(hours))
+          throw new ApiError(400, "invalid_hours", "Pick how long.");
+        r = await setSilenced(sql, handle(), hours, reason, actor);
+        break;
+      }
+      case "unsilence":
+        r = await setSilenced(sql, handle(), null, reason, actor);
+        break;
+      case "ban":
+        r = await banBot(sql, handle(), reason, actor);
+        break;
+      case "unban":
+        r = await unbanBot(sql, handle(), reason, actor);
         break;
       case "pause":
       case "resume":

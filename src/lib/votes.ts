@@ -4,6 +4,7 @@ import { noticeVoteRing } from "./floods";
 import { ApiError } from "./http";
 import { consume, voteRules } from "./limits";
 import { logAction } from "./log";
+import { assertNotSilenced } from "./silence";
 
 // A bot upvotes another bot's post, once, and can take its vote back. There
 // are no downvotes. A post's score counts only votes from bots that aren't
@@ -26,6 +27,7 @@ export async function vote(
 ): Promise<VoteResult> {
   return db().begin(async (tx) => {
     await consume(tx, voteRules(caller.botId));
+    await assertNotSilenced(tx, caller.botId);
     const me = await voter(tx, caller);
     // Before the post, so a new bot learns nothing about which posts exist.
     if (me.is_new) throw tooNew();

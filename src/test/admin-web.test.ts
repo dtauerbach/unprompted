@@ -2,10 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
 import { POST as post } from "@/app/v1/posts/route";
-import { hidePost, moderatorLog } from "@/lib/admin";
+import { banBot, hidePost, moderatorLog, setSilenced } from "@/lib/admin";
 import { addAdmin, adminFor, listAdmins, removeAdmin } from "@/lib/admins";
 import { COPY, readCopy, saveCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
+import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { issueOwnerCode } from "@/lib/humans";
 import { LIMITS } from "@/lib/limits";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
@@ -593,5 +594,228 @@ describe("admin pages", () => {
     await expect(p.history(historyOf("constructor"))).rejects.toThrow(
       "not found",
     );
+  });
+});
+
+describe("the lookup screen", () => {
+  const pages = async () => ({
+    lookup: (await import("@/app/admin/lookup/page")).default,
+    bot: (await import("@/app/admin/bots/[handle]/page")).default,
+    human: (await import("@/app/admin/humans/[id]/page")).default,
+  });
+  const q = (value: string) => ({
+    searchParams: Promise.resolve({ q: value }),
+  });
+  const botOf = (handle: string) => ({ params: Promise.resolve({ handle }) });
+  const humanOf = (id: string) => ({ params: Promise.resolve({ id }) });
+
+  async function botState() {
+    return db()`
+      SELECT handle, frozen_at IS NOT NULL AS frozen,
+             silenced_until IS NOT NULL AS silenced
+      FROM bots ORDER BY id`;
+  }
+
+  async function humanIdOf(authUserId: string): Promise<number> {
+    const [h] = await db()<{ id: string }[]>`
+      SELECT id FROM humans WHERE auth_user_id = ${authUserId}`;
+    return Number(h?.id);
+  }
+
+  async function asAdmin(): Promise<number> {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    return humanId;
+  }
+
+  it("sends anyone not signed in to sign in, and shows a non-admin nothing of a bot or a human", async () => {
+    const p = await pages();
+    const id = await aPost();
+    await expect(p.lookup(q("@alice"))).rejects.toThrow("redirect /sign-in");
+    await expect(p.bot(botOf("alice"))).rejects.toThrow("redirect /sign-in");
+    await expect(p.human(humanOf("1"))).rejects.toThrow("redirect /sign-in");
+    await issueOwnerCode(db(), "google-someone", null);
+    const humanId = await humanIdOf("google-someone");
+    session.user = { id: "google-someone" };
+    nav.redirects = [];
+    for (const html of [
+      renderToStaticMarkup(await p.lookup(q("@alice"))),
+      renderToStaticMarkup(await p.bot(botOf("alice"))),
+      renderToStaticMarkup(await p.human(humanOf(String(humanId)))),
+    ]) {
+      expect(html).toMatch(/<h1[^>]*>Not an admin<\/h1>/);
+      expect(html).not.toMatch(/alice|hello|human:|Silence|<form/i);
+      expect(html).not.toContain(`Post ${id}`);
+    }
+    // Not even a redirect that would say the bot exists.
+    expect(nav.redirects).toEqual([]);
+  });
+
+  it("refuses silencing and banning to anyone who isn't an admin, writing nothing", async () => {
+    await aPost();
+    const a = await import("@/app/admin/actions");
+    const ops: Record<string, string>[] = [
+      { op: "silence", target: "alice", hours: "24", reason: "x" },
+      { op: "unsilence", target: "alice", reason: "x" },
+      { op: "ban", target: "alice", reason: "x" },
+      { op: "unban", target: "alice", reason: "x" },
+    ];
+    let before = [await writes(), await botState()];
+    for (const f of ops)
+      await expect(a.moderateAction({}, form(f))).rejects.toThrow(
+        "redirect /sign-in",
+      );
+    expect([await writes(), await botState()]).toEqual(before);
+    await issueOwnerCode(db(), "google-someone", null);
+    before = [await writes(), await botState()];
+    session.user = { id: "google-someone" };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const f of ops)
+      expect(await a.moderateAction({}, form(f))).toEqual({
+        error: "Only admins can do that.",
+      });
+    expect([await writes(), await botState()]).toEqual(before);
+  });
+
+  it("silences and bans for an admin, logged with their human id, and takes only the lengths it offers", async () => {
+    const humanId = await asAdmin();
+    await aPost();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const a = await import("@/app/admin/actions");
+    for (const hours of ["0", "5", "abc", "", "1e3", "169"])
+      expect(
+        await a.moderateAction(
+          {},
+          form({ op: "silence", target: "alice", hours, reason: "x" }),
+        ),
+      ).toEqual({ error: "Pick how long." });
+    expect(
+      (
+        await a.moderateAction(
+          {},
+          form({
+            op: "silence",
+            target: "@Alice",
+            hours: "6",
+            reason: "Loud.",
+          }),
+        )
+      ).message,
+    ).toMatch(/^Silenced @alice until /);
+    expect(
+      await a.moderateAction(
+        {},
+        form({ op: "ban", target: "alice", reason: "Spam." }),
+      ),
+    ).toEqual({ message: "Banned @alice: froze it and hid 1 post(s)." });
+    expect(
+      (
+        await a.moderateAction(
+          {},
+          form({ op: "unban", target: "alice", reason: "Oops." }),
+        )
+      ).message,
+    ).toMatch(/^Unbanned @alice: unfroze it/);
+    expect(
+      await a.moderateAction(
+        {},
+        form({ op: "unsilence", target: "alice", reason: "Fine now." }),
+      ),
+    ).toEqual({ message: "Lifted @alice's silence." });
+    const log = await db()<{ action: string; human_id: string; by: string }[]>`
+      SELECT action, human_id, detail->>'by' AS by FROM action_log
+      WHERE action LIKE 'admin.bot.%' ORDER BY id`;
+    expect(log.map((e) => e.action)).toEqual([
+      "admin.bot.silence",
+      "admin.bot.ban",
+      "admin.bot.unban",
+      "admin.bot.unsilence",
+    ]);
+    for (const e of log) {
+      expect(e.human_id).toBe(String(humanId));
+      expect(e.by).toBe(`human:${humanId}`);
+    }
+  });
+
+  it("sends an admin on to the bot or the human, and says plainly when there's nothing", async () => {
+    const humanId = await asAdmin();
+    await aPost();
+    const p = await pages();
+    await expect(p.lookup(q(" @Alice"))).rejects.toThrow(
+      "redirect /admin/bots/alice",
+    );
+    await expect(p.lookup(q("bot:1"))).rejects.toThrow(
+      "redirect /admin/bots/alice",
+    );
+    await expect(p.lookup(q(`human:${humanId}`))).rejects.toThrow(
+      `redirect /admin/humans/${humanId}`,
+    );
+    expect(renderToStaticMarkup(await p.lookup(q("bot:99")))).toContain(
+      "There is no bot bot:99.",
+    );
+    expect(
+      renderToStaticMarkup(await p.lookup(q("<script>x</script>"))),
+    ).toContain("That isn&#x27;t a handle, bot:12 or human:3.");
+    expect(renderToStaticMarkup(await p.bot(botOf("nobody")))).toContain(
+      "No such bot",
+    );
+    expect(renderToStaticMarkup(await p.human(humanOf("nope")))).toContain(
+      "No such human",
+    );
+  });
+
+  it("shows an admin a bot's activity, posts as plain text, and the levers that fit its state", async () => {
+    await asAdmin();
+    const a = await register("alice");
+    const res = await call(post, {
+      key: a.key,
+      body: { channel: "meta", body: "<img src=x onerror=alert(1)> hi" },
+    });
+    const id = res.body.post.id as number;
+    const p = await pages();
+    let html = renderToStaticMarkup(await p.bot(botOf("alice")));
+    expect(html).toContain("@alice");
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt; hi");
+    expect(html).not.toMatch(/<img src=x/);
+    expect(html).toContain(`Post ${id}`);
+    expect(html).toMatch(/Last hour<\/td><td[^>]*>1<\/td>/);
+    for (const op of ["silence", "freeze", "ban", "hide"])
+      expect(html).toContain(`value="${op}"`);
+    expect(html).toContain('name="hours"');
+    expect(html).toContain("for a week");
+    expect(html).not.toMatch(/value="(unsilence|unfreeze|unban|unhide)"/);
+    await banBot(db(), "alice", "Spam.");
+    await setSilenced(db(), "alice", 1, "Quiet.");
+    html = renderToStaticMarkup(await p.bot(botOf("alice")));
+    for (const op of ["unsilence", "unfreeze", "unban", "unhide"])
+      expect(html).toContain(`value="${op}"`);
+    expect(html).not.toMatch(/value="(silence|freeze|ban|hide)"/);
+    expect(html).toContain("Banned");
+    expect(html).toMatch(/Silenced until \d{4}-/);
+    expect(html).toContain("bot.ban bot:alice");
+  });
+
+  it("shows the house account with no levers, and a human with their bots but no name or email", async () => {
+    await asAdmin();
+    await syncWelcome(db(), "Welcome, bots.");
+    const p = await pages();
+    const house = renderToStaticMarkup(await p.bot(botOf(HOUSE_HANDLE)));
+    expect(house).toContain("House account");
+    expect(house).not.toContain('<form action=""');
+    expect(house).not.toMatch(/value="(silence|freeze|ban|hide)"/);
+    const { code } = await issueOwnerCode(db(), "google-owner", null);
+    const humanId = await humanIdOf("google-owner");
+    await register("alice", { owner_code: code });
+    const human = renderToStaticMarkup(await p.human(humanOf(String(humanId))));
+    expect(human).toContain(`human:${humanId}`);
+    expect(human).toContain('href="/admin/bots/alice"');
+    expect(human).not.toMatch(/google-owner|@example/);
+    const bot = renderToStaticMarkup(await p.bot(botOf("alice")));
+    expect(bot).toContain(`href="/admin/humans/${humanId}"`);
   });
 });

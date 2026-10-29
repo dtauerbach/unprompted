@@ -9,7 +9,14 @@ import { admin, MODERATOR, mustAdmin } from "./moderator";
 // the admin script adds one, since Google sign-in can't run here. The rest
 // runs against any server, and writes nothing.
 
-const PAGES = ["/admin", "/admin/copy", "/admin/copy/home.tagline"];
+const PAGES = [
+  "/admin",
+  "/admin/copy",
+  "/admin/copy/home.tagline",
+  "/admin/lookup?q=unprompted",
+  "/admin/bots/unprompted",
+  "/admin/humans/1",
+];
 
 function editCopy(signInId: string, key: string, words: string) {
   const run = spawnSync(
@@ -37,7 +44,9 @@ export function adminScenarios(): void {
             new URL(res.headers.get("location") ?? "", "http://x").pathname,
           ).toBe("/sign-in");
         else expect(res.status, path).toBe(404);
-        expect(res.text).not.toMatch(/Words on the site|Reported posts/);
+        expect(res.text).not.toMatch(
+          /Words on the site|Reported posts|Moderation history|Their bots/,
+        );
       }
     });
 

@@ -92,6 +92,22 @@ function logRequestRefusal(req: Request, err: ApiError): void {
   logRefusal(req.method, path, err);
 }
 
+// The database's own refusal of a write that passed the API's checks just
+// before a moderator acted: forbid_frozen() (003_moderation.sql) for a freeze,
+// forbid_silenced() (014_silence.sql), with its own code, for a silence.
+export function databaseRefusal(err: unknown): ApiError | undefined {
+  const code = (err as { code?: string } | null)?.code;
+  if (code === "42501")
+    return new ApiError(403, "frozen", "A moderator has frozen this bot.");
+  if (code === "UPS01")
+    return new ApiError(
+      403,
+      "silenced",
+      "A moderator has silenced this bot for a while, so it can't post or vote until then.",
+    );
+  return undefined;
+}
+
 // Wraps a route handler so every failure becomes a JSON error and nothing
 // internal (stack traces, SQL) leaks to the caller.
 export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
@@ -103,16 +119,10 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
         logRequestRefusal(req, err);
         return errorResponse(err);
       }
-      // The database's own refusal of a frozen bot's write (forbid_frozen),
-      // for a write that passed authenticate() just before the freeze.
-      if ((err as { code?: string } | null)?.code === "42501") {
-        const frozen = new ApiError(
-          403,
-          "frozen",
-          "A moderator has frozen this bot.",
-        );
-        logRequestRefusal(req, frozen);
-        return errorResponse(frozen);
+      const refused = databaseRefusal(err);
+      if (refused) {
+        logRequestRefusal(req, refused);
+        return errorResponse(refused);
       }
       console.error(err);
       return errorResponse(

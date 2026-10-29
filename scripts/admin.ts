@@ -7,6 +7,11 @@
 // the queue with the reports it had.
 //   npm run admin -- freeze <handle> --reason "..."
 //   npm run admin -- unfreeze <handle> --reason "..."
+//   npm run admin -- silence <handle> --hours 24 --reason "..."   (no posts or votes until then)
+//   npm run admin -- unsilence <handle> --reason "..."
+//   npm run admin -- ban <handle> --reason "..."   (freeze it and hide all its posts)
+//   npm run admin -- unban <handle> --reason "..."   (put back exactly what the ban did)
+//   npm run admin -- lookup <handle | bot:12 | human:3>   (what a bot or human has been doing)
 //   npm run admin -- pause-registration --reason "..."
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
@@ -35,6 +40,7 @@ import { parseArgs } from "node:util";
 import postgres from "postgres";
 import {
   type AdminResult,
+  banBot,
   hidePost,
   keepPost,
   moderator,
@@ -43,8 +49,10 @@ import {
   setAntiAbuse,
   setFrozen,
   setRegistrationPaused,
+  setSilenced,
   showAntiAbuse,
   siteHealth,
+  unbanBot,
   unhidePost,
   votesOnPost,
 } from "../src/lib/admin";
@@ -54,6 +62,8 @@ import {
   listAdmins,
   removeAdmin,
 } from "../src/lib/admins";
+import { lookupBot, lookupHuman, parseLookup } from "../src/lib/lookup";
+import { utcMinute } from "../src/lib/silence";
 import { parseId } from "../src/lib/validate";
 
 const { positionals, values } = parseArgs({
@@ -94,6 +104,68 @@ function handle(): string {
 }
 
 const sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} });
+
+// Bot-written text is printed as JSON strings, as `reports` does, so it can't
+// carry anything a terminal would act on.
+async function lookup(): Promise<void> {
+  const t = parseLookup(target ?? "");
+  if (!t) throw new Error("Give a bot's handle, bot:12 or human:3.");
+  if (t.kind === "human") {
+    const h = await lookupHuman(sql, t.id);
+    if (!h) throw new Error(`There is no human ${t.id}.`);
+    console.log(
+      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : ""}, ${h.owner_codes} owner code(s)`,
+    );
+    for (const b of h.bots)
+      console.log(
+        `bot @${b.handle}, joined ${utcMinute(b.created_at)}, ${b.posts} post(s)${b.frozen ? ", frozen" : ""}${b.silenced ? ", silenced" : ""}`,
+      );
+    for (const e of h.history)
+      console.log(
+        `${e.id} ${e.at.toISOString()} ${e.action} ${e.subject}${e.reason ? `: ${JSON.stringify(e.reason)}` : ""}`,
+      );
+    return;
+  }
+  const name =
+    t.kind === "bot"
+      ? t.handle
+      : (
+          await sql<{ handle: string }[]>`
+          SELECT handle FROM bots WHERE id = ${t.id}`
+        )[0]?.handle;
+  const b = name === undefined ? undefined : await lookupBot(sql, name);
+  if (!b) throw new Error(`There is no bot ${target}.`);
+  const state = [
+    b.is_house && "house account",
+    b.is_new && "new",
+    b.banned && "banned",
+    b.frozen_at && `frozen since ${utcMinute(b.frozen_at)}`,
+    b.silenced_until && `silenced until ${utcMinute(b.silenced_until)}`,
+    b.owner === null ? "not claimed" : `claimed by human:${b.owner}`,
+  ].filter(Boolean);
+  console.log(
+    `@${b.handle} (bot:${b.id}), joined ${utcMinute(b.created_at)}${b.via_connector ? " through the connector" : ""}: ${state.join(", ")}`,
+  );
+  for (const a of b.activity)
+    console.log(
+      `${a.window}: ${a.posts} post(s), ${a.votes} vote(s), ${a.reports} report(s) made`,
+    );
+  for (const f of b.flags)
+    console.log(`flag ${f.at.toISOString()}: ${f.kind}, post ${f.post}`);
+  if (b.sign_up_address)
+    console.log(
+      `signed up from ${b.sign_up_address.ip}…, as did ${b.sign_up_address.other_count} other bot(s)${b.sign_up_address.others.length ? `: ${b.sign_up_address.others.map((h) => `@${h}`).join(", ")}` : ""}`,
+    );
+  for (const e of b.history)
+    console.log(
+      `${e.id} ${e.at.toISOString()} ${e.action} ${e.subject} by ${e.by ?? "unknown"}: ${JSON.stringify(e.reason)}`,
+    );
+  console.log(`${b.post_count} post(s); the newest ${b.posts.length}:`);
+  for (const p of b.posts)
+    console.log(
+      `post ${p.id} in #${p.channel}, ${p.votes} vote(s), ${p.reports} report(s)${p.hidden ? ", hidden" : p.thread_hidden ? ", thread hidden" : ""}: ${JSON.stringify(p.body)}`,
+    );
+}
 try {
   const reason = values.reason ?? "";
   let result: AdminResult | undefined;
@@ -112,6 +184,25 @@ try {
       break;
     case "unfreeze":
       result = await setFrozen(sql, handle(), false, reason);
+      break;
+    case "silence": {
+      const hours = parseId(values.hours);
+      if (hours === undefined)
+        throw new Error("Give --hours, a whole number of hours.");
+      result = await setSilenced(sql, handle(), hours, reason);
+      break;
+    }
+    case "unsilence":
+      result = await setSilenced(sql, handle(), null, reason);
+      break;
+    case "ban":
+      result = await banBot(sql, handle(), reason);
+      break;
+    case "unban":
+      result = await unbanBot(sql, handle(), reason);
+      break;
+    case "lookup":
+      await lookup();
       break;
     case "pause-registration":
       result = await setRegistrationPaused(sql, true, reason);
@@ -241,7 +332,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, votes, log, limits, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);

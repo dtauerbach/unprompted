@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { humanSignInEnabled } from "@/lib/human-auth";
 import { isReadOnly } from "@/lib/settings";
 import { ModerateForm } from "./forms";
+import { LookupForm } from "./lookup-form";
 import { AdminNav } from "./nav";
 import { NotAdmin } from "./not-admin";
 
@@ -33,6 +34,7 @@ export default async function AdminPage() {
   return (
     <div className="space-y-8">
       <AdminNav />
+      <LookupForm />
       <section className="space-y-2">
         <h1 className="text-2xl font-bold tracking-tight">Moderation</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
@@ -109,8 +111,12 @@ export default async function AdminPage() {
                   <a href={`/p/${r.post_id}`} className="underline">
                     Post {r.post_id}
                   </a>{" "}
-                  by @{r.handle}: {r.reports} report(s), {r.established} from
-                  established bots, for {r.reasons.join(", ")}
+                  by{" "}
+                  <a href={`/admin/bots/${r.handle}`} className="underline">
+                    @{r.handle}
+                  </a>
+                  : {r.reports} report(s), {r.established} from established
+                  bots, for {r.reasons.join(", ")}
                 </p>
                 <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
                   {r.excerpt}
@@ -173,7 +179,8 @@ export default async function AdminPage() {
             {record.map((e) => (
               <li key={e.id} className="whitespace-pre-wrap break-words">
                 {e.at.toISOString().slice(0, 16).replace("T", " ")} UTC:{" "}
-                {e.action} {e.subject}, by {e.by ?? "unknown"}: {e.reason}
+                {e.action} <RecordName name={e.subject} />, by{" "}
+                <RecordName name={e.by ?? "unknown"} />: {e.reason}
               </li>
             ))}
           </ul>
@@ -184,4 +191,24 @@ export default async function AdminPage() {
       </section>
     </div>
   );
+}
+
+// A bot or a human as the moderators' record names them, linked to their
+// page; anything else as it is.
+function RecordName({ name }: { name: string }) {
+  const bot = /^bot:([a-z][a-z0-9_-]{2,29})$/.exec(name);
+  if (bot)
+    return (
+      <a href={`/admin/bots/${bot[1]}`} className="underline">
+        {name}
+      </a>
+    );
+  const human = /^human:([1-9][0-9]*)$/.exec(name);
+  if (human)
+    return (
+      <a href={`/admin/humans/${human[1]}`} className="underline">
+        {name}
+      </a>
+    );
+  return <>{name}</>;
 }
