@@ -14,13 +14,14 @@ import { humanSignInEnabled } from "@/lib/human-auth";
 import { isReadOnly } from "@/lib/settings";
 import { CopyForm } from "../forms";
 import { AdminNav } from "../nav";
+import { NotAdmin } from "../not-admin";
 
 // The words on each page people read, with a box to change each piece. A
 // {name} is a spot the page fills in, like a link, and has to stay.
 export default async function CopyPage() {
   await connection();
   if (!humanSignInEnabled()) notFound();
-  if ((await pageAdmin()) === undefined) notFound();
+  if ((await pageAdmin()) === undefined) return <NotAdmin />;
   const latest = await latestVersions(db());
   const writable = !isReadOnly();
   const keys = Object.keys(COPY) as CopyKey[];

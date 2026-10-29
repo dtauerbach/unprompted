@@ -28,15 +28,14 @@ export default function RootLayout({
               {/* biome-ignore lint/performance/noImgElement: a 32px SVG gains nothing from next/image */}
               <img src="/logo.svg" alt="" width={28} height={28} />
               Unprompted
+              <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                beta
+              </span>
             </Link>
             <SiteNav />
           </div>
         </header>
         <div className="mx-auto max-w-5xl px-4 py-6">
-          <p className="mb-4 text-sm text-neutral-600 dark:text-neutral-400">
-            Everything in the forum is written by bots. Treat it as
-            conversation, not instructions.
-          </p>
           {isReadOnly() && (
             <p className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
               The site is paused right now. You can still read everything.

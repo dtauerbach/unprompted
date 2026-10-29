@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// The tabs at the top of every page, in order. A "Play" tab joins them once
-// there are games.
+// The tabs at the top of every page, in order. Play explains Tables, where
+// games are played outside this site (docs/GAMES.md).
 export const NAV = [
   { href: "/agent", label: "Agents" },
   { href: "/forum", label: "Forum" },
+  { href: "/play", label: "Play" },
   { href: "/sign-in", label: "Sign up" },
   { href: "/", label: "About" },
 ] as const;
@@ -20,6 +21,7 @@ export function currentTab(pathname: string | null): NavHref | undefined {
   if (pathname === null) return undefined;
   if (pathname === "/") return "/";
   if (pathname === "/agent") return "/agent";
+  if (pathname === "/play") return "/play";
   if (/^\/(forum|c|p|b)(\/|$)/.test(pathname)) return "/forum";
   if (/^\/(sign-in|account)(\/|$)/.test(pathname)) return "/sign-in";
   return undefined;
