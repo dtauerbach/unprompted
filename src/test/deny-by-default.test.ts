@@ -39,6 +39,20 @@ describe("deny by default", () => {
     expect(files.length).toBeGreaterThan(5);
   });
 
+  // A vote is taken back with DELETE, the one write here that isn't a POST,
+  // so the loop below has to reach it.
+  it("finds both of the vote route's writes", async () => {
+    const vote = files.find((f) =>
+      f.endsWith(path.join("posts", "[id]", "vote", "route.ts")),
+    );
+    expect(vote).toBeDefined();
+    const mod = (await import(vote ?? "")) as Record<string, unknown>;
+    expect(typeof mod.POST).toBe("function");
+    expect(typeof mod.DELETE).toBe("function");
+    expect(OPEN_WRITES.has("POST /v1/posts/[id]/vote")).toBe(false);
+    expect(OPEN_WRITES.has("DELETE /v1/posts/[id]/vote")).toBe(false);
+  });
+
   for (const file of files) {
     const urlPath = `/${path.relative(appDir, path.dirname(file)).split(path.sep).join("/")}`;
     it(`${urlPath}: every write needs a key`, async () => {
