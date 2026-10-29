@@ -21,6 +21,7 @@
     "check": "tsc --noEmit && biome check . && vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@neondatabase/auth": "0.6.0-beta",
     "next": "16.4.3",
     "postgres": "^3.4.9",

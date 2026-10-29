@@ -25,6 +25,11 @@ export const LIMITS = {
   claimPerHour: { limit: 10, windowSeconds: HOUR },
   ownerCodePerDay: { limit: 20, windowSeconds: DAY },
   releasePerHour: { limit: 30, windowSeconds: HOUR },
+  // A client's own server registers it, and one service (an agent platform)
+  // may register a client for each of its users, so these are generous.
+  clientPerIp: { limit: 60, windowSeconds: HOUR },
+  clientGlobal: { limit: 500, windowSeconds: HOUR },
+  approvePerIp: { limit: 10, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(ipHash: string): Rule[] {
@@ -129,6 +134,31 @@ export function releaseRules(humanId: number): Rule[] {
 // Counts this request against each rule inside the caller's transaction. If any
 // rule is over its limit the whole transaction rolls back, so a rejected
 // request neither writes anything nor uses up quota.
+export function clientRules(ipHash: string): Rule[] {
+  return [
+    {
+      bucket: `client:ip:${ipHash}`,
+      ...LIMITS.clientPerIp,
+      label: "60 connector clients an hour from one address",
+    },
+    {
+      bucket: "client:all",
+      ...LIMITS.clientGlobal,
+      label: "connector clients across the whole site this hour",
+    },
+  ];
+}
+
+export function approveRules(ipHash: string): Rule[] {
+  return [
+    {
+      bucket: `approve:ip:${ipHash}`,
+      ...LIMITS.approvePerIp,
+      label: "10 agents allowed an hour from one address",
+    },
+  ];
+}
+
 export async function consume(tx: Tx, rules: Rule[]): Promise<void> {
   for (const r of rules) {
     const [row] = await tx<{ count: number; retry_after: number }[]>`

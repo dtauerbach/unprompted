@@ -77,12 +77,53 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
   };
 }
 
-const MAX_BODY_BYTES = 16 * 1024;
+// The OAuth endpoints answer in OAuth's own error shape, which clients show
+// to the person connecting: {error, error_description}. A 400 keeps an OAuth
+// error code if it has one and otherwise gets the endpoint's own; limits and
+// the kill switch keep their status and headers.
+const OAUTH_ERRORS = new Set([
+  "invalid_request",
+  "invalid_grant",
+  "invalid_client",
+  "unsupported_grant_type",
+  "invalid_redirect_uri",
+  "invalid_client_metadata",
+]);
 
-export async function readJson<S extends z.ZodType>(
-  req: Request,
-  schema: S,
-): Promise<z.output<S>> {
+export function oauthRoute(
+  badRequest: string,
+  fn: (req: Request) => Promise<Response>,
+) {
+  return async (req: Request): Promise<Response> => {
+    try {
+      return await fn(req);
+    } catch (err) {
+      if (!(err instanceof ApiError)) console.error(err);
+      const e =
+        err instanceof ApiError
+          ? err
+          : new ApiError(500, "internal", "Something went wrong on our side.");
+      const kept = e.status === 400 || e.status === 429 || e.status === 503;
+      const error =
+        e.status === 400
+          ? OAUTH_ERRORS.has(e.code)
+            ? e.code
+            : badRequest
+          : kept
+            ? "temporarily_unavailable"
+            : "server_error";
+      return json(
+        { error, error_description: e.message },
+        kept ? e.status : 500,
+        { ...e.headers, Pragma: "no-cache" },
+      );
+    }
+  };
+}
+
+export const MAX_BODY_BYTES = 16 * 1024;
+
+async function readText(req: Request): Promise<string> {
   const declared = Number(req.headers.get("content-length") ?? 0);
   if (declared > MAX_BODY_BYTES)
     throw new ApiError(413, "too_large", "Request body is over 16 KB.");
@@ -90,12 +131,10 @@ export async function readJson<S extends z.ZodType>(
   if (Buffer.byteLength(text) > MAX_BODY_BYTES) {
     throw new ApiError(413, "too_large", "Request body is over 16 KB.");
   }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw new ApiError(400, "bad_json", "Request body must be JSON.");
-  }
+  return text;
+}
+
+function parseWith<S extends z.ZodType>(schema: S, raw: unknown): z.output<S> {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const detail = parsed.error.issues
@@ -104,6 +143,55 @@ export async function readJson<S extends z.ZodType>(
     throw new ApiError(400, "invalid", detail);
   }
   return parsed.data;
+}
+
+export async function readJson<S extends z.ZodType>(
+  req: Request,
+  schema: S,
+): Promise<z.output<S>> {
+  const text = await readText(req);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new ApiError(400, "bad_json", "Request body must be JSON.");
+  }
+  return parseWith(schema, raw);
+}
+
+// OAuth's token request is a form, not JSON.
+export async function readForm<S extends z.ZodType>(
+  req: Request,
+  schema: S,
+): Promise<z.output<S>> {
+  const type = req.headers.get("content-type")?.split(";")[0]?.trim();
+  if (type !== "application/x-www-form-urlencoded")
+    throw new ApiError(
+      400,
+      "invalid",
+      "Send the request as application/x-www-form-urlencoded.",
+    );
+  const params = new URLSearchParams(await readText(req));
+  const raw: Record<string, string> = {};
+  for (const [k, v] of params) {
+    if (k in raw)
+      throw new ApiError(400, "invalid", `${k} is given more than once.`);
+    raw[k] = v;
+  }
+  return parseWith(schema, raw);
+}
+
+// The address a request was sent to, from its Host header (Next builds
+// req.url from its own hostname). Vercel sets both headers itself.
+export function originFromHeaders(
+  headers: Headers,
+  fallbackHost: string,
+): string {
+  const host = headers.get("host") ?? fallbackHost;
+  const proto =
+    headers.get("x-forwarded-proto") ??
+    (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? "http" : "https");
+  return `${proto}://${host}`;
 }
 
 // Vercel sets x-real-ip and overwrites x-forwarded-for, so both are

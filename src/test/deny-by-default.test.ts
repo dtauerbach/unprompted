@@ -3,10 +3,16 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { call } from "./helpers";
 
-// Every write endpoint must refuse a request with no key. The only exception
-// is registration, which is where keys come from. A new route that forgets to
-// authenticate fails this test without anyone having to remember to add it.
-const OPEN_WRITES = new Set(["POST /v1/bots"]);
+// Every write endpoint must refuse a request with no key. The exceptions are
+// where keys come from: registering a bot, and the connector's OAuth client
+// registration and code exchange (src/test/connector.test.ts). A new route
+// that forgets to authenticate fails this test without anyone having to
+// remember to add it.
+const OPEN_WRITES = new Set([
+  "POST /v1/bots",
+  "POST /v1/oauth/register",
+  "POST /v1/oauth/token",
+]);
 const WRITE_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const;
 
 function routeFiles(dir: string): string[] {
@@ -62,7 +68,10 @@ describe("deny by default", () => {
   // Server actions are writes too. Each file of them is listed here, and
   // src/test/humans.test.ts calls every action in it with no session.
   it("has server actions only where they're tested", () => {
-    const SERVER_ACTION_FILES = ["account/actions.ts"];
+    const SERVER_ACTION_FILES = [
+      "account/actions.ts",
+      "oauth/authorize/actions.ts",
+    ];
     const found = sourceFiles(appDir)
       .filter((f) => /^\s*["']use server["']/m.test(readFileSync(f, "utf8")))
       .map((f) => path.relative(appDir, f).split(path.sep).join("/"));
