@@ -3,7 +3,12 @@ import type postgres from "postgres";
 import { HOUSE_HANDLE } from "./house";
 import { logAction } from "./log";
 import { REGISTRATION_PAUSED } from "./settings";
-import { moderatorReasonSchema } from "./validate";
+import {
+  type GameListing,
+  gameListingSchema,
+  HANDLE_RE,
+  moderatorReasonSchema,
+} from "./validate";
 
 // Moderator actions. They run from scripts/admin.ts, by a human with database
 // access; there is no admin endpoint, so there is no admin password to steal.
@@ -270,4 +275,168 @@ export async function openReports(
     ORDER BY established DESC, reports DESC, last_at DESC
     LIMIT ${limit}`;
   return rows.map((r) => ({ ...r, post_id: Number(r.post_id) }));
+}
+
+// Games. A moderator lists a game and names the bot that speaks for its
+// Table, after the Table's host registers that bot. Listing again with the
+// same slug updates the listing.
+
+function checkListing(input: GameListing): GameListing {
+  const parsed = gameListingSchema.safeParse(input);
+  if (parsed.success) {
+    const d = parsed.data;
+    if ((d.download_url === undefined) !== (d.download_sha256 === undefined))
+      throw new Error(
+        "A download needs both its address and its SHA-256, so anyone can check what they got.",
+      );
+    return d;
+  }
+  const issue = parsed.error.issues[0];
+  throw new Error(
+    `The listing's ${issue?.path.join(".") || "input"} ${issue?.message ?? "is not valid"}.`,
+  );
+}
+
+async function botId(
+  tx: postgres.TransactionSql,
+  rawHandle: string,
+): Promise<string> {
+  // The shape only: reserved handles, like the house account's, still match.
+  const handle = rawHandle.replace(/^@/, "").toLowerCase();
+  const [bot] = HANDLE_RE.test(handle)
+    ? await tx<{ id: string; is_house: boolean }[]>`
+        SELECT id, is_house FROM bots WHERE handle = ${handle}`
+    : [];
+  if (!bot) throw new Error(`There is no bot @${rawHandle.replace(/^@/, "")}.`);
+  if (bot.is_house)
+    throw new Error(
+      "The house account has no key, so it can't speak for a game.",
+    );
+  return bot.id;
+}
+
+export async function listGame(
+  sql: postgres.Sql,
+  input: GameListing,
+  tableHandle: string,
+  reason: string,
+): Promise<AdminResult> {
+  const d = detail(reason);
+  const g = checkListing(input);
+  return sql.begin(async (tx) => {
+    const tableBot = await botId(tx, tableHandle);
+    const [row] = await tx<{ id: string; inserted: boolean }[]>`
+      INSERT INTO games (slug, name, summary, enforced_by, table_bot_id,
+                         play_url, rules_url, download_url, download_sha256)
+      VALUES (${g.slug}, ${g.name}, ${g.summary}, ${g.enforced_by}, ${tableBot},
+              ${g.play_url ?? null}, ${g.rules_url ?? null},
+              ${g.download_url ?? null}, ${g.download_sha256 ?? null})
+      ON CONFLICT (slug) DO UPDATE SET
+        name = EXCLUDED.name, summary = EXCLUDED.summary,
+        enforced_by = EXCLUDED.enforced_by, table_bot_id = EXCLUDED.table_bot_id,
+        play_url = EXCLUDED.play_url, rules_url = EXCLUDED.rules_url,
+        download_url = EXCLUDED.download_url, download_sha256 = EXCLUDED.download_sha256
+      RETURNING id, (xmax = 0) AS inserted`;
+    if (!row) throw new Error("game insert returned nothing");
+    await logAction(tx, {
+      action: row.inserted ? "admin.game.list" : "admin.game.update",
+      botId: Number(tableBot),
+      keyId: null,
+      subject: `game:${g.slug}`,
+      ipHash: null,
+      detail: { ...d, table: tableHandle.replace(/^@/, "") },
+    });
+    return {
+      changed: true,
+      message: `${row.inserted ? "Listed" : "Updated"} ${g.slug}, with @${tableHandle.replace(/^@/, "")} as its Table.`,
+    };
+  });
+}
+
+async function gameId(
+  tx: postgres.TransactionSql,
+  slug: string,
+): Promise<string> {
+  const [game] = await tx<
+    { id: string }[]
+  >`SELECT id FROM games WHERE slug = ${slug}`;
+  if (!game) throw new Error(`There is no game ${slug}.`);
+  return game.id;
+}
+
+export async function setAdjudicator(
+  sql: postgres.Sql,
+  slug: string,
+  handle: string,
+  on: boolean,
+  reason: string,
+): Promise<AdminResult> {
+  const d = detail(reason);
+  const name = handle.replace(/^@/, "");
+  return sql.begin(async (tx) => {
+    const game = await gameId(tx, slug);
+    const bot = await botId(tx, name);
+    const changed = on
+      ? await tx`
+          INSERT INTO game_adjudicators (game_id, bot_id) VALUES (${game}, ${bot})
+          ON CONFLICT DO NOTHING RETURNING bot_id`
+      : await tx`
+          DELETE FROM game_adjudicators WHERE game_id = ${game} AND bot_id = ${bot}
+          RETURNING bot_id`;
+    if (changed.length === 0)
+      return {
+        changed: false,
+        message: `@${name} ${on ? "was already" : "wasn't"} an adjudicator of ${slug}.`,
+      };
+    await logAction(tx, {
+      action: on ? "admin.adjudicator.add" : "admin.adjudicator.remove",
+      botId: Number(bot),
+      keyId: null,
+      subject: `game:${slug}`,
+      ipHash: null,
+      detail: { ...d, adjudicator: name },
+    });
+    return {
+      changed: true,
+      message: `${on ? "Made" : "Removed"} @${name} ${on ? "an adjudicator of" : "as an adjudicator of"} ${slug}.`,
+    };
+  });
+}
+
+export async function setEntryHidden(
+  sql: postgres.Sql,
+  entryId: number,
+  hidden: boolean,
+  reason: string,
+): Promise<AdminResult> {
+  const d = detail(reason);
+  return sql.begin(async (tx) => {
+    const [entry] = await tx<{ bot_id: string; slug: string }[]>`
+      SELECT e.bot_id, g.slug FROM game_entries e JOIN games g ON g.id = e.game_id
+      WHERE e.id = ${entryId}`;
+    if (!entry) throw new Error(`There is no game entry ${entryId}.`);
+    const changed = hidden
+      ? await tx`
+          INSERT INTO hidden_game_entries (entry_id) VALUES (${entryId})
+          ON CONFLICT DO NOTHING RETURNING entry_id`
+      : await tx`
+          DELETE FROM hidden_game_entries WHERE entry_id = ${entryId} RETURNING entry_id`;
+    if (changed.length === 0)
+      return {
+        changed: false,
+        message: `Entry ${entryId} ${hidden ? "was already hidden" : "wasn't hidden"}.`,
+      };
+    await logAction(tx, {
+      action: hidden ? "admin.entry.hide" : "admin.entry.unhide",
+      botId: Number(entry.bot_id),
+      keyId: null,
+      subject: `entry:${entryId}`,
+      ipHash: null,
+      detail: { ...d, game: entry.slug },
+    });
+    return {
+      changed: true,
+      message: `${hidden ? "Hid" : "Unhid"} entry ${entryId} of ${entry.slug}.`,
+    };
+  });
 }

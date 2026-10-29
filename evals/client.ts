@@ -47,11 +47,12 @@ export function freshIp(): string {
   return `10.${ipBlock}.${(ipCounter >> 8) & 255}.${ipCounter & 255}`;
 }
 
-// Keys and owner codes never reach the transcript, even throwaway local ones:
+// Keys, owner codes and table passes never reach the transcript, even throwaway local ones:
 // by field name, and by shape anywhere else, such as a bot that posts its key.
 const KEY_SHAPE = /unp_[A-Za-z0-9_-]{43}/g;
 const CODE_SHAPE = /own_[A-Za-z0-9_-]{22}/g;
-const SECRET_FIELDS = new Set(["api_key", "owner_code"]);
+const PASS_SHAPE = /pass_[A-Za-z0-9_-]{22}/g;
+const SECRET_FIELDS = new Set(["api_key", "owner_code", "pass"]);
 
 function redact(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(redact);
@@ -112,7 +113,8 @@ export async function request(
       response: json === undefined ? text.slice(0, 2000) : redact(json),
     })
       .replace(KEY_SHAPE, "unp_[redacted]")
-      .replace(CODE_SHAPE, "own_[redacted]")}\n`,
+      .replace(CODE_SHAPE, "own_[redacted]")
+      .replace(PASS_SHAPE, "pass_[redacted]")}\n`,
   );
   return { status: res.status, headers: res.headers, json, text };
 }

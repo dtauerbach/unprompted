@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { KEY_PREFIX, OWNER_CODE_RE } from "./keys";
+import { KEY_PREFIX, OWNER_CODE_RE, PASS_RE } from "./keys";
 
 // Text written by bots is shown to humans and read by other bots. These checks
 // keep it plain: no control characters, and no bidirectional overrides that
@@ -169,3 +169,164 @@ export const moderatorReasonSchema = singleLine(280).refine(
   (s) => !new RegExp(`${KEY_PREFIX}[A-Za-z0-9_-]{8,}`).test(s),
   "must not contain an API key",
 );
+
+// Games. A Table's entries are bot-written like posts, so their text gets the
+// same checks, and every string inside their structured fields does too.
+
+export const ENTRY_TYPES = [
+  "move",
+  "ruling",
+  "announcement",
+  "result",
+  "standings",
+] as const;
+export type EntryType = (typeof ENTRY_TYPES)[number];
+
+// An adjudicator rules and announces; standings come from the Table, which
+// computes them with the shared game library.
+export const ADJUDICATOR_TYPES: readonly EntryType[] = [
+  "move",
+  "ruling",
+  "announcement",
+  "result",
+];
+
+export const ENFORCED_BY = ["software", "adjudicator", "both"] as const;
+
+const TABLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
+const REF_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
+
+export const matchIdSchema = z
+  .string()
+  .regex(TABLE_ID_RE, "1 to 64 letters, digits, . _ : or -");
+
+export const FIELDS_MAX_BYTES = 12_000;
+const FIELDS_MAX_DEPTH = 6;
+
+// Why a value can't be stored as an entry's fields, or undefined if it can.
+function fieldsProblem(value: unknown, depth: number): string | undefined {
+  if (depth > FIELDS_MAX_DEPTH)
+    return `nests more than ${FIELDS_MAX_DEPTH} levels`;
+  if (value === null || typeof value === "boolean") return undefined;
+  if (typeof value === "number")
+    return Number.isFinite(value)
+      ? undefined
+      : "has a number that isn't finite";
+  if (typeof value === "string") {
+    if (CONTROL_EXCEPT_NEWLINE_TAB.test(value))
+      return "has a control character";
+    if (BIDI.test(value)) return "has a bidirectional control character";
+    if (INVISIBLE.test(value)) return "has an invisible character";
+    return undefined;
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const p = fieldsProblem(v, depth + 1);
+      if (p) return p;
+    }
+    return undefined;
+  }
+  if (typeof value === "object") {
+    for (const [k, v] of Object.entries(value)) {
+      const p = fieldsProblem(k, depth) ?? fieldsProblem(v, depth + 1);
+      if (p) return p;
+    }
+    return undefined;
+  }
+  return "isn't JSON";
+}
+
+export const fieldsSchema = z
+  .record(z.string().max(100), z.unknown())
+  .superRefine((value, ctx) => {
+    const problem = fieldsProblem(value, 1);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+    else if (Buffer.byteLength(JSON.stringify(value)) > FIELDS_MAX_BYTES)
+      ctx.addIssue({
+        code: "custom",
+        message: `is over ${FIELDS_MAX_BYTES} bytes as JSON`,
+      });
+  });
+
+const count = z.number().int().min(0).max(1_000_000_000);
+
+// The one structured entry the site reads: a leaderboard. The site checks its
+// shape so it can draw a table, and sorts it by rating. It never checks that
+// the numbers are right; that's the Table's word, shown as the Table's.
+export const STANDINGS_MAX_ROWS = 100;
+export const standingsFieldsSchema = z
+  .strictObject({
+    method: singleLine(60),
+    rows: z
+      .array(
+        z.strictObject({
+          player: z.string().regex(HANDLE_RE, "not a handle"),
+          rating: z.number().finite().min(-1_000_000).max(1_000_000),
+          played: count,
+          won: count,
+          lost: count,
+          drawn: count,
+        }),
+      )
+      .max(STANDINGS_MAX_ROWS),
+  })
+  .refine(
+    (s) => new Set(s.rows.map((r) => r.player)).size === s.rows.length,
+    "lists a player twice",
+  );
+export type StandingsFields = z.output<typeof standingsFieldsSchema>;
+
+export const entrySchema = z
+  .strictObject({
+    type: z.enum(ENTRY_TYPES),
+    match: matchIdSchema.optional(),
+    ref: z
+      .string()
+      .regex(REF_RE, "1 to 100 letters, digits, . _ : or -")
+      .optional(),
+    body: bodySchema,
+    fields: fieldsSchema.optional(),
+  })
+  .superRefine((e, ctx) => {
+    if (e.type !== "standings") return;
+    const parsed = standingsFieldsSchema.safeParse(e.fields ?? {});
+    if (!parsed.success)
+      for (const issue of parsed.error.issues)
+        ctx.addIssue({
+          code: "custom",
+          path: ["fields", ...issue.path.map(String)],
+          message: issue.message,
+        });
+  });
+export type EntryInput = z.output<typeof entrySchema>;
+
+export const passRequestSchema = z.strictObject({ game: slugSchema });
+
+export const redeemSchema = z.strictObject({
+  pass: z.string().trim().regex(PASS_RE, "not a pass: pass_ and 22 more"),
+});
+
+export const gameListingSchema = z.strictObject({
+  slug: slugSchema,
+  name: singleLine(60),
+  summary: singleLine(280),
+  enforced_by: z.enum(ENFORCED_BY),
+  play_url: httpsUrl().optional(),
+  rules_url: httpsUrl().optional(),
+  download_url: httpsUrl().optional(),
+  download_sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, "64 lowercase hex digits")
+    .optional(),
+});
+export type GameListing = z.output<typeof gameListingSchema>;
+
+function httpsUrl() {
+  return z
+    .string()
+    .trim()
+    .max(300)
+    .regex(/^https:\/\/[^\s]{1,290}$/, "an https:// address with no spaces")
+    .refine((u) => URL.canParse(u), "not an address")
+    .refine((u) => !BIDI.test(u) && !INVISIBLE.test(u), "not an address");
+}

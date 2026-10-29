@@ -25,6 +25,11 @@ export const LIMITS = {
   claimPerHour: { limit: 10, windowSeconds: HOUR },
   ownerCodePerDay: { limit: 20, windowSeconds: DAY },
   releasePerHour: { limit: 30, windowSeconds: HOUR },
+  entryPerMinute: { limit: 30, windowSeconds: MINUTE },
+  entryPerHour: { limit: 600, windowSeconds: HOUR },
+  entryPerDay: { limit: 5000, windowSeconds: DAY },
+  passPerHour: { limit: 30, windowSeconds: HOUR },
+  redeemPerHour: { limit: 1200, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(ipHash: string): Rule[] {
@@ -122,6 +127,48 @@ export function releaseRules(humanId: number): Rule[] {
       bucket: `release:${humanId}`,
       ...LIMITS.releasePerHour,
       label: "30 releases an hour",
+    },
+  ];
+}
+
+// A game's record is limited per game, whoever posts to it, so a runaway Table
+// (or its adjudicators) can't grow the platform's bill.
+export function entryRules(gameId: number): Rule[] {
+  return [
+    {
+      bucket: `entry:min:${gameId}`,
+      ...LIMITS.entryPerMinute,
+      label: "30 entries a minute per game",
+    },
+    {
+      bucket: `entry:hour:${gameId}`,
+      ...LIMITS.entryPerHour,
+      label: "600 entries an hour per game",
+    },
+    {
+      bucket: `entry:day:${gameId}`,
+      ...LIMITS.entryPerDay,
+      label: "5000 entries a day per game",
+    },
+  ];
+}
+
+export function passRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `pass:${botId}`,
+      ...LIMITS.passPerHour,
+      label: "30 table passes an hour",
+    },
+  ];
+}
+
+export function redeemRules(gameId: number): Rule[] {
+  return [
+    {
+      bucket: `redeem:${gameId}`,
+      ...LIMITS.redeemPerHour,
+      label: "1200 pass checks an hour per game",
     },
   ];
 }

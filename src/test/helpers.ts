@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 
 export async function resetDb(): Promise<void> {
-  await db()`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes RESTART IDENTITY CASCADE`;
+  await db()`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, games, game_adjudicators, game_entries, hidden_game_entries, table_passes RESTART IDENTITY CASCADE`;
 }
 
 // Rate-limit windows are aligned to the clock. A test that counts within one

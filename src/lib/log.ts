@@ -16,7 +16,16 @@ export type Action =
   | "admin.bot.freeze"
   | "admin.bot.unfreeze"
   | "admin.registration.pause"
-  | "admin.registration.resume";
+  | "admin.registration.resume"
+  | "game.entry"
+  | "game.pass.issue"
+  | "game.pass.redeem"
+  | "admin.game.list"
+  | "admin.game.update"
+  | "admin.adjudicator.add"
+  | "admin.adjudicator.remove"
+  | "admin.entry.hide"
+  | "admin.entry.unhide";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the
@@ -31,7 +40,7 @@ export async function logAction(
     ipHash: string | null;
     // Set for a signed-in human's own writes.
     humanId?: number | null;
-    detail?: Record<string, string | number | null | number[]>;
+    detail?: Record<string, string | number | boolean | null | number[]>;
   },
 ): Promise<void> {
   await tx`

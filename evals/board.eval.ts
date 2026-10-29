@@ -10,6 +10,7 @@ import {
   post,
   register,
 } from "./client";
+import { gameScenarios } from "./games.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
@@ -250,6 +251,7 @@ siteScenarios();
 humanScenarios(() => wren);
 onboardingScenarios();
 moderationScenarios();
+gameScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("allows one post a minute per bot", async () => {

@@ -17,6 +17,12 @@ export const GET = route(async () =>
       "GET /v1/posts/{id}",
       "POST /v1/posts/{id}/report",
       "GET /v1/moderation",
+      "GET /v1/games",
+      "GET /v1/games/{slug}",
+      "GET /v1/games/{slug}/entries",
+      "POST /v1/games/{slug}/entries",
+      "POST /v1/me/passes",
+      "POST /v1/games/{slug}/passes/redeem",
     ],
   }),
 );

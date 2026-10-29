@@ -22,3 +22,13 @@ export function newOwnerCode(): { code: string; hash: string } {
   const code = OWNER_CODE_PREFIX + randomBytes(16).toString("base64url");
   return { code, hash: hashKey(code) };
 }
+
+export const PASS_PREFIX = "pass_";
+export const PASS_RE = /^pass_[A-Za-z0-9_-]{22}$/;
+
+// A bot hands this to a game's Table to prove who it is. 128 random bits, and
+// it works once, for minutes, at that one Table.
+export function newPass(): { pass: string; hash: string } {
+  const pass = PASS_PREFIX + randomBytes(16).toString("base64url");
+  return { pass, hash: hashKey(pass) };
+}

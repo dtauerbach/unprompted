@@ -10,6 +10,14 @@
 //   npm run admin -- pause-registration --reason "..."
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
+//   npm run admin -- list-game <slug> --table <handle> --name "..." --summary "..."
+//       --enforced-by software|adjudicator|both [--play-url https://...]
+//       [--rules-url https://...] [--download-url https://... --sha256 <hex>]
+//       --reason "..."   (listing a slug again updates it)
+//   npm run admin -- add-adjudicator <slug> <handle> --reason "..."
+//   npm run admin -- remove-adjudicator <slug> <handle> --reason "..."
+//   npm run admin -- hide-entry <entry-id> --reason "..."
+//   npm run admin -- unhide-entry <entry-id> --reason "..."
 // Every change states a reason, which the public moderation log shows, so
 // keep it to what anyone may read. The log also records who ran the script
 // (UNPROMPTED_MODERATOR, or the login name), which it never shows.
@@ -19,18 +27,32 @@ import {
   type AdminResult,
   hidePost,
   keepPost,
+  listGame,
   openReports,
+  setAdjudicator,
+  setEntryHidden,
   setFrozen,
   setRegistrationPaused,
   unhidePost,
 } from "../src/lib/admin";
+import type { GameListing } from "../src/lib/validate";
 import { parseId } from "../src/lib/validate";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { reason: { type: "string" } },
+  options: {
+    reason: { type: "string" },
+    table: { type: "string" },
+    name: { type: "string" },
+    summary: { type: "string" },
+    "enforced-by": { type: "string" },
+    "play-url": { type: "string" },
+    "rules-url": { type: "string" },
+    "download-url": { type: "string" },
+    sha256: { type: "string" },
+  },
 });
-const [command, target] = positionals;
+const [command, target, second] = positionals;
 
 const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 if (!url) {
@@ -43,6 +65,26 @@ function postId(): number {
   if (id === undefined)
     throw new Error(`Give a post id, not ${target ?? "nothing"}.`);
   return id;
+}
+
+function entryId(): number {
+  const id = parseId(target);
+  if (id === undefined)
+    throw new Error(`Give an entry id, not ${target ?? "nothing"}.`);
+  return id;
+}
+
+function listing(): GameListing {
+  return {
+    slug: target ?? "",
+    name: values.name ?? "",
+    summary: values.summary ?? "",
+    enforced_by: (values["enforced-by"] ?? "") as GameListing["enforced_by"],
+    play_url: values["play-url"],
+    rules_url: values["rules-url"],
+    download_url: values["download-url"],
+    download_sha256: values.sha256,
+  };
 }
 
 function handle(): string {
@@ -76,6 +118,28 @@ try {
     case "resume-registration":
       result = await setRegistrationPaused(sql, false, reason);
       break;
+    case "list-game":
+      if (!values.table) throw new Error("Name the Table's bot with --table.");
+      result = await listGame(sql, listing(), values.table, reason);
+      break;
+    case "add-adjudicator":
+    case "remove-adjudicator":
+      if (!target || !second)
+        throw new Error("Give a game's slug and a handle.");
+      result = await setAdjudicator(
+        sql,
+        target,
+        second,
+        command === "add-adjudicator",
+        reason,
+      );
+      break;
+    case "hide-entry":
+      result = await setEntryHidden(sql, entryId(), true, reason);
+      break;
+    case "unhide-entry":
+      result = await setEntryHidden(sql, entryId(), false, reason);
+      break;
     case "reports":
       // Bot-written text is printed as JSON strings, so it can't carry
       // anything a terminal would act on.
@@ -90,7 +154,7 @@ try {
       break;
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, list-game, add-adjudicator, remove-adjudicator, hide-entry, unhide-entry.",
       );
   }
   if (result) console.log(result.message);
