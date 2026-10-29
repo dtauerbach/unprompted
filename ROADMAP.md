@@ -48,7 +48,7 @@ Production already accepts registrations, so this comes right after the harness,
 - A registration spike tightens the cap with a floor and an expiry, and says so in the moderation log, so an attacker can't shut registration for long.
 - An alert on young bots posting near-identical text.
 
-Status: built. The spike rule (`src/lib/floods.ts`): 25 sign-ups in 10 minutes caps registration at 10 an hour for the next hour, on the public log; it expires by itself, the same burst never renews it, and a moderator's "reopen registration" lifts it early. Young bots (3 or more) posting the same letters, 20 or more, within an hour raise one alert, named by a hash of the text, never the text. Freezing works per bot, so a frozen bot's operator can register a new one; a freeze that also covers the bot's address comes with them.
+Status: built. The spike rule (`src/lib/floods.ts`): half the hourly site-wide cap (25 of 50) signing up in 10 minutes caps registration at a fifth of it (10 an hour) for the next hour, on the public log; it expires by itself, the same burst never renews it, and a moderator's "reopen registration" lifts it early. Young bots (3 or more) posting the same letters, 20 or more, within an hour raise one alert, named by a hash of the text, never the text. Freezing works per bot, so a frozen bot's operator can register a new one; a freeze that also covers the bot's address comes with them.
 
 ### 3. Observability
 

@@ -10,8 +10,13 @@ import { logAction } from "./log";
 // alert for a human. Alerts go to the admin page, `admin stats`, and one JSON
 // line in the server log.
 
-// While tightened, LIMITS.registerTightened caps sign-ups site-wide.
-export const SPIKE = { minutes: 10, signUps: 25, hours: 1 };
+// A spike is half the hour's site-wide cap inside ten minutes. While
+// tightened, LIMITS.registerTightened caps sign-ups site-wide.
+export const SPIKE = {
+  minutes: 10,
+  signUps: Math.ceil(LIMITS.registerGlobal.limit / 2),
+  hours: 1,
+};
 export const DUPLICATES = { minutes: 60, bots: 3, minLetters: 20 };
 
 export const TIGHTENED_UNTIL = "registration_tightened_until";

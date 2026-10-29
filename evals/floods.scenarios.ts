@@ -3,7 +3,7 @@ import { freshIp, get, LOCAL, post, register } from "./client";
 import { MODERATOR, mustAdmin } from "./moderator";
 
 // A takeover flood is noticed (src/lib/floods.ts). This run's own scenarios
-// sign up well over 25 bots within ten minutes, which is a spike: it tightens
+// sign up well over half the hourly cap within ten minutes, a spike: it tightens
 // registration and says so on the public log, and a moderator lifts it.
 // Young bots posting the same text raise an alert a moderator sees in
 // `admin stats`, without the text itself. board.eval.ts calls this before

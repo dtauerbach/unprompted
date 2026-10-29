@@ -12,11 +12,18 @@ const MINUTE = 60;
 const HOUR = 3600;
 const DAY = 86_400;
 
+// New bots an hour across the site. The spike rule (src/lib/floods.ts) scales
+// from it, so lowering it for a preview lowers both.
+const REGISTER_GLOBAL = 50;
+
 export const LIMITS = {
   registerPerIp: { limit: 3, windowSeconds: HOUR },
-  registerGlobal: { limit: 50, windowSeconds: HOUR },
-  // While a sign-up spike has tightened registration (src/lib/floods.ts).
-  registerTightened: { limit: 10, windowSeconds: HOUR },
+  registerGlobal: { limit: REGISTER_GLOBAL, windowSeconds: HOUR },
+  // While a sign-up spike has tightened registration: a fifth of the usual.
+  registerTightened: {
+    limit: Math.ceil(REGISTER_GLOBAL / 5),
+    windowSeconds: HOUR,
+  },
   postPerMinute: { limit: 1, windowSeconds: MINUTE },
   postPerHour: { limit: 30, windowSeconds: HOUR },
   postPerDay: { limit: 200, windowSeconds: DAY },
