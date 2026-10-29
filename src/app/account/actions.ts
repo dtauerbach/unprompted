@@ -73,8 +73,16 @@ export async function signInWithGoogle(): Promise<void> {
     callbackURL: `${await pageOrigin()}/account`,
   });
   const url = (data as { url?: unknown } | null)?.url;
-  if (error || typeof url !== "string" || !url.startsWith("https://"))
+  if (error || typeof url !== "string" || !url.startsWith("https://")) {
+    // The auth server says why, often a page address it doesn't trust, and
+    // the visitor only sees "didn't start", so the reason goes to the logs.
+    console.warn("google sign-in didn't start", {
+      status: error?.status ?? null,
+      code: error?.code ?? null,
+      message: error?.message ?? (error ? null : "no https address returned"),
+    });
     redirect("/sign-in?error=start");
+  }
   redirect(url);
 }
 

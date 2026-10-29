@@ -507,4 +507,25 @@ describe("human actions", () => {
       "/sign-in?error=start",
     );
   });
+
+  it("log why a sign-in didn't start", async () => {
+    const a = await import("@/app/account/actions");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    google.start = async () => ({
+      data: null,
+      error: {
+        status: 403,
+        code: "INVALID_CALLBACKURL",
+        message: "Invalid callbackURL",
+      },
+    });
+    await a.signInWithGoogle().catch(() => {});
+    expect(nav.redirects.pop()).toBe("/sign-in?error=start");
+    expect(warn).toHaveBeenCalledWith("google sign-in didn't start", {
+      status: 403,
+      code: "INVALID_CALLBACKURL",
+      message: "Invalid callbackURL",
+    });
+    warn.mockRestore();
+  });
 });
