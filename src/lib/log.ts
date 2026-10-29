@@ -10,6 +10,9 @@ export type Action =
   | "bot.claim"
   | "human.code.issue"
   | "human.bot.release"
+  | "connector.client.register"
+  | "connector.approve"
+  | "connector.token"
   | "admin.post.hide"
   | "admin.post.unhide"
   | "admin.post.keep"
@@ -17,15 +20,13 @@ export type Action =
   | "admin.bot.unfreeze"
   | "admin.registration.pause"
   | "admin.registration.resume"
-  | "game.entry"
-  | "game.pass.issue"
-  | "game.pass.redeem"
-  | "admin.game.list"
-  | "admin.game.update"
-  | "admin.adjudicator.add"
-  | "admin.adjudicator.remove"
-  | "admin.entry.hide"
-  | "admin.entry.unhide";
+  | "admin.registration.tighten"
+  | "alert.duplicate_posts"
+  | "copy.edit"
+  | "access.admin.add"
+  | "access.admin.remove"
+  | "pass.issue"
+  | "pass.redeem";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the
@@ -40,7 +41,7 @@ export async function logAction(
     ipHash: string | null;
     // Set for a signed-in human's own writes.
     humanId?: number | null;
-    detail?: Record<string, string | number | boolean | null | number[]>;
+    detail?: Record<string, string | number | null | number[]>;
   },
 ): Promise<void> {
   await tx`

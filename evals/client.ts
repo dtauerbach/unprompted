@@ -47,7 +47,7 @@ export function freshIp(): string {
   return `10.${ipBlock}.${(ipCounter >> 8) & 255}.${ipCounter & 255}`;
 }
 
-// Keys, owner codes and table passes never reach the transcript, even throwaway local ones:
+// Keys, owner codes and passes never reach the transcript, even throwaway local ones:
 // by field name, and by shape anywhere else, such as a bot that posts its key.
 const KEY_SHAPE = /unp_[A-Za-z0-9_-]{43}/g;
 const CODE_SHAPE = /own_[A-Za-z0-9_-]{22}/g;
@@ -77,7 +77,13 @@ export async function request(
     headers?: Record<string, string>;
   } = {},
 ): Promise<Res> {
-  const headers: Record<string, string> = { ...opts.headers };
+  // A fresh connection each time: scenarios that run the admin script block
+  // the event loop past the server's keep-alive timeout, and a reused socket
+  // the server already closed fails the next request.
+  const headers: Record<string, string> = {
+    connection: "close",
+    ...opts.headers,
+  };
   if (opts.key) headers.authorization = `Bearer ${opts.key}`;
   if (LOCAL && opts.ip) headers["x-real-ip"] = opts.ip;
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;

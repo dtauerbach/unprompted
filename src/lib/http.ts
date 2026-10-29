@@ -55,6 +55,43 @@ function errorResponse(err: ApiError): Response {
   );
 }
 
+// A refused write leaves no row behind, since its transaction rolls back, so
+// this line in the server log is its only record. It names the route and
+// the site's own error, never the request body or the caller's address.
+// Rate-limit refusals are logged where the limit is checked, with its bucket.
+// MCP tools log as method MCP, and server actions as ACTION, with the tool
+// or action's name in the path. Reads, our own failures and the kill
+// switch (which refuses every write) leave no line. The path is the
+// caller's, so it's cut short.
+export function logRefusal(method: string, path: string, err: ApiError): void {
+  if (
+    method === "GET" ||
+    method === "HEAD" ||
+    err.status === 429 ||
+    err.code === "internal" ||
+    err.code === "read_only"
+  )
+    return;
+  console.warn(
+    JSON.stringify({
+      event: "refused",
+      method,
+      path: path.slice(0, 200),
+      status: err.status,
+      code: err.code,
+    }),
+  );
+}
+
+function logRequestRefusal(req: Request, err: ApiError): void {
+  const path = new URL(req.url).pathname;
+  // Every MCP client's first call comes without a token, to learn where to
+  // get one: a handshake, not a refusal. A dead token is still logged.
+  if (err.code === "missing_key" && (path === "/mcp" || path === "/v1/mcp"))
+    return;
+  logRefusal(req.method, path, err);
+}
+
 // Wraps a route handler so every failure becomes a JSON error and nothing
 // internal (stack traces, SQL) leaks to the caller.
 export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
@@ -62,13 +99,21 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
     try {
       return await fn(req, ctx);
     } catch (err) {
-      if (err instanceof ApiError) return errorResponse(err);
+      if (err instanceof ApiError) {
+        logRequestRefusal(req, err);
+        return errorResponse(err);
+      }
       // The database's own refusal of a frozen bot's write (forbid_frozen),
       // for a write that passed authenticate() just before the freeze.
-      if ((err as { code?: string } | null)?.code === "42501")
-        return errorResponse(
-          new ApiError(403, "frozen", "A moderator has frozen this bot."),
+      if ((err as { code?: string } | null)?.code === "42501") {
+        const frozen = new ApiError(
+          403,
+          "frozen",
+          "A moderator has frozen this bot.",
         );
+        logRequestRefusal(req, frozen);
+        return errorResponse(frozen);
+      }
       console.error(err);
       return errorResponse(
         new ApiError(500, "internal", "Something went wrong on our side."),
@@ -77,12 +122,55 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
   };
 }
 
-const MAX_BODY_BYTES = 16 * 1024;
+// The OAuth endpoints answer in OAuth's own error shape, which clients show
+// to the person connecting: {error, error_description}. A refusal keeps its
+// status and headers, and its OAuth error code if it has one, otherwise the
+// endpoint's own; limits and the kill switch are temporarily_unavailable.
+const OAUTH_ERRORS = new Set([
+  "invalid_request",
+  "invalid_grant",
+  "invalid_client",
+  "unsupported_grant_type",
+  "invalid_redirect_uri",
+  "invalid_client_metadata",
+]);
 
-export async function readJson<S extends z.ZodType>(
-  req: Request,
-  schema: S,
-): Promise<z.output<S>> {
+export function oauthRoute(
+  badRequest: string,
+  fn: (req: Request) => Promise<Response>,
+) {
+  return async (req: Request): Promise<Response> => {
+    try {
+      return await fn(req);
+    } catch (err) {
+      if (err instanceof ApiError) logRequestRefusal(req, err);
+      else console.error(err);
+      const e =
+        err instanceof ApiError
+          ? err
+          : new ApiError(500, "internal", "Something went wrong on our side.");
+      // Busy or paused is temporary; any other refusal is the request's.
+      const busy = e.status === 429 || e.status === 503;
+      const kept = e.status < 500 || busy;
+      const error = busy
+        ? "temporarily_unavailable"
+        : !kept
+          ? "server_error"
+          : OAUTH_ERRORS.has(e.code)
+            ? e.code
+            : badRequest;
+      return json(
+        { error, error_description: e.message },
+        kept ? e.status : 500,
+        { ...e.headers, Pragma: "no-cache" },
+      );
+    }
+  };
+}
+
+export const MAX_BODY_BYTES = 16 * 1024;
+
+async function readText(req: Request): Promise<string> {
   const declared = Number(req.headers.get("content-length") ?? 0);
   if (declared > MAX_BODY_BYTES)
     throw new ApiError(413, "too_large", "Request body is over 16 KB.");
@@ -90,12 +178,10 @@ export async function readJson<S extends z.ZodType>(
   if (Buffer.byteLength(text) > MAX_BODY_BYTES) {
     throw new ApiError(413, "too_large", "Request body is over 16 KB.");
   }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    throw new ApiError(400, "bad_json", "Request body must be JSON.");
-  }
+  return text;
+}
+
+function parseWith<S extends z.ZodType>(schema: S, raw: unknown): z.output<S> {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const detail = parsed.error.issues
@@ -104,6 +190,55 @@ export async function readJson<S extends z.ZodType>(
     throw new ApiError(400, "invalid", detail);
   }
   return parsed.data;
+}
+
+export async function readJson<S extends z.ZodType>(
+  req: Request,
+  schema: S,
+): Promise<z.output<S>> {
+  const text = await readText(req);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw new ApiError(400, "bad_json", "Request body must be JSON.");
+  }
+  return parseWith(schema, raw);
+}
+
+// OAuth's token request is a form, not JSON.
+export async function readForm<S extends z.ZodType>(
+  req: Request,
+  schema: S,
+): Promise<z.output<S>> {
+  const type = req.headers.get("content-type")?.split(";")[0]?.trim();
+  if (type !== "application/x-www-form-urlencoded")
+    throw new ApiError(
+      400,
+      "invalid",
+      "Send the request as application/x-www-form-urlencoded.",
+    );
+  const params = new URLSearchParams(await readText(req));
+  const raw: Record<string, string> = {};
+  for (const [k, v] of params) {
+    if (k in raw)
+      throw new ApiError(400, "invalid", `${k} is given more than once.`);
+    raw[k] = v;
+  }
+  return parseWith(schema, raw);
+}
+
+// The address a request was sent to, from its Host header (Next builds
+// req.url from its own hostname). Vercel sets both headers itself.
+export function originFromHeaders(
+  headers: Headers,
+  fallbackHost: string,
+): string {
+  const host = headers.get("host") ?? fallbackHost;
+  const proto =
+    headers.get("x-forwarded-proto") ??
+    (/^(localhost|127\.0\.0\.1)(:|$)/.test(host) ? "http" : "https");
+  return `${proto}://${host}`;
 }
 
 // Vercel sets x-real-ip and overwrites x-forwarded-for, so both are

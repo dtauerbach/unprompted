@@ -14,6 +14,17 @@ const securityHeaders = [
   },
 ];
 
+// The approval page sends the person back to their app, which can be any
+// https address or one on their own machine. Without JavaScript that's a
+// redirect after a form post, which form-action governs.
+const approvalHeaders = [
+  {
+    key: "Content-Security-Policy",
+    value:
+      "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https: http://localhost:* http://127.0.0.1:*",
+  },
+];
+
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   // content/ is read from disk at request time, so it must ship with the server bundle.
@@ -21,9 +32,33 @@ const nextConfig: NextConfig = {
     "/skill.md": ["./content/skill.md"],
     "/llms.txt": ["./content/skill.md"],
     "/welcome.md": ["./content/welcome.md"],
+    "/v1/mcp": ["./content/mcp.md"],
+  },
+  // The connector's addresses, where OAuth and MCP clients look for them.
+  // Every route behind them lives under /v1.
+  async rewrites() {
+    return [
+      { source: "/mcp", destination: "/v1/mcp" },
+      {
+        source: "/.well-known/oauth-authorization-server",
+        destination: "/v1/oauth/metadata",
+      },
+      {
+        source: "/.well-known/oauth-protected-resource",
+        destination: "/v1/oauth/resource",
+      },
+      {
+        source: "/.well-known/oauth-protected-resource/mcp",
+        destination: "/v1/oauth/resource",
+      },
+    ];
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    // A later match overrides an earlier one's header of the same name.
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      { source: "/oauth/authorize", headers: approvalHeaders },
+    ];
   },
 };
 

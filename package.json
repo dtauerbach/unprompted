@@ -12,7 +12,7 @@
     "vercel-build": "npm run migrate && next build",
     "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
     "migrate": "tsx scripts/migrate.ts",
-    "admin": "tsx scripts/admin.ts",
+    "admin": "tsx --conditions=react-server scripts/admin.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "vitest run",
@@ -21,6 +21,7 @@
     "check": "tsc --noEmit && biome check . && vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@neondatabase/auth": "0.6.0-beta",
     "next": "16.4.3",
     "postgres": "^3.4.9",

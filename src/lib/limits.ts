@@ -12,9 +12,18 @@ const MINUTE = 60;
 const HOUR = 3600;
 const DAY = 86_400;
 
+// New bots an hour across the site. The spike rule (src/lib/floods.ts) scales
+// from it, so lowering it for a preview lowers both.
+const REGISTER_GLOBAL = 50;
+
 export const LIMITS = {
   registerPerIp: { limit: 3, windowSeconds: HOUR },
-  registerGlobal: { limit: 50, windowSeconds: HOUR },
+  registerGlobal: { limit: REGISTER_GLOBAL, windowSeconds: HOUR },
+  // While a sign-up spike has tightened registration: a fifth of the usual.
+  registerTightened: {
+    limit: Math.ceil(REGISTER_GLOBAL / 5),
+    windowSeconds: HOUR,
+  },
   postPerMinute: { limit: 1, windowSeconds: MINUTE },
   postPerHour: { limit: 30, windowSeconds: HOUR },
   postPerDay: { limit: 200, windowSeconds: DAY },
@@ -25,14 +34,20 @@ export const LIMITS = {
   claimPerHour: { limit: 10, windowSeconds: HOUR },
   ownerCodePerDay: { limit: 20, windowSeconds: DAY },
   releasePerHour: { limit: 30, windowSeconds: HOUR },
-  entryPerMinute: { limit: 30, windowSeconds: MINUTE },
-  entryPerHour: { limit: 600, windowSeconds: HOUR },
-  entryPerDay: { limit: 5000, windowSeconds: DAY },
+  // A client's own server registers it, and one service (an agent platform)
+  // may register a client for each of its users, so these are generous.
+  clientPerIp: { limit: 60, windowSeconds: HOUR },
+  clientGlobal: { limit: 500, windowSeconds: HOUR },
+  approvePerIp: { limit: 10, windowSeconds: HOUR },
+  approveGlobal: { limit: 500, windowSeconds: HOUR },
+  // Admins are trusted, so this only bounds what a stolen session could do.
+  adminPerHour: { limit: 300, windowSeconds: HOUR },
   passPerHour: { limit: 30, windowSeconds: HOUR },
+  // A busy service checks every player who joins it.
   redeemPerHour: { limit: 1200, windowSeconds: HOUR },
 } as const;
 
-export function registerRules(ipHash: string): Rule[] {
+export function registerRules(ipHash: string, tightened = false): Rule[] {
   return [
     {
       bucket: `register:ip:${ipHash}`,
@@ -44,6 +59,16 @@ export function registerRules(ipHash: string): Rule[] {
       ...LIMITS.registerGlobal,
       label: "new bots across the whole site this hour",
     },
+    ...(tightened
+      ? [
+          {
+            bucket: "register:tight",
+            ...LIMITS.registerTightened,
+            label:
+              "new bots across the whole site this hour, while registration is tightened after a spike",
+          },
+        ]
+      : []),
   ];
 }
 
@@ -131,24 +156,42 @@ export function releaseRules(humanId: number): Rule[] {
   ];
 }
 
-// A game's record is limited per game, whoever posts to it, so a runaway Table
-// (or its adjudicators) can't grow the platform's bill.
-export function entryRules(gameId: number): Rule[] {
+export function clientRules(ipHash: string): Rule[] {
   return [
     {
-      bucket: `entry:min:${gameId}`,
-      ...LIMITS.entryPerMinute,
-      label: "30 entries a minute per game",
+      bucket: `client:ip:${ipHash}`,
+      ...LIMITS.clientPerIp,
+      label: "60 connector clients an hour from one address",
     },
     {
-      bucket: `entry:hour:${gameId}`,
-      ...LIMITS.entryPerHour,
-      label: "600 entries an hour per game",
+      bucket: "client:all",
+      ...LIMITS.clientGlobal,
+      label: "connector clients across the whole site this hour",
+    },
+  ];
+}
+
+export function approveRules(ipHash: string): Rule[] {
+  return [
+    {
+      bucket: `approve:ip:${ipHash}`,
+      ...LIMITS.approvePerIp,
+      label: "10 agents allowed an hour from one address",
     },
     {
-      bucket: `entry:day:${gameId}`,
-      ...LIMITS.entryPerDay,
-      label: "5000 entries a day per game",
+      bucket: "approve:all",
+      ...LIMITS.approveGlobal,
+      label: "agents allowed across the whole site this hour",
+    },
+  ];
+}
+
+export function adminRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `admin:${humanId}`,
+      ...LIMITS.adminPerHour,
+      label: "300 admin changes an hour",
     },
   ];
 }
@@ -158,17 +201,17 @@ export function passRules(botId: number): Rule[] {
     {
       bucket: `pass:${botId}`,
       ...LIMITS.passPerHour,
-      label: "30 table passes an hour",
+      label: "30 passes an hour",
     },
   ];
 }
 
-export function redeemRules(gameId: number): Rule[] {
+export function redeemRules(botId: number): Rule[] {
   return [
     {
-      bucket: `redeem:${gameId}`,
+      bucket: `redeem:${botId}`,
       ...LIMITS.redeemPerHour,
-      label: "1200 passes redeemed an hour per game",
+      label: "1200 passes redeemed an hour",
     },
   ];
 }
@@ -190,6 +233,16 @@ export async function consume(tx: Tx, rules: Rule[]): Promise<void> {
         greatest(1, ceil(extract(epoch FROM (window_start + make_interval(secs => ${r.windowSeconds}) - now()))))::int
           AS retry_after`;
     if (row && row.count > r.limit) {
+      // The refusal rolls back with its transaction, so the database keeps
+      // no trace of it; this line in the server log is the only record.
+      // Buckets name a bot or human id or an address hash, never an address.
+      console.warn(
+        JSON.stringify({
+          event: "rate_limited",
+          rule: r.label,
+          bucket: r.bucket,
+        }),
+      );
       throw new ApiError(
         429,
         "rate_limited",
@@ -203,5 +256,5 @@ export async function consume(tx: Tx, rules: Rule[]): Promise<void> {
 export async function pruneRateLimits(): Promise<void> {
   await db()`DELETE FROM rate_limits WHERE window_start < now() - interval '2 days'`;
   // A used or expired pass is only a hash nobody can use again.
-  await db()`DELETE FROM table_passes WHERE expires_at < now() - interval '1 day'`;
+  await db()`DELETE FROM passes WHERE expires_at < now() - interval '1 day'`;
 }

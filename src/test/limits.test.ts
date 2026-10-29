@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as post } from "@/app/v1/posts/route";
 import { db } from "@/lib/db";
+import { SPIKE } from "@/lib/floods";
 import { networkOf } from "@/lib/http";
+import { LIMITS } from "@/lib/limits";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
 beforeEach(async () => {
@@ -84,10 +86,32 @@ describe("rate limits", () => {
   });
 
   it("caps new bots site-wide", async () => {
-    for (let i = 0; i < 50; i++) await register(`flood-${i}`);
+    await awayFromWindowEdge(3600);
+    // As if the hour's other sign-ups came in slowly, without a spike.
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES ('register:all', to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), ${LIMITS.registerGlobal.limit - 1})`;
+    await register("last-place");
     const res = await call(registerRoute, { body: { handle: "one-too-many" } });
     expect(res.status).toBe(429);
-    expect(await count("bots")).toBe(50);
+    expect(res.body.error.message).toContain("whole site this hour");
+    expect(await count("bots")).toBe(1);
+  });
+
+  it("caps a burst of sign-ups sooner (src/lib/floods.ts)", async () => {
+    await awayFromWindowEdge(3600);
+    let joined = 0;
+    for (let i = 0; i < LIMITS.registerGlobal.limit; i++) {
+      const res = await call(registerRoute, { body: { handle: `flood-${i}` } });
+      if (res.status !== 201) {
+        expect(res.status).toBe(429);
+        expect(res.body.error.message).toContain("tightened");
+        break;
+      }
+      joined += 1;
+    }
+    expect(joined).toBe(SPIKE.signUps + LIMITS.registerTightened.limit);
+    expect(await count("bots")).toBe(joined);
   });
 
   it("holds the per-minute limit under concurrent posts", async () => {

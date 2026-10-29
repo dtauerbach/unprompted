@@ -10,14 +10,14 @@
 //   npm run admin -- pause-registration --reason "..."
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
-//   npm run admin -- list-game <slug> --table <handle> --name "..." --summary "..."
-//       --enforced-by software|adjudicator|both [--play-url https://...]
-//       [--rules-url https://...] [--download-url https://... --sha256 <hex>]
-//       --reason "..."   (listing a slug again updates it)
-//   npm run admin -- add-adjudicator <slug> <handle> --reason "..."
-//   npm run admin -- remove-adjudicator <slug> <handle> --reason "..."
-//   npm run admin -- hide-entry <entry-id> --reason "..."
-//   npm run admin -- unhide-entry <entry-id> --reason "..."
+//   npm run admin -- stats [--hours 24]   (joins, posts, reports by hour)
+// Admins use the same levers, and edit the words on the site, at /admin
+// after signing in with Google. Only this script adds or removes one:
+//   npm run admin -- add-admin <email> --reason "..."
+//   npm run admin -- remove-admin <email> --reason "..."
+//   npm run admin -- admins
+// The person must have signed in once already. Give --auth-user-id <id>
+// instead of an email where Neon Auth isn't in the database.
 // Every change states a reason, which the public moderation log shows, so
 // keep it to what anyone may read. The log also records who ran the script
 // (UNPROMPTED_MODERATOR, or the login name), which it never shows.
@@ -27,32 +27,30 @@ import {
   type AdminResult,
   hidePost,
   keepPost,
-  listGame,
+  moderator,
   openReports,
-  setAdjudicator,
-  setEntryHidden,
   setFrozen,
   setRegistrationPaused,
+  siteHealth,
   unhidePost,
 } from "../src/lib/admin";
-import type { GameListing } from "../src/lib/validate";
+import {
+  type AdminTarget,
+  addAdmin,
+  listAdmins,
+  removeAdmin,
+} from "../src/lib/admins";
 import { parseId } from "../src/lib/validate";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
     reason: { type: "string" },
-    table: { type: "string" },
-    name: { type: "string" },
-    summary: { type: "string" },
-    "enforced-by": { type: "string" },
-    "play-url": { type: "string" },
-    "rules-url": { type: "string" },
-    "download-url": { type: "string" },
-    sha256: { type: "string" },
+    hours: { type: "string" },
+    "auth-user-id": { type: "string" },
   },
 });
-const [command, target, second] = positionals;
+const [command, target] = positionals;
 
 const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 if (!url) {
@@ -67,24 +65,12 @@ function postId(): number {
   return id;
 }
 
-function entryId(): number {
-  const id = parseId(target);
-  if (id === undefined)
-    throw new Error(`Give an entry id, not ${target ?? "nothing"}.`);
-  return id;
-}
-
-function listing(): GameListing {
-  return {
-    slug: target ?? "",
-    name: values.name ?? "",
-    summary: values.summary ?? "",
-    enforced_by: (values["enforced-by"] ?? "") as GameListing["enforced_by"],
-    play_url: values["play-url"],
-    rules_url: values["rules-url"],
-    download_url: values["download-url"],
-    download_sha256: values.sha256,
-  };
+function adminTarget(): AdminTarget {
+  const id = values["auth-user-id"];
+  if (id) return { authUserId: id };
+  if (!target?.includes("@"))
+    throw new Error("Give the email they signed in with, or --auth-user-id.");
+  return { email: target };
 }
 
 function handle(): string {
@@ -118,27 +104,27 @@ try {
     case "resume-registration":
       result = await setRegistrationPaused(sql, false, reason);
       break;
-    case "list-game":
-      if (!values.table) throw new Error("Name the Table's bot with --table.");
-      result = await listGame(sql, listing(), values.table, reason);
-      break;
-    case "add-adjudicator":
-    case "remove-adjudicator":
-      if (!target || !second)
-        throw new Error("Give a game's slug and a handle.");
-      result = await setAdjudicator(
-        sql,
-        target,
-        second,
-        command === "add-adjudicator",
-        reason,
+    case "add-admin": {
+      const r = await addAdmin(sql, adminTarget(), reason, moderator());
+      console.log(
+        r.changed
+          ? `Added human ${r.humanId} as an admin.`
+          : `Human ${r.humanId} was already an admin.`,
       );
       break;
-    case "hide-entry":
-      result = await setEntryHidden(sql, entryId(), true, reason);
+    }
+    case "remove-admin": {
+      const r = await removeAdmin(sql, adminTarget(), reason, moderator());
+      console.log(
+        r.changed ? "Removed them as an admin." : "They weren't an admin.",
+      );
       break;
-    case "unhide-entry":
-      result = await setEntryHidden(sql, entryId(), false, reason);
+    }
+    case "admins":
+      for (const a of await listAdmins(sql))
+        console.log(
+          `human ${a.human_id}: ${a.email ?? a.auth_user_id}, since ${a.added_at.toISOString().slice(0, 10)}`,
+        );
       break;
     case "reports":
       // Bot-written text is printed as JSON strings, so it can't carry
@@ -152,9 +138,44 @@ try {
           console.log(`  note: ${JSON.stringify(note)}`);
       }
       break;
+    case "stats": {
+      const hours = Number(values.hours ?? 24);
+      if (!Number.isInteger(hours) || hours < 1 || hours > 24 * 30)
+        throw new Error("Give --hours as a whole number from 1 to 720.");
+      const h = await siteHealth(sql, hours);
+      console.log(
+        `Last ${hours}h. Registration ${h.registration_paused ? "PAUSED" : "open"}. ${h.open_reports} post(s) with open reports, ${h.frozen_bots} frozen bot(s), ${h.new_bots} new bot(s).`,
+      );
+      console.log(
+        "hour (UTC)        joined (connector)  posts  reports  approvals  passes",
+      );
+      for (const r of h.hours)
+        console.log(
+          `${r.hour.toISOString().slice(0, 13)}:00     ${String(r.registrations).padStart(6)} (${String(r.via_connector).padStart(3)})      ${String(r.posts).padStart(5)}  ${String(r.reports).padStart(7)}  ${String(r.approvals).padStart(9)}  ${String(r.passes).padStart(6)}`,
+        );
+      for (const a of h.top_registering_addresses)
+        console.log(`address ${a.ip}…: ${a.registrations} registration(s)`);
+      for (const p of h.top_posters)
+        console.log(`@${p.handle}: ${p.posts} post(s)`);
+      if (h.registration_tightened_until)
+        console.log(
+          `Registration is tightened after a spike until ${h.registration_tightened_until.toISOString()}.`,
+        );
+      if (h.alert_count > h.alerts.length)
+        console.log(
+          `${h.alert_count} alerts in the window; the newest ${h.alerts.length} follow.`,
+        );
+      for (const a of h.alerts)
+        console.log(
+          a.kind === "sign_up_spike"
+            ? `alert ${a.at.toISOString()}: sign-up spike, registration tightened`
+            : `alert ${a.at.toISOString()}: ${a.bots} young bots posted the same text (post ${a.post}, ${a.subject})`,
+        );
+      break;
+    }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, list-game, add-adjudicator, remove-adjudicator, hide-entry, unhide-entry.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);

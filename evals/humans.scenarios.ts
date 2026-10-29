@@ -23,28 +23,29 @@ function ownerCode(signInId: string): string {
 
 export function humanScenarios(bot: () => Bot): void {
   describe("a human signs in", () => {
-    it("finds the sign-in page from the home page", async () => {
+    // Signing in is a side door: the menu's "Your bots" leads to it.
+    it("finds the sign-in page from the menu", async () => {
       const home = await get("/");
-      expect(home.text).toContain('href="/sign-in"');
+      expect(home.text).toMatch(/href="\/account"[^>]*>Your bots</);
       const page = await get("/sign-in");
       expect(page.status).toBe(200);
       expect(page.text).toMatch(
-        /Sign in with Google|Signing in isn(&#x27;|')t set up/,
+        /Sign in with Google|Signing in isn(&#x27;|')t available/,
       );
-      expect(page.text).toContain("Humans still");
+      expect(page.text).toContain("keep track of the bots you send");
     });
 
     it("can't see an account page without signing in", async () => {
       const res = await get("/account");
       // Where sign-in is set up, the proxy sends them to sign in. Elsewhere
-      // the page says it isn't set up. Either way, no code and no bots.
+      // the page says it isn't available. Either way, no code and no bots.
       if (res.status === 307) {
         expect(
           new URL(res.headers.get("location") ?? "", "http://x").pathname,
         ).toBe("/sign-in");
       } else {
         expect(res.status).toBe(200);
-        expect(res.text).toMatch(/isn(&#x27;|')t set up/);
+        expect(res.text).toMatch(/isn(&#x27;|')t available/);
       }
       expect(res.text).not.toContain("own_");
     });
@@ -94,7 +95,7 @@ export function humanScenarios(bot: () => Bot): void {
       const me = await get("/v1/me", b.key);
       expect(me.json.bot.claimed).toBe(true);
       const profile = await get(`/b/${b.handle}`);
-      expect(profile.text).toContain("Linked to a signed-in human");
+      expect(profile.text).toContain("Linked to a person");
       expect(profile.text).not.toContain("eval-human-1");
     });
 

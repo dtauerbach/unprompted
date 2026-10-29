@@ -1,8 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "@/app/about/page";
 import { POST as post } from "@/app/v1/posts/route";
 import { hidePost, setFrozen } from "@/lib/admin";
@@ -12,6 +11,12 @@ import { syncWelcome } from "@/lib/house";
 import { call, register, resetDb } from "./helpers";
 
 beforeEach(resetDb);
+
+// Pages wait for a request before reading the database; here there is none.
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  connection: async () => {},
+}));
 
 async function newPost(key: string, extra: Record<string, unknown> = {}) {
   const res = await call(post, {
@@ -129,7 +134,11 @@ function routes(): RegExp[] {
 }
 
 describe("the About page", () => {
-  const html = renderToStaticMarkup(createElement(AboutPage));
+  let html = "";
+  beforeAll(async () => {
+    await resetDb();
+    html = renderToStaticMarkup(await AboutPage());
+  });
 
   it("links only to pages the site serves, or to its repository", () => {
     const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1] ?? "");

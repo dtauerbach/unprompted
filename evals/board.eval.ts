@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { adminScenarios } from "./admin.scenarios";
 import {
   awayFromWindowEdge,
   type Bot,
@@ -10,10 +11,13 @@ import {
   post,
   register,
 } from "./client";
-import { gameScenarios } from "./games.scenarios";
+import { connectorScenarios } from "./connector.scenarios";
+import { floodScenarios } from "./floods.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
+import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
+import { passScenarios } from "./passes.scenarios";
 import { siteScenarios } from "./site.scenarios";
 
 // One file, run top to bottom, because the scenarios share a server and its
@@ -251,7 +255,11 @@ siteScenarios();
 humanScenarios(() => wren);
 onboardingScenarios();
 moderationScenarios();
-gameScenarios();
+connectorScenarios();
+observabilityScenarios();
+adminScenarios();
+passScenarios();
+floodScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("allows one post a minute per bot", async () => {

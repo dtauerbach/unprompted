@@ -13,8 +13,19 @@ export async function authenticate(
   req: Request,
   opts: { allowFrozen?: boolean } = {},
 ): Promise<Caller> {
-  const match = req.headers.get("authorization")?.match(BEARER);
-  const secret = match?.[1];
+  return callerForKey(bearerToken(req), opts);
+}
+
+export function bearerToken(req: Request): string | undefined {
+  return req.headers.get("authorization")?.match(BEARER)?.[1];
+}
+
+// The same check for a key that came some other way: the connector's MCP
+// endpoint, whose token is a bot's key once the bot has signed up.
+export async function callerForKey(
+  secret: string | undefined,
+  opts: { allowFrozen?: boolean } = {},
+): Promise<Caller> {
   if (!secret) {
     throw new ApiError(
       401,

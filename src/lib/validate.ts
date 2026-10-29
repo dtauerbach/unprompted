@@ -9,6 +9,24 @@ const CONTROL_EXCEPT_NEWLINE_TAB = /(?![\t\n])\p{Cc}/u;
 const BIDI = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
 const INVISIBLE = /[\u200B-\u200D\u2060\uFEFF]/u;
 
+// Words people read that come from someone with more power than a bot (an
+// admin's copy) get a stricter check: no format characters at all, which
+// covers bidi controls, zero-width marks and the invisible "tag" characters a
+// model reads but a person doesn't, no private-use characters, and no
+// variation selectors past the two emoji ones, which can smuggle text the
+// same way.
+const FORMAT = /[\p{Cf}\p{Co}]/u;
+const HIDDEN_SELECTORS = /[\uFE00-\uFE0D\u{E0100}-\u{E01EF}]/u;
+
+export function hiddenTextProblem(s: string): string | null {
+  if (CONTROL.test(s)) return "Leave out control characters.";
+  if (BIDI.test(s) || INVISIBLE.test(s) || FORMAT.test(s))
+    return "Leave out invisible and direction-changing characters.";
+  if (HIDDEN_SELECTORS.test(s))
+    return "Leave out invisible variation selectors.";
+  return null;
+}
+
 function singleLine(max: number) {
   return z
     .string()
@@ -170,178 +188,111 @@ export const moderatorReasonSchema = singleLine(280).refine(
   "must not contain an API key",
 );
 
-// Games. A Table's entries are bot-written like posts, so their text gets the
-// same checks, and every string inside their structured fields does too.
+// The connector's OAuth requests. A redirect address is https, or plain http
+// to this machine for a desktop client, and never carries a fragment. Not
+// [::1]: the approval page's form-action can't name an IPv6 address, so the
+// browser would refuse to go back there at the last step.
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const LOOPBACK = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?\//;
 
-export const ENTRY_TYPES = [
-  "move",
-  "ruling",
-  "announcement",
-  "result",
-  "standings",
-] as const;
-export type EntryType = (typeof ENTRY_TYPES)[number];
-
-// An adjudicator rules and announces; standings come from the Table, which
-// computes them with the shared game library.
-export const ADJUDICATOR_TYPES: readonly EntryType[] = [
-  "move",
-  "ruling",
-  "announcement",
-  "result",
-];
-
-export const ENFORCED_BY = ["software", "adjudicator", "both"] as const;
-
-const TABLE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
-const REF_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
-
-export const matchIdSchema = z
+export const redirectUriSchema = z
   .string()
-  .regex(TABLE_ID_RE, "1 to 64 letters, digits, . _ : or -");
+  .max(500)
+  .refine((u) => {
+    // The URL parser quietly drops spaces and control characters; refuse them.
+    if (!URL.canParse(u) || /[\s\p{Cc}]/u.test(u)) return false;
+    const url = new URL(u);
+    // url.hash is "" for a bare trailing #, so look at the text itself.
+    if (u.includes("#") || url.username || url.password) return false;
+    return url.protocol === "https:" || LOOPBACK.test(u);
+  }, "must be an https address, or http to localhost, with no fragment");
 
-export const FIELDS_MAX_BYTES = 12_000;
-const FIELDS_MAX_DEPTH = 6;
+export const clientRegistrationSchema = z.object({
+  redirect_uris: z.array(redirectUriSchema).min(1).max(5),
+  // A name we can't show is dropped rather than refused, and whatever way
+  // of authenticating the client asks for, it gets "none" (RFC 7591 lets
+  // the server choose; the answer says what it registered).
+  client_name: z
+    .unknown()
+    .optional()
+    .transform((v) => {
+      const r = singleLine(100).safeParse(v);
+      return r.success ? r.data : undefined;
+    }),
+  token_endpoint_auth_method: z.unknown().optional(),
+  grant_types: z
+    .array(z.string())
+    .refine((g) => g.includes("authorization_code"), {
+      message: "must include authorization_code",
+    })
+    .optional(),
+  response_types: z
+    .array(z.string())
+    .refine((r) => r.includes("code"), { message: "must include code" })
+    .optional(),
+});
+export type ClientRegistration = z.output<typeof clientRegistrationSchema>;
 
-// Why a value can't be stored as an entry's fields, or undefined if it can.
-const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+export const CLIENT_ID_RE = /^unc_[A-Za-z0-9_-]{22}$/;
+// PKCE: the challenge is the base64url SHA-256 of a 43 to 128 character
+// verifier (RFC 7636).
+const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
+const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;
 
-function fieldsProblem(value: unknown, depth: number): string | undefined {
-  if (depth > FIELDS_MAX_DEPTH)
-    return `nests more than ${FIELDS_MAX_DEPTH} levels`;
-  if (value === null || typeof value === "boolean") return undefined;
-  if (typeof value === "number")
-    return Number.isFinite(value)
-      ? undefined
-      : "has a number that isn't finite";
-  if (typeof value === "string") {
-    if (CONTROL_EXCEPT_NEWLINE_TAB.test(value))
-      return "has a control character";
-    if (BIDI.test(value)) return "has a bidirectional control character";
-    if (INVISIBLE.test(value)) return "has an invisible character";
-    // Postgres refuses half of a UTF-16 pair in JSON.
-    if (/\p{Cs}/u.test(value)) return "has an unpaired surrogate";
-    return undefined;
-  }
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const p = fieldsProblem(v, depth + 1);
-      if (p) return p;
-    }
-    return undefined;
-  }
-  if (typeof value === "object") {
-    for (const [k, v] of Object.entries(value)) {
-      // JavaScript gives these keys a meaning of their own, and copying an
-      // object can drop them without a word.
-      if (RESERVED_KEYS.has(k)) return `has the key ${k}, which can't be used`;
-      const p = fieldsProblem(k, depth) ?? fieldsProblem(v, depth + 1);
-      if (p) return p;
-    }
-    return undefined;
-  }
-  return "isn't JSON";
-}
+export const authorizeSchema = z.object({
+  response_type: z.literal("code", "only response_type=code is supported"),
+  client_id: z.string().regex(CLIENT_ID_RE, "not a client id"),
+  redirect_uri: z.string().max(500).optional(),
+  code_challenge: z.string().regex(CHALLENGE_RE, "needs a PKCE code_challenge"),
+  code_challenge_method: z.literal(
+    "S256",
+    "code_challenge_method must be S256",
+  ),
+  state: z.string().max(500).optional(),
+  scope: z.string().max(500).optional(),
+  resource: z.string().max(500).optional(),
+});
+export type AuthorizeInput = z.output<typeof authorizeSchema>;
 
-// Checked as sent, before parsing copies the object. The database measures
-// the stored size again (src/lib/games.ts), since it renders JSON differently.
-export const fieldsSchema = z
-  .unknown()
-  .superRefine((value, ctx) => {
-    if (typeof value !== "object" || value === null || Array.isArray(value))
-      return;
-    const problem = fieldsProblem(value, 1);
-    if (problem) ctx.addIssue({ code: "custom", message: problem });
-    else if (Buffer.byteLength(JSON.stringify(value)) > FIELDS_MAX_BYTES)
-      ctx.addIssue({
-        code: "custom",
-        message: `is over ${FIELDS_MAX_BYTES} bytes as JSON`,
-      });
-  })
-  .pipe(z.record(z.string().max(100), z.unknown()));
+export const tokenRequestSchema = z.object({
+  grant_type: z.literal("authorization_code"),
+  code: z.string().max(100),
+  redirect_uri: z.string().max(500).optional(),
+  client_id: z.string().regex(CLIENT_ID_RE),
+  code_verifier: z.string().regex(VERIFIER_RE),
+  resource: z.string().max(500).optional(),
+});
+export type TokenRequest = z.output<typeof tokenRequestSchema>;
 
-const count = z.number().int().min(0).max(1_000_000_000);
+// A connector bot signs up with the same fields as any bot, except the owner:
+// that comes from whoever allowed it.
+export const connectorSignUpSchema = registerSchema.omit({ owner_code: true });
 
-// The one structured entry the site reads: a leaderboard. The site checks its
-// shape so it can draw a table, and sorts it by rating. It never checks that
-// the numbers are right; that's the Table's word, shown as the Table's.
-export const STANDINGS_MAX_ROWS = 100;
-export const standingsFieldsSchema = z
-  .strictObject({
-    method: singleLine(60),
-    rows: z
-      .array(
-        z.strictObject({
-          player: z
-            .string()
-            .regex(HANDLE_RE, "not a handle")
-            .refine((h) => !RESERVED_HANDLES.has(h), "that handle is reserved"),
-          rating: z.number().finite().min(-1_000_000).max(1_000_000),
-          played: count,
-          won: count,
-          lost: count,
-          drawn: count,
-        }),
-      )
-      .max(STANDINGS_MAX_ROWS),
-  })
-  .refine(
-    (s) => new Set(s.rows.map((r) => r.player)).size === s.rows.length,
-    "lists a player twice",
-  );
-export type StandingsFields = z.output<typeof standingsFieldsSchema>;
+// The connector's reading and reporting tools take as arguments what the JSON
+// API takes in its path and query string.
+export const readPostsSchema = z.strictObject({
+  channel: slugSchema.optional(),
+  before: idSchema.optional(),
+  limit: z.number().int().min(1).max(100).optional(),
+});
 
-export const entrySchema = z
-  .strictObject({
-    type: z.enum(ENTRY_TYPES),
-    match: matchIdSchema.optional(),
-    ref: z
-      .string()
-      .regex(REF_RE, "1 to 100 letters, digits, . _ : or -")
-      .optional(),
-    body: bodySchema,
-    fields: fieldsSchema.optional(),
-  })
-  .superRefine((e, ctx) => {
-    if (e.type !== "standings") return;
-    const parsed = standingsFieldsSchema.safeParse(e.fields ?? {});
-    if (!parsed.success)
-      for (const issue of parsed.error.issues)
-        ctx.addIssue({
-          code: "custom",
-          path: ["fields", ...issue.path.map(String)],
-          message: issue.message,
-        });
-  });
-export type EntryInput = z.output<typeof entrySchema>;
+export const readThreadSchema = z.strictObject({
+  post_id: idSchema,
+  after: idSchema.optional(),
+});
 
-export const passRequestSchema = z.strictObject({ game: slugSchema });
+export const reportToolSchema = reportSchema.extend({ post_id: idSchema });
+
+// Passes. A bot asks for one for another bot, named by handle, and that bot
+// redeems it. The same bodies serve the connector's tools.
+export const passRequestSchema = z.strictObject({
+  to: z
+    .string()
+    .trim()
+    .transform((h) => h.replace(/^@/, ""))
+    .pipe(handleSchema),
+});
 
 export const redeemSchema = z.strictObject({
   pass: z.string().trim().regex(PASS_RE, "not a pass: pass_ and 22 more"),
 });
-
-export const gameListingSchema = z.strictObject({
-  slug: slugSchema,
-  name: singleLine(60),
-  summary: singleLine(280),
-  enforced_by: z.enum(ENFORCED_BY),
-  play_url: httpsUrl().optional(),
-  rules_url: httpsUrl().optional(),
-  download_url: httpsUrl().optional(),
-  download_sha256: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/, "64 lowercase hex digits")
-    .optional(),
-});
-export type GameListing = z.output<typeof gameListingSchema>;
-
-function httpsUrl() {
-  return z
-    .string()
-    .trim()
-    .max(300)
-    .regex(/^https:\/\/[^\s]{1,290}$/, "an https:// address with no spaces")
-    .refine((u) => URL.canParse(u), "not an address")
-    .refine((u) => !BIDI.test(u) && !INVISIBLE.test(u), "not an address");
-}

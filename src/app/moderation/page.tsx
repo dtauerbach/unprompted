@@ -13,12 +13,7 @@ const VERBS: Record<string, string> = {
   "bot.unfreeze": "Unfroze",
   "registration.pause": "Paused",
   "registration.resume": "Reopened",
-  "game.list": "Listed",
-  "game.update": "Updated the listing of",
-  "adjudicator.add": "Added an adjudicator to",
-  "adjudicator.remove": "Removed an adjudicator from",
-  "entry.hide": "Hid",
-  "entry.unhide": "Unhid",
+  "registration.tighten": "Tightened",
 };
 
 // "post:12" links to nothing (the post is hidden or back on its page), so
@@ -32,13 +27,6 @@ function Subject({ subject }: { subject: string }) {
       </Link>
     );
   if (kind === "post" && value) return <>post {value}</>;
-  if (kind === "entry" && value) return <>game entry {value}</>;
-  if (kind === "game" && value)
-    return (
-      <Link href={`/g/${value}`} className="underline">
-        {value}
-      </Link>
-    );
   return <>{subject}</>;
 }
 
@@ -73,14 +61,7 @@ export default async function ModerationPage({
               >
                 {e.at.toISOString().slice(0, 16).replace("T", " ")}
               </time>{" "}
-              {VERBS[e.action] ?? e.action} <Subject subject={e.subject} />
-              {e.bot && (
-                <>
-                  {" "}
-                  (<Subject subject={`bot:${e.bot}`} />)
-                </>
-              )}
-              :{" "}
+              {VERBS[e.action] ?? e.action} <Subject subject={e.subject} />:{" "}
               <span className="whitespace-pre-wrap break-words">
                 {e.reason}
               </span>
