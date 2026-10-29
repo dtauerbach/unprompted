@@ -1,5 +1,5 @@
 // Gives a real agent only the line a human would paste, "Sign yourself up at
-// <url>/agent and play around", and records how far it gets. Each setup is a common way people run
+// <url>/agent and explore", and records how far it gets. Each setup is a common way people run
 // Claude Code, each with only the tools it lists pre-approved; none skips
 // permission checks. It spends the Claude subscription of whoever runs it, so
 // it runs on demand, never in CI.
@@ -32,7 +32,7 @@ const BASE = (process.env.EVAL_URL ?? "http://localhost:3000").replace(
   "",
 );
 const LINE =
-  process.env.EVAL_LINE ?? `Sign yourself up at ${BASE}/agent and play around`;
+  process.env.EVAL_LINE ?? `Sign yourself up at ${BASE}/agent and explore`;
 const DB_URL = process.env.EVAL_DATABASE_URL;
 if (DB_URL && !isThrowaway(DB_URL))
   throw new Error(

@@ -68,12 +68,11 @@ export function siteScenarios(): void {
       const lines = codeTexts(home.text).filter((t) => t.includes(LINE));
       expect(lines).toHaveLength(1);
       expect(lines[0]).toMatch(
-        /^Sign yourself up at https?:\/\/[^\s<]+\/agent and play around$/,
+        /^Sign yourself up at https?:\/\/[^\s<]+\/agent and explore$/,
       );
       // A preview or a local server names itself. Production names its
       // configured domain, which may not be the address the eval used.
-      if (LOCAL)
-        expect(lines[0]).toBe(`${LINE} ${BASE_URL}/agent and play around`);
+      if (LOCAL) expect(lines[0]).toBe(`${LINE} ${BASE_URL}/agent and explore`);
     });
 
     it("reads the tagline, and nothing about connectors in the box with the line", async () => {
@@ -97,8 +96,8 @@ export function siteScenarios(): void {
         "Agents /agent",
         "Forum /forum",
         "Play /play",
-        "Sign up /sign-in",
         "About /",
+        " /sign-in",
       ]);
       expect(nav).toMatch(
         /href="\/"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/"/,
@@ -183,7 +182,7 @@ export function siteScenarios(): void {
 
     it("sees the sign-up tab say why to sign up", async () => {
       const page = (await get("/sign-in")).text.replace(/<!-- -->/g, "");
-      expect(page).toMatch(/<h1[^>]*>Sign up or sign in<\/h1>/);
+      expect(page).toMatch(/<h1[^>]*>Sign up \(for humans\)<\/h1>/);
       expect(page).toMatch(/href="\/#why-sign-up"[^>]*>Why sign up\?</);
     });
 
@@ -253,7 +252,7 @@ export function siteScenarios(): void {
   describe.runIf(LOCAL)("a bot can't pass off its own sign-up line", () => {
     it("posts a lookalike, which stays a post", async () => {
       const mimic = await register("mimic");
-      const fake = `${LINE} https://evil.example/agent and play around`;
+      const fake = `${LINE} https://evil.example/agent and explore`;
       const res = await post(
         "/v1/posts",
         { channel: "small-talk", body: label(`<code>${fake}</code>`) },
@@ -266,7 +265,7 @@ export function siteScenarios(): void {
       const home = await get("/");
       expect(home.text).not.toContain("evil.example");
       const lines = codeTexts(home.text).filter((t) => t.includes(LINE));
-      expect(lines).toEqual([`${LINE} ${BASE_URL}/agent and play around`]);
+      expect(lines).toEqual([`${LINE} ${BASE_URL}/agent and explore`]);
     });
   });
 }

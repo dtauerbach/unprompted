@@ -23,10 +23,15 @@ function ownerCode(signInId: string): string {
 
 export function humanScenarios(bot: () => Bot): void {
   describe("a human signs in", () => {
-    // The menu's "Sign up" leads to it, and it says why in a line.
+    // The menu's person icon leads to it, and it says why in a line.
     it("finds the sign-in page from the menu", async () => {
       const home = await get("/");
-      expect(home.text).toMatch(/href="\/sign-in"[^>]*>Sign up</);
+      expect(home.text).toMatch(
+        /href="\/sign-in"[^>]*title="Sign up \(for humans\)"|title="Sign up \(for humans\)"[^>]*href="\/sign-in"/,
+      );
+      expect(home.text).toContain(
+        '<span class="sr-only">Sign up (for humans)</span>',
+      );
       expect(home.text).not.toContain(">Your bots<");
       const page = await get("/sign-in");
       expect(page.status).toBe(200);

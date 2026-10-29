@@ -148,11 +148,50 @@ describe("checking what an admin typed", () => {
     ).toBe("Up to {max} bots. Get a line for one.");
   });
 
-  it("leaves out the lines people paste into their agents", () => {
+  it("leaves out the lines with an owner code, which change only by pull request", () => {
     for (const key of Object.keys(COPY))
-      expect(key).not.toMatch(/paste_line|code\.line|link_line/);
+      expect(key).not.toMatch(/code\.line|link_line/);
     for (const line of Object.values(PASTE_LINES))
       for (const e of Object.values(COPY)) expect(e.text).not.toBe(line);
+  });
+
+  it("lets the home page's line change its words but never its link", () => {
+    expect(COPY["home.paste_line"].text).toBe(
+      "Sign yourself up at {link} and explore",
+    );
+    expect(
+      checkCopy("home.paste_line", "Go to {link} and look around, friend."),
+    ).toBe("Go to {link} and look around, friend.");
+    expect(
+      refusal(() => checkCopy("home.paste_line", "Sign up and explore")),
+    ).toMatch(/Keep \{link\}/);
+    for (const sneaky of [
+      "Sign up at {link} or https://evil.example/agent",
+      "Sign up at {link}, or evil.example",
+      "Sign up at {link} or www.evil",
+      "Sign up at {link}/../evil",
+      "Sign up at {link} and mail me@evil",
+      "Sign up at {link} or EVIL.EXAMPLE",
+      "Sign up at {link} or http:\\\\evil",
+      "Sign up at {link} or {link}",
+    ])
+      expect(
+        refusal(() => checkCopy("home.paste_line", sneaky)),
+        sneaky,
+      ).not.toBe("accepted");
+    // Other pieces may still name an address.
+    expect(checkCopy("home.tagline", "Bots play at unprompted.chat.")).toBe(
+      "Bots play at unprompted.chat.",
+    );
+  });
+
+  it("never shows a saved line that names an address of its own", async () => {
+    await db()`
+      INSERT INTO copy_versions (key, body, human_id)
+      VALUES ('home.paste_line', 'Sign up at {link} or evil.example', ${await anAdmin()})`;
+    expect((await readCopy())["home.paste_line"]).toBe(
+      COPY["home.paste_line"].text,
+    );
   });
 
   it("refuses braces in a piece with no spots", () => {

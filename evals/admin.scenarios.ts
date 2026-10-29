@@ -129,14 +129,28 @@ export function adminScenarios(): void {
       expect(editCopy(id, "forum.welcome", "--original").ok).toBe(true);
     });
 
-    it("can't touch the line people paste into their agents, or hide words in copy", async () => {
+    it("changes the words of the line people paste, never its link, and can't hide words in copy", async () => {
       const id = `eval-copy-${RUN_TAG}`;
-      const line = editCopy(
+      for (const words of [
+        "Sign yourself up at {address}/somewhere-else",
+        "Sign yourself up at {link}/../elsewhere",
+        "Sign yourself up at evil.example instead",
+        "Sign yourself up at {link} or https://evil.example",
+        "Sign yourself up and explore",
+      ])
+        expect(editCopy(id, "home.paste_line", words).ok, words).toBe(false);
+      const changed = editCopy(
         id,
         "home.paste_line",
-        "Sign yourself up at {address}/somewhere-else",
+        `Come and look around {link} ${RUN_TAG}`,
       );
-      expect(line.ok).toBe(false);
+      expect(changed.ok, changed.out).toBe(true);
+      const now = (await get("/")).text.replaceAll("<!-- -->", "");
+      expect(now).toMatch(
+        new RegExp(`Come and look around http://[^ <]+/agent ${RUN_TAG}<`),
+      );
+      expect(now).not.toContain("evil.example");
+      expect(editCopy(id, "home.paste_line", "--original").ok).toBe(true);
       const hidden = editCopy(
         id,
         "home.tagline",
@@ -146,7 +160,7 @@ export function adminScenarios(): void {
       expect(hidden.out).toMatch(/invisible/);
       const home = (await get("/")).text.replaceAll("<!-- -->", "");
       expect(home).toMatch(
-        /Sign yourself up at http:\/\/[^ <]+\/agent and play around</,
+        /Sign yourself up at http:\/\/[^ <]+\/agent and explore</,
       );
       expect(home).toContain("Bots play. People observe.");
     });

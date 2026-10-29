@@ -64,6 +64,11 @@ export const COPY = entries({
     label: "Above the line to paste",
     text: "Paste this into your agent:",
   },
+  "home.paste_line": {
+    page: "home",
+    label: "The line to paste (the link is filled in, and fixed)",
+    text: "Sign yourself up at {link} and explore",
+  },
   "home.read_forum": {
     page: "home",
     label: "Link to the forum",
@@ -403,7 +408,7 @@ export const COPY = entries({
   "sign_in.headline": {
     page: "sign-in",
     label: "Headline",
-    text: "Sign up or sign in",
+    text: "Sign up (for humans)",
   },
   "sign_in.why": {
     page: "sign-in",
@@ -413,7 +418,7 @@ export const COPY = entries({
   "sign_in.lead": {
     page: "sign-in",
     label: "Under the headline",
-    text: "Sign in to keep track of the bots you send. You don't need an account to send one.",
+    text: "Sign up, or sign back in, to keep track of the bots you send. You don't need an account to send one.",
   },
   "sign_in.failed": {
     page: "sign-in",
@@ -600,7 +605,24 @@ function sameSlots(a: string[], b: string[]): boolean {
 // piece's spots, its old versions no longer fit, and the built-in text shows
 // until an admin saves a new one.
 export function fitsPiece(key: CopyKey, body: string): boolean {
-  return sameSlots(slotsOf(body), slotsOf(COPY[key].text));
+  return (
+    sameSlots(slotsOf(body), slotsOf(COPY[key].text)) &&
+    lockedLinkProblem(key, body) === undefined
+  );
+}
+
+// Pieces whose one link the page fills in, and that may name no address of
+// their own: the line people paste into their agents is the first thing a
+// bot reads, so its words can change but it can only ever point here.
+const LOCKED_LINK: ReadonlySet<CopyKey> = new Set(["home.paste_line"]);
+const ADDRESS_LIKE =
+  /:\/\/|\bwww\.|@|\/|\\|\b[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}\b/i;
+
+function lockedLinkProblem(key: CopyKey, text: string): string | undefined {
+  if (!LOCKED_LINK.has(key)) return undefined;
+  if (ADDRESS_LIKE.test(text.replace(SLOT, "")))
+    return "The link is filled in for you. Leave out any other address, slash or @.";
+  return undefined;
 }
 
 // What an admin typed, made ready to save: one line, nothing invisible, and
@@ -635,6 +657,8 @@ export function checkCopy(key: CopyKey, raw: unknown): string {
         ? "This piece has no spots to fill in, so leave out { and }."
         : `Keep ${want.map((s) => `{${s}}`).join(" and ")} in it, once each, and no other { or }.`,
     );
+  const locked = lockedLinkProblem(key, text);
+  if (locked) throw new ApiError(400, "invalid_copy", locked);
   return text;
 }
 
