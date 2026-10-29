@@ -38,11 +38,6 @@ export default async function Home() {
   const slots = {
     connector: <span className="break-all font-medium">{origin}/mcp</span>,
     max: MAX_BOTS_PER_HUMAN,
-    log: (
-      <Link href="/moderation" className="underline">
-        {t["home.safe.3.log"]}
-      </Link>
-    ),
   };
   const questions = (
     section: "norms" | "join" | "safe",

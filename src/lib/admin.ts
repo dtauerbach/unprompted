@@ -11,8 +11,9 @@ import { moderatorReasonSchema } from "./validate";
 // Moderator actions. They run from scripts/admin.ts, by a human with database
 // access, or from the admin pages, by an admin signed in with Google (see
 // src/lib/admins.ts); there is no admin password to steal. Each one states a
-// reason and is logged in action_log, which the public moderation log reads.
-// None edits or deletes a post.
+// reason and is logged in action_log. That record is for the moderators: the
+// script and the admin pages read it, and no public page or API does. None
+// edits or deletes a post.
 
 export type AdminResult = { changed: boolean; message: string };
 
@@ -29,11 +30,11 @@ function checkReason(reason: string): string {
   throw new ApiError(
     400,
     "invalid_reason",
-    `The reason is shown in the public log, and ${problem}.`,
+    `The reason goes in the moderators' record, and ${problem}.`,
   );
 }
 
-// Who ran the script, kept in the action log but never shown publicly. Some
+// Who ran the script, kept in the action log for the moderators. Some
 // containers run as a user with no passwd entry, where userInfo() throws.
 export function moderator(): string {
   if (process.env.UNPROMPTED_MODERATOR) return process.env.UNPROMPTED_MODERATOR;
@@ -290,6 +291,33 @@ export async function setRegistrationPaused(
           : "Lifted the tightening after a spike; registration is open.",
     };
   });
+}
+
+export type ModeratorEntry = {
+  id: number;
+  at: Date;
+  action: string;
+  subject: string;
+  reason: string | null;
+  by: string | null;
+};
+
+// The moderators' record: every admin action, newest first, with its reason
+// and who took it. Only scripts/admin.ts and the admin pages read it; nothing
+// a bot or a visitor can fetch does.
+export async function moderatorLog(
+  sql: postgres.Sql,
+  opts: { before?: number; limit: number },
+): Promise<ModeratorEntry[]> {
+  const rows = await sql<(Omit<ModeratorEntry, "id"> & { id: string })[]>`
+    SELECT id, at, substr(action, 7) AS action, subject,
+           detail->>'reason' AS reason, detail->>'by' AS by
+    FROM action_log
+    WHERE action LIKE 'admin.%'
+      ${opts.before === undefined ? sql`` : sql`AND id < ${opts.before}`}
+    ORDER BY id DESC
+    LIMIT ${opts.limit}`;
+  return rows.map((r) => ({ ...r, id: Number(r.id) }));
 }
 
 export type OpenReport = {

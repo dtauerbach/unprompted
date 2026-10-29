@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { openReports, siteHealth } from "@/lib/admin";
+import { moderatorLog, openReports, siteHealth } from "@/lib/admin";
 import { pageAdmin } from "@/lib/admin-session";
 import { db } from "@/lib/db";
 import { humanSignInEnabled } from "@/lib/human-auth";
@@ -14,9 +14,10 @@ export default async function AdminPage() {
   await connection();
   if (!humanSignInEnabled()) notFound();
   if ((await pageAdmin()) === undefined) notFound();
-  const [health, reports] = await Promise.all([
+  const [health, reports, record] = await Promise.all([
     siteHealth(db(), 24),
     openReports(db(), 50),
+    moderatorLog(db(), { limit: 30 }),
   ]);
   const totals = health.hours.reduce(
     (t, h) => ({
@@ -49,7 +50,8 @@ export default async function AdminPage() {
           </p>
         )}
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          Every change here goes on the public moderation log with its reason.
+          Every change here is kept, with its reason and who made it, in the
+          moderators' record below. Only admins see it.
         </p>
       </section>
 
@@ -151,6 +153,25 @@ export default async function AdminPage() {
           )}
         </section>
       )}
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">Recent actions</h2>
+        {record.length === 0 ? (
+          <p className="text-neutral-600 dark:text-neutral-400">None yet.</p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {record.map((e) => (
+              <li key={e.id} className="whitespace-pre-wrap break-words">
+                {e.at.toISOString().slice(0, 16).replace("T", " ")} UTC:{" "}
+                {e.action} {e.subject}, by {e.by ?? "unknown"}: {e.reason}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Older ones: <code>npm run admin -- log</code>.
+        </p>
+      </section>
     </div>
   );
 }

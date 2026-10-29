@@ -2,12 +2,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
 import { POST as post } from "@/app/v1/posts/route";
+import { hidePost, moderatorLog } from "@/lib/admin";
 import { addAdmin, adminFor, listAdmins, removeAdmin } from "@/lib/admins";
 import { COPY, readCopy, saveCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { issueOwnerCode } from "@/lib/humans";
 import { LIMITS } from "@/lib/limits";
-import { listModerationLog } from "@/lib/moderation";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
 // Who is an admin, and the admin pages' actions. The actions are POST
@@ -129,7 +129,7 @@ describe("adding an admin", () => {
     expect((await writes())?.admins).toBe(0);
   });
 
-  it("needs a reason, and logs it, but not on the public moderation log", async () => {
+  it("needs a reason, and logs it, but not among the moderation actions", async () => {
     await expect(
       addAdmin(db(), { authUserId: "google-1" }, "", "x"),
     ).rejects.toMatchObject({ code: "invalid_reason" });
@@ -150,7 +150,7 @@ describe("adding an admin", () => {
         detail: { reason: "Helps moderate.", by: "district" },
       },
     ]);
-    expect(await listModerationLog({ limit: 10 })).toEqual([]);
+    expect(await moderatorLog(db(), { limit: 10 })).toEqual([]);
   });
 
   it("can be undone, and lists who's an admin for the command line", async () => {
@@ -381,7 +381,7 @@ describe("admin actions", () => {
     expect(await writes()).toEqual(before);
   });
 
-  it("moderate as the admin, on the public log without their name", async () => {
+  it("moderate as the admin, in the moderators' record with their human id", async () => {
     const id = await aPost();
     const { humanId } = await addAdmin(
       db(),
@@ -418,9 +418,11 @@ describe("admin actions", () => {
         detail: { reason: "Flooding.", by: `human:${humanId}` },
       },
     ]);
-    const shown = await listModerationLog({ limit: 10 });
-    expect(shown.map((e) => e.reason)).toEqual(["Flooding.", "Spam."]);
-    expect(JSON.stringify(shown)).not.toContain("human:");
+    const shown = await moderatorLog(db(), { limit: 10 });
+    expect(shown.map((e) => [e.action, e.reason, e.by])).toEqual([
+      ["bot.freeze", "Flooding.", `human:${humanId}`],
+      ["post.hide", "Spam.", `human:${humanId}`],
+    ]);
   });
 
   it("are off in read-only mode", async () => {
@@ -483,6 +485,19 @@ describe("admin pages", () => {
     expect(html).not.toMatch(/<img src=x|<script>bad/);
     expect(html).toContain('value="hide"');
     expect(html).toContain('value="keep"');
+  });
+
+  it("show an admin the moderators' record, reasons as plain text", async () => {
+    const id = await aPost();
+    await hidePost(db(), id, "Spam <b>link</b>, posted twice.");
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const html = renderToStaticMarkup(await (await pages()).moderation());
+    expect(html).toContain("Recent actions");
+    expect(html).toContain(`post.hide post:${id}`);
+    expect(html).toContain("Spam &lt;b&gt;link&lt;/b&gt;, posted twice.");
+    expect(html).not.toContain("<b>link</b>");
+    expect(html).not.toMatch(/public (moderation )?log/i);
   });
 
   it("show an admin every piece of copy, and each one's history", async () => {

@@ -124,8 +124,8 @@ export function ModerateForm({
       ) : null}
       <input
         name="reason"
-        placeholder="Reason, shown on the public log"
-        aria-label="Reason, shown on the public log"
+        placeholder="Reason, kept for the moderators"
+        aria-label="Reason, kept for the moderators"
         required
         maxLength={280}
         className={`${INPUT} max-w-sm`}

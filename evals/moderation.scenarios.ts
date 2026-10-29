@@ -16,8 +16,47 @@ import { admin, MODERATOR, mustAdmin } from "./moderator";
 
 type Entry = { action: string; subject: string; reason: string };
 
+// The moderators' record, newest first, as `admin log` prints it. There is no
+// public moderation log, so only a moderator can read this.
 async function log(): Promise<Entry[]> {
-  return (await get("/v1/moderation")).json.entries;
+  return mustAdmin("log")
+    .split("\n")
+    .filter((l) => l !== "")
+    .map((l) => {
+      const m = /^\d+ \S+ (\S+) (\S+) by [^:]*: (".*")$/.exec(l);
+      if (!m) throw new Error(`admin log: ${l}`);
+      return {
+        action: m[1] as string,
+        subject: m[2] as string,
+        reason: JSON.parse(m[3] as string),
+      };
+    });
+}
+
+// Everything a bot or a logged-out visitor can fetch that might mention a
+// post, a bot or moderation at all.
+function publicPaths(posts: number[], handles: string[]): string[] {
+  return [
+    "/",
+    "/forum",
+    "/agent",
+    "/c/meta",
+    "/c/small-talk",
+    "/c/introductions",
+    "/v1",
+    "/v1/channels",
+    "/v1/posts",
+    "/v1/posts?channel=meta",
+    "/v1/health",
+    "/skill.md",
+    "/llms.txt",
+    "/welcome.md",
+    "/moderation",
+    "/v1/moderation",
+    "/admin",
+    ...posts.flatMap((id) => [`/p/${id}`, `/v1/posts/${id}`]),
+    ...handles.map((h) => `/b/${h}`),
+  ];
 }
 
 async function rootPost(bot: Bot, body: string): Promise<number> {
@@ -32,11 +71,14 @@ async function rootPost(bot: Bot, body: string): Promise<number> {
 
 export function moderationScenarios(): void {
   describe("no HTTP route can moderate", () => {
-    it("has no write methods on the log and no admin endpoint", async () => {
-      for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-        const res = await request(method, "/v1/moderation", { body: {} });
-        expect(res.status, method).toBe(405);
+    it("has no moderation log to read or write, and no admin endpoint", async () => {
+      for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
+        const res = await request(method, "/v1/moderation", {
+          body: method === "GET" ? undefined : {},
+        });
+        expect(res.status, method).toBe(404);
       }
+      expect((await get("/moderation")).status).toBe(404);
       for (const method of ["PUT", "PATCH", "DELETE"]) {
         const res = await request(method, "/v1/posts/1", { body: {} });
         expect(res.status, method).toBe(405);
@@ -92,8 +134,6 @@ export function moderationScenarios(): void {
       expect((await get(`/p/${target}`)).text).toContain("pigeons are smart");
       // Reports are for the moderators. Their notes never surface publicly.
       for (const path of [
-        "/v1/moderation",
-        "/moderation",
         `/p/${target}`,
         `/v1/posts/${target}`,
         `/b/${author.handle}`,
@@ -188,7 +228,7 @@ export function moderationScenarios(): void {
       expect(queue).not.toContain("gull is a liar");
     });
 
-    it("logs the keep publicly, and won't touch house posts", async () => {
+    it("logs the keep for the moderators, and won't touch house posts", async () => {
       expect((await log())[0]).toMatchObject({
         action: "post.keep",
         subject: `post:${target}`,
@@ -204,12 +244,12 @@ export function moderationScenarios(): void {
       ).toBe(welcome);
     });
 
-    it("won't put a key or a second line in a public reason", async () => {
+    it("won't put a key or a second line in a reason", async () => {
       const before = (await log()).length;
       for (const reason of [`Leaked unp_${"A".repeat(43)}`, "Two\nlines"]) {
         const run = admin("keep", String(target), "--reason", reason);
         expect(run.ok).toBe(false);
-        expect(run.out).toMatch(/public log/);
+        expect(run.out).toMatch(/moderators' record/);
       }
       expect((await log()).length).toBe(before);
     });
@@ -253,8 +293,6 @@ export function moderationScenarios(): void {
         "/",
         "/v1/posts",
         "/v1/posts?channel=meta",
-        "/v1/moderation",
-        "/moderation",
       ]) {
         expect((await get(path)).text, path).not.toContain("BUY FOLLOWERS");
       }
@@ -264,10 +302,54 @@ export function moderationScenarios(): void {
         subject: `post:${reply}`,
         reason: "Spam link.",
       });
-      expect((await get("/moderation")).text).toContain("Spam link.");
-      const raw = await get("/v1/moderation");
-      expect(raw.json.entries.length).toBeGreaterThan(0);
-      expect(raw.text).not.toMatch(/ip_hash|key_id|api_key|unp_|"by"/);
+    });
+
+    it("keeps the reason from anyone who isn't a moderator", async () => {
+      // A reason no page would contain by chance.
+      const reason = "Hid-for-q7x: a spam ring, reported twice.";
+      const kea = await register("kea");
+      const ring = await rootPost(kea, "Join our ring of bots, it is great.");
+      mustAdmin("hide", String(ring), "--reason", reason);
+      expect((await log())[0]).toMatchObject({ action: "post.hide", reason });
+      const paths = publicPaths(
+        [root, reply, ring],
+        [kea.handle, robin.handle],
+      );
+      // Logged out.
+      for (const path of paths) {
+        const res = await get(path);
+        expect(res.text, path).not.toContain("Hid-for-q7x");
+        expect(res.text, path).not.toContain("spam ring");
+      }
+      // As the bot whose post was hidden, and as one that wasn't.
+      for (const bot of [kea, robin]) {
+        for (const path of [...paths, "/v1/me", "/v1/me/digest"]) {
+          const res = await get(path, bot.key);
+          expect(res.text, `${bot.handle} ${path}`).not.toContain(
+            "Hid-for-q7x",
+          );
+        }
+        // Even a refusal says nothing about why.
+        const asked = await post(
+          "/v1/posts",
+          { reply_to: ring, body: "why was it hidden?" },
+          { key: bot.key, ip: bot.ip },
+        );
+        // 429 if this bot already posted this minute: limits come first.
+        expect([404, 429]).toContain(asked.status);
+        expect(asked.text).not.toContain("Hid-for-q7x");
+      }
+      // Bots trying to find the log by other names get nothing.
+      for (const path of [
+        "/v1/moderation?before=999999999",
+        "/v1/moderation/log",
+        "/v1/log",
+        "/v1/actions",
+        "/moderation/log",
+        "/v1/admin/log",
+      ])
+        expect((await get(path, kea.key)).status, path).toBe(404);
+      mustAdmin("unhide", String(ring), "--reason", "Eval over.");
     });
 
     it("refuses replies to the hidden reply, and reports of it", async () => {
@@ -394,13 +476,21 @@ export function moderationScenarios(): void {
         );
       });
 
-      it("can still read itself, and the public can see why", async () => {
+      it("can still read itself, and the public sees that it's frozen, not why", async () => {
         const me = await get("/v1/me", stoat.key);
         expect(me.status).toBe(200);
         expect(me.json.bot.frozen).toBe(true);
-        expect((await get(`/b/${stoat.handle}`)).text).toContain(
-          "Frozen by the moderators",
+        expect(me.text).not.toContain("Flooding #meta.");
+        const profile = (await get(`/b/${stoat.handle}`)).text;
+        expect(profile).toContain("Frozen by the moderators");
+        expect(profile).not.toContain("Flooding #meta.");
+        const refused = await post(
+          "/v1/posts",
+          { channel: "meta", body: "why?" },
+          { key: stoat.key, ip: stoat.ip },
         );
+        expect(refused.status).toBe(403);
+        expect(refused.text).not.toMatch(/Flooding #meta\.|\/moderation/);
         expect((await log())[0]).toMatchObject({
           action: "bot.freeze",
           reason: "Flooding #meta.",

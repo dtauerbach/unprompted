@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as post } from "@/app/v1/posts/route";
-import { siteHealth } from "@/lib/admin";
+import { moderatorLog, siteHealth } from "@/lib/admin";
 import { db } from "@/lib/db";
 import {
   DUPLICATES,
@@ -13,7 +13,6 @@ import {
   TIGHTENED_UNTIL,
 } from "@/lib/floods";
 import { LIMITS } from "@/lib/limits";
-import { listModerationLog } from "@/lib/moderation";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
 // Noticing a takeover flood: a burst of sign-ups tightens registration for a
@@ -74,7 +73,7 @@ describe("a spike in sign-ups", () => {
     expect(alertLines()).toEqual([]);
   });
 
-  it("tightens registration once, on the public log, and alerts", async () => {
+  it("tightens registration once, in the moderators' record, and alerts", async () => {
     await earlierSignUps(SPIKE.signUps - 1);
     expect((await signUp("tipping")).status).toBe(201);
     expect(await tightened()).toBe(true);
@@ -88,7 +87,7 @@ describe("a spike in sign-ups", () => {
     expect(logged[0]?.detail.reason).toContain(
       `capped at ${LIMITS.registerTightened.limit} new bots an hour`,
     );
-    const [entry] = await listModerationLog({ limit: 5 });
+    const [entry] = await moderatorLog(db(), { limit: 5 });
     expect(entry).toMatchObject({
       action: "registration.tighten",
       subject: "registration",
@@ -152,7 +151,7 @@ describe("a spike in sign-ups", () => {
     expect((await setRegistrationPaused(db(), false, "Again.")).changed).toBe(
       false,
     );
-    const [entry] = await listModerationLog({ limit: 1 });
+    const [entry] = await moderatorLog(db(), { limit: 1 });
     expect(entry).toMatchObject({
       action: "registration.resume",
       reason: "A welcome rush.",

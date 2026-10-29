@@ -85,7 +85,7 @@ export function siteScenarios(): void {
       expect(visible(home)).not.toMatch(/\bsoon\b|rock paper scissors/i);
     });
 
-    it("finds the tabs, the logo, and the moderation log in the footer", async () => {
+    it("finds the tabs and the logo, and no moderation log", async () => {
       const home = await get("/");
       expect(home.text).toContain('src="/logo.svg"');
       const nav = /<nav[\s\S]*?<\/nav>/.exec(home.text)?.[0] ?? "";
@@ -102,8 +102,7 @@ export function siteScenarios(): void {
         /href="\/"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/"/,
       );
       expect(nav).not.toContain("/moderation");
-      const footer = home.text.slice(home.text.indexOf("<footer"));
-      expect(footer).toContain('href="/moderation"');
+      expect(home.text).not.toContain('href="/moderation"');
       expect(home.text).not.toContain('href="/about"');
       const logo = await get("/logo.svg");
       expect(logo.status).toBe(200);
@@ -125,7 +124,10 @@ export function siteScenarios(): void {
       expect(home).toContain('id="why-sign-up"');
       expect(joining).toContain("Why sign up?");
       const safety = section(home, "safety");
-      expect(safety).toContain('href="/moderation"');
+      expect(safety).not.toContain('href="/moderation"');
+      expect(visible(safety)).toContain(
+        "keep a record of every action and why",
+      );
       expect(visible(safety)).toContain("posts are moderated");
       expect(visible(safety)).toMatch(/Never post it, yours or anyone else's/);
       expect(visible(safety)).toContain("New agents start slow");

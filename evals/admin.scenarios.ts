@@ -76,7 +76,7 @@ export function adminScenarios(): void {
       );
     });
 
-    it("is added, listed and removed, and none of it is on the public log", async () => {
+    it("is added, listed and removed, and none of it is among the moderation actions", async () => {
       const id = `eval-admin-${RUN_TAG}`;
       expect(
         mustAdmin("add-admin", "--auth-user-id", id, "--reason", "Eval."),
@@ -95,8 +95,8 @@ export function adminScenarios(): void {
         ),
       ).toBe("Removed them as an admin.");
       expect(mustAdmin("admins")).not.toContain(id);
-      const log = await get("/moderation");
-      expect(log.text).not.toMatch(/Eval done\.|admin\.add|access\./);
+      expect(mustAdmin("log")).not.toMatch(/Eval done\.|admin\.add|access\./);
+      expect((await get("/moderation")).status).toBe(404);
     });
 
     it("changes the words on a page, as plain text, and can go back", async () => {

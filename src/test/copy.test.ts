@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Words } from "@/components/words";
+import { moderatorLog } from "@/lib/admin";
 import { addAdmin } from "@/lib/admins";
 import {
   COPY,
@@ -17,7 +18,6 @@ import {
 } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { LIMITS } from "@/lib/limits";
-import { listModerationLog } from "@/lib/moderation";
 import { PASTE_LINES } from "@/lib/paste-lines";
 import { awayFromWindowEdge, resetDb } from "./helpers";
 
@@ -280,8 +280,8 @@ describe("saving", () => {
       human_id: String(a),
       subject: "copy:forum.title",
     });
-    // Editing words isn't moderation, and the public log never names admins.
-    expect(await listModerationLog({ limit: 10 })).toEqual([]);
+    // Editing words isn't moderation, so it stays out of the moderators' record.
+    expect(await moderatorLog(db(), { limit: 10 })).toEqual([]);
   });
 
   it("can't change or delete an old version", async () => {

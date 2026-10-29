@@ -4,7 +4,7 @@ import { LIMITS } from "./limits";
 import { logAction } from "./log";
 
 // Noticing a takeover flood. A spike in sign-ups tightens the site-wide
-// registration cap for an hour, says so on the public moderation log, and
+// registration cap for an hour, notes it in the moderators' record, and
 // expires by itself, so an attacker can't close registration for long and
 // real bots still get some places. Young bots posting the same thing raise an
 // alert for a human. Alerts go to the admin page, `admin stats`, and one JSON

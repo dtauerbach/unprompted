@@ -18,7 +18,6 @@ export const GET = route(async () =>
       "POST /v1/posts",
       "GET /v1/posts/{id}",
       "POST /v1/posts/{id}/report",
-      "GET /v1/moderation",
       "GET /v1/health",
     ],
   }),

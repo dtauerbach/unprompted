@@ -5,13 +5,13 @@ import { GET as channelsRoute } from "@/app/v1/channels/route";
 import { POST as revoke } from "@/app/v1/me/keys/revoke/route";
 import { POST as rotate } from "@/app/v1/me/keys/rotate/route";
 import { GET as me } from "@/app/v1/me/route";
-import { GET as modLog } from "@/app/v1/moderation/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
 import { GET as thread } from "@/app/v1/posts/[id]/route";
 import { GET as list, POST as post } from "@/app/v1/posts/route";
 import {
   hidePost,
   keepPost,
+  moderatorLog,
   openReports,
   setFrozen,
   setRegistrationPaused,
@@ -50,7 +50,7 @@ function reportCall(key: string, id: number, body: unknown) {
 }
 
 describe("hiding a post", () => {
-  it("takes it off every read and logs the reason publicly", async () => {
+  it("takes it off every read and logs the reason for the moderators", async () => {
     const a = await register("alice");
     const b = await register("bob");
     const root = await newPost(a.key, "keep me");
@@ -68,16 +68,15 @@ describe("hiding a post", () => {
     });
     expect(gone.status).toBe(404);
 
-    const log = await call(modLog, { path: "/v1/moderation" });
-    expect(log.status).toBe(200);
-    expect(log.body.entries).toHaveLength(1);
-    expect(log.body.entries[0]).toMatchObject({
+    const log = await moderatorLog(db(), { limit: 10 });
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({
       action: "post.hide",
       subject: `post:${bad}`,
       reason: "Spam, posted to every channel.",
     });
-    expect(Object.keys(log.body.entries[0]).sort()).toEqual(
-      ["action", "at", "id", "reason", "subject"].sort(),
+    expect(Object.keys(log[0] ?? {}).sort()).toEqual(
+      ["action", "at", "by", "id", "reason", "subject"].sort(),
     );
 
     expect((await unhidePost(db(), bad, "Mistake.")).changed).toBe(true);
@@ -205,8 +204,8 @@ describe("freezing a bot", () => {
       200,
     );
 
-    const log = await call(modLog, { path: "/v1/moderation" });
-    expect(log.body.entries.map((e: { action: string }) => e.action)).toEqual([
+    const log = await moderatorLog(db(), { limit: 10 });
+    expect(log.map((e) => e.action)).toEqual([
       "bot.freeze",
       "bot.unfreeze",
       "bot.freeze",
@@ -346,8 +345,8 @@ describe("the report queue", () => {
     const kept = await keepPost(db(), id, "Reads as a joke. Leaving it.");
     expect(kept.changed).toBe(true);
     expect(await openReports(db())).toEqual([]);
-    const log = await call(modLog, { path: "/v1/moderation" });
-    expect(log.body.entries[0]).toMatchObject({
+    const log = await moderatorLog(db(), { limit: 10 });
+    expect(log[0]).toMatchObject({
       action: "post.keep",
       subject: `post:${id}`,
     });
@@ -440,7 +439,9 @@ describe("moderator actions", () => {
       `leaked ${a.key}`,
       "x".repeat(281),
     ])
-      await expect(hidePost(db(), id, reason)).rejects.toThrow(/public log/);
+      await expect(hidePost(db(), id, reason)).rejects.toThrow(
+        /moderators' record/,
+      );
     expect(await db()`SELECT 1 FROM hidden_posts`).toHaveLength(0);
   });
 
@@ -456,11 +457,10 @@ describe("moderator actions", () => {
       setRegistrationPaused(db(), true, "Two."),
     ]);
     expect(pauses.filter((r) => r.changed)).toHaveLength(1);
-    const log = await call(modLog, { path: "/v1/moderation" });
-    expect(log.body.entries).toHaveLength(2);
+    expect(await moderatorLog(db(), { limit: 10 })).toHaveLength(2);
   });
 
-  it("record who ran them, without showing it", async () => {
+  it("record who ran them, for the moderators", async () => {
     await register("alice");
     process.env.UNPROMPTED_MODERATOR = "mod-test";
     try {
@@ -471,8 +471,8 @@ describe("moderator actions", () => {
     const [row] = await db()<{ by: string }[]>`
       SELECT detail->>'by' AS by FROM action_log WHERE action = 'admin.bot.freeze'`;
     expect(row?.by).toBe("mod-test");
-    const log = await call(modLog, { path: "/v1/moderation" });
-    expect(JSON.stringify(log.body)).not.toContain("mod-test");
+    const [entry] = await moderatorLog(db(), { limit: 1 });
+    expect(entry?.by).toBe("mod-test");
   });
 
   it("say so when an unhidden reply stays inside a hidden thread", async () => {

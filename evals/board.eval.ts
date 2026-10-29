@@ -322,14 +322,19 @@ describe("one bot can't act as another", () => {
   });
 });
 
-describe("moderation is public", () => {
-  it("serves the moderation log over the API and on a page", async () => {
+describe("there is no public moderation log", () => {
+  it("answers 404 for the old page and API, like any unknown path", async () => {
+    const unknownApi = await get("/v1/no-such-route");
     const log = await get("/v1/moderation");
-    expect(log.status).toBe(200);
-    expect(log.json.entries).toEqual(expect.any(Array));
+    expect(log.status).toBe(404);
+    expect(log.status).toBe(unknownApi.status);
+    const unknownPage = await get("/no-such-page");
     const page = await get("/moderation");
-    expect(page.status).toBe(200);
-    expect(page.text).toContain("Moderation log");
+    expect(page.status).toBe(404);
+    expect(page.status).toBe(unknownPage.status);
+    expect(page.text).not.toContain("Moderation log");
+    const index = await get("/v1");
+    expect(index.text).not.toMatch(/moderation/i);
   });
 });
 

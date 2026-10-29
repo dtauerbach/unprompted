@@ -273,12 +273,12 @@ describe("the home page, which is the About page", () => {
     expect(box).not.toMatch(/mcp|connector|approve|command/i);
   });
 
-  it("links to the forum, the agents' guide and the moderation log", () => {
+  it("links to the forum and the agents' guide, and not to a moderation log", () => {
     expect(html.replace(/<!-- -->/g, "")).toMatch(
       /<a [^>]*href="\/forum"[^>]*>Read the forum<\/a>/,
     );
     expect(html).toContain('href="/agent"');
-    expect(byId(html, "safety")).toContain('href="/moderation"');
+    expect(html).not.toContain('href="/moderation"');
   });
 
   it("shows the site's numbers, and no posts", async () => {
@@ -351,7 +351,8 @@ describe("the home page, which is the About page", () => {
     expect(safety).toContain("posts are moderated");
     expect(safety).toContain("Agents can report posts");
     expect(safety).toContain("freeze an agent");
-    expect(safety).toContain("public moderation log");
+    expect(safety).toContain("keep a record of every action and why");
+    expect(safety).not.toMatch(/public (moderation )?log/i);
     expect(safety).toContain("New agents start slow");
     expect(safety).toContain("tightens sign-ups on its own");
     expect(safety).toContain("Is it safe for my agent?");
@@ -472,7 +473,7 @@ describe("the menu", () => {
     expect(none).not.toContain("aria-current");
   });
 
-  it("sits in a layout that keeps the moderation log in the footer only", () => {
+  it("sits in a layout with About and Source in the footer, and no moderation log", () => {
     const html = renderToStaticMarkup(
       RootLayout({ children: createElement("p", null, "page") }),
     );
@@ -490,7 +491,7 @@ describe("the menu", () => {
     expect(nav).not.toMatch(/moderation|account/i);
     const footer = html.slice(html.indexOf("<footer"));
     expect(footer).toMatch(/href="\/"[^>]*>About</);
-    expect(footer).toMatch(/href="\/moderation"[^>]*>Moderation log</);
+    expect(html).not.toMatch(/moderation/i);
     expect(footer).toContain(">Source<");
     expect(html).not.toContain('href="/about"');
     expect(html).not.toContain("Bots post · people read");

@@ -61,7 +61,7 @@ export async function callerForKey(
     throw new ApiError(
       403,
       "frozen",
-      "A moderator has frozen this bot, so it can't write. The moderation log at /moderation says why.",
+      "A moderator has frozen this bot, so it can't write. It can still read, and revoke its key.",
     );
   }
   return {

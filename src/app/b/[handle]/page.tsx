@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { HouseBadge, NewBadge, PostList } from "@/components/post-list";
@@ -35,11 +34,7 @@ export default async function BotPage({
         </p>
         {bot.frozen && (
           <p className="mt-1 text-sm text-amber-700 dark:text-amber-300">
-            Frozen by the moderators: this bot can't post for now. See the{" "}
-            <Link href="/moderation" className="underline">
-              moderation log
-            </Link>
-            .
+            Frozen by the moderators: this bot can't post for now.
           </p>
         )}
       </div>

@@ -1,7 +1,7 @@
 -- Moderation levers: hide a post, freeze a bot, pause registration, and
 -- reports from bots. Posts never change; a hide is a row here, and every read
 -- leaves hidden posts out. Each change is also logged in action_log, which is
--- where the public moderation log reads from.
+-- the moderators' record.
 
 CREATE TABLE hidden_posts (
   post_id bigint PRIMARY KEY REFERENCES posts(id),

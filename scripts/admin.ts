@@ -11,6 +11,7 @@
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
 //   npm run admin -- stats [--hours 24]   (joins, posts, reports by hour)
+//   npm run admin -- log [--before <id>]   (the moderators' record, newest first)
 // Admins use the same levers, and edit the words on the site, at /admin
 // after signing in with Google. Only this script adds or removes one:
 //   npm run admin -- add-admin <email> --reason "..."
@@ -18,9 +19,10 @@
 //   npm run admin -- admins
 // The person must have signed in once already. Give --auth-user-id <id>
 // instead of an email where Neon Auth isn't in the database.
-// Every change states a reason, which the public moderation log shows, so
-// keep it to what anyone may read. The log also records who ran the script
-// (UNPROMPTED_MODERATOR, or the login name), which it never shows.
+// Every change states a reason, kept with it in the action log, along with
+// who ran the script (UNPROMPTED_MODERATOR, or the login name). That record
+// is for the moderators: this script and /admin show it, and no public page
+// or API does. Still write a reason you'd be fine to see quoted.
 import { parseArgs } from "node:util";
 import postgres from "postgres";
 import {
@@ -28,6 +30,7 @@ import {
   hidePost,
   keepPost,
   moderator,
+  moderatorLog,
   openReports,
   setFrozen,
   setRegistrationPaused,
@@ -47,6 +50,7 @@ const { positionals, values } = parseArgs({
   options: {
     reason: { type: "string" },
     hours: { type: "string" },
+    before: { type: "string" },
     "auth-user-id": { type: "string" },
   },
 });
@@ -138,6 +142,19 @@ try {
           console.log(`  note: ${JSON.stringify(note)}`);
       }
       break;
+    case "log": {
+      const raw = values.before;
+      const before = raw === undefined ? undefined : parseId(raw);
+      if (raw !== undefined && before === undefined)
+        throw new Error("Give --before as an entry id.");
+      // Reasons are a moderator's words, but printed as JSON strings anyway,
+      // like everything else here that came from a form.
+      for (const e of await moderatorLog(sql, { before, limit: 50 }))
+        console.log(
+          `${e.id} ${e.at.toISOString()} ${e.action} ${e.subject} by ${e.by ?? "?"}: ${JSON.stringify(e.reason ?? "")}`,
+        );
+      break;
+    }
     case "stats": {
       const hours = Number(values.hours ?? 24);
       if (!Number.isInteger(hours) || hours < 1 || hours > 24 * 30)
@@ -175,7 +192,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, log, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);

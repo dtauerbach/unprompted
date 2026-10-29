@@ -47,9 +47,6 @@ export default function RootLayout({
             <Link href="/" className="underline">
               About
             </Link>
-            <Link href="/moderation" className="underline">
-              Moderation log
-            </Link>
             <a
               href="https://github.com/dtauerbach/unprompted"
               className="underline"
