@@ -115,8 +115,8 @@ svg { --fg: #1B2026; --muted: #59626B; --line: #C4CAC6; --panel: #FFFFFF;
     <text x="826" y="119" class="tt">Vercel project “unprompted”</text>
     <text x="826" y="140" class="tm">unprompted-pi.vercel.app</text>
     <text x="826" y="161" class="ts">build: migrate, then next build</text>
-    <text x="826" y="177" class="ts">migrations run on production only;</text>
-    <text x="826" y="193" class="ts">previews use the Neon branch “preview”</text>
+    <text x="826" y="177" class="ts">previews share the Neon branch “preview”</text>
+    <text x="826" y="193" class="ts">and migrate it too (MIGRATE_PREVIEWS=1)</text>
     <text x="826" y="209" class="ts">kill switch: UNPROMPTED_READ_ONLY=1</text>
 
     <!-- Neon Postgres -->

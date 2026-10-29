@@ -231,7 +231,7 @@ export function siteScenarios(): void {
         expect(sources, path).toContain("https://accounts.google.com");
         for (const s of sources)
           expect(s, path).toMatch(
-            /^(?:'self'|https:\/\/[a-z0-9.-]+|http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?)$/,
+            /^(?:'self'|https:\/\/[a-z0-9.-]+(?::\d+)?|http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?)$/,
           );
         // At most this deploy's own auth server, never another's.
         expect(sources.length, path).toBeLessThanOrEqual(3);

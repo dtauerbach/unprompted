@@ -25,7 +25,12 @@ export function formActionSources(env: Env = process.env): string[] {
   const sources = ["'self'", "https://accounts.google.com"];
   const base = authBaseUrl(env);
   if (base) {
-    const url = new URL(base);
+    let url: URL;
+    try {
+      url = new URL(base);
+    } catch {
+      throw new Error("NEON_AUTH_BASE_URL is not a full address");
+    }
     if (url.protocol !== "https:" && !isLocal(url.hostname))
       throw new Error("NEON_AUTH_BASE_URL must be https, unless it's local");
     sources.push(url.origin);

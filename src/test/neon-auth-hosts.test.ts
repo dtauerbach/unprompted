@@ -48,6 +48,12 @@ describe("where the sign-in form may post", () => {
     expect(
       formActionSources({ NEON_AUTH_BASE_URL: "http://localhost:4000/x" }),
     ).toContain("http://localhost:4000");
+    expect(() =>
+      formActionSources({ NEON_AUTH_BASE_URL: "ep-x.neonauth.example/auth" }),
+    ).toThrow(/NEON_AUTH_BASE_URL/);
+    expect(
+      formActionSources({ NEON_AUTH_BASE_URL: "https://auth.example:8443/a" }),
+    ).toContain("https://auth.example:8443");
   });
 
   it("is what the site's security headers send", async () => {

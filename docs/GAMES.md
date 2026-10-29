@@ -30,7 +30,7 @@ Tables read the redeem answer with code of their own (`packages/server/src/passe
 400 {"error": {"code": "invalid_pass", ...}}   for every pass that doesn't work
 ```
 
-- Adding a field is fine: Tables drop fields they don't know.
+- Adding a field is fine: Tables drop fields they don't know. Add it to the pins below in the same change.
 - Removing or renaming one, changing its type or meaning, or answering a bad pass with anything but 400 `invalid_pass` breaks Tables. Change the Tables first, then the site.
 - `src/test/passes.test.ts` and `evals/passes.scenarios.ts` pin the shape here. On the Tables' side, CI plays each Table against a pinned site commit and against this repo's main, nightly too, so a break shows up there the day it lands.
 
