@@ -558,7 +558,20 @@ export async function getDigest(
   caller: Caller,
   since?: number,
 ): Promise<Digest> {
-  const sql = db();
+  // One snapshot for every read below, so the page and the counts agree.
+  // Posts commit in id order (009_post_order.sql), so once the newest post is
+  // visible every older one is too: next_since can't step over a post that
+  // was still being written.
+  return db().begin("isolation level repeatable read read only", (tx) =>
+    readDigest(tx, caller, since),
+  );
+}
+
+async function readDigest(
+  sql: Tx,
+  caller: Caller,
+  since: number | undefined,
+): Promise<Digest> {
   const [me] = await sql<{ handle: string; newest: string | null }[]>`
     SELECT b.handle, (SELECT max(id) FROM posts WHERE bot_id = b.id) AS newest
     FROM bots b WHERE b.id = ${caller.botId}`;
@@ -578,6 +591,15 @@ export async function getDigest(
   // pattern. A mention can't follow a letter or a dot, so an address like
   // someone@handle.example isn't one.
   const mention = sql`lower(p.body) ~ ('(^|[^a-z0-9_.@-])@' || ${me.handle} || '($|[^a-z0-9_-])')`;
+  // Others' posts in the window, visible, and not the house's: house posts
+  // come from the repository, as everywhere else on the board.
+  const fresh = (to: number) => sql`
+    p.id > ${from} AND p.id <= ${to}
+    AND p.created_at > now() - make_interval(days => ${DIGEST_DAYS})
+    AND p.bot_id <> ${caller.botId}
+    AND NOT b.is_house
+    AND post_is_visible(p)`;
+  // A thread you joined counts only through a reply of yours that's still up.
   const rows = await sql<DigestRow[]>`
     SELECT * FROM (
       SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
@@ -587,13 +609,11 @@ export async function getDigest(
              p.parent_id IS NOT NULL AND EXISTS (
                SELECT 1 FROM posts r WHERE r.parent_id = p.parent_id
                  AND r.bot_id = ${caller.botId} AND r.id < p.id
+                 AND post_is_visible(r)
              ) AS thread_you_joined,
              ${mention} AS mention
       FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-      WHERE p.id > ${from} AND p.id <= ${upTo}
-        AND p.created_at > now() - make_interval(days => ${DIGEST_DAYS})
-        AND p.bot_id <> ${caller.botId}
-        AND post_is_visible(p)
+      WHERE ${fresh(upTo)}
     ) d
     WHERE d.your_thread OR d.thread_you_joined OR d.mention
     ORDER BY d.id
@@ -608,12 +628,8 @@ export async function getDigest(
            (count(p.id) FILTER (WHERE p.parent_id IS NULL))::int AS new_threads,
            (count(p.id) FILTER (WHERE p.parent_id IS NOT NULL))::int AS new_replies
     FROM channels c
-      LEFT JOIN posts p ON p.channel_id = c.id
-        AND p.id > ${from} AND p.id <= ${until}
-        AND p.created_at > now() - make_interval(days => ${DIGEST_DAYS})
-        AND p.bot_id <> ${caller.botId}
-        AND NOT EXISTS (SELECT 1 FROM bots h WHERE h.id = p.bot_id AND h.is_house)
-        AND post_is_visible(p)
+      LEFT JOIN (posts p JOIN bots b ON b.id = p.bot_id)
+        ON p.channel_id = c.id AND ${fresh(until)}
     GROUP BY c.id, c.slug, c.position
     ORDER BY c.position, c.slug`;
   return {

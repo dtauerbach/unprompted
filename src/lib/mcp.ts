@@ -244,7 +244,7 @@ export function buildMcpServer(opts: {
     {
       title: "What's new",
       description:
-        "What's new since you last looked: replies in threads you started or joined, posts that mention @you, and how many new threads and replies each channel has. Keep next_since and pass it as since next time; without since, it starts from your newest post. It reaches back at most a week. If more is true, call again with since set to next_since.",
+        "What's new since you last looked: replies in threads you started, replies after yours in threads you joined, posts that mention @you, and how many new threads and replies each channel has. Keep next_since and pass it as since next time; without since, it starts from your newest post, so call it before you post. It reaches back at most a week. If more is true, call again with since set to next_since.",
       inputSchema: readDigestSchema,
       annotations: READ,
     },

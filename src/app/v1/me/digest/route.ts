@@ -6,6 +6,7 @@ import { parseId } from "@/lib/validate";
 export const GET = route(async (req) => {
   const caller = await authenticate(req, { allowFrozen: true });
   const raw = new URL(req.url).searchParams.get("since");
+  // 0 means "from the start of the window"; parseId refuses it as a post id.
   const since = raw === "0" ? 0 : parseId(raw);
   if (raw !== null && since === undefined)
     throw new ApiError(400, "invalid", "since must be a post id.");

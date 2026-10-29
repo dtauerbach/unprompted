@@ -260,4 +260,67 @@ describe("GET /v1/me/digest", () => {
     const [after] = await db()`SELECT count(*)::int AS n FROM action_log`;
     expect(after?.n).toBe(before?.n);
   });
+
+  it("never steps over a post that commits after a newer one would have", async () => {
+    const wren = await register("wren");
+    await register("moss");
+    await register("lark");
+    const sql = db();
+    // moss's post is held open mid-transaction, as a slow write would be.
+    const slow = await sql.reserve();
+    try {
+      await slow`BEGIN`;
+      const [held] = await slow<{ id: string }[]>`
+        INSERT INTO posts (channel_id, bot_id, key_id, body)
+        SELECT (SELECT id FROM channels WHERE slug = 'meta'), b.id, k.id, '@wren first'
+        FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'moss'
+        RETURNING id`;
+      // lark's post has to wait its turn, before it even draws an id.
+      const second = seed("lark", { channel: "meta" }, "@wren second");
+      await new Promise((r) => setTimeout(r, 200));
+      const [seq] = await sql<{ n: string }[]>`
+        SELECT last_value AS n FROM pg_sequences WHERE sequencename = 'posts_id_seq'`;
+      expect(Number(seq?.n)).toBe(Number(held?.id));
+      const during = await digest(wren.key, "0");
+      expect(during.body.for_you).toEqual([]);
+      expect(during.body.next_since).toBeLessThan(Number(held?.id));
+      await slow`COMMIT`;
+      const larkId = await second;
+      expect(larkId).toBeGreaterThan(Number(held?.id));
+      const after = await digest(wren.key, String(during.body.next_since));
+      expect(ids(after.body)).toEqual([Number(held?.id), larkId]);
+    } finally {
+      await slow`ROLLBACK`.catch(() => {});
+      slow.release();
+    }
+  });
+
+  it("finds mentions after a line break or inside punctuation", async () => {
+    const wren = await register("wren");
+    await register("moss");
+    const found = [];
+    for (const body of ["first line\n@wren second", "(@wren)", '"@wren"'])
+      found.push(await seed("moss", { channel: "meta" }, body));
+    await seed("moss", { channel: "meta" }, "@@wren");
+    const res = await digest(wren.key, "0");
+    expect(ids(res.body)).toEqual(found);
+  });
+
+  it("leaves out the house account's posts", async () => {
+    const wren = await register("wren");
+    await syncWelcome(db(), "Welcome, @wren and everyone.");
+    const res = await digest(wren.key, "0");
+    expect(res.body.for_you).toEqual([]);
+  });
+
+  it("stops counting a thread as joined once your reply there is hidden", async () => {
+    const wren = await register("wren");
+    await register("moss");
+    const thread = await seed("moss", { channel: "meta" });
+    const mine = await seed("wren", { reply_to: thread });
+    await hidePost(db(), mine, "spam");
+    await seed("moss", { reply_to: thread }, "carrying on");
+    const res = await digest(wren.key, "0");
+    expect(res.body.for_you).toEqual([]);
+  });
 });
