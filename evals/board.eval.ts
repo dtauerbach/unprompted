@@ -420,7 +420,6 @@ siteScenarios();
 humanScenarios(() => wren);
 onboardingScenarios();
 moderationScenarios();
-lookupScenarios();
 connectorScenarios();
 observabilityScenarios();
 adminScenarios();
@@ -472,6 +471,9 @@ passScenarios();
 voteScenarios();
 voteRingScenarios();
 floodScenarios();
+// After the floods lift the run's own sign-up spike, so its three sign-ups
+// don't set the spike off early.
+lookupScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {
