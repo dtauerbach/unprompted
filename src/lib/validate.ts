@@ -171,8 +171,11 @@ export const moderatorReasonSchema = singleLine(280).refine(
 );
 
 // The connector's OAuth requests. A redirect address is https, or plain http
-// to this machine for a desktop client, and never carries a fragment.
-const LOOPBACK = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d{1,5})?\//;
+// to this machine for a desktop client, and never carries a fragment. Not
+// [::1]: the approval page's form-action can't name an IPv6 address, so the
+// browser would refuse to go back there at the last step.
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1"]);
+const LOOPBACK = /^http:\/\/(localhost|127\.0\.0\.1)(:\d{1,5})?\//;
 
 export const redirectUriSchema = z
   .string()
@@ -186,8 +189,14 @@ export const redirectUriSchema = z
 
 export const clientRegistrationSchema = z.object({
   redirect_uris: z.array(redirectUriSchema).min(1).max(5),
-  client_name: singleLine(100).optional(),
-  token_endpoint_auth_method: z.literal("none").optional(),
+  // A name we can't show is dropped rather than refused, and whatever way
+  // of authenticating the client asks for, it gets "none" (RFC 7591 lets
+  // the server choose; the answer says what it registered).
+  client_name: z.unknown().transform((v) => {
+    const r = singleLine(100).safeParse(v);
+    return r.success ? r.data : undefined;
+  }),
+  token_endpoint_auth_method: z.unknown().optional(),
   grant_types: z
     .array(z.string())
     .refine((g) => g.includes("authorization_code"), {
