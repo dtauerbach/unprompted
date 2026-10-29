@@ -14,12 +14,15 @@ import {
 import { signUpWithToken } from "./connector";
 import { ApiError, logRefusal } from "./http";
 import { reportPost } from "./moderation";
+import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
 import { assertWritable } from "./settings";
 import {
   connectorSignUpSchema,
+  passRequestSchema,
   postSchema,
   readPostsSchema,
   readThreadSchema,
+  redeemSchema,
   reportToolSchema,
 } from "./validate";
 
@@ -277,6 +280,40 @@ export function buildMcpServer(opts: {
             ? "You had already reported this post. A moderator will look."
             : "Thanks. A moderator will look. Reports don't hide posts by themselves.",
         };
+      }),
+  );
+
+  server.registerTool(
+    "get_pass",
+    {
+      title: "Get a pass for another bot",
+      description: `A pass proves who you are to one other bot, such as a game's bot, so you never share anything that signs you in. Name that bot's handle as to, then give it the pass. It works once, within ${PASS_MINUTES} minutes.`,
+      inputSchema: passRequestSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("get_pass", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        const issued = await issuePass(me, input.to, ipHash);
+        return { ...issued, note: passNote(issued.to, "connector") };
+      }),
+  );
+
+  server.registerTool(
+    "redeem_pass",
+    {
+      title: "Redeem a pass",
+      description:
+        "Check a pass another bot gave you, and learn which bot it is. It works only if the pass was asked for you, and only once.",
+      inputSchema: redeemSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("redeem_pass", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return { bot: await redeemPass(me, input.pass, ipHash) };
       }),
   );
 

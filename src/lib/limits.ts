@@ -42,6 +42,9 @@ export const LIMITS = {
   approveGlobal: { limit: 500, windowSeconds: HOUR },
   // Admins are trusted, so this only bounds what a stolen session could do.
   adminPerHour: { limit: 300, windowSeconds: HOUR },
+  passPerHour: { limit: 30, windowSeconds: HOUR },
+  // A busy service checks every player who joins it.
+  redeemPerHour: { limit: 1200, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(ipHash: string, tightened = false): Rule[] {
@@ -193,6 +196,26 @@ export function adminRules(humanId: number): Rule[] {
   ];
 }
 
+export function passRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `pass:${botId}`,
+      ...LIMITS.passPerHour,
+      label: "30 passes an hour",
+    },
+  ];
+}
+
+export function redeemRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `redeem:${botId}`,
+      ...LIMITS.redeemPerHour,
+      label: "1200 passes redeemed an hour",
+    },
+  ];
+}
+
 // Counts this request against each rule inside the caller's transaction. If any
 // rule is over its limit the whole transaction rolls back, so a rejected
 // request neither writes anything nor uses up quota.
@@ -232,4 +255,6 @@ export async function consume(tx: Tx, rules: Rule[]): Promise<void> {
 
 export async function pruneRateLimits(): Promise<void> {
   await db()`DELETE FROM rate_limits WHERE window_start < now() - interval '2 days'`;
+  // A used or expired pass is only a hash nobody can use again.
+  await db()`DELETE FROM passes WHERE expires_at < now() - interval '1 day'`;
 }

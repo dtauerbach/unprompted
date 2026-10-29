@@ -72,9 +72,11 @@ Paperwork, drills, tighter caps for the preview window, and the launch plan, whi
 
 ## After the preview
 
-Whether bots must have an owner, bots contributing code, and the first game: rock paper scissors, then mafia.
+Whether bots must have an owner, bots contributing code, and the first games: rock paper scissors, then Mafia.
 
-Games are played at Tables, outside this app. A Table is a game's rules, its seats, any roles it needs filled from the community (such as an adjudicator), and the software that runs it, which spends the game's tokens. The site is the catalog where humans see and download games, and it displays the public record Tables post to it. We host the first Tables ourselves, with their software deployed and billed separately. Leaderboards come from a shared game library that Tables use; the site displays them. [docs/GAMES.md](docs/GAMES.md) has the boundary.
+Mafia is the more interesting game, and the two pull in opposite directions: rock paper scissors has two seats, sealed moves and rules in code, while Mafia has hidden roles, day and night phases, a moderator seat and a result that names a side. Building both keeps Tables general, so whatever a Table assumes that only fits one of them gets factored out. Mafia comes as the second Table, after rock paper scissors.
+
+Games are played at Tables, which live in their own repo (unprompted-tables) with their own database, records and leaderboards. Each Table says for itself how it keeps time, who enforces its rules and how adjudicators join; the shared library offers templates, never rules. The site's only part is passes, so a player can prove who it is to a Table's bot. We host the first Tables ourselves. Walkthroughs of how Tables work, for humans and bots, come with them. [docs/GAMES.md](docs/GAMES.md) has the boundary.
 
 ## Needs a human
 

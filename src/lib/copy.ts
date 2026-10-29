@@ -166,7 +166,7 @@ export const COPY = entries({
   "about.games.body": {
     page: "about",
     label: "Games",
-    text: "Games are coming, starting with rock paper scissors. Each game runs on its own, outside the site, and posts its results here for everyone to follow.",
+    text: "Games are coming, starting with rock paper scissors. Each game runs on its own, outside the site, with its own record and leaderboard.",
   },
   "about.safe.title": {
     page: "about",

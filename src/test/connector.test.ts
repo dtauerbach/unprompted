@@ -4,11 +4,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
+import { POST as passRoute } from "@/app/v1/me/passes/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { GET as metadataRoute } from "@/app/v1/oauth/metadata/route";
 import { POST as registerClientRoute } from "@/app/v1/oauth/register/route";
 import { GET as resourceRoute } from "@/app/v1/oauth/resource/route";
 import { POST as tokenRoute } from "@/app/v1/oauth/token/route";
+import { POST as redeemRoute } from "@/app/v1/passes/redeem/route";
 import { POST as postsRoute } from "@/app/v1/posts/route";
 import { setFrozen, siteHealth } from "@/lib/admin";
 import { callerForKey } from "@/lib/auth";
@@ -654,15 +656,26 @@ describe("the MCP endpoint", () => {
     const names = res.body.result.tools.map((t: { name: string }) => t.name);
     expect(names.sort()).toEqual(
       [
+        "get_pass",
         "list_channels",
         "post",
         "read_posts",
         "read_thread",
+        "redeem_pass",
         "report",
         "sign_up",
         "whoami",
       ].sort(),
     );
+    // skill.md names them all, so a bot reading it knows what it gets.
+    const skill = readFileSync(
+      path.join(process.cwd(), "content/skill.md"),
+      "utf8",
+    );
+    const line =
+      skill.split("\n").find((l) => l.includes("you have tools for")) ?? "";
+    const listed = [...line.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
+    expect(listed.sort()).toEqual(names.sort());
   });
 
   it("gives its instructions on initialize", async () => {
@@ -1079,5 +1092,129 @@ describe("the approval page's actions", () => {
     expect(url.searchParams.get("state")).toBe("st-1");
     expect(url.searchParams.get("code")).toBeNull();
     expect(await count("connector_grants")).toBe(0);
+  });
+});
+
+describe("passes through the connector", () => {
+  it("gives a signed-up bot a pass that the bot it names can redeem, once", async () => {
+    const table = await register("rps-table");
+    const token = await connect();
+    const unsigned = await tool(token, "get_pass", { to: table.handle });
+    expect(unsigned.data.error.code).toBe("not_signed_up");
+    await tool(token, "sign_up", { handle: "alice" });
+    const r = await tool(token, "get_pass", { to: `@${table.handle}` });
+    expect(r.isError).toBe(false);
+    expect(r.data.pass).toMatch(/^pass_/);
+    expect(r.data.to).toBe(table.handle);
+    // A connector bot never sees its key, so the note doesn't talk about one.
+    expect(r.data.note).not.toMatch(/key/);
+    expect(r.text).not.toContain(token);
+    const [row] = await db()<
+      { pass_hash: string }[]
+    >`SELECT pass_hash FROM passes`;
+    expect(row?.pass_hash).toBe(hashKey(r.data.pass));
+    const logged = await db()`SELECT detail FROM action_log`;
+    expect(JSON.stringify(logged)).not.toContain(r.data.pass);
+    const ok = await call(redeemRoute, {
+      key: table.key,
+      body: { pass: r.data.pass },
+    });
+    expect(ok.body.bot.handle).toBe("alice");
+    const again = await call(redeemRoute, {
+      key: table.key,
+      body: { pass: r.data.pass },
+    });
+    expect(again.body.error.code).toBe("invalid_pass");
+  });
+
+  it("lets a connector bot redeem a pass asked for it", async () => {
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "judge" });
+    const bob = await register("bob");
+    const asked = await call(passRoute, {
+      key: bob.key,
+      body: { to: "judge" },
+    });
+    expect(asked.status).toBe(201);
+    const r = await tool(token, "redeem_pass", { pass: asked.body.pass });
+    expect(r.isError).toBe(false);
+    expect(r.data.bot.handle).toBe(bob.handle);
+    const replay = await tool(token, "redeem_pass", { pass: asked.body.pass });
+    expect(replay.data.error.code).toBe("invalid_pass");
+    // A pass for someone else is no use to it.
+    const other = await register("carol");
+    const forCarol = await call(passRoute, {
+      key: bob.key,
+      body: { to: other.handle },
+    });
+    const stolen = await tool(token, "redeem_pass", {
+      pass: forCarol.body.pass,
+    });
+    expect(stolen.data.error.code).toBe("invalid_pass");
+  });
+
+  it("refuses a missing bot, bad arguments, a frozen bot, read-only mode and too many", async () => {
+    await awayFromWindowEdge(3600);
+    const table = await register("rps-table");
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "alice" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(
+      (await tool(token, "get_pass", { to: "nobody-here" })).data.error.code,
+    ).toBe("no_such_bot");
+    expect(
+      (await tool(token, "get_pass", { to: "alice" })).data.error.code,
+    ).toBe("invalid");
+    for (const args of [
+      {},
+      { to: "Not A Handle!" },
+      { to: table.handle, game: "rps" },
+    ])
+      expect(
+        (await tool(token, "get_pass", args)).isError,
+        JSON.stringify(args),
+      ).toBe(true);
+    expect((await tool(token, "redeem_pass", { pass: "nope" })).isError).toBe(
+      true,
+    );
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    for (const [name, args] of [
+      ["get_pass", { to: table.handle }],
+      ["redeem_pass", { pass: `pass_${"a".repeat(22)}` }],
+    ] as const)
+      expect((await tool(token, name, args)).data.error.code, name).toBe(
+        "read_only",
+      );
+    delete process.env.UNPROMPTED_READ_ONLY;
+    expect(await count("passes")).toBe(0);
+    for (let i = 0; i < LIMITS.passPerHour.limit; i++)
+      expect(
+        (await tool(token, "get_pass", { to: table.handle })).isError,
+      ).toBe(false);
+    const over = await tool(token, "get_pass", { to: table.handle });
+    expect(over.data.error.code).toBe("rate_limited");
+    expect(over.data.error.retry_after_seconds).toBeGreaterThan(0);
+    expect(await count("passes")).toBe(LIMITS.passPerHour.limit);
+    await setFrozen(db(), "alice", true, "test");
+    expect(
+      (await tool(token, "get_pass", { to: table.handle })).data.error.code,
+    ).toBe("frozen");
+    // Refused writes leave a line naming the tool, never the token.
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.join("\n")).toContain("/mcp get_pass");
+    for (const l of lines) expect(l).not.toContain(token);
+    warn.mockRestore();
+  });
+
+  it("lets a pass die with the connection's key", async () => {
+    const table = await register("rps-table");
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "alice" });
+    const { pass } = (await tool(token, "get_pass", { to: table.handle })).data;
+    expect((await call(revokeRoute, { key: token })).status).toBe(200);
+    expect(
+      (await call(redeemRoute, { key: table.key, body: { pass } })).body.error
+        .code,
+    ).toBe("invalid_pass");
   });
 });

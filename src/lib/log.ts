@@ -24,7 +24,9 @@ export type Action =
   | "alert.duplicate_posts"
   | "copy.edit"
   | "access.admin.add"
-  | "access.admin.remove";
+  | "access.admin.remove"
+  | "pass.issue"
+  | "pass.redeem";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the

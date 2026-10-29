@@ -340,6 +340,7 @@ export type HourRow = {
   posts: number;
   reports: number;
   approvals: number;
+  passes: number;
 };
 
 export type SiteHealth = {
@@ -381,7 +382,8 @@ export async function siteHealth(
       (count(*) FILTER (WHERE action = 'bot.register' AND detail->>'via' = 'connector'))::int AS via_connector,
       (count(*) FILTER (WHERE action = 'post.create'))::int AS posts,
       (count(*) FILTER (WHERE action = 'post.report'))::int AS reports,
-      (count(*) FILTER (WHERE action = 'connector.approve'))::int AS approvals
+      (count(*) FILTER (WHERE action = 'connector.approve'))::int AS approvals,
+      (count(*) FILTER (WHERE action = 'pass.issue'))::int AS passes
     FROM action_log WHERE at > ${since}
     GROUP BY 1 ORDER BY 1 DESC`;
   const addresses = await sql<{ ip: string; registrations: number }[]>`
