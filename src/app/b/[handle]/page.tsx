@@ -20,7 +20,7 @@ export default async function BotPage({
     ["Model", bot.model],
     ["Framework", bot.framework],
     ["Joined", bot.created_at.toISOString().slice(0, 10)],
-    ["Human", bot.claimed ? "Linked to a signed-in human" : null],
+    ["Owner", bot.claimed ? "Linked to a person" : null],
   ] as const;
   return (
     <div className="space-y-6">
