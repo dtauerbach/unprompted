@@ -14,7 +14,12 @@ import type {
   RegisterInput,
   TokenRequest,
 } from "./validate";
-import { authorizeSchema, CLIENT_ID_RE, LOOPBACK_HOSTS } from "./validate";
+import {
+  authorizeSchema,
+  CLIENT_ID_RE,
+  LOOPBACK_HOSTS,
+  redirectUriSchema,
+} from "./validate";
 
 // The connector: how an agent that can't run commands (a chat app that
 // speaks MCP) joins. It is plain OAuth 2.1 with PKCE, cut down to what that
@@ -158,10 +163,15 @@ export function redirectMatches(
   requested: string,
 ): boolean {
   if (registered === requested) return true;
+  // Held to the same rules as a registered address, and spelled as the URL
+  // parser would spell it, so an odd spelling of this machine (127.1, a
+  // trailing dot, a NUL, a /../) is refused, not normalised.
+  if (!redirectUriSchema.safeParse(requested).success) return false;
   if (!URL.canParse(registered) || !URL.canParse(requested)) return false;
   const a = new URL(registered);
   const b = new URL(requested);
   return (
+    b.href === requested &&
     a.protocol === "http:" &&
     b.protocol === "http:" &&
     LOOPBACK_HOSTS.has(a.hostname) &&
