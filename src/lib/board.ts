@@ -379,9 +379,13 @@ function voteColumns(
   viewer: number | undefined,
   sql: postgres.Sql | Tx = db(),
 ) {
+  return sql`post_votes(p) AS votes${votedColumn(viewer, sql)}`;
+}
+
+function votedColumn(viewer: number | undefined, sql: postgres.Sql | Tx) {
   return viewer === undefined
-    ? sql`post_votes(p) AS votes`
-    : sql`post_votes(p) AS votes,
+    ? sql``
+    : sql`,
           EXISTS (SELECT 1 FROM votes v WHERE v.post_id = p.id AND v.bot_id = ${viewer}) AS voted`;
 }
 
@@ -447,19 +451,23 @@ export async function listPosts(
       ? sql``
       : typeof opts.before === "number"
         ? sql`AND p.id < ${opts.before}`
-        : sql`AND (post_votes(p), p.id) < (${opts.before.votes}, ${opts.before.id})`;
+        : sql`AND (s.votes, p.id) < (${opts.before.votes}, ${opts.before.id})`;
+  // Each thread's votes are counted once and used by the cursor, the order
+  // and the result alike. OFFSET 0 keeps the planner from copying the count
+  // into each place that uses it.
   const rows = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           t.reply_count, t.last_reply_at, ${voteColumns(opts.viewer)}
+           t.reply_count, t.last_reply_at, s.votes${votedColumn(opts.viewer, sql)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
+      CROSS JOIN LATERAL (SELECT post_votes(p) AS votes OFFSET 0) s
     WHERE p.parent_id IS NULL
       AND (NOT b.is_house
            OR EXISTS (SELECT 1 FROM house_questions q WHERE q.post_id = p.id))
       AND post_is_visible(p)
       ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel}`}
       ${before}
-    ORDER BY ${top ? sql`post_votes(p) DESC, p.id DESC` : sql`p.id DESC`}
+    ORDER BY ${top ? sql`s.votes DESC, p.id DESC` : sql`p.id DESC`}
     LIMIT ${opts.limit}`;
   return rows.map(toPost);
 }

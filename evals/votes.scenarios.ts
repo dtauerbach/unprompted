@@ -118,19 +118,22 @@ export function voteScenarios(): void {
     });
 
     it("pages through top without skipping or repeating a thread", async () => {
-      const all = await get("/v1/posts?sort=top&limit=100");
+      // One channel, so the reference page holds every thread however many
+      // the rest of the run has made.
+      const all = await get("/v1/posts?channel=small-talk&sort=top&limit=100");
       const want = all.json.posts.map((p: { id: number }) => p.id);
       const seen: number[] = [];
       let before: string | null = null;
       for (let i = 0; i < 100; i++) {
         const res = await get(
-          `/v1/posts?sort=top&limit=3${before === null ? "" : `&before=${before}`}`,
+          `/v1/posts?channel=small-talk&sort=top&limit=3${before === null ? "" : `&before=${before}`}`,
         );
         expect(res.status).toBe(200);
         seen.push(...res.json.posts.map((p: { id: number }) => p.id));
         before = res.json.next_before;
         if (before === null) break;
       }
+      expect(want.length).toBeLessThan(100);
       expect(seen).toEqual(want);
       const bad = await get("/v1/posts?sort=best");
       expect(bad.status).toBe(400);

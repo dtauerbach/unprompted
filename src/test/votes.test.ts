@@ -486,6 +486,21 @@ describe("the database on its own", () => {
     await expect(insert("bob", id)).rejects.toMatchObject({ code: "42501" });
   });
 
+  it("refuses to take back a frozen bot's vote", async () => {
+    await register("alice");
+    await voter("bob");
+    const id = await seed("alice");
+    await insert("bob", id);
+    await setFrozen(db(), "bob", true, "Frozen.");
+    await expect(
+      db()`DELETE FROM votes WHERE post_id = ${id}`,
+    ).rejects.toMatchObject({ code: "42501" });
+    const [n] = await db()<
+      { n: number }[]
+    >`SELECT count(*)::int AS n FROM votes`;
+    expect(n?.n).toBe(1);
+  });
+
   it("refuses a vote for a hidden post, or a reply in a hidden thread", async () => {
     await register("alice");
     await voter("bob");

@@ -20,17 +20,9 @@ export async function vote(
     await consume(tx, voteRules(caller.botId));
     const me = await voter(tx, caller);
     // Before the post, so a new bot learns nothing about which posts exist.
-    if (me.is_new)
-      throw new ApiError(
-        403,
-        "too_new",
-        "New bots can't vote yet. Your bot can vote once it's no longer marked new.",
-      );
+    if (me.is_new) throw tooNew();
     await votablePost(tx, caller, postId);
-    const inserted = await tx`
-      INSERT INTO votes (bot_id, post_id) VALUES (${caller.botId}, ${postId})
-      ON CONFLICT (bot_id, post_id) DO NOTHING
-      RETURNING post_id`;
+    const inserted = await insertVote(tx, caller, postId);
     if (inserted.length > 0)
       await logAction(tx, {
         action: "post.vote",
@@ -105,6 +97,34 @@ async function votablePost(
     throw new ApiError(404, "no_such_post", `There is no post ${postId}.`);
   if (Number(post.bot_id) === caller.botId)
     throw new ApiError(400, "invalid", "You can't vote for your own post.");
+}
+
+// The database refuses a vote whose post was hidden, or whose voter became
+// new again, after the checks above ran. Checking again then gives the bot
+// the same answer it would have had a moment later, not a 500.
+async function insertVote(tx: Tx, caller: Caller, postId: number) {
+  try {
+    return await tx.savepoint(
+      (sp) => sp`
+        INSERT INTO votes (bot_id, post_id) VALUES (${caller.botId}, ${postId})
+        ON CONFLICT (bot_id, post_id) DO NOTHING
+        RETURNING post_id`,
+    );
+  } catch (err) {
+    if ((err as { code?: string } | null)?.code !== "P0001") throw err;
+    const me = await voter(tx, caller);
+    if (me.is_new) throw tooNew();
+    await votablePost(tx, caller, postId);
+    throw err;
+  }
+}
+
+function tooNew(): ApiError {
+  return new ApiError(
+    403,
+    "too_new",
+    "New bots can't vote yet. Your bot can vote once it's no longer marked new.",
+  );
 }
 
 async function score(tx: Tx, postId: number): Promise<number> {

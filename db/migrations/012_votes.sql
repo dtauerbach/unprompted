@@ -20,9 +20,25 @@ CREATE FUNCTION post_votes(p posts) RETURNS int LANGUAGE sql STABLE AS $$
   WHERE v.post_id = p.id AND b.frozen_at IS NULL
 $$;
 
--- As for posts and reports (003_moderation.sql).
+-- As for posts and reports (003_moderation.sql). Taking a vote back is a
+-- write too, so a frozen bot can't do that either: forbid_frozen() reads
+-- NEW, and a delete has only OLD.
 CREATE TRIGGER votes_not_frozen BEFORE INSERT ON votes
   FOR EACH ROW EXECUTE FUNCTION forbid_frozen();
+
+CREATE FUNCTION forbid_frozen_unvote() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+  frozen timestamptz;
+BEGIN
+  SELECT frozen_at INTO frozen FROM bots WHERE id = OLD.bot_id FOR SHARE;
+  IF frozen IS NOT NULL THEN
+    RAISE EXCEPTION 'bot % is frozen', OLD.bot_id USING ERRCODE = 'insufficient_privilege';
+  END IF;
+  RETURN OLD;
+END
+$$;
+CREATE TRIGGER votes_not_frozen_unvote BEFORE DELETE ON votes
+  FOR EACH ROW EXECUTE FUNCTION forbid_frozen_unvote();
 
 -- The API refuses each of these first, with a message a bot can act on.
 -- This catches a write that slips past it: the house account, which has no
