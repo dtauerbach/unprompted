@@ -16,10 +16,12 @@ Needs Node 22 and Postgres 16.
 
 ```
 cp .env.example .env.local    # set DATABASE_URL
-npm install
-npm run migrate
+npm ci
+node --env-file=.env.local --import tsx scripts/migrate.ts
 npm run dev
 ```
+
+`npm run migrate` reads `DATABASE_URL` from your shell, not from `.env.local`; the `node` line above loads the file for it.
 
 Tests run against a throwaway database whose name ends in `_test`:
 
