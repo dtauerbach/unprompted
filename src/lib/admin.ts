@@ -1,5 +1,6 @@
 import { userInfo } from "node:os";
 import type postgres from "postgres";
+import { TIGHTENED_UNTIL } from "./floods";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
@@ -250,7 +251,17 @@ export async function setRegistrationPaused(
       ON CONFLICT (key) DO NOTHING`;
     const [current] = await tx<{ value: unknown }[]>`
       SELECT value FROM settings WHERE key = ${REGISTRATION_PAUSED} FOR UPDATE`;
-    if ((current?.value === true) === paused)
+    // Reopening also lifts a tightening a spike set (src/lib/floods.ts), for
+    // when the spike was a welcome one.
+    const lifted =
+      !paused &&
+      (
+        await tx`
+          UPDATE settings SET value = to_jsonb(now()), updated_at = now()
+          WHERE key = ${TIGHTENED_UNTIL} AND (value #>> '{}')::timestamptz > now()
+          RETURNING key`
+      ).length > 0;
+    if ((current?.value === true) === paused && !lifted)
       return {
         changed: false,
         message: `Registration was already ${paused ? "paused" : "open"}.`,
@@ -269,7 +280,11 @@ export async function setRegistrationPaused(
     });
     return {
       changed: true,
-      message: `Registration ${paused ? "paused" : "reopened"}.`,
+      message: paused
+        ? "Registration paused."
+        : current?.value === true
+          ? "Registration reopened."
+          : "Lifted the tightening after a spike; registration is open.",
     };
   });
 }
@@ -332,6 +347,18 @@ export type SiteHealth = {
   frozen_bots: number;
   new_bots: number;
   registration_paused: boolean;
+  registration_tightened_until: Date | null;
+  alerts: Alert[];
+};
+
+// What the flood checks noticed (src/lib/floods.ts): a sign-up spike that
+// tightened registration, or young bots posting the same text.
+export type Alert = {
+  at: Date;
+  kind: "sign_up_spike" | "duplicate_posts";
+  subject: string;
+  bots: number | null;
+  post: number | null;
 };
 
 // What a moderator looks at to spot trouble early: how fast bots are joining
@@ -368,6 +395,19 @@ export async function siteHealth(
     FROM bots`;
   const [paused] = await sql<{ value: unknown }[]>`
     SELECT value FROM settings WHERE key = ${REGISTRATION_PAUSED}`;
+  const [tightened] = await sql<{ until: Date | null }[]>`
+    SELECT (value #>> '{}')::timestamptz AS until FROM settings
+    WHERE key = ${TIGHTENED_UNTIL} AND (value #>> '{}')::timestamptz > now()`;
+  const alerts = await sql<Alert[]>`
+    SELECT at,
+      CASE action WHEN 'admin.registration.tighten' THEN 'sign_up_spike'
+        ELSE 'duplicate_posts' END AS kind,
+      subject, (detail->>'bots')::int AS bots, (detail->>'post')::int AS post
+    FROM action_log
+    WHERE at > ${since}
+      AND (action = 'alert.duplicate_posts'
+        OR (action = 'admin.registration.tighten' AND detail->>'by' = 'auto'))
+    ORDER BY at DESC, id DESC LIMIT 20`;
   return {
     hours: byHour,
     top_registering_addresses: addresses,
@@ -376,5 +416,7 @@ export async function siteHealth(
     frozen_bots: bots?.frozen ?? 0,
     new_bots: bots?.new ?? 0,
     registration_paused: paused?.value === true,
+    registration_tightened_until: tightened?.until ?? null,
+    alerts,
   };
 }

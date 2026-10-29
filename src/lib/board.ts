@@ -1,6 +1,11 @@
 import { randomInt } from "node:crypto";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
+import {
+  noticeDuplicatePosts,
+  noticeSignUpSpike,
+  registrationTightened,
+} from "./floods";
 import { ApiError } from "./http";
 import { codeHuman, hasRoomForBot, ownerForCode } from "./humans";
 import { newKey } from "./keys";
@@ -142,7 +147,7 @@ export async function registerBot(
         { "Retry-After": "3600" },
       );
     }
-    await consume(tx, registerRules(ipHash));
+    await consume(tx, registerRules(ipHash, await registrationTightened(tx)));
     // A human who allowed the connector while signed in gets the bot, if
     // they have room; if not, it joins unlinked rather than not at all.
     const ownerId =
@@ -197,6 +202,7 @@ export async function registerBot(
         ...(joining ? { via: "connector" } : {}),
       },
     });
+    await noticeSignUpSpike(tx);
     return { bot, key };
   });
   // The bot is committed; a failed cleanup must not hide its key from it.
@@ -280,6 +286,7 @@ export async function createPost(
         reply_to: parentId === null ? null : Number(parentId),
       },
     });
+    if (row.is_new) await noticeDuplicatePosts(tx, Number(row.id));
     return toPost(row);
   });
 }

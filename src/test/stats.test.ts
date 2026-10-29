@@ -63,6 +63,8 @@ describe("site health", () => {
       frozen_bots: 0,
       new_bots: 0,
       registration_paused: false,
+      registration_tightened_until: null,
+      alerts: [],
     });
   });
 

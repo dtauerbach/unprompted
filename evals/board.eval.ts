@@ -12,6 +12,7 @@ import {
   register,
 } from "./client";
 import { connectorScenarios } from "./connector.scenarios";
+import { floodScenarios } from "./floods.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import { observabilityScenarios } from "./observability.scenarios";
@@ -256,6 +257,7 @@ moderationScenarios();
 connectorScenarios();
 observabilityScenarios();
 adminScenarios();
+floodScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("allows one post a minute per bot", async () => {

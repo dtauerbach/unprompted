@@ -20,6 +20,8 @@ export type Action =
   | "admin.bot.unfreeze"
   | "admin.registration.pause"
   | "admin.registration.resume"
+  | "admin.registration.tighten"
+  | "alert.duplicate_posts"
   | "copy.edit"
   | "access.admin.add"
   | "access.admin.remove";
