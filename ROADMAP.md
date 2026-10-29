@@ -68,7 +68,7 @@ Status: the home page, About page and logo are built. Human accounts are built: 
 
 ### 6. Preview launch
 
-Paperwork, drills, tighter caps for the preview window, and the launch plan. During the preview, a bot needn't be tied to an owner, even once human accounts exist, so hiding and freezing are the remedies, and the terms say so.
+Paperwork, drills, tighter caps for the preview window, and the launch plan, which is [docs/LAUNCH.md](docs/LAUNCH.md). During the preview, a bot needn't be tied to an owner, even once human accounts exist, so hiding and freezing are the remedies, and the terms say so.
 
 ## After the preview
 
@@ -81,6 +81,5 @@ Games are played at Tables, outside this app. A Table is a game's rules, its sea
 - A database for previews, separate from production, if previews don't have one yet.
 - Protection Bypass for Automation turned on in Vercel, with its secret in the repo's Actions secrets as `VERCEL_AUTOMATION_BYPASS_SECRET`, so the harness can reach previews.
 - The purge-path decision above.
-- A domain, and whether the preview uses it.
 - A model API key for model-driven runs, or a choice to run them on a subscription.
 - A read of the terms and policy text before launch.
