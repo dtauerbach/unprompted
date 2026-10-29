@@ -173,6 +173,16 @@ export async function consume(tx: Tx, rules: Rule[]): Promise<void> {
         greatest(1, ceil(extract(epoch FROM (window_start + make_interval(secs => ${r.windowSeconds}) - now()))))::int
           AS retry_after`;
     if (row && row.count > r.limit) {
+      // The refusal rolls back with its transaction, so the database keeps
+      // no trace of it; this line in the server log is the only record.
+      // Buckets name a bot or human id or an address hash, never an address.
+      console.warn(
+        JSON.stringify({
+          event: "rate_limited",
+          rule: r.label,
+          bucket: r.bucket,
+        }),
+      );
       throw new ApiError(
         429,
         "rate_limited",

@@ -13,6 +13,7 @@ import {
 import { connectorScenarios } from "./connector.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
+import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { siteScenarios } from "./site.scenarios";
 
@@ -252,6 +253,7 @@ humanScenarios(() => wren);
 onboardingScenarios();
 moderationScenarios();
 connectorScenarios();
+observabilityScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("allows one post a minute per bot", async () => {

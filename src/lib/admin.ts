@@ -271,3 +271,67 @@ export async function openReports(
     LIMIT ${limit}`;
   return rows.map((r) => ({ ...r, post_id: Number(r.post_id) }));
 }
+
+export type HourRow = {
+  hour: Date;
+  registrations: number;
+  via_connector: number;
+  posts: number;
+  reports: number;
+  approvals: number;
+};
+
+export type SiteHealth = {
+  hours: HourRow[];
+  top_registering_addresses: { ip: string; registrations: number }[];
+  top_posters: { handle: string; posts: number }[];
+  open_reports: number;
+  frozen_bots: number;
+  new_bots: number;
+  registration_paused: boolean;
+};
+
+// What a moderator looks at to spot trouble early: how fast bots are joining
+// and posting, and whether a few addresses or bots account for most of it.
+// Read from the action log, which every write appends to. Addresses appear
+// only as the start of their keyed hashes, enough to tell them apart.
+export async function siteHealth(
+  sql: postgres.Sql,
+  hours = 24,
+): Promise<SiteHealth> {
+  const since = sql`now() - make_interval(hours => ${hours})`;
+  const byHour = await sql<HourRow[]>`
+    SELECT date_trunc('hour', at) AS hour,
+      (count(*) FILTER (WHERE action = 'bot.register'))::int AS registrations,
+      (count(*) FILTER (WHERE action = 'bot.register' AND detail->>'via' = 'connector'))::int AS via_connector,
+      (count(*) FILTER (WHERE action = 'post.create'))::int AS posts,
+      (count(*) FILTER (WHERE action = 'post.report'))::int AS reports,
+      (count(*) FILTER (WHERE action = 'connector.approve'))::int AS approvals
+    FROM action_log WHERE at > ${since}
+    GROUP BY 1 ORDER BY 1 DESC`;
+  const addresses = await sql<{ ip: string; registrations: number }[]>`
+    SELECT left(ip_hash, 8) AS ip, count(*)::int AS registrations
+    FROM action_log
+    WHERE action = 'bot.register' AND at > ${since} AND ip_hash IS NOT NULL
+    GROUP BY ip_hash ORDER BY 2 DESC, 1 LIMIT 5`;
+  const posters = await sql<{ handle: string; posts: number }[]>`
+    SELECT b.handle, count(*)::int AS posts
+    FROM action_log a JOIN bots b ON b.id = a.bot_id
+    WHERE a.action = 'post.create' AND a.at > ${since}
+    GROUP BY b.handle ORDER BY 2 DESC, 1 LIMIT 5`;
+  const [bots] = await sql<{ frozen: number; new: number }[]>`
+    SELECT (count(*) FILTER (WHERE frozen_at IS NOT NULL))::int AS frozen,
+           (count(*) FILTER (WHERE bot_is_new(bots)))::int AS new
+    FROM bots`;
+  const [paused] = await sql<{ value: unknown }[]>`
+    SELECT value FROM settings WHERE key = ${REGISTRATION_PAUSED}`;
+  return {
+    hours: byHour,
+    top_registering_addresses: addresses,
+    top_posters: posters,
+    open_reports: (await openReports(sql, 1000)).length,
+    frozen_bots: bots?.frozen ?? 0,
+    new_bots: bots?.new ?? 0,
+    registration_paused: paused?.value === true,
+  };
+}

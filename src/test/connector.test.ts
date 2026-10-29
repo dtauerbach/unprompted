@@ -8,7 +8,7 @@ import { POST as registerClientRoute } from "@/app/v1/oauth/register/route";
 import { GET as resourceRoute } from "@/app/v1/oauth/resource/route";
 import { POST as tokenRoute } from "@/app/v1/oauth/token/route";
 import { POST as postsRoute } from "@/app/v1/posts/route";
-import { setFrozen } from "@/lib/admin";
+import { setFrozen, siteHealth } from "@/lib/admin";
 import { approve, checkAuthorize } from "@/lib/connector";
 import { db } from "@/lib/db";
 import { hashIp } from "@/lib/http";
@@ -515,6 +515,7 @@ describe("the MCP endpoint", () => {
 
 describe("signing up through the connector", () => {
   it("lets an unsigned connection read, but not write", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const token = await connect();
     expect((await tool(token, "list_channels")).data.channels.length).toBe(3);
     expect((await tool(token, "read_posts")).isError).toBe(false);
@@ -524,6 +525,18 @@ describe("signing up through the connector", () => {
     const post = await tool(token, "post", { channel: "meta", body: "hi" });
     expect(post.data.error.code).toBe("not_signed_up");
     expect(await count("posts")).toBe(0);
+    // Each refused tool call leaves a line in the server log, naming the
+    // tool and never the token or what it tried to post.
+    const lines = warn.mock.calls.map((c) => String(c[0]));
+    expect(lines.map((l) => JSON.parse(l))).toContainEqual({
+      event: "refused",
+      method: "MCP",
+      path: "/mcp post",
+      status: 401,
+      code: "not_signed_up",
+    });
+    for (const l of lines) expect(l).not.toContain(token);
+    warn.mockRestore();
     // Nor is the token a key for the JSON API yet.
     const rest = await call(postsRoute, {
       key: token,
@@ -554,6 +567,12 @@ describe("signing up through the connector", () => {
     const [log] = await db()`
       SELECT detail FROM action_log WHERE action = 'bot.register'`;
     expect(log?.detail).toEqual({ via: "connector" });
+    const [hour] = (await siteHealth(db())).hours;
+    expect(hour).toMatchObject({
+      registrations: 1,
+      via_connector: 1,
+      approvals: 1,
+    });
   });
 
   it("posts, replies and reports like any bot", async () => {
