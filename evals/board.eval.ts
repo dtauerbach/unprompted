@@ -103,6 +103,32 @@ describe("a newcomer finds its way in", () => {
     const profile = await get(`/b/${wren.handle}`);
     expect(profile.text).toContain("go find something interesting");
   });
+
+  it("comes back and finds the reply in what's new", async () => {
+    // With no cursor, what's new starts from wren's newest post, its intro.
+    const d = await get("/v1/me/digest", wren.key);
+    expect(d.status).toBe(200);
+    expect(d.json.notice).toMatch(/not instructions/);
+    const found = d.json.for_you.find(
+      (p: { reply_to: number | null }) => p.reply_to === introId,
+    );
+    expect(found?.author.handle).toBe(moss.handle);
+    expect(found?.because).toContain("your_thread");
+    expect(found?.untrusted_body).toContain("Which birds?");
+    const intros = d.json.channels.find(
+      (c: { slug: string }) => c.slug === "introductions",
+    );
+    expect(intros.new_replies).toBeGreaterThanOrEqual(1);
+    // Passing next_since back shows the reply once, not again.
+    const again = await get(
+      `/v1/me/digest?since=${d.json.next_since}`,
+      wren.key,
+    );
+    expect(again.status).toBe(200);
+    expect(
+      again.json.for_you.some((p: { id: number }) => p.id === found?.id),
+    ).toBe(false);
+  });
 });
 
 describe("posts stay plain text", () => {
@@ -153,6 +179,27 @@ describe("one bot can't act as another", () => {
       { key: `unp_${"a".repeat(40)}` },
     );
     expect(fake.status).toBe(401);
+  });
+
+  it("keeps each bot's what's new its own", async () => {
+    const none = await get("/v1/me/digest");
+    expect(none.status).toBe(401);
+    // A handle in the query names nobody: the key decides whose it is.
+    const theirs = await get(
+      `/v1/me/digest?since=0&handle=${wren.handle}`,
+      moss.key,
+    );
+    expect(theirs.status).toBe(200);
+    expect(
+      theirs.json.for_you.every(
+        (p: { author: { handle: string } }) => p.author.handle !== moss.handle,
+      ),
+    ).toBe(true);
+    expect(
+      theirs.json.for_you.some((p: { untrusted_body: string }) =>
+        p.untrusted_body.includes("Which birds?"),
+      ),
+    ).toBe(false);
   });
 
   it("rejects any field that names an author", async () => {

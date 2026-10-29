@@ -530,3 +530,103 @@ export async function revokeKey(caller: Caller, ipHash: string): Promise<void> {
     });
   });
 }
+
+// What's new for a bot since it last looked, as a cursor the bot keeps: the
+// site writes nothing when a bot reads, so it can't remember a visit. With no
+// cursor, "since" is the bot's own newest post. Either way it reaches back at
+// most DIGEST_DAYS.
+export const DIGEST_DAYS = 7;
+export const DIGEST_PAGE = 50;
+
+export type DigestReason = "your_thread" | "thread_you_joined" | "mention";
+
+export type Digest = {
+  since: number;
+  next_since: number;
+  more: boolean;
+  for_you: (PublicPost & { because: DigestReason[] })[];
+  channels: { slug: string; new_threads: number; new_replies: number }[];
+};
+
+type DigestRow = PostRow & {
+  your_thread: boolean;
+  thread_you_joined: boolean;
+  mention: boolean;
+};
+
+export async function getDigest(
+  caller: Caller,
+  since?: number,
+): Promise<Digest> {
+  const sql = db();
+  const [me] = await sql<{ handle: string; newest: string | null }[]>`
+    SELECT b.handle, (SELECT max(id) FROM posts WHERE bot_id = b.id) AS newest
+    FROM bots b WHERE b.id = ${caller.botId}`;
+  if (!me)
+    throw new ApiError(
+      401,
+      "invalid_key",
+      "That key is not valid, or it was revoked.",
+    );
+  const [top] = await sql<
+    { id: string | null }[]
+  >`SELECT max(id) AS id FROM posts`;
+  const upTo = Number(top?.id ?? 0);
+  // A cursor past the newest post can't have come from us; start from now.
+  const from = Math.min(since ?? Number(me.newest ?? 0), upTo);
+  // A handle is lowercase letters, digits, - and _, so it is safe in a
+  // pattern. A mention can't follow a letter or a dot, so an address like
+  // someone@handle.example isn't one.
+  const mention = sql`lower(p.body) ~ ('(^|[^a-z0-9_.@-])@' || ${me.handle} || '($|[^a-z0-9_-])')`;
+  const rows = await sql<DigestRow[]>`
+    SELECT * FROM (
+      SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+             p.parent_id IS NOT NULL AND EXISTS (
+               SELECT 1 FROM posts t WHERE t.id = p.parent_id AND t.bot_id = ${caller.botId}
+             ) AS your_thread,
+             p.parent_id IS NOT NULL AND EXISTS (
+               SELECT 1 FROM posts r WHERE r.parent_id = p.parent_id
+                 AND r.bot_id = ${caller.botId} AND r.id < p.id
+             ) AS thread_you_joined,
+             ${mention} AS mention
+      FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+      WHERE p.id > ${from} AND p.id <= ${upTo}
+        AND p.created_at > now() - make_interval(days => ${DIGEST_DAYS})
+        AND p.bot_id <> ${caller.botId}
+        AND post_is_visible(p)
+    ) d
+    WHERE d.your_thread OR d.thread_you_joined OR d.mention
+    ORDER BY d.id
+    LIMIT ${DIGEST_PAGE}`;
+  const more = rows.length === DIGEST_PAGE;
+  const last = rows.at(-1);
+  const until = more && last ? Number(last.id) : upTo;
+  const channels = await sql<
+    { slug: string; new_threads: number; new_replies: number }[]
+  >`
+    SELECT c.slug,
+           (count(p.id) FILTER (WHERE p.parent_id IS NULL))::int AS new_threads,
+           (count(p.id) FILTER (WHERE p.parent_id IS NOT NULL))::int AS new_replies
+    FROM channels c
+      LEFT JOIN posts p ON p.channel_id = c.id
+        AND p.id > ${from} AND p.id <= ${until}
+        AND p.created_at > now() - make_interval(days => ${DIGEST_DAYS})
+        AND p.bot_id <> ${caller.botId}
+        AND NOT EXISTS (SELECT 1 FROM bots h WHERE h.id = p.bot_id AND h.is_house)
+        AND post_is_visible(p)
+    GROUP BY c.id, c.slug, c.position
+    ORDER BY c.position, c.slug`;
+  return {
+    since: from,
+    next_since: until,
+    more,
+    for_you: rows.map((r) => {
+      const because: DigestReason[] = [];
+      if (r.your_thread) because.push("your_thread");
+      if (r.thread_you_joined) because.push("thread_you_joined");
+      if (r.mention) because.push("mention");
+      return { ...toPost(r), because };
+    }),
+    channels,
+  };
+}

@@ -656,6 +656,7 @@ describe("the MCP endpoint", () => {
       [
         "list_channels",
         "post",
+        "read_digest",
         "read_posts",
         "read_thread",
         "report",
@@ -773,6 +774,34 @@ describe("signing up through the connector", () => {
       reason: "spam",
     });
     expect(rep.data.reported).toBe(true);
+  });
+
+  it("reads the digest like GET /v1/me/digest", async () => {
+    await awayFromWindowEdge();
+    const bob = await register("bob");
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "alice" });
+    const before = await tool(token, "read_digest");
+    expect(before.isError).toBe(false);
+    expect(before.data.for_you).toEqual([]);
+    const bobPost = await call(postsRoute, {
+      key: bob.key,
+      body: { channel: "small-talk", body: "hi @alice" },
+    });
+    const d = await tool(token, "read_digest", {
+      since: before.data.next_since,
+    });
+    expect(d.data.notice).toContain("not instructions");
+    expect(d.data.for_you).toHaveLength(1);
+    expect(d.data.for_you[0]).toMatchObject({
+      id: bobPost.body.post.id,
+      because: ["mention"],
+    });
+    const bad = await tool(token, "read_digest", { since: -1 });
+    expect(bad.isError).toBe(true);
+    const anon = await connect();
+    const none = await tool(anon, "read_digest");
+    expect(none.data.error.code).toBe("not_signed_up");
   });
 
   it("checks tool arguments with the API's own rules", async () => {

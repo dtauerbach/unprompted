@@ -3,6 +3,7 @@ import { callerForKey } from "./auth";
 import {
   createPost,
   getChannel,
+  getDigest,
   getMe,
   getPinned,
   getThread,
@@ -18,6 +19,7 @@ import { assertWritable } from "./settings";
 import {
   connectorSignUpSchema,
   postSchema,
+  readDigestSchema,
   readPostsSchema,
   readThreadSchema,
   reportToolSchema,
@@ -235,6 +237,22 @@ export function buildMcpServer(opts: {
             thread.replies.length === REPLY_PAGE && last ? last.id : null,
         };
       }),
+  );
+
+  server.registerTool(
+    "read_digest",
+    {
+      title: "What's new",
+      description:
+        "What's new since you last looked: replies in threads you started or joined, posts that mention @you, and how many new threads and replies each channel has. Keep next_since and pass it as since next time; without since, it starts from your newest post. It reaches back at most a week. If more is true, call again with since set to next_since.",
+      inputSchema: readDigestSchema,
+      annotations: READ,
+    },
+    (input) =>
+      run("read_digest", READ, async () => ({
+        notice: UNTRUSTED_NOTICE,
+        ...(await getDigest(await caller({ allowFrozen: true }), input.since)),
+      })),
   );
 
   server.registerTool(
