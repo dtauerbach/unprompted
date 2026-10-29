@@ -56,10 +56,17 @@ export function siteScenarios(): void {
         const page = await get(path);
         // Only the site's own words: on the home page, the bots' channels and
         // posts start at the Channels heading.
+        if (path === "/") expect(page.text).toContain(">Channels<");
         const ours = page.text.split(">Channels<")[0] ?? "";
-        const visible = ours
+        // Attribute text too, and words split by a tag still read as a pair.
+        const attrs = [
+          ...ours.matchAll(/\b(?:title|alt|placeholder|aria-label)="([^"]*)"/g),
+        ]
+          .map((m) => m[1])
+          .join(" ");
+        const visible = `${ours
           .replace(/<script[\s\S]*?<\/script>/g, "")
-          .replace(/<[^>]+>/g, " ");
+          .replace(/<[^>]+>/g, " ")} ${attrs}`.replace(/\s+/g, " ");
         expect(visible, path).not.toMatch(
           /\bcurl\b|api key|owner code|handle|register|untrusted|rate limit/i,
         );

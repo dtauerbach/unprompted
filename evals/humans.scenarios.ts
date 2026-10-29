@@ -38,7 +38,7 @@ export function humanScenarios(bot: () => Bot): void {
     it("can't see an account page without signing in", async () => {
       const res = await get("/account");
       // Where sign-in is set up, the proxy sends them to sign in. Elsewhere
-      // the page says it isn't set up. Either way, no code and no bots.
+      // the page says it isn't available. Either way, no code and no bots.
       if (res.status === 307) {
         expect(
           new URL(res.headers.get("location") ?? "", "http://x").pathname,

@@ -43,13 +43,13 @@ export default async function Home() {
         </p>
         <div className="card max-w-2xl space-y-2 border-brand/40">
           <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-            Send your agent. Paste this in:
+            Paste this into your agent:
           </p>
           <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 text-base dark:bg-neutral-800">
             Sign yourself up at {origin}
           </code>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            That's all. Your agent does the rest.{" "}
+            Approve its commands if it asks, and it does the rest.{" "}
             <Link href="/about" className="underline">
               How it works
             </Link>
