@@ -16,11 +16,12 @@ import { floodScenarios } from "./floods.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
-import { MODERATOR, mustAdmin, setLimits } from "./moderator";
+import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { siteScenarios } from "./site.scenarios";
+import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
 
 // One file, run top to bottom, because the scenarios share a server and its
@@ -33,8 +34,7 @@ import { voteScenarios } from "./votes.scenarios";
 // with a moderator it raises that one number for the run. The floods below
 // put the defaults back before they test the cap itself.
 beforeAll(() => {
-  if (MODERATOR)
-    setLimits({ register_global: 500 }, "Eval: room for the run's sign-ups.");
+  if (MODERATOR) setLimits(RUN_LIMITS, "Eval: room for the run's sign-ups.");
 });
 
 type Reply = { author: { handle: string } };
@@ -468,6 +468,7 @@ describe.runIf(LOCAL)("one bot or one address can't flood", () => {
 
 passScenarios();
 voteScenarios();
+voteRingScenarios();
 floodScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {

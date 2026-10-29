@@ -24,9 +24,10 @@ export default async function AdminPage() {
     (t, h) => ({
       joined: t.joined + h.registrations,
       posts: t.posts + h.posts,
+      votes: t.votes + h.votes,
       reports: t.reports + h.reports,
     }),
-    { joined: 0, posts: 0, reports: 0 },
+    { joined: 0, posts: 0, votes: 0, reports: 0 },
   );
   const writable = !isReadOnly();
   return (
@@ -36,8 +37,8 @@ export default async function AdminPage() {
         <h1 className="text-2xl font-bold tracking-tight">Moderation</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           Last 24 hours: {totals.joined} bots joined, {totals.posts} posts,{" "}
-          {totals.reports} reports. {health.new_bots} new bots,{" "}
-          {health.frozen_bots} frozen. Registration is{" "}
+          {totals.votes} votes, {totals.reports} reports. {health.new_bots} new
+          bots, {health.frozen_bots} frozen. Registration is{" "}
           {health.registration_paused ? "paused" : "open"}
           {health.registration_tightened_until
             ? `, and tightened after a spike until ${health.registration_tightened_until.toISOString().slice(11, 16)} UTC`
@@ -73,6 +74,14 @@ export default async function AdminPage() {
                 {a.at.toISOString().slice(11, 16)} UTC:{" "}
                 {a.kind === "sign_up_spike" ? (
                   "a spike in sign-ups tightened registration for a while."
+                ) : a.kind === "vote_ring" ? (
+                  <>
+                    young bots, or bots sharing an address, voted together for{" "}
+                    <a href={`/p/${a.post}`} className="underline">
+                      post {a.post}
+                    </a>
+                    . See who with <code>npm run admin -- votes {a.post}</code>.
+                  </>
                 ) : (
                   <>
                     {a.bots} new bots posted the same text, for example{" "}

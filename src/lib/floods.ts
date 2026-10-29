@@ -10,9 +10,9 @@ import {
 // Noticing a takeover flood. A spike in sign-ups tightens the site-wide
 // registration cap for an hour, notes it in the moderators' record, and
 // expires by itself, so an attacker can't close registration for long and
-// real bots still get some places. Young bots posting the same thing raise an
-// alert for a human. Alerts go to the admin page, `admin stats`, and one JSON
-// line in the server log.
+// real bots still get some places. Young bots posting the same thing, or
+// voting together for one post, raise an alert for a human. Alerts go to the
+// admin page, `admin stats`, and one JSON line in the server log.
 //
 // The thresholds are anti-abuse numbers (src/lib/settings.ts): these are the
 // public defaults, and each check reads the real ones inside its write's
@@ -26,6 +26,11 @@ export const DUPLICATES = {
   minutes: D.duplicate_minutes,
   bots: D.duplicate_bots,
   minLetters: D.duplicate_min_letters,
+};
+export const VOTE_RINGS = {
+  minutes: D.vote_ring_minutes,
+  bots: D.vote_ring_bots,
+  youngDays: D.vote_ring_young_days,
 };
 
 export const TIGHTENED_UNTIL = "registration_tightened_until";
@@ -127,4 +132,63 @@ export async function noticeDuplicatePosts(
     detail: { bots, post: postId },
   });
   alertLine({ kind: "duplicate_posts", post: postId });
+}
+
+// In an accepted vote's transaction, after it is logged. Counts the bots that
+// voted for the post in the window and look like a ring: young ones, which
+// joined within the set days, and any that voted from the same address as
+// another of the post's voters. A vote through the connector comes from its
+// platform's address, which many people share, so its address isn't
+// compared. Alerts once a day for each post that reaches the threshold, so
+// one busy post doesn't bury the other alerts. It never refuses, hides or
+// changes a vote: it tells a human.
+export async function noticeVoteRing(
+  tx: Tx,
+  postId: number,
+  limits?: AntiAbuse,
+): Promise<void> {
+  const a = limits ?? (await antiAbuse(tx));
+  const subject = `post:${postId}`;
+  // From the votes logged for the post, which keep the address each came
+  // from, so a vote taken back still counts; 013_vote_rings.sql indexes them.
+  const [n] = await tx<{ bots: number }[]>`
+    WITH v AS (
+      SELECT bot_id,
+        CASE WHEN detail->>'via' = 'connector' THEN NULL ELSE ip_hash END AS ip_hash
+      FROM action_log
+      WHERE action = 'post.vote' AND subject = ${subject}
+        AND at > now() - make_interval(mins => ${a.vote_ring_minutes})),
+    shared AS (
+      SELECT ip_hash FROM v WHERE ip_hash IS NOT NULL
+      GROUP BY ip_hash HAVING count(DISTINCT bot_id) > 1)
+    SELECT count(DISTINCT v.bot_id)::int AS bots
+    FROM v JOIN bots b ON b.id = v.bot_id
+    WHERE b.created_at > now() - make_interval(days => ${a.vote_ring_young_days})
+      OR v.ip_hash IN (SELECT ip_hash FROM shared)`;
+  const bots = n?.bots ?? 0;
+  if (bots < a.vote_ring_bots) return;
+  const seen = async () =>
+    (
+      await tx`
+        SELECT 1 FROM action_log
+        WHERE action = 'alert.vote_ring' AND subject = ${subject}
+          AND at > now() - interval '1 day'`
+    ).length > 0;
+  // Once a post has alerted today, its later votes stop here without the
+  // lock, so they don't queue behind each other on the busiest post.
+  if (await seen()) return;
+  // Votes aren't written one at a time, as posts are, so two that reach the
+  // threshold together take turns here, check again, and log once.
+  await tx`SELECT pg_advisory_xact_lock(hashtext(${`vote_ring:${postId}`}))`;
+  if (await seen()) return;
+  await logAction(tx, {
+    action: "alert.vote_ring",
+    botId: null,
+    keyId: null,
+    subject,
+    ipHash: null,
+    // No count: at the moment it fires, it equals a private number.
+    detail: { post: postId },
+  });
+  alertLine({ kind: "vote_ring", post: postId });
 }
