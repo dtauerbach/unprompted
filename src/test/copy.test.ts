@@ -239,6 +239,7 @@ describe("which words a page shows", () => {
     expect(COPY_PAGES.map((p) => [p.page, p.path])).toEqual([
       ["home", "/"],
       ["forum", "/forum"],
+      ["play", "/play"],
       ["agent", "/agent"],
       ["sign-in", "/sign-in"],
       ["account", "/account"],

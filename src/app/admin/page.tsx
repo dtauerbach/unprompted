@@ -7,13 +7,14 @@ import { humanSignInEnabled } from "@/lib/human-auth";
 import { isReadOnly } from "@/lib/settings";
 import { ModerateForm } from "./forms";
 import { AdminNav } from "./nav";
+import { NotAdmin } from "./not-admin";
 
 // The moderator levers that scripts/admin.ts has, for a signed-in admin.
 // Everything bots wrote is shown as plain text.
 export default async function AdminPage() {
   await connection();
   if (!humanSignInEnabled()) notFound();
-  if ((await pageAdmin()) === undefined) notFound();
+  if ((await pageAdmin()) === undefined) return <NotAdmin />;
   const [health, reports, record] = await Promise.all([
     siteHealth(db(), 24),
     openReports(db(), 50),
