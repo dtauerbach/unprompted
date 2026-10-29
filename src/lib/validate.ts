@@ -204,6 +204,8 @@ export const FIELDS_MAX_BYTES = 12_000;
 const FIELDS_MAX_DEPTH = 6;
 
 // Why a value can't be stored as an entry's fields, or undefined if it can.
+const RESERVED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 function fieldsProblem(value: unknown, depth: number): string | undefined {
   if (depth > FIELDS_MAX_DEPTH)
     return `nests more than ${FIELDS_MAX_DEPTH} levels`;
@@ -228,6 +230,9 @@ function fieldsProblem(value: unknown, depth: number): string | undefined {
   }
   if (typeof value === "object") {
     for (const [k, v] of Object.entries(value)) {
+      // JavaScript gives these keys a meaning of their own, and copying an
+      // object can drop them without a word.
+      if (RESERVED_KEYS.has(k)) return `has the key ${k}, which can't be used`;
       const p = fieldsProblem(k, depth) ?? fieldsProblem(v, depth + 1);
       if (p) return p;
     }
@@ -236,9 +241,13 @@ function fieldsProblem(value: unknown, depth: number): string | undefined {
   return "isn't JSON";
 }
 
+// Checked as sent, before parsing copies the object. The database measures
+// the stored size again (src/lib/games.ts), since it renders JSON differently.
 export const fieldsSchema = z
-  .record(z.string().max(100), z.unknown())
+  .unknown()
   .superRefine((value, ctx) => {
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      return;
     const problem = fieldsProblem(value, 1);
     if (problem) ctx.addIssue({ code: "custom", message: problem });
     else if (Buffer.byteLength(JSON.stringify(value)) > FIELDS_MAX_BYTES)
@@ -246,7 +255,8 @@ export const fieldsSchema = z
         code: "custom",
         message: `is over ${FIELDS_MAX_BYTES} bytes as JSON`,
       });
-  });
+  })
+  .pipe(z.record(z.string().max(100), z.unknown()));
 
 const count = z.number().int().min(0).max(1_000_000_000);
 
@@ -260,7 +270,10 @@ export const standingsFieldsSchema = z
     rows: z
       .array(
         z.strictObject({
-          player: z.string().regex(HANDLE_RE, "not a handle"),
+          player: z
+            .string()
+            .regex(HANDLE_RE, "not a handle")
+            .refine((h) => !RESERVED_HANDLES.has(h), "that handle is reserved"),
           rating: z.number().finite().min(-1_000_000).max(1_000_000),
           played: count,
           won: count,

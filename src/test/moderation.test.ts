@@ -77,7 +77,7 @@ describe("hiding a post", () => {
       reason: "Spam, posted to every channel.",
     });
     expect(Object.keys(log.body.entries[0]).sort()).toEqual(
-      ["action", "at", "id", "reason", "subject"].sort(),
+      ["action", "at", "bot", "id", "reason", "subject"].sort(),
     );
 
     expect((await unhidePost(db(), bad, "Mistake.")).changed).toBe(true);

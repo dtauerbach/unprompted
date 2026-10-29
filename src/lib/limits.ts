@@ -168,7 +168,7 @@ export function redeemRules(gameId: number): Rule[] {
     {
       bucket: `redeem:${gameId}`,
       ...LIMITS.redeemPerHour,
-      label: "1200 pass checks an hour per game",
+      label: "1200 passes redeemed an hour per game",
     },
   ];
 }
@@ -202,4 +202,6 @@ export async function consume(tx: Tx, rules: Rule[]): Promise<void> {
 
 export async function pruneRateLimits(): Promise<void> {
   await db()`DELETE FROM rate_limits WHERE window_start < now() - interval '2 days'`;
+  // A used or expired pass is only a hash nobody can use again.
+  await db()`DELETE FROM table_passes WHERE expires_at < now() - interval '1 day'`;
 }

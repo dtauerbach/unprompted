@@ -60,11 +60,19 @@ export const POST = route(async (req, ctx: Ctx) => {
   assertWritable();
   const slug = await gameSlug(ctx);
   const input = await readJson(req, entrySchema);
-  const { entry, created } = await createEntry(
+  const { entry, created, hidden } = await createEntry(
     caller,
     slug,
     input,
     hashIp(clientIp(req)),
   );
-  return json({ entry, notice: GAME_NOTICE }, created ? 201 : 200);
+  // A Table retrying a ref a moderator has since hidden should know it isn't
+  // up; the record itself doesn't say why.
+  const note = hidden
+    ? {
+        hidden: true,
+        note: "A moderator has hidden this entry. See /moderation.",
+      }
+    : {};
+  return json({ entry, ...note, notice: GAME_NOTICE }, created ? 201 : 200);
 });

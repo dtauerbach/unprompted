@@ -8,6 +8,7 @@ import {
   ADJUDICATOR_TYPES,
   type EntryInput,
   type EntryType,
+  FIELDS_MAX_BYTES,
   type StandingsFields,
   standingsFieldsSchema,
 } from "./validate";
@@ -196,31 +197,34 @@ export function rankRows(rows: StandingsFields["rows"]): StandingsRow[] {
 }
 
 // The latest visible standings the game was given, sorted for display. If a
-// moderator hides them, the ones before come back.
+// moderator hides them, or they no longer fit today's checks, the ones before
+// come back.
 export async function latestStandings(
   gameId: number,
 ): Promise<Standings | null> {
-  const [r] = await db()<EntryRow[]>`
+  const rows = await db()<EntryRow[]>`
     SELECT e.id, g.slug, e.type, e.match, e.ref, e.role, b.handle, b.display_name,
            e.body, e.fields, e.created_at
     FROM game_entries e JOIN games g ON g.id = e.game_id JOIN bots b ON b.id = e.bot_id
     WHERE e.game_id = ${gameId} AND e.type = 'standings' AND entry_is_visible(e)
     ORDER BY e.id DESC
-    LIMIT 1`;
-  if (!r) return null;
-  const parsed = standingsFieldsSchema.safeParse(r.fields);
-  if (!parsed.success) return null;
-  return {
-    entry_id: Number(r.id),
-    reported_by: {
-      handle: r.handle,
-      display_name: r.display_name,
-      role: r.role,
-    },
-    reported_at: r.created_at,
-    untrusted_method: parsed.data.method,
-    rows: rankRows(parsed.data.rows),
-  };
+    LIMIT 20`;
+  for (const r of rows) {
+    const parsed = standingsFieldsSchema.safeParse(r.fields);
+    if (!parsed.success) continue;
+    return {
+      entry_id: Number(r.id),
+      reported_by: {
+        handle: r.handle,
+        display_name: r.display_name,
+        role: r.role,
+      },
+      reported_at: r.created_at,
+      untrusted_method: parsed.data.method,
+      rows: rankRows(parsed.data.rows),
+    };
+  }
+  return null;
 }
 
 async function gameForWrite(
@@ -234,9 +238,11 @@ async function gameForWrite(
   return game;
 }
 
-const ENTRY_RETURNING = (tx: Tx, id: string) => tx<EntryRow[]>`
+const ENTRY_RETURNING = (tx: Tx, id: string) => tx<
+  (EntryRow & { hidden: boolean })[]
+>`
   SELECT e.id, g.slug, e.type, e.match, e.ref, e.role, b.handle, b.display_name,
-         e.body, e.fields, e.created_at
+         e.body, e.fields, e.created_at, NOT entry_is_visible(e) AS hidden
   FROM game_entries e JOIN games g ON g.id = e.game_id JOIN bots b ON b.id = e.bot_id
   WHERE e.id = ${id}`;
 
@@ -248,7 +254,7 @@ export async function createEntry(
   slug: string,
   input: EntryInput,
   ipHash: string,
-): Promise<{ entry: PublicEntry; created: boolean }> {
+): Promise<{ entry: PublicEntry; created: boolean; hidden: boolean }> {
   return db().begin(async (tx) => {
     const game = await gameForWrite(tx, slug);
     let role: PublicEntry["role"];
@@ -268,11 +274,25 @@ export async function createEntry(
     if (role === "adjudicator" && !ADJUDICATOR_TYPES.includes(input.type))
       throw new ApiError(
         403,
-        "not_at_this_table",
+        "not_for_adjudicators",
         `An adjudicator can't post ${input.type}; that comes from the Table.`,
       );
     const fields = input.fields ?? {};
+    // Postgres renders JSON with spaces and expands numbers like 1e300, so
+    // the size that counts is the one it stores.
+    const [size] = await tx<{ n: number }[]>`
+      SELECT octet_length(${tx.json(fields as never)}::jsonb::text) AS n`;
+    if ((size?.n ?? 0) > FIELDS_MAX_BYTES)
+      throw new ApiError(
+        400,
+        "invalid",
+        `fields: is over ${FIELDS_MAX_BYTES} bytes as stored`,
+      );
     if (input.ref !== undefined) {
+      // Two posts with the same new ref wait for each other here, so the
+      // second sees the first and answers as a retry instead of failing.
+      await tx`
+        SELECT pg_advisory_xact_lock(hashtextextended(${`${game.id}:${input.ref}`}, 0))`;
       const [same] = await tx<{ id: string; same: boolean }[]>`
         SELECT id, (bot_id = ${caller.botId} AND type = ${input.type}
                     AND match IS NOT DISTINCT FROM ${input.match ?? null}
@@ -287,7 +307,11 @@ export async function createEntry(
           );
         const [existing] = await ENTRY_RETURNING(tx, same.id);
         if (!existing) throw new Error("entry vanished");
-        return { entry: toEntry(existing), created: false };
+        return {
+          entry: toEntry(existing),
+          created: false,
+          hidden: existing.hidden,
+        };
       }
     }
     await consume(tx, entryRules(Number(game.id)));
@@ -307,7 +331,7 @@ export async function createEntry(
     });
     const [row] = await ENTRY_RETURNING(tx, inserted.id);
     if (!row) throw new Error("entry vanished");
-    return { entry: toEntry(row), created: true };
+    return { entry: toEntry(row), created: true, hidden: false };
   });
 }
 
@@ -373,13 +397,15 @@ export async function redeemPass(
       WHERE p.pass_hash = ${hashKey(pass)} AND p.game_id = ${game.id}
         AND p.redeemed_at IS NULL AND p.expires_at > now()
         AND b.id = p.bot_id AND b.frozen_at IS NULL
+        AND EXISTS (SELECT 1 FROM api_keys k
+                    WHERE k.id = p.key_id AND k.revoked_at IS NULL)
       RETURNING b.id, b.handle, b.display_name, bot_is_new(b) AS is_new,
                 b.owner_id IS NOT NULL AS claimed, b.created_at`;
     if (!holder)
       throw new ApiError(
         400,
         "invalid_pass",
-        "That pass doesn't work here: it may have expired, been used already, or be for another game.",
+        "That pass doesn't work here: it may have expired, been used already, be for another game, or come from a key that's since been replaced.",
       );
     await logAction(tx, {
       action: "game.pass.redeem",

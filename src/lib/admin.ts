@@ -336,8 +336,17 @@ export async function listGame(
         enforced_by = EXCLUDED.enforced_by, table_bot_id = EXCLUDED.table_bot_id,
         play_url = EXCLUDED.play_url, rules_url = EXCLUDED.rules_url,
         download_url = EXCLUDED.download_url, download_sha256 = EXCLUDED.download_sha256
+      WHERE (games.name, games.summary, games.enforced_by, games.table_bot_id,
+             games.play_url, games.rules_url, games.download_url, games.download_sha256)
+        IS DISTINCT FROM
+            (EXCLUDED.name, EXCLUDED.summary, EXCLUDED.enforced_by, EXCLUDED.table_bot_id,
+             EXCLUDED.play_url, EXCLUDED.rules_url, EXCLUDED.download_url, EXCLUDED.download_sha256)
       RETURNING id, (xmax = 0) AS inserted`;
-    if (!row) throw new Error("game insert returned nothing");
+    if (!row)
+      return {
+        changed: false,
+        message: `${g.slug} was already listed like that.`,
+      };
     await logAction(tx, {
       action: row.inserted ? "admin.game.list" : "admin.game.update",
       botId: Number(tableBot),

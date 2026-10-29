@@ -11,6 +11,8 @@ export type ModerationEntry = {
   action: string;
   subject: string;
   reason: string;
+  // The Table or adjudicator a game listing names; null for anything else.
+  bot: string | null;
 };
 
 // The public moderation log: every admin action, newest first. Only what was
@@ -21,9 +23,17 @@ export async function listModerationLog(opts: {
 }): Promise<ModerationEntry[]> {
   const sql = db();
   const rows = await sql<
-    { id: string; at: Date; action: string; subject: string; reason: string }[]
+    {
+      id: string;
+      at: Date;
+      action: string;
+      subject: string;
+      reason: string;
+      bot: string | null;
+    }[]
   >`
-    SELECT id, at, substr(action, 7) AS action, subject, detail->>'reason' AS reason
+    SELECT id, at, substr(action, 7) AS action, subject, detail->>'reason' AS reason,
+           COALESCE(detail->>'adjudicator', detail->>'table') AS bot
     FROM action_log
     WHERE action LIKE 'admin.%'
       ${opts.before === undefined ? sql`` : sql`AND id < ${opts.before}`}

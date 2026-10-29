@@ -6,6 +6,7 @@ import {
 import { POST as redeemRoute } from "@/app/v1/games/[slug]/passes/redeem/route";
 import { GET as gameRoute } from "@/app/v1/games/[slug]/route";
 import { GET as gamesRoute } from "@/app/v1/games/route";
+import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as passRoute } from "@/app/v1/me/passes/route";
 import { GET as modLog } from "@/app/v1/moderation/route";
 import {
@@ -15,9 +16,10 @@ import {
   setFrozen,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
-import { rankRows } from "@/lib/games";
+import { latestStandings, rankRows } from "@/lib/games";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { hashKey } from "@/lib/keys";
+import { pruneRateLimits } from "@/lib/limits";
 import type { GameListing } from "@/lib/validate";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
@@ -138,6 +140,16 @@ describe("listing a game", () => {
     const log = await call(modLog, { path: "/v1/moderation" });
     expect(log.body.entries[0].action).toBe("game.update");
     expect(await countRows("games")).toBe(1);
+  });
+
+  it("reports a listing that changes nothing, and logs nothing for it", async () => {
+    const table = await setUp();
+    const again = await listGame(db(), RPS, table.handle, "Same again.");
+    expect(again.changed).toBe(false);
+    const log = await call(modLog, { path: "/v1/moderation" });
+    expect(log.body.entries).toHaveLength(1);
+    // The log names the Table a listing points at.
+    expect(log.body.entries[0].bot).toBe(table.handle);
   });
 
   it("refuses a bad listing and writes nothing", async () => {
@@ -302,6 +314,7 @@ describe("a game's record", () => {
       fields: STANDINGS,
     });
     expect(standings.status).toBe(403);
+    expect(standings.body.error.code).toBe("not_for_adjudicators");
     expect((await game()).body.game.adjudicators).toEqual([
       { handle: judge.handle, display_name: null },
     ]);
@@ -317,6 +330,7 @@ describe("a game's record", () => {
       "adjudicator.add",
       "game.list",
     ]);
+    expect(log.body.entries[0].bot).toBe(judge.handle);
   });
 
   it("reports an adjudicator change that changes nothing", async () => {
@@ -397,12 +411,87 @@ describe("a game's record", () => {
     expect(await countRows("game_entries")).toBe(0);
   });
 
+  it("measures fields as the database stores them, and refuses keys JavaScript treats specially", async () => {
+    const table = await setUp();
+    // Small as sent, but Postgres writes each 1e300 out as 301 digits.
+    const exponents = await postEntry(table.key, {
+      type: "move",
+      body: "x",
+      fields: { a: Array.from({ length: 40 }, () => 1e300) },
+    });
+    expect(exponents.status).toBe(400);
+    expect(exponents.body.error.message).toMatch(/as stored/);
+    // Under the limit compact, over it once jsonb adds a space after each comma.
+    const spaced = await postEntry(table.key, {
+      type: "move",
+      body: "x",
+      fields: { a: Array.from({ length: 5900 }, () => 1) },
+    });
+    expect(spaced.status).toBe(400);
+    for (const key of ["__proto__", "constructor", "prototype"]) {
+      const res = await call(entryRoute, {
+        key: table.key,
+        path: "/v1/games/rps/entries",
+        params: { slug: "rps" },
+        rawBody: `{"type":"move","body":"x","fields":{"${key}":{"polluted":true},"ok":1}}`,
+      });
+      expect(res.status, key).toBe(400);
+    }
+    expect(await countRows("game_entries")).toBe(0);
+    expect(
+      (
+        await postEntry(table.key, {
+          type: "move",
+          body: "x",
+          fields: { a: Array.from({ length: 100 }, () => 1.5) },
+        })
+      ).status,
+    ).toBe(201);
+  });
+
+  it("answers a burst of retries of one new ref as one entry and the rest as retries", async () => {
+    const table = await setUp();
+    const entry = {
+      type: "result",
+      match: "m-1",
+      ref: "m-1:result",
+      body: "alice beat bob",
+    };
+    const same = await Promise.all(
+      Array.from({ length: 6 }, () => postEntry(table.key, entry)),
+    );
+    expect(same.map((r) => r.status).sort()).toEqual([
+      200, 200, 200, 200, 200, 201,
+    ]);
+    expect(new Set(same.map((r) => r.body.entry.id)).size).toBe(1);
+    const rivals = await Promise.all(
+      ["a", "b", "c"].map((b) =>
+        postEntry(table.key, { ...entry, ref: "m-2:result", body: b }),
+      ),
+    );
+    expect(rivals.map((r) => r.status).sort()).toEqual([201, 409, 409]);
+    expect(await countRows("game_entries")).toBe(2);
+  });
+
+  it("tells a Table when the entry it retried has been hidden", async () => {
+    const table = await setUp();
+    const entry = { type: "result", ref: "r-1", body: "alice won" };
+    const first = await postEntry(table.key, entry);
+    expect(first.body.hidden).toBeUndefined();
+    await setEntryHidden(db(), first.body.entry.id, true, "Disputed.");
+    const retry = await postEntry(table.key, entry);
+    expect(retry.status).toBe(200);
+    expect(retry.body.hidden).toBe(true);
+    expect(retry.body.note).toMatch(/moderation/);
+  });
+
   it("caps entries per game, and a refused one writes nothing", async () => {
     const table = await setUp();
     await awayFromWindowEdge();
     for (let i = 0; i < 30; i++) {
       const res = await postEntry(table.key, {
         type: "move",
+        ref: `move-${i}`,
         body: `move ${i}`,
       });
       expect(res.status).toBe(201);
@@ -416,10 +505,13 @@ describe("a game's record", () => {
     expect(over.body.error.message).toMatch(/per game/);
     expect(await countRows("game_entries")).toBe(30);
     // A retry of a stored ref needs no quota, so it still answers.
-    const [first] = await db()<
-      { id: string }[]
-    >`SELECT id FROM game_entries ORDER BY id LIMIT 1`;
-    expect(first).toBeDefined();
+    const retry = await postEntry(table.key, {
+      type: "move",
+      ref: "move-0",
+      body: "move 0",
+    });
+    expect(retry.status).toBe(200);
+    expect(await countRows("game_entries")).toBe(30);
     const judge = await register("judge");
     await setAdjudicator(db(), "rps", judge.handle, true, "ok");
     // The cap is the game's, whoever posts.
@@ -567,6 +659,43 @@ describe("standings", () => {
     );
   });
 
+  it("can't name the house account or a reserved handle", async () => {
+    const table = await setUp();
+    for (const player of ["unprompted", "admin", "moderator"]) {
+      const res = await postEntry(table.key, {
+        type: "standings",
+        body: "Standings",
+        fields: {
+          ...STANDINGS,
+          rows: [{ ...STANDINGS.rows[0], player }],
+        },
+      });
+      expect(res.status, player).toBe(400);
+    }
+    expect(await countRows("game_entries")).toBe(0);
+  });
+
+  it("fall back past stored standings that no longer pass today's checks", async () => {
+    const table = await setUp();
+    const good = await postEntry(table.key, {
+      type: "standings",
+      body: "Standings",
+      fields: STANDINGS,
+    });
+    // As if written before a check was added: straight into the database.
+    const [g] = await db()<{ id: string; table_bot_id: string }[]>`
+      SELECT id, table_bot_id FROM games WHERE slug = 'rps'`;
+    const [k] = await db()<{ id: string }[]>`
+      SELECT id FROM api_keys WHERE bot_id = ${g?.table_bot_id ?? 0}`;
+    await db()`
+      INSERT INTO game_entries (game_id, bot_id, key_id, role, type, body, fields)
+      VALUES (${g?.id ?? 0}, ${g?.table_bot_id ?? 0}, ${k?.id ?? 0}, 'table',
+              'standings', 'Old',
+              ${db().json({ method: "x", rows: [{ ...STANDINGS.rows[0], player: "unprompted" }] })})`;
+    const latest = await latestStandings(Number(g?.id));
+    expect(latest?.entry_id).toBe(good.body.entry.id);
+  });
+
   it("rank ties together and skip the next rank", () => {
     const r = (player: string, rating: number, won = 0) => ({
       player,
@@ -685,6 +814,32 @@ describe("table passes", () => {
       ).status,
     ).toBe(400);
     expect((await call(passRoute, { body: { game: "rps" } })).status).toBe(401);
+  });
+
+  it("stop working once the key that asked for them is replaced", async () => {
+    const table = await setUp();
+    const alice = await register("alice");
+    const { pass } = (await askPass(alice.key)).body;
+    const rotated = await call(rotateRoute, { key: alice.key, method: "POST" });
+    expect(rotated.status).toBe(200);
+    const res = await redeem(table.key, pass);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("invalid_pass");
+    // A pass from the new key works.
+    const fresh = (await askPass(rotated.body.api_key)).body.pass;
+    expect((await redeem(table.key, fresh)).status).toBe(200);
+  });
+
+  it("are swept once they're a day past expiry", async () => {
+    await setUp();
+    const alice = await register("alice");
+    await askPass(alice.key);
+    await askPass(alice.key);
+    await db()`
+      UPDATE table_passes SET expires_at = now() - interval '2 days'
+      WHERE id = (SELECT min(id) FROM table_passes)`;
+    await pruneRateLimits();
+    expect(await countRows("table_passes")).toBe(1);
   });
 
   it("are limited per bot, and a refused ask writes nothing", async () => {

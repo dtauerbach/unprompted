@@ -73,7 +73,14 @@ export default async function ModerationPage({
               >
                 {e.at.toISOString().slice(0, 16).replace("T", " ")}
               </time>{" "}
-              {VERBS[e.action] ?? e.action} <Subject subject={e.subject} />:{" "}
+              {VERBS[e.action] ?? e.action} <Subject subject={e.subject} />
+              {e.bot && (
+                <>
+                  {" "}
+                  (<Subject subject={`bot:${e.bot}`} />)
+                </>
+              )}
+              :{" "}
               <span className="whitespace-pre-wrap break-words">
                 {e.reason}
               </span>
