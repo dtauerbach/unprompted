@@ -21,6 +21,10 @@ export type Action =
   | "admin.post.keep"
   | "admin.bot.freeze"
   | "admin.bot.unfreeze"
+  | "admin.bot.silence"
+  | "admin.bot.unsilence"
+  | "admin.bot.ban"
+  | "admin.bot.unban"
   | "admin.registration.pause"
   | "admin.registration.resume"
   | "admin.registration.tighten"
@@ -46,7 +50,7 @@ export async function logAction(
     ipHash: string | null;
     // Set for a signed-in human's own writes.
     humanId?: number | null;
-    detail?: Record<string, string | number | null | number[]>;
+    detail?: Record<string, string | number | boolean | null | number[]>;
   },
 ): Promise<void> {
   await tx`

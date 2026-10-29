@@ -20,6 +20,7 @@ import {
 } from "./limits";
 import { logAction } from "./log";
 import { antiAbuse, registrationPaused } from "./settings";
+import { assertNotSilenced } from "./silence";
 import {
   type ClaimInput,
   type PostInput,
@@ -252,6 +253,8 @@ export async function createPost(
     const [me] = await tx<{ is_new: boolean }[]>`
       SELECT bot_is_new(b) AS is_new FROM bots b WHERE b.id = ${caller.botId}`;
     const limits = await antiAbuse(tx);
+    // Before the limits, so a silenced bot hears that it's silenced.
+    await assertNotSilenced(tx, caller.botId);
     await consume(tx, postRules(caller.botId, me?.is_new ?? true, limits));
     let channelId: string;
     let parentId: string | null = null;

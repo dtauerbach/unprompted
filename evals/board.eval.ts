@@ -15,6 +15,7 @@ import { connectorScenarios } from "./connector.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
+import { lookupScenarios } from "./lookup.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
@@ -470,6 +471,9 @@ passScenarios();
 voteScenarios();
 voteRingScenarios();
 floodScenarios();
+// After the floods lift the run's own sign-up spike, so its three sign-ups
+// don't set the spike off early.
+lookupScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {
