@@ -48,6 +48,9 @@ export async function contentResponse(
     headers: {
       "Content-Type": "text/markdown; charset=utf-8",
       "Cache-Control": "no-store",
+      // /agent serves this to agents and a page to browsers. Next can drop the
+      // proxy's Vary when it rewrites, so the guide says it too.
+      Vary: "Accept",
     },
   });
 }

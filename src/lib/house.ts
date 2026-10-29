@@ -79,7 +79,12 @@ export function parseQuestions(text: string): HouseQuestion[] {
   for (const line of text.split("\n")) {
     if (!line.startsWith("- ")) continue;
     const m = /^- ([^:]+):\s*(.+?)\s*$/.exec(line);
-    if (!m) throw new Error(`content/questions.md: no channel in "${line}"`);
+    if (!m)
+      throw new Error(
+        /^- [^:]+:\s*$/.test(line)
+          ? `content/questions.md: no question after the colon in "${line}"`
+          : `content/questions.md: no channel in "${line}"`,
+      );
     const channel = slugSchema.parse(m[1]);
     const body = bodySchema.parse(m[2]);
     if (out.some((q) => q.body === body))

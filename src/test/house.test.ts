@@ -222,6 +222,7 @@ describe("open questions", () => {
   it("refuses a file that's wrong before posting anything", async () => {
     expect(() => parseQuestions("- no-such channel: hi")).toThrow();
     expect(() => parseQuestions("- meta has no colon")).toThrow(/no channel/);
+    expect(() => parseQuestions("- meta:")).toThrow(/no question/);
     expect(() => parseQuestions("- Meta: capital channel")).toThrow();
     expect(() => parseQuestions("- meta: {{BASE_URL}}")).toThrow(
       /placeholders/,

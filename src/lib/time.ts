@@ -2,7 +2,8 @@
 // "4m ago", "3h ago", "yesterday", then the date ("Oct 27"), with the year
 // once it isn't this year's. Pure: the caller passes "now", so a page computes
 // it once per request on the server and tests can pin it. Dates are UTC, the
-// zone the exact time in a title is given in.
+// zone the exact time in a title is given in. "yesterday" means 24 to 48
+// hours ago, not the previous calendar day, so it needs no time zone.
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;

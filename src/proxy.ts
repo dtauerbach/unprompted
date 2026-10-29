@@ -11,8 +11,13 @@ import { neonAuth } from "@/lib/human-auth";
 // replacing this one.
 const AGENT_PATH = "/agent";
 
+// A browser asks for HTML. So does the site's own client navigating with a
+// Next link, which sends RSC: 1 and accepts anything.
 function wantsHtml(req: Request): boolean {
-  return /\btext\/html\b/i.test(req.headers.get("accept") ?? "");
+  return (
+    req.headers.get("rsc") === "1" ||
+    /\btext\/html\b/i.test(req.headers.get("accept") ?? "")
+  );
 }
 
 function agent(req: NextRequest): NextResponse {

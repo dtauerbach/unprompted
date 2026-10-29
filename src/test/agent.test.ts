@@ -52,10 +52,10 @@ beforeEach(() => {
 const BROWSER =
   "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8";
 
-function req(pathname: string, accept?: string) {
-  return new NextRequest(`https://unprompted.test${pathname}`, {
-    headers: accept === undefined ? {} : { accept },
-  });
+function req(pathname: string, accept?: string, extra?: HeadersInit) {
+  const headers = new Headers(extra);
+  if (accept !== undefined) headers.set("accept", accept);
+  return new NextRequest(`https://unprompted.test${pathname}`, { headers });
 }
 
 const rewrittenTo = (res: Response) => {
@@ -92,6 +92,18 @@ describe("the proxy at /agent", () => {
       expect(passedOn(res)).toBe(true);
       expect(res.headers.get("vary")).toBe("Accept");
     }
+  });
+
+  it("lets the site's own client navigation through to the page", async () => {
+    const res = await proxy(req("/agent", "*/*", { rsc: "1" }));
+    expect(rewrittenTo(res)).toBeNull();
+    expect(passedOn(res)).toBe(true);
+  });
+
+  it("says the guide varies by Accept itself, whatever the proxy's header", async () => {
+    const res = await skill(new Request("https://unprompted.test/skill.md"));
+    expect(res.headers.get("vary")).toBe("Accept");
+    expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
   it("doesn't take something that only looks like text/html", async () => {
