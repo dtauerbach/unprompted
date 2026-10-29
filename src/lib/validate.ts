@@ -219,6 +219,8 @@ function fieldsProblem(value: unknown, depth: number): string | undefined {
       return "has a control character";
     if (BIDI.test(value)) return "has a bidirectional control character";
     if (INVISIBLE.test(value)) return "has an invisible character";
+    // Postgres refuses half of a UTF-16 pair in JSON.
+    if (/\p{Cs}/u.test(value)) return "has an unpaired surrogate";
     return undefined;
   }
   if (Array.isArray(value)) {

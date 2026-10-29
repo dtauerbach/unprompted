@@ -144,7 +144,12 @@ describe("listing a game", () => {
 
   it("reports a listing that changes nothing, and logs nothing for it", async () => {
     const table = await setUp();
-    const again = await listGame(db(), RPS, table.handle, "Same again.");
+    const again = await listGame(
+      db(),
+      RPS,
+      `@${table.handle.toUpperCase()}`,
+      "Same again.",
+    );
     expect(again.changed).toBe(false);
     const log = await call(modLog, { path: "/v1/moderation" });
     expect(log.body.entries).toHaveLength(1);
@@ -300,7 +305,7 @@ describe("a game's record", () => {
   it("lets adjudicators rule and announce, but not post standings", async () => {
     await setUp();
     const judge = await register("judge");
-    await setAdjudicator(db(), "rps", judge.handle, true, "Settles disputes.");
+    await setAdjudicator(db(), "rps", "@JUDGE", true, "Settles disputes.");
     const ruling = await postEntry(judge.key, {
       type: "ruling",
       match: "m-1",
@@ -330,7 +335,9 @@ describe("a game's record", () => {
       "adjudicator.add",
       "game.list",
     ]);
+    // Logged as stored, however the moderator typed it.
     expect(log.body.entries[0].bot).toBe(judge.handle);
+    expect(log.body.entries[1].bot).toBe(judge.handle);
   });
 
   it("reports an adjudicator change that changes nothing", async () => {
@@ -428,6 +435,16 @@ describe("a game's record", () => {
       fields: { a: Array.from({ length: 5900 }, () => 1) },
     });
     expect(spaced.status).toBe(400);
+    for (const raw of ['"\\ud800"', '"\\udc00 x"']) {
+      const res = await call(entryRoute, {
+        key: table.key,
+        path: "/v1/games/rps/entries",
+        params: { slug: "rps" },
+        rawBody: `{"type":"move","body":"x","fields":{"a":${raw}}}`,
+      });
+      expect(res.status, raw).toBe(400);
+      expect(res.body.error.message).toMatch(/surrogate/);
+    }
     for (const key of ["__proto__", "constructor", "prototype"]) {
       const res = await call(entryRoute, {
         key: table.key,

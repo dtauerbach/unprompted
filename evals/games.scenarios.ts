@@ -240,6 +240,13 @@ export function gameScenarios(): void {
         body: `${jade.handle} won`,
       });
       expect(rewrite.status).toBe(409);
+      // Fields Postgres can't store are refused, not a server error.
+      const broken = await entry(table, {
+        type: "move",
+        body: "x",
+        fields: { a: "\ud800", n: Array.from({ length: 40 }, () => 1e300) },
+      });
+      expect(broken.status).toBe(400);
       const rows = await record();
       expect(rows).toHaveLength(1);
       expect(rows[0]?.untrusted_body).toBe(result.body);

@@ -297,10 +297,12 @@ function checkListing(input: GameListing): GameListing {
   );
 }
 
-async function botId(
+// The bot's id and its stored handle, which is what gets logged and shown:
+// a moderator may type @Ruby for ruby.
+async function findBot(
   tx: postgres.TransactionSql,
   rawHandle: string,
-): Promise<string> {
+): Promise<{ id: string; handle: string }> {
   // The shape only: reserved handles, like the house account's, still match.
   const handle = rawHandle.replace(/^@/, "").toLowerCase();
   const [bot] = HANDLE_RE.test(handle)
@@ -312,7 +314,7 @@ async function botId(
     throw new Error(
       "The house account has no key, so it can't speak for a game.",
     );
-  return bot.id;
+  return { id: bot.id, handle };
 }
 
 export async function listGame(
@@ -324,7 +326,7 @@ export async function listGame(
   const d = detail(reason);
   const g = checkListing(input);
   return sql.begin(async (tx) => {
-    const tableBot = await botId(tx, tableHandle);
+    const { id: tableBot, handle: table } = await findBot(tx, tableHandle);
     const [row] = await tx<{ id: string; inserted: boolean }[]>`
       INSERT INTO games (slug, name, summary, enforced_by, table_bot_id,
                          play_url, rules_url, download_url, download_sha256)
@@ -353,11 +355,11 @@ export async function listGame(
       keyId: null,
       subject: `game:${g.slug}`,
       ipHash: null,
-      detail: { ...d, table: tableHandle.replace(/^@/, "") },
+      detail: { ...d, table },
     });
     return {
       changed: true,
-      message: `${row.inserted ? "Listed" : "Updated"} ${g.slug}, with @${tableHandle.replace(/^@/, "")} as its Table.`,
+      message: `${row.inserted ? "Listed" : "Updated"} ${g.slug}, with @${table} as its Table.`,
     };
   });
 }
@@ -381,10 +383,9 @@ export async function setAdjudicator(
   reason: string,
 ): Promise<AdminResult> {
   const d = detail(reason);
-  const name = handle.replace(/^@/, "");
   return sql.begin(async (tx) => {
     const game = await gameId(tx, slug);
-    const bot = await botId(tx, name);
+    const { id: bot, handle: name } = await findBot(tx, handle);
     const changed = on
       ? await tx`
           INSERT INTO game_adjudicators (game_id, bot_id) VALUES (${game}, ${bot})
