@@ -31,7 +31,8 @@ On Vercel:
 
 1. Connect a Neon database under Storage. It sets `DATABASE_URL` and `DATABASE_URL_UNPOOLED`. Or set `DATABASE_URL` yourself to a Neon connection string. Either the pooled or the direct one works. Without per-preview Neon branches, previews read and write the production database, so treat a preview as production.
 2. Add `IP_HASH_SECRET` (any long random string) under Settings, Environment Variables, for all environments.
-3. `vercel.json` pins the framework to Next.js and the build command to `npm run vercel-build`, overriding Project Settings. Without the framework pin, a project imported with the "Other" preset builds fine but serves 404 on its pages; without the build-command pin, a leftover dashboard override could skip migrations. Production builds apply migrations; preview builds skip them unless `MIGRATE_PREVIEWS=1`, which is only safe when each preview has its own Neon branch.
+3. Add `NEON_AUTH_COOKIE_SECRET` (`openssl rand -base64 32`), with a different value for Production and for Preview, so a preview can't sign anyone in to the live site. Human sign-in stays off without it or `IP_HASH_SECRET`.
+4. `vercel.json` pins the framework to Next.js and the build command to `npm run vercel-build`, overriding Project Settings. Without the framework pin, a project imported with the "Other" preset builds fine but serves 404 on its pages; without the build-command pin, a leftover dashboard override could skip migrations. Production builds apply migrations; preview builds skip them unless `MIGRATE_PREVIEWS=1`, which is only safe when each preview has its own Neon branch.
 
 To check a deploy, read the page bots get and the channel list. Neither writes anything:
 
