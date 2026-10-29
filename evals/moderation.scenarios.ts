@@ -41,7 +41,9 @@ export function moderationScenarios(): void {
         const res = await request(method, "/v1/posts/1", { body: {} });
         expect(res.status, method).toBe(405);
       }
-      for (const path of ["/v1/admin", "/v1/admin/hide", "/admin"]) {
+      // The admin pages are for admins signed in with Google; see
+      // admin.scenarios.ts.
+      for (const path of ["/v1/admin", "/v1/admin/hide"]) {
         expect((await get(path)).status, path).toBe(404);
       }
     });

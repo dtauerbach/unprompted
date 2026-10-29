@@ -1,0 +1,515 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as report } from "@/app/v1/posts/[id]/report/route";
+import { POST as post } from "@/app/v1/posts/route";
+import { addAdmin, adminFor, listAdmins, removeAdmin } from "@/lib/admins";
+import { COPY, readCopy, saveCopy } from "@/lib/copy";
+import { db } from "@/lib/db";
+import { issueOwnerCode } from "@/lib/humans";
+import { LIMITS } from "@/lib/limits";
+import { listModerationLog } from "@/lib/moderation";
+import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
+
+// Who is an admin, and the admin pages' actions. The actions are POST
+// endpoints like any other, so these call each one with no session and with
+// a signed-in human who isn't an admin, and check that neither writes.
+
+const session = vi.hoisted(() => ({ user: null as null | { id: string } }));
+const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
+
+vi.mock("@/lib/human-auth", () => ({
+  humanSignInEnabled: () => true,
+  sessionUser: async () =>
+    session.user ? { id: session.user.id, email: null } : null,
+}));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ "x-real-ip": "10.9.9.8" }),
+}));
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("next/navigation", () => ({
+  redirect: (to: string) => {
+    nav.redirects.push(to);
+    throw new Error(`redirect ${to}`);
+  },
+  notFound: () => {
+    throw new Error("not found");
+  },
+}));
+// Pages wait for a request before reading the database; here there is none.
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  connection: async () => {},
+}));
+
+beforeEach(async () => {
+  await resetDb();
+  session.user = null;
+  nav.redirects = [];
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete process.env.UNPROMPTED_READ_ONLY;
+});
+
+// A stand-in for the table Neon Auth keeps in its own schema.
+async function fakeNeonAuth() {
+  await db()`CREATE SCHEMA IF NOT EXISTS neon_auth`;
+  await db()`
+    CREATE TABLE IF NOT EXISTS neon_auth."user" (
+      id uuid PRIMARY KEY, email text UNIQUE, "emailVerified" boolean NOT NULL)`;
+  await db()`TRUNCATE neon_auth."user"`;
+  await db()`
+    INSERT INTO neon_auth."user" (id, email, "emailVerified") VALUES
+      ('00000000-0000-4000-8000-000000000001', 'Ada@Example.com', true),
+      ('00000000-0000-4000-8000-000000000002', 'eve@example.com', false)`;
+}
+const ADA = "00000000-0000-4000-8000-000000000001";
+
+async function writes() {
+  const [r] = await db()<
+    { log: number; copy: number; hidden: number; admins: number }[]
+  >`
+    SELECT (SELECT count(*) FROM action_log)::int AS log,
+           (SELECT count(*) FROM copy_versions)::int AS copy,
+           (SELECT count(*) FROM hidden_posts)::int AS hidden,
+           (SELECT count(*) FROM admins)::int AS admins`;
+  return r;
+}
+
+function form(fields: Record<string, string>): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(fields)) f.set(k, v);
+  return f;
+}
+
+async function aPost(): Promise<number> {
+  const a = await register("alice");
+  const res = await call(post, {
+    key: a.key,
+    body: { channel: "meta", body: "hello" },
+  });
+  return res.body.post.id as number;
+}
+
+describe("adding an admin", () => {
+  it("says what to do where Neon Auth isn't in the database", async () => {
+    await db()`DROP SCHEMA IF EXISTS neon_auth CASCADE`;
+    await expect(
+      addAdmin(db(), { email: "ada@example.com" }, "Runs the site.", "x"),
+    ).rejects.toMatchObject({ code: "no_sign_ins" });
+    expect(await listAdmins(db())).toEqual([]);
+  });
+
+  it("finds them by the address Google verified, in any case", async () => {
+    await fakeNeonAuth();
+    const r = await addAdmin(
+      db(),
+      { email: "ada@example.COM" },
+      "Runs the site.",
+      "district",
+    );
+    expect(r.changed).toBe(true);
+    expect(await adminFor(db(), ADA)).toBe(r.humanId);
+    // The site's own tables still keep only the sign-in id.
+    const [h] = await db()`SELECT auth_user_id FROM humans`;
+    expect(h?.auth_user_id).toBe(ADA);
+    expect(JSON.stringify(await db()`SELECT * FROM action_log`)).not.toMatch(
+      /ada@/i,
+    );
+  });
+
+  it("refuses an address that isn't verified or never signed in", async () => {
+    await fakeNeonAuth();
+    await expect(
+      addAdmin(db(), { email: "eve@example.com" }, "No.", "x"),
+    ).rejects.toMatchObject({ code: "not_signed_in" });
+    await expect(
+      addAdmin(db(), { email: "nobody@example.com" }, "No.", "x"),
+    ).rejects.toMatchObject({ code: "not_signed_in" });
+    expect((await writes())?.admins).toBe(0);
+  });
+
+  it("needs a reason, and logs it, but not on the public moderation log", async () => {
+    await expect(
+      addAdmin(db(), { authUserId: "google-1" }, "", "x"),
+    ).rejects.toMatchObject({ code: "invalid_reason" });
+    await addAdmin(
+      db(),
+      { authUserId: "google-1" },
+      "Helps moderate.",
+      "district",
+    );
+    expect(
+      (await addAdmin(db(), { authUserId: "google-1" }, "Again.", "district"))
+        .changed,
+    ).toBe(false);
+    const log = await db()`SELECT action, detail FROM action_log`;
+    expect(log).toEqual([
+      {
+        action: "access.admin.add",
+        detail: { reason: "Helps moderate.", by: "district" },
+      },
+    ]);
+    expect(await listModerationLog({ limit: 10 })).toEqual([]);
+  });
+
+  it("can be undone, and lists who's an admin for the command line", async () => {
+    await fakeNeonAuth();
+    await addAdmin(db(), { email: "ada@example.com" }, "Runs the site.", "x");
+    expect((await listAdmins(db())).map((a) => a.email)).toEqual([
+      "Ada@Example.com",
+    ]);
+    expect(
+      (
+        await removeAdmin(
+          db(),
+          { email: "ada@example.com" },
+          "Stepped back.",
+          "x",
+        )
+      ).changed,
+    ).toBe(true);
+    expect(await adminFor(db(), ADA)).toBeUndefined();
+    expect(
+      (await removeAdmin(db(), { authUserId: ADA }, "Again.", "x")).changed,
+    ).toBe(false);
+    expect(await listAdmins(db())).toEqual([]);
+  });
+});
+
+describe("admin actions", () => {
+  const calls = async () => {
+    const a = await import("@/app/admin/actions");
+    return {
+      saveCopy: () =>
+        a.saveCopyAction(
+          {},
+          form({ key: "home.title", body: "Taken over.", after: "0" }),
+        ),
+      restoreCopy: () =>
+        a.restoreCopyAction(
+          {},
+          form({ key: "home.title", version: "original", after: "0" }),
+        ),
+      hide: (id: number) =>
+        a.moderateAction(
+          {},
+          form({ op: "hide", target: String(id), reason: "Spam." }),
+        ),
+      pause: () =>
+        a.moderateAction({}, form({ op: "pause", reason: "Flood." })),
+    };
+  };
+
+  it("send anyone with no session to sign in, and write nothing", async () => {
+    const id = await aPost();
+    const before = await writes();
+    const c = await calls();
+    for (const run of [c.saveCopy, c.restoreCopy, () => c.hide(id), c.pause])
+      await expect(run()).rejects.toThrow("redirect /sign-in");
+    expect(nav.redirects).toHaveLength(4);
+    expect(await writes()).toEqual(before);
+  });
+
+  it("refuse a signed-in human who isn't an admin, and log the refusal", async () => {
+    const id = await aPost();
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    // A human the site knows, as a real non-admin is once they've asked for
+    // an owner code.
+    await issueOwnerCode(db(), "google-someone", null);
+    session.user = { id: "google-someone" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = await writes();
+    const c = await calls();
+    for (const run of [c.saveCopy, c.restoreCopy, () => c.hide(id), c.pause])
+      expect(await run()).toEqual({ error: "Only admins can do that." });
+    expect(await writes()).toEqual(before);
+    expect(warn).toHaveBeenCalledTimes(4);
+    expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
+      method: "ACTION",
+      path: "saveCopy",
+      status: 403,
+      code: "not_admin",
+    });
+  });
+
+  it("count an admin's moderation against their hourly limit, and a refusal writes nothing", async () => {
+    const id = await aPost();
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await awayFromWindowEdge(3600);
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES (${`admin:${humanId}`}, to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), ${LIMITS.adminPerHour.limit})`;
+    const before = await writes();
+    const c = await calls();
+    for (const run of [() => c.hide(id), c.pause])
+      expect((await run()).error).toMatch(/Rate limit/);
+    expect(await writes()).toEqual(before);
+  });
+
+  it("stop working the moment an admin is removed", async () => {
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const c = await calls();
+    expect(await c.saveCopy()).toEqual({ message: "Saved." });
+    await removeAdmin(db(), { authUserId: "google-admin" }, "Done.", "x");
+    expect(await c.restoreCopy()).toEqual({
+      error: "Only admins can do that.",
+    });
+  });
+
+  it("save copy for an admin, and go back to the original", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    expect(
+      await a.saveCopyAction(
+        {},
+        form({ key: "home.title", body: "Bots at play.", after: "0" }),
+      ),
+    ).toEqual({ message: "Saved." });
+    expect((await readCopy())["home.title"]).toBe("Bots at play.");
+    const [v] = await db()<{ id: string; human_id: string }[]>`
+      SELECT id, human_id FROM copy_versions`;
+    expect(Number(v?.human_id)).toBe(humanId);
+    // Two admins on an old page: the second is told to reload.
+    expect(
+      await a.saveCopyAction(
+        {},
+        form({ key: "home.title", body: "Mine instead.", after: "0" }),
+      ),
+    ).toEqual({
+      error:
+        "Someone saved a newer version while you were editing. Reload to see it.",
+    });
+    expect(
+      await a.restoreCopyAction(
+        {},
+        form({ key: "home.title", version: "original", after: String(v?.id) }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await readCopy())["home.title"]).toBe(COPY["home.title"].text);
+  });
+
+  it("restore an older version as the newest", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const v1 = await saveCopy(db(), {
+      key: "about.title",
+      body: "First words",
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    const v2 = await saveCopy(db(), {
+      key: "about.title",
+      body: "Second words",
+      after: v1.version,
+      humanId,
+      ipHash: null,
+    });
+    const a = await import("@/app/admin/actions");
+    expect(
+      await a.restoreCopyAction(
+        {},
+        form({
+          key: "about.title",
+          version: String(v1.version),
+          after: String(v2.version),
+        }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await readCopy())["about.title"]).toBe("First words");
+    expect(await db()`SELECT 1 FROM copy_versions`).toHaveLength(3);
+    // A version of another piece can't be restored here.
+    expect(
+      await a.restoreCopyAction(
+        {},
+        form({
+          key: "home.title",
+          version: String(v1.version),
+          after: "0",
+        }),
+      ),
+    ).toEqual({ error: "That version isn't there." });
+  });
+
+  it("refuse what isn't a piece of copy, a version or a lever", async () => {
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const a = await import("@/app/admin/actions");
+    const before = await writes();
+    for (const f of [
+      { key: "nope", body: "x", after: "0" },
+      { key: "__proto__", body: "x", after: "0" },
+      { key: "home.title", body: "x", after: "-1" },
+      { key: "home.title", body: "x", after: "" },
+      { key: "home.welcome", body: "No link here", after: "0" },
+      { key: "home.title", body: "Hi\u200B there", after: "0" },
+    ])
+      expect((await a.saveCopyAction({}, form(f))).error).toBeTruthy();
+    for (const f of <Record<string, string>[]>[
+      { op: "delete", target: "1", reason: "x" },
+      { op: "hide", target: "abc", reason: "x" },
+      { op: "freeze", target: "Not A Handle!", reason: "x" },
+      { op: "hide", target: "999", reason: "x" },
+      { op: "pause", reason: "" },
+    ])
+      expect((await a.moderateAction({}, form(f))).error).toBeTruthy();
+    expect(await writes()).toEqual(before);
+  });
+
+  it("moderate as the admin, on the public log without their name", async () => {
+    const id = await aPost();
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    expect(
+      await a.moderateAction(
+        {},
+        form({ op: "hide", target: String(id), reason: "Spam." }),
+      ),
+    ).toEqual({ message: `Hid post ${id}.` });
+    expect(
+      await a.moderateAction(
+        {},
+        form({ op: "freeze", target: "@Alice", reason: "Flooding." }),
+      ),
+    ).toEqual({ message: "Froze @alice." });
+    const log = await db()`
+      SELECT action, human_id, detail FROM action_log
+      WHERE action LIKE 'admin.%' ORDER BY id`;
+    expect(log).toEqual([
+      {
+        action: "admin.post.hide",
+        human_id: String(humanId),
+        detail: { reason: "Spam.", by: `human:${humanId}` },
+      },
+      {
+        action: "admin.bot.freeze",
+        human_id: String(humanId),
+        detail: { reason: "Flooding.", by: `human:${humanId}` },
+      },
+    ]);
+    const shown = await listModerationLog({ limit: 10 });
+    expect(shown.map((e) => e.reason)).toEqual(["Flooding.", "Spam."]);
+    expect(JSON.stringify(shown)).not.toContain("human:");
+  });
+
+  it("are off in read-only mode", async () => {
+    const id = await aPost();
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const before = await writes();
+    const c = await calls();
+    for (const run of [c.saveCopy, c.restoreCopy, () => c.hide(id), c.pause])
+      expect((await run()).error).toMatch(/read-only/);
+    expect(await writes()).toEqual(before);
+  });
+});
+
+describe("admin pages", () => {
+  const pages = async () => ({
+    moderation: (await import("@/app/admin/page")).default,
+    copy: (await import("@/app/admin/copy/page")).default,
+    history: (await import("@/app/admin/copy/[key]/page")).default,
+  });
+  const historyOf = (key: string) => ({ params: Promise.resolve({ key }) });
+
+  it("send anyone not signed in to sign in, and show a non-admin nothing", async () => {
+    const p = await pages();
+    await expect(p.moderation()).rejects.toThrow("redirect /sign-in");
+    await expect(p.copy()).rejects.toThrow("redirect /sign-in");
+    await expect(p.history(historyOf("home.title"))).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    session.user = { id: "google-someone" };
+    await expect(p.moderation()).rejects.toThrow("not found");
+    await expect(p.copy()).rejects.toThrow("not found");
+    await expect(p.history(historyOf("home.title"))).rejects.toThrow(
+      "not found",
+    );
+  });
+
+  it("show an admin the report queue, with bots' words as plain text", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const res = await call(post, {
+      key: a.key,
+      body: { channel: "meta", body: "<img src=x onerror=alert(1)> hi" },
+    });
+    const id = res.body.post.id as number;
+    await call(report, {
+      key: b.key,
+      path: `/v1/posts/${id}/report`,
+      params: { id: String(id) },
+      body: { reason: "spam", note: "<script>bad()</script>" },
+    });
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const html = renderToStaticMarkup(await (await pages()).moderation());
+    expect(html).toContain("Reported posts");
+    expect(html).toContain(`Post ${id}`);
+    expect(html).toContain("&lt;img src=x onerror=alert(1)&gt; hi");
+    expect(html).toContain("&lt;script&gt;bad()&lt;/script&gt;");
+    expect(html).not.toMatch(/<img src=x|<script>bad/);
+    expect(html).toContain('value="hide"');
+    expect(html).toContain('value="keep"');
+  });
+
+  it("show an admin every piece of copy, and each one's history", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    await saveCopy(db(), {
+      key: "home.title",
+      body: "Bots <i>at play</i>.",
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    const p = await pages();
+    const list = renderToStaticMarkup(await p.copy());
+    for (const e of Object.values(COPY))
+      expect(list).toContain(e.label.replaceAll("'", "&#x27;"));
+    expect(list).toContain("Bots &lt;i&gt;at play&lt;/i&gt;.");
+    const history = renderToStaticMarkup(
+      await p.history(historyOf("home.title")),
+    );
+    expect(history).toContain("Bots &lt;i&gt;at play&lt;/i&gt;.");
+    expect(history).toContain(COPY["home.title"].text);
+    expect(history).toContain("Use the original");
+    await expect(p.history(historyOf("nope"))).rejects.toThrow("not found");
+    await expect(p.history(historyOf("constructor"))).rejects.toThrow(
+      "not found",
+    );
+  });
+});

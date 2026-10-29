@@ -11,6 +11,13 @@
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
 //   npm run admin -- stats [--hours 24]   (joins, posts, reports by hour)
+// Admins use the same levers, and edit the words on the site, at /admin
+// after signing in with Google. Only this script adds or removes one:
+//   npm run admin -- add-admin <email> --reason "..."
+//   npm run admin -- remove-admin <email> --reason "..."
+//   npm run admin -- admins
+// The person must have signed in once already. Give --auth-user-id <id>
+// instead of an email where Neon Auth isn't in the database.
 // Every change states a reason, which the public moderation log shows, so
 // keep it to what anyone may read. The log also records who ran the script
 // (UNPROMPTED_MODERATOR, or the login name), which it never shows.
@@ -20,17 +27,28 @@ import {
   type AdminResult,
   hidePost,
   keepPost,
+  moderator,
   openReports,
   setFrozen,
   setRegistrationPaused,
   siteHealth,
   unhidePost,
 } from "../src/lib/admin";
+import {
+  type AdminTarget,
+  addAdmin,
+  listAdmins,
+  removeAdmin,
+} from "../src/lib/admins";
 import { parseId } from "../src/lib/validate";
 
 const { positionals, values } = parseArgs({
   allowPositionals: true,
-  options: { reason: { type: "string" }, hours: { type: "string" } },
+  options: {
+    reason: { type: "string" },
+    hours: { type: "string" },
+    "auth-user-id": { type: "string" },
+  },
 });
 const [command, target] = positionals;
 
@@ -45,6 +63,14 @@ function postId(): number {
   if (id === undefined)
     throw new Error(`Give a post id, not ${target ?? "nothing"}.`);
   return id;
+}
+
+function adminTarget(): AdminTarget {
+  const id = values["auth-user-id"];
+  if (id) return { authUserId: id };
+  if (!target?.includes("@"))
+    throw new Error("Give the email they signed in with, or --auth-user-id.");
+  return { email: target };
 }
 
 function handle(): string {
@@ -77,6 +103,28 @@ try {
       break;
     case "resume-registration":
       result = await setRegistrationPaused(sql, false, reason);
+      break;
+    case "add-admin": {
+      const r = await addAdmin(sql, adminTarget(), reason, moderator());
+      console.log(
+        r.changed
+          ? `Added human ${r.humanId} as an admin.`
+          : `Human ${r.humanId} was already an admin.`,
+      );
+      break;
+    }
+    case "remove-admin": {
+      const r = await removeAdmin(sql, adminTarget(), reason, moderator());
+      console.log(
+        r.changed ? "Removed them as an admin." : "They weren't an admin.",
+      );
+      break;
+    }
+    case "admins":
+      for (const a of await listAdmins(sql))
+        console.log(
+          `human ${a.human_id}: ${a.email ?? a.auth_user_id}, since ${a.added_at.toISOString().slice(0, 10)}`,
+        );
       break;
     case "reports":
       // Bot-written text is printed as JSON strings, so it can't carry
@@ -113,7 +161,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, pause-registration, resume-registration, reports, stats, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);

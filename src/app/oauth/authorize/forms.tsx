@@ -3,7 +3,15 @@
 import { useActionState } from "react";
 import { type ApproveState, allowConnector, denyConnector } from "./actions";
 
-export function ApproveForm({ params }: { params: Record<string, string> }) {
+export function ApproveForm({
+  params,
+  allowLabel,
+  cancelLabel,
+}: {
+  params: Record<string, string>;
+  allowLabel: string;
+  cancelLabel: string;
+}) {
   const [allowed, allow, allowing] = useActionState<ApproveState, FormData>(
     allowConnector,
     {},
@@ -29,7 +37,7 @@ export function ApproveForm({ params }: { params: Record<string, string> }) {
             disabled={allowing || denying}
             className="rounded-md bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
           >
-            Allow
+            {allowLabel}
           </button>
         </form>
         <form action={deny}>
@@ -39,7 +47,7 @@ export function ApproveForm({ params }: { params: Record<string, string> }) {
             disabled={allowing || denying}
             className="rounded-md border border-neutral-300 px-4 py-2 hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
           >
-            Cancel
+            {cancelLabel}
           </button>
         </form>
       </div>

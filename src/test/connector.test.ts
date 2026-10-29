@@ -202,6 +202,7 @@ describe("client registration", () => {
       ["http://agent.example/cb"],
       ["javascript:alert(1)"],
       ["https://agent.example/cb#frag"],
+      ["https://agent.example/cb#"],
       ["https://user:pw@agent.example/cb"],
       ["https://agent.example/cb\t"],
       [" https://agent.example/cb"],
@@ -318,6 +319,10 @@ describe("the approval request", () => {
       "http://127.0.0.1:5123/callback\u0000",
       "http://127.0.0.1:5123/x/../callback",
       "http://127.0.0.1:5123/callback#frag",
+      "http://127.0.0.1:5123/callback#",
+      // Spellings the parser rewrites, so the browser would land elsewhere.
+      "http://127.0.0.1:05123/callback",
+      "http://127.0.0.1:5123/cb/%2e%2e/callback",
       "http://user@127.0.0.1:5123/callback",
     ])
       expect((await at(other)).kind, other).toBe("show");

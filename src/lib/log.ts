@@ -19,7 +19,10 @@ export type Action =
   | "admin.bot.freeze"
   | "admin.bot.unfreeze"
   | "admin.registration.pause"
-  | "admin.registration.resume";
+  | "admin.registration.resume"
+  | "copy.edit"
+  | "access.admin.add"
+  | "access.admin.remove";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the
