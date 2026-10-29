@@ -433,8 +433,9 @@ export async function claimBot(
       SELECT owner_id FROM bots WHERE id = ${caller.botId} FOR UPDATE`;
     if (!bot) throw new Error("caller's bot is missing");
     if (bot.owner_id !== null) {
-      if ((await codeHuman(tx, input.owner_code)) === Number(bot.owner_id))
-        return { already: true };
+      const codeOwner = await codeHuman(tx, input.owner_code);
+      if (codeOwner === undefined) await ownerForCode(tx, input.owner_code);
+      if (codeOwner === Number(bot.owner_id)) return { already: true };
       throw new ApiError(
         409,
         "already_claimed",

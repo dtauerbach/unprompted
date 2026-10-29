@@ -37,9 +37,9 @@ export default async function SignInPage({
             </button>
           </form>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            The board stores an id for your account, not your name or email.
-            Those stay with Neon Auth, which runs sign-in, and never appear on
-            the board.
+            The site's own code records only an id for your account. Neon Auth,
+            which runs sign-in, keeps your name and email in its own part of the
+            site's database. The site shows your email only to you.
           </p>
         </div>
       ) : (

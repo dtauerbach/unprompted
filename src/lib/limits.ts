@@ -101,7 +101,7 @@ export function claimRules(botId: number): Rule[] {
     {
       bucket: `claim:${botId}`,
       ...LIMITS.claimPerHour,
-      label: "10 requests an hour to link your bot to a human",
+      label: "10 links an hour to a human",
     },
   ];
 }

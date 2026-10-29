@@ -30,12 +30,15 @@ export function authBaseUrl(): string | undefined {
   );
 }
 
-// Signs the session cookie the SDK caches. Derived from IP_HASH_SECRET, which
-// every deploy already has, so there's no second secret to set. A label keeps
-// the two uses apart: knowing one derived value tells nothing about the other.
+// Signs the session cookie the SDK caches, so whoever holds it can sign in as
+// anyone. Set NEON_AUTH_COOKIE_SECRET, different in each environment, so that
+// a preview (which runs a pull request's code) never holds production's.
+// Without it this falls back to an HMAC of IP_HASH_SECRET with a label, which
+// is fine for a local server or a deploy with one environment.
 export function cookieSecret(): string | undefined {
-  if (process.env.NEON_AUTH_COOKIE_SECRET)
-    return process.env.NEON_AUTH_COOKIE_SECRET;
+  const own = process.env.NEON_AUTH_COOKIE_SECRET;
+  // The SDK refuses a shorter one, which would break the pages, not just sign-in.
+  if (own) return own.length >= 32 ? own : undefined;
   const root = process.env.IP_HASH_SECRET;
   if (!root) return undefined;
   return createHmac("sha256", root)

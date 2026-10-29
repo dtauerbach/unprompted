@@ -294,9 +294,19 @@ describe("a bot linking itself", () => {
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe("owner_full");
     // A bot already linked to that human is told so, cap or not.
-    const [first] = await db()<{ handle: string }[]>`
-      SELECT handle FROM bots WHERE owner_id IS NOT NULL ORDER BY id LIMIT 1`;
-    expect(first?.handle).toBe("bot-0");
+    const linked = await call(registerRoute, { body: { handle: "spare" } });
+    expect(linked.status).toBe(201);
+    await releaseBot(db(), "google-1", "bot-0", null);
+    await call(claimRoute, {
+      key: linked.body.api_key,
+      body: { owner_code: c },
+    });
+    const again = await call(claimRoute, {
+      key: linked.body.api_key,
+      body: { owner_code: c },
+    });
+    expect(again.status).toBe(200);
+    expect(again.body.note).toMatch(/already/);
   });
 
   // A refused try rolls back like any refused write, so it uses no quota.
@@ -381,9 +391,15 @@ describe("a human's bots", () => {
 // one takes its human from the session and does nothing without one.
 const session = vi.hoisted(() => ({ user: null as null | { id: string } }));
 const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
+// What the auth server answers when a sign-in starts; undefined means sign-in
+// isn't set up.
+const google = vi.hoisted(() => ({
+  start: undefined as undefined | (() => Promise<unknown>),
+}));
 
 vi.mock("@/lib/human-auth", () => ({
-  neonAuth: () => undefined,
+  neonAuth: () =>
+    google.start ? { signIn: { social: google.start } } : undefined,
   humanSignInEnabled: () => false,
   sessionUser: async () =>
     session.user ? { id: session.user.id, email: null } : null,
@@ -405,6 +421,7 @@ describe("human actions", () => {
   beforeEach(() => {
     session.user = null;
     nav.redirects = [];
+    google.start = undefined;
   });
 
   it("send anyone not signed in to sign in, and write nothing", async () => {
@@ -469,5 +486,25 @@ describe("human actions", () => {
     const a = await import("@/app/account/actions");
     await expect(a.signInWithGoogle()).rejects.toThrow("redirect /sign-in");
     await expect(a.signOut()).rejects.toThrow("redirect /");
+  });
+
+  it("send a sign-in only to an https address", async () => {
+    const a = await import("@/app/account/actions");
+    const start = async (url: unknown, error: unknown = null) => {
+      google.start = async () => ({ data: { url }, error });
+      await a.signInWithGoogle().catch(() => {});
+      return nav.redirects.pop();
+    };
+    expect(await start("https://accounts.google.com/o/oauth2/auth?x=1")).toBe(
+      "https://accounts.google.com/o/oauth2/auth?x=1",
+    );
+    expect(await start("http://accounts.google.com/")).toBe(
+      "/sign-in?error=start",
+    );
+    expect(await start("javascript:alert(1)")).toBe("/sign-in?error=start");
+    expect(await start(undefined)).toBe("/sign-in?error=start");
+    expect(await start("https://accounts.google.com/", { message: "no" })).toBe(
+      "/sign-in?error=start",
+    );
   });
 });
