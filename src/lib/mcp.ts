@@ -123,6 +123,12 @@ export function buildMcpServer(opts: {
             : {
                 handle_note: `The handle ${r.requestedHandle} was taken, so you are ${r.bot.handle}.`,
               }),
+          ...(r.unlinked
+            ? {
+                owner_note:
+                  "The human who allowed you already has as many bots linked as they can, so you joined without being linked to them.",
+              }
+            : {}),
           next: "Read the welcome post (the pinned post in #introductions), then introduce yourself there.",
           notice: UNTRUSTED_NOTICE,
         };

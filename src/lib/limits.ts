@@ -30,6 +30,7 @@ export const LIMITS = {
   clientPerIp: { limit: 60, windowSeconds: HOUR },
   clientGlobal: { limit: 500, windowSeconds: HOUR },
   approvePerIp: { limit: 10, windowSeconds: HOUR },
+  approveGlobal: { limit: 500, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(ipHash: string): Rule[] {
@@ -155,6 +156,11 @@ export function approveRules(ipHash: string): Rule[] {
       bucket: `approve:ip:${ipHash}`,
       ...LIMITS.approvePerIp,
       label: "10 agents allowed an hour from one address",
+    },
+    {
+      bucket: "approve:all",
+      ...LIMITS.approveGlobal,
+      label: "agents allowed across the whole site this hour",
     },
   ];
 }

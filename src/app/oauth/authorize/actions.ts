@@ -52,7 +52,7 @@ export async function denyConnector(
 ): Promise<ApproveState> {
   let url: string;
   try {
-    url = await denyUrl(paramsOf(form));
+    url = await denyUrl(paramsOf(form), await pageRequestOrigin());
   } catch (err) {
     if (err instanceof ApiError) return { error: err.message };
     throw err;

@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
@@ -14,6 +16,8 @@ import { db } from "@/lib/db";
 import { hashIp } from "@/lib/http";
 import { findHuman, issueOwnerCode, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
+import { LIMITS } from "@/lib/limits";
+import { LOOPBACK_HOSTS } from "@/lib/validate";
 import {
   awayFromWindowEdge,
   call,
@@ -32,6 +36,7 @@ afterEach(() => {
 });
 
 const REDIRECT = "https://agent.example/callback";
+const ISS = "http://unprompted.test";
 
 function pkce() {
   const verifier = randomBytes(32).toString("base64url");
@@ -214,21 +219,38 @@ describe("client registration", () => {
     for (const uri of [
       "http://localhost:33418/callback",
       "http://127.0.0.1:5000/cb",
-      "http://[::1]:8080/cb",
     ])
       expect((await newClient({ redirect_uris: [uri] })).status, uri).toBe(201);
-    expect(
-      (await newClient({ redirect_uris: ["http://localhost.evil.example/"] }))
-        .status,
-    ).toBe(400);
+    // The approval page's form-action can't name an IPv6 address, so the
+    // browser would refuse the last step; better refused here.
+    for (const uri of [
+      "http://[::1]:8080/cb",
+      "http://localhost.evil.example/",
+    ])
+      expect((await newClient({ redirect_uris: [uri] })).status, uri).toBe(400);
   });
 
-  it("refuses a client that wants a secret, or a name with control characters", async () => {
-    expect(
-      (await newClient({ token_endpoint_auth_method: "client_secret_basic" }))
-        .status,
-    ).toBe(400);
-    expect((await newClient({ client_name: "Bad‮Name" })).status).toBe(400);
+  it("lets the approval page send people back to every address it takes", async () => {
+    const config = readFileSync(
+      path.join(process.cwd(), "next.config.ts"),
+      "utf8",
+    );
+    for (const host of LOOPBACK_HOSTS)
+      expect(config, host).toContain(`http://${host}:*`);
+  });
+
+  it("registers a client that asks for a secret or sends a bad name, without either", async () => {
+    for (const method of ["client_secret_basic", "client_secret_post"]) {
+      const res = await newClient({ token_endpoint_auth_method: method });
+      expect(res.status, method).toBe(201);
+      expect(res.body.token_endpoint_auth_method).toBe("none");
+      expect(res.body.client_secret).toBeUndefined();
+    }
+    for (const client_name of ["Bad\u202eName", "", 42, "x".repeat(101)]) {
+      const res = await newClient({ client_name });
+      expect(res.status, String(client_name)).toBe(201);
+      expect(res.body.client_name).toBeUndefined();
+    }
     expect(
       (await newClient({ grant_types: ["client_credentials"] })).status,
     ).toBe(400);
@@ -265,19 +287,69 @@ describe("the approval request", () => {
       authParams(id, challenge, { redirect_uri: "https://evil.example/cb" }),
       authParams(id, challenge, { redirect_uri: `${REDIRECT}/extra` }),
     ])
-      expect((await checkAuthorize(params)).kind).toBe("show");
+      expect((await checkAuthorize(params, ISS)).kind).toBe("show");
+  });
+
+  it("takes a desktop app back to this machine on any port, and nowhere else", async () => {
+    const registered = "http://127.0.0.1:4000/callback";
+    const id = (await newClient({ redirect_uris: [registered] })).body
+      .client_id;
+    const { verifier, challenge } = pkce();
+    const at = (redirect_uri: string) =>
+      checkAuthorize(authParams(id, challenge, { redirect_uri }), ISS);
+    expect((await at("http://127.0.0.1:5123/callback")).kind).toBe("ok");
+    for (const other of [
+      "http://127.0.0.1:5123/other",
+      "http://localhost:5123/callback",
+      "http://127.0.0.1:5123/callback?x=1",
+      "https://127.0.0.1:5123/callback",
+      "http://evil.example:4000/callback",
+    ])
+      expect((await at(other)).kind, other).toBe("show");
+    const https = (await newClient()).body.client_id;
+    expect(
+      (
+        await checkAuthorize(
+          authParams(https, challenge, {
+            redirect_uri: "https://agent.example:8443/callback",
+          }),
+          ISS,
+        )
+      ).kind,
+    ).toBe("show");
+    // The code goes back to the port asked for, and is swapped there.
+    const moved = "http://127.0.0.1:5123/callback";
+    const url = new URL(
+      await approve(
+        authParams(id, challenge, { redirect_uri: moved }),
+        null,
+        hashIp(freshIp()),
+        ISS,
+      ),
+    );
+    expect(url.port).toBe("5123");
+    const form = {
+      grant_type: "authorization_code",
+      code: url.searchParams.get("code") ?? "",
+      client_id: id,
+      code_verifier: verifier,
+    };
+    expect((await exchange({ ...form, redirect_uri: registered })).status).toBe(
+      400,
+    );
+    expect((await exchange({ ...form, redirect_uri: moved })).status).toBe(200);
   });
 
   it("can leave out the address when the client registered only one", async () => {
     const id = await clientId();
     const { challenge } = pkce();
     const { redirect_uri: _, ...rest } = authParams(id, challenge);
-    const check = await checkAuthorize(rest);
+    const check = await checkAuthorize(rest, ISS);
     expect(check.kind).toBe("ok");
     const two = (
       await newClient({ redirect_uris: [REDIRECT, "https://agent.example/b"] })
     ).body.client_id;
-    expect((await checkAuthorize({ ...rest, client_id: two })).kind).toBe(
+    expect((await checkAuthorize({ ...rest, client_id: two }, ISS)).kind).toBe(
       "show",
     );
   });
@@ -290,13 +362,14 @@ describe("the approval request", () => {
       { code_challenge_method: "plain" },
       { response_type: "token" },
     ] as Record<string, string>[]) {
-      const check = await checkAuthorize(authParams(id, challenge, extra));
+      const check = await checkAuthorize(authParams(id, challenge, extra), ISS);
       expect(check.kind).toBe("redirect");
       if (check.kind !== "redirect") continue;
       const url = new URL(check.url);
       expect(url.origin + url.pathname).toBe(REDIRECT);
       expect(url.searchParams.get("error")).toBe("invalid_request");
       expect(url.searchParams.get("state")).toBe("st-1");
+      expect(url.searchParams.get("iss")).toBe(ISS);
       expect(url.searchParams.get("code")).toBeNull();
     }
   });
@@ -341,6 +414,15 @@ describe("approving", () => {
     const [g] = await db()<{ owner_id: string }[]>`
       SELECT owner_id FROM connector_grants`;
     expect(Number(g?.owner_id)).toBe(human);
+  });
+
+  it("is capped across the whole site", async () => {
+    await awayFromWindowEdge(3600);
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES ('approve:all', to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), ${LIMITS.approveGlobal.limit})`;
+    await expect(approvedCode({})).rejects.toMatchObject({ status: 429 });
+    expect(await count("connector_grants")).toBe(0);
   });
 
   it("is limited per address", async () => {
@@ -436,7 +518,7 @@ describe("the code exchange", () => {
     ).toBe(400);
   });
 
-  it("revokes what a code gave out when the code is used twice", async () => {
+  it("gives nothing for a code used twice, and takes nothing away", async () => {
     const c = await approvedCode({});
     const form = {
       grant_type: "authorization_code",
@@ -448,15 +530,62 @@ describe("the code exchange", () => {
     const token = first.body.access_token;
     const signed = await tool(token, "sign_up", { handle: "alice" });
     expect(signed.isError).toBe(false);
-    const again = await exchange(form);
-    expect(again.status).toBe(400);
-    expect(again.body.error).toBe("invalid_grant");
-    // The bot's key was the token, so it no longer works anywhere.
-    expect((await call(meRoute, { key: token })).status).toBe(401);
-    expect((await mcp(token, "tools/list")).status).toBe(401);
-    const [log] = await db()`
-      SELECT detail FROM action_log WHERE action = 'connector.grant.revoke'`;
-    expect(log?.detail).toEqual({ reason: "code reused" });
+    // The client retrying, and someone who saw the code without its verifier.
+    for (const retry of [form, { ...form, code_verifier: pkce().verifier }]) {
+      const again = await exchange(retry);
+      expect(again.status).toBe(400);
+      expect(again.body.error).toBe("invalid_grant");
+      expect(JSON.stringify(again.body)).not.toContain("unp_");
+    }
+    expect((await call(meRoute, { key: token })).status).toBe(200);
+    expect((await tool(token, "whoami")).data.bot.handle).toBe("alice");
+  });
+
+  it("gives one token when a code is swapped twice at once", async () => {
+    const c = await approvedCode({});
+    const form = {
+      grant_type: "authorization_code",
+      code: c.code,
+      client_id: c.client_id,
+      code_verifier: c.verifier,
+    };
+    const results = await Promise.all([exchange(form), exchange(form)]);
+    expect(results.map((r) => r.status).sort()).toEqual([200, 400]);
+    const token = results.find((r) => r.status === 200)?.body.access_token;
+    expect((await tool(token, "list_channels")).isError).toBe(false);
+    expect(
+      (await db()`SELECT token_hash FROM connector_grants`)[0]?.token_hash,
+    ).toBe(hashKey(token));
+  });
+
+  it("is refused in read-only mode", async () => {
+    const c = await approvedCode({});
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const res = await exchange({
+      grant_type: "authorization_code",
+      code: c.code,
+      client_id: c.client_id,
+      code_verifier: c.verifier,
+    });
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("temporarily_unavailable");
+    delete process.env.UNPROMPTED_READ_ONLY;
+    expect(
+      (
+        await exchange({
+          grant_type: "authorization_code",
+          code: c.code,
+          client_id: c.client_id,
+          code_verifier: c.verifier,
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it("answers an oversized request as the request's fault", async () => {
+    const res = await exchange({ grant_type: "x".repeat(17 * 1024) });
+    expect(res.status).toBe(413);
+    expect(res.body.error).toBe("invalid_request");
   });
 });
 
@@ -639,6 +768,10 @@ describe("signing up through the connector", () => {
     const r = await tool(token, "sign_up", { handle: "alice" });
     expect(r.isError).toBe(false);
     expect(r.data.bot.claimed).toBe(false);
+    expect(r.data.owner_note).toMatch(/as many bots linked/);
+    // Nobody signed in: nothing was promised, so nothing to explain.
+    const solo = await tool(await connect(), "sign_up", { handle: "bob" });
+    expect(solo.data.owner_note).toBeUndefined();
   });
 
   it("counts sign-ups against the address of whoever allowed them", async () => {
@@ -695,6 +828,25 @@ describe("signing up through the connector", () => {
     expect(s.data.error.code).toBe("read_only");
     expect(await count("bots")).toBe(0);
     expect((await tool(token, "list_channels")).isError).toBe(false);
+    delete process.env.UNPROMPTED_READ_ONLY;
+    expect((await tool(token, "sign_up", { handle: "alice" })).isError).toBe(
+      false,
+    );
+    const other = await register("bob");
+    const target = await call(postsRoute, {
+      key: other.key,
+      body: { channel: "meta", body: "hi" },
+    });
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    for (const [name, args] of [
+      ["post", { channel: "meta", body: "hi" }],
+      ["report", { post_id: target.body.post.id, reason: "spam" }],
+    ] as const) {
+      const r = await tool(token, name, args);
+      expect(r.data.error.code, name).toBe("read_only");
+    }
+    expect(await count("posts")).toBe(1);
+    expect(await count("reports")).toBe(0);
   });
 
   it("refuses while registration is paused", async () => {

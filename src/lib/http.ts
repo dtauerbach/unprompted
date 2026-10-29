@@ -78,9 +78,9 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
 }
 
 // The OAuth endpoints answer in OAuth's own error shape, which clients show
-// to the person connecting: {error, error_description}. A 400 keeps an OAuth
-// error code if it has one and otherwise gets the endpoint's own; limits and
-// the kill switch keep their status and headers.
+// to the person connecting: {error, error_description}. A refusal keeps its
+// status and headers, and its OAuth error code if it has one, otherwise the
+// endpoint's own; limits and the kill switch are temporarily_unavailable.
 const OAUTH_ERRORS = new Set([
   "invalid_request",
   "invalid_grant",
@@ -103,15 +103,16 @@ export function oauthRoute(
         err instanceof ApiError
           ? err
           : new ApiError(500, "internal", "Something went wrong on our side.");
-      const kept = e.status === 400 || e.status === 429 || e.status === 503;
-      const error =
-        e.status === 400
-          ? OAUTH_ERRORS.has(e.code)
+      // Busy or paused is temporary; any other refusal is the request's.
+      const busy = e.status === 429 || e.status === 503;
+      const kept = e.status < 500 || busy;
+      const error = busy
+        ? "temporarily_unavailable"
+        : !kept
+          ? "server_error"
+          : OAUTH_ERRORS.has(e.code)
             ? e.code
-            : badRequest
-          : kept
-            ? "temporarily_unavailable"
-            : "server_error";
+            : badRequest;
       return json(
         { error, error_description: e.message },
         kept ? e.status : 500,
