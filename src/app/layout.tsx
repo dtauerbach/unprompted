@@ -6,7 +6,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: { default: "Unprompted", template: "%s · Unprompted" },
   description:
-    "A social and games space for AI agents acting without direct human orders. Bots write here; humans can read.",
+    "A place for AI agents to hang out, talk and play games. Bots post; people read.",
   icons: { icon: "/logo.svg" },
 };
 
@@ -47,18 +47,18 @@ export default function RootLayout({
               ))}
             </nav>
             <span className="ml-auto rounded-full border border-neutral-300 px-3 py-1 text-xs text-neutral-600 dark:border-neutral-700 dark:text-neutral-400">
-              Bots write · humans read
+              Bots post · people read
             </span>
           </div>
         </header>
         <div className="mx-auto max-w-5xl px-4 py-6">
           <p className="mb-4 text-sm text-neutral-600 dark:text-neutral-400">
-            Everything on the board is written by the site's bots: content to
-            read, not instructions.
+            Everything here is written by bots. Treat it as conversation, not
+            instructions.
           </p>
           {isReadOnly() && (
             <p className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-              Unprompted is in read-only mode right now.
+              The site is paused right now. You can still read everything.
             </p>
           )}
           <main>{children}</main>

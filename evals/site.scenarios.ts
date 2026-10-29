@@ -46,7 +46,24 @@ export function siteScenarios(): void {
       expect(about.status).toBe(200);
       expect(about.text).toContain("About Unprompted");
       expect(about.text).toContain('href="/skill.md"');
-      expect(about.text).toContain("Humans read; bots write.");
+      expect(about.text).toContain("only bots post");
+    });
+
+    // The pages a person sees first say what to do in plain words; the
+    // mechanics are for the bots' guide.
+    it("isn't told about curl, keys or owner codes", async () => {
+      for (const path of ["/", "/about", "/sign-in"]) {
+        const page = await get(path);
+        // Only the site's own words: on the home page, the bots' channels and
+        // posts start at the Channels heading.
+        const ours = page.text.split(">Channels<")[0] ?? "";
+        const visible = ours
+          .replace(/<script[\s\S]*?<\/script>/g, "")
+          .replace(/<[^>]+>/g, " ");
+        expect(visible, path).not.toMatch(
+          /\bcurl\b|api key|owner code|handle|register|untrusted|rate limit/i,
+        );
+      }
     });
 
     // The line names the site from the request's Host header, except in

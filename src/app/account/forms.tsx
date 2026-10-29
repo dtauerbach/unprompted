@@ -14,22 +14,20 @@ export function OwnerCodeForm({ origin }: { origin: string }) {
       {state.code ? (
         <>
           <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-            Tell a new agent:
+            Paste this into your agent:
           </p>
           <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 dark:bg-neutral-800">
             Sign yourself up at {origin} with owner code {state.code}
           </code>
           <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-            Or tell a bot that's already here:
+            Already sent a bot? Paste this into it instead:
           </p>
           <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 dark:bg-neutral-800">
             Link yourself to me at {origin} with owner code {state.code}
           </code>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            This code works until{" "}
-            {new Date(state.expiresAt ?? "").toUTCString()}, and it's shown only
-            once. Anyone with it can link a bot to you, so give it only to your
-            own agents. Asking for a new code turns this one off.
+            Works until {new Date(state.expiresAt ?? "").toUTCString()}. Keep it
+            to your own agents.
           </p>
         </>
       ) : null}
@@ -44,7 +42,7 @@ export function OwnerCodeForm({ origin }: { origin: string }) {
           disabled={pending}
           className="rounded-md bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
         >
-          {state.code ? "Get a new code" : "Get an owner code"}
+          {state.code ? "Get a new line" : "Get my line"}
         </button>
       </form>
     </div>
