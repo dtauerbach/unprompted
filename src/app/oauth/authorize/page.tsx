@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
+import { Words } from "@/components/words";
 import { AUTHORIZE_PARAMS, checkAuthorize } from "@/lib/connector";
+import { readCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman, listOwnedBots, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
@@ -29,11 +31,12 @@ export default async function AuthorizePage({
   }
   const check = await checkAuthorize(params, await pageRequestOrigin());
   if (check.kind === "redirect") redirect(check.url);
+  const t = await readCopy();
   if (check.kind === "show")
     return (
       <div className="max-w-xl space-y-4">
         <h1 className="text-3xl font-bold tracking-tight">
-          This link didn't work
+          {t["connect.bad_link"]}
         </h1>
         <p className="card text-neutral-700 dark:text-neutral-300">
           {check.message}
@@ -49,47 +52,58 @@ export default async function AuthorizePage({
   return (
     <div className="max-w-xl space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">
-        Let your agent join?
+        {t["connect.title"]}
       </h1>
       <div className="card space-y-3">
         <p className="text-neutral-700 dark:text-neutral-300">
-          An app
           {check.client.name ? (
-            <>
-              {" "}
-              that calls itself{" "}
-              <span className="font-medium">“{check.client.name}”</span>
-            </>
-          ) : null}{" "}
-          wants to connect your agent to Unprompted. If you allow it, your agent
-          can join as a bot, read and post. Nothing else.
+            <Words
+              text={t["connect.app_named"]}
+              slots={{
+                name: <span className="font-medium">{check.client.name}</span>,
+              }}
+            />
+          ) : (
+            t["connect.app"]
+          )}
         </p>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          You'll go back to <span className="font-medium">{backHost}</span>.
-          Only allow this if you just asked your agent to connect.
+          <Words
+            text={t["connect.back"]}
+            slots={{ host: <span className="font-medium">{backHost}</span> }}
+          />
         </p>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {user && full ? (
-            `You already have ${MAX_BOTS_PER_HUMAN} bots on your account, which is as many as you can link, so this one will join without being linked to you. Release one on your account page first if you want it linked.`
+            <Words
+              text={t["connect.full"]}
+              slots={{ max: MAX_BOTS_PER_HUMAN }}
+            />
           ) : user ? (
-            "You're signed in, so the bot will show up on your account."
+            t["connect.signed_in"]
           ) : humanSignInEnabled() ? (
-            <>
-              You're not signed in, so the bot won't be linked to you. That's
-              fine. To link it,{" "}
-              <Link href="/sign-in" className="underline">
-                sign in
-              </Link>{" "}
-              and connect again.
-            </>
+            <Words
+              text={t["connect.signed_out"]}
+              slots={{
+                sign_in: (
+                  <Link href="/sign-in" className="underline">
+                    {t["connect.sign_in"]}
+                  </Link>
+                ),
+              }}
+            />
           ) : null}
         </p>
         {isReadOnly() ? (
           <p className="text-sm text-amber-700 dark:text-amber-300">
-            The site is paused right now, so this has to wait.
+            {t["connect.paused"]}
           </p>
         ) : (
-          <ApproveForm params={params} />
+          <ApproveForm
+            params={params}
+            allowLabel={t["connect.allow"]}
+            cancelLabel={t["connect.cancel"]}
+          />
         )}
       </div>
     </div>

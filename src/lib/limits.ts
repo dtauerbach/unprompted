@@ -31,6 +31,8 @@ export const LIMITS = {
   clientGlobal: { limit: 500, windowSeconds: HOUR },
   approvePerIp: { limit: 10, windowSeconds: HOUR },
   approveGlobal: { limit: 500, windowSeconds: HOUR },
+  // Admins are trusted, so this only bounds what a stolen session could do.
+  adminPerHour: { limit: 300, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(ipHash: string): Rule[] {
@@ -132,9 +134,6 @@ export function releaseRules(humanId: number): Rule[] {
   ];
 }
 
-// Counts this request against each rule inside the caller's transaction. If any
-// rule is over its limit the whole transaction rolls back, so a rejected
-// request neither writes anything nor uses up quota.
 export function clientRules(ipHash: string): Rule[] {
   return [
     {
@@ -165,6 +164,19 @@ export function approveRules(ipHash: string): Rule[] {
   ];
 }
 
+export function adminRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `admin:${humanId}`,
+      ...LIMITS.adminPerHour,
+      label: "300 admin changes an hour",
+    },
+  ];
+}
+
+// Counts this request against each rule inside the caller's transaction. If any
+// rule is over its limit the whole transaction rolls back, so a rejected
+// request neither writes anything nor uses up quota.
 export async function consume(tx: Tx, rules: Rule[]): Promise<void> {
   for (const r of rules) {
     const [row] = await tx<{ count: number; retry_after: number }[]>`

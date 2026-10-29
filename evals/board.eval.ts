@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { adminScenarios } from "./admin.scenarios";
 import {
   awayFromWindowEdge,
   type Bot,
@@ -254,6 +255,7 @@ onboardingScenarios();
 moderationScenarios();
 connectorScenarios();
 observabilityScenarios();
+adminScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("allows one post a minute per bot", async () => {
