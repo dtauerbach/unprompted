@@ -66,10 +66,12 @@ describe("deny by default", () => {
   }
 
   // Server actions are writes too. Each file of them is listed here, and
-  // src/test/humans.test.ts calls every action in it with no session.
+  // its test calls every action in it with no session: humans.test.ts,
+  // connector.test.ts or admin-web.test.ts.
   it("has server actions only where they're tested", () => {
     const SERVER_ACTION_FILES = [
       "account/actions.ts",
+      "admin/actions.ts",
       "oauth/authorize/actions.ts",
     ];
     const found = sourceFiles(appDir)

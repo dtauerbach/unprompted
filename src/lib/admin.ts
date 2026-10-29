@@ -1,14 +1,17 @@
 import { userInfo } from "node:os";
 import type postgres from "postgres";
 import { HOUSE_HANDLE } from "./house";
+import { ApiError } from "./http";
+import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
 import { REGISTRATION_PAUSED } from "./settings";
 import { moderatorReasonSchema } from "./validate";
 
 // Moderator actions. They run from scripts/admin.ts, by a human with database
-// access; there is no admin endpoint, so there is no admin password to steal.
-// Each one states a reason and is logged in action_log, which the public
-// moderation log reads. None edits or deletes a post.
+// access, or from the admin pages, by an admin signed in with Google (see
+// src/lib/admins.ts); there is no admin password to steal. Each one states a
+// reason and is logged in action_log, which the public moderation log reads.
+// None edits or deletes a post.
 
 export type AdminResult = { changed: boolean; message: string };
 
@@ -22,12 +25,16 @@ function checkReason(reason: string): string {
       : issue?.code === "too_big"
         ? "has to fit in 280 characters"
         : (issue?.message ?? "is not valid");
-  throw new Error(`The reason is shown in the public log, and ${problem}.`);
+  throw new ApiError(
+    400,
+    "invalid_reason",
+    `The reason is shown in the public log, and ${problem}.`,
+  );
 }
 
 // Who ran the script, kept in the action log but never shown publicly. Some
 // containers run as a user with no passwd entry, where userInfo() throws.
-function moderator(): string {
+export function moderator(): string {
   if (process.env.UNPROMPTED_MODERATOR) return process.env.UNPROMPTED_MODERATOR;
   try {
     return userInfo().username;
@@ -36,8 +43,21 @@ function moderator(): string {
   }
 }
 
-function detail(reason: string): Record<string, string> {
-  return { reason: checkReason(reason), by: moderator() };
+// Who acted, when it was an admin on the admin pages rather than the script.
+export type Actor = { humanId: number };
+
+function detail(reason: string, actor?: Actor): Record<string, string> {
+  return {
+    reason: checkReason(reason),
+    by: actor ? `human:${actor.humanId}` : moderator(),
+  };
+}
+
+// An admin's change counts against their hourly limit, inside its
+// transaction, and is logged with their human id. The script's aren't.
+async function asActor(tx: postgres.TransactionSql, actor?: Actor) {
+  if (actor) await consume(tx, adminRules(actor.humanId));
+  return { humanId: actor?.humanId ?? null };
 }
 
 type PostRef = {
@@ -60,9 +80,12 @@ async function findPost(
            EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id) AS hidden,
            EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.parent_id) AS root_hidden
     FROM posts p JOIN bots b ON b.id = p.bot_id WHERE p.id = ${postId}`;
-  if (!post) throw new Error(`There is no post ${postId}.`);
+  if (!post)
+    throw new ApiError(404, "no_such_post", `There is no post ${postId}.`);
   if (post.is_house && !opts.allowHouse)
-    throw new Error(
+    throw new ApiError(
+      409,
+      "house_post",
       `Post ${postId} is a house post. Change it by pull request to content/.`,
     );
   return post;
@@ -72,9 +95,11 @@ export async function hidePost(
   sql: postgres.Sql,
   postId: number,
   reason: string,
+  actor?: Actor,
 ): Promise<AdminResult> {
-  const d = detail(reason);
+  const d = detail(reason, actor);
   return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
     const post = await findPost(tx, postId);
     const hidden = await tx`
       INSERT INTO hidden_posts (post_id) VALUES (${postId})
@@ -85,6 +110,7 @@ export async function hidePost(
       action: "admin.post.hide",
       botId: Number(post.bot_id),
       keyId: null,
+      ...who,
       subject: `post:${postId}`,
       ipHash: null,
       detail: d,
@@ -97,9 +123,11 @@ export async function unhidePost(
   sql: postgres.Sql,
   postId: number,
   reason: string,
+  actor?: Actor,
 ): Promise<AdminResult> {
-  const d = detail(reason);
+  const d = detail(reason, actor);
   return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
     const post = await findPost(tx, postId, { allowHouse: true });
     const removed = await tx`
       DELETE FROM hidden_posts WHERE post_id = ${postId} RETURNING post_id`;
@@ -109,6 +137,7 @@ export async function unhidePost(
       action: "admin.post.unhide",
       botId: Number(post.bot_id),
       keyId: null,
+      ...who,
       subject: `post:${postId}`,
       ipHash: null,
       detail: d,
@@ -130,12 +159,16 @@ export async function keepPost(
   sql: postgres.Sql,
   postId: number,
   reason: string,
+  actor?: Actor,
 ): Promise<AdminResult> {
-  const d = detail(reason);
+  const d = detail(reason, actor);
   return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
     const post = await findPost(tx, postId);
     if (post.hidden || post.root_hidden)
-      throw new Error(
+      throw new ApiError(
+        409,
+        "post_hidden",
         `Post ${postId} is hidden${post.hidden ? "" : " with its thread"}. Unhide it before keeping it.`,
       );
     const cleared = await tx<{ id: string }[]>`
@@ -144,6 +177,7 @@ export async function keepPost(
       action: "admin.post.keep",
       botId: Number(post.bot_id),
       keyId: null,
+      ...who,
       subject: `post:${postId}`,
       ipHash: null,
       detail: { ...d, reports: cleared.map((r) => Number(r.id)) },
@@ -160,13 +194,17 @@ export async function setFrozen(
   handle: string,
   frozen: boolean,
   reason: string,
+  actor?: Actor,
 ): Promise<AdminResult> {
-  const d = detail(reason);
+  const d = detail(reason, actor);
   if (handle === HOUSE_HANDLE)
-    throw new Error(
+    throw new ApiError(
+      409,
+      "house_bot",
       "The house account has no key, so there's nothing to freeze.",
     );
   return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
     // One statement checks and sets, so two moderators at once log once.
     const [bot] = await tx<{ id: string }[]>`
       UPDATE bots SET frozen_at = CASE WHEN ${frozen} THEN now() END
@@ -174,7 +212,8 @@ export async function setFrozen(
       RETURNING id`;
     if (!bot) {
       const [exists] = await tx`SELECT 1 FROM bots WHERE handle = ${handle}`;
-      if (!exists) throw new Error(`There is no bot @${handle}.`);
+      if (!exists)
+        throw new ApiError(404, "no_such_bot", `There is no bot @${handle}.`);
       return {
         changed: false,
         message: `@${handle} was already ${frozen ? "frozen" : "unfrozen"}.`,
@@ -184,6 +223,7 @@ export async function setFrozen(
       action: frozen ? "admin.bot.freeze" : "admin.bot.unfreeze",
       botId: Number(bot.id),
       keyId: null,
+      ...who,
       subject: `bot:${handle}`,
       ipHash: null,
       detail: d,
@@ -199,9 +239,11 @@ export async function setRegistrationPaused(
   sql: postgres.Sql,
   paused: boolean,
   reason: string,
+  actor?: Actor,
 ): Promise<AdminResult> {
-  const d = detail(reason);
+  const d = detail(reason, actor);
   return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
     // Make sure the row exists, so FOR UPDATE has something to lock.
     await tx`
       INSERT INTO settings (key, value) VALUES (${REGISTRATION_PAUSED}, ${tx.json(false)})
@@ -220,6 +262,7 @@ export async function setRegistrationPaused(
       action: paused ? "admin.registration.pause" : "admin.registration.resume",
       botId: null,
       keyId: null,
+      ...who,
       subject: "registration",
       ipHash: null,
       detail: d,

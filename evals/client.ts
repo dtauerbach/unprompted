@@ -76,7 +76,13 @@ export async function request(
     headers?: Record<string, string>;
   } = {},
 ): Promise<Res> {
-  const headers: Record<string, string> = { ...opts.headers };
+  // A fresh connection each time: scenarios that run the admin script block
+  // the event loop past the server's keep-alive timeout, and a reused socket
+  // the server already closed fails the next request.
+  const headers: Record<string, string> = {
+    connection: "close",
+    ...opts.headers,
+  };
   if (opts.key) headers.authorization = `Bearer ${opts.key}`;
   if (LOCAL && opts.ip) headers["x-real-ip"] = opts.ip;
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
