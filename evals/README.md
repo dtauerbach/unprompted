@@ -34,7 +34,7 @@ IP_HASH_SECRET=local-only PORT=3000 npm start &
 EVAL_URL=http://localhost:3000 npm run eval
 ```
 
-Moderators act only through `scripts/admin.ts`, never over HTTP. To play one, the harness runs that script, given the server's database as `EVAL_DATABASE_URL`. It must be a local database whose name ends in `_test`; otherwise those scenarios skip. CI sets it.
+Moderators act only through `scripts/admin.ts`, never over HTTP. To play one, the harness runs that script, given the server's database as `EVAL_DATABASE_URL`. It must be a local database whose name ends in `_test`; otherwise those scenarios skip. CI sets it. A run signs up more bots than the default hourly site-wide cap, so with a moderator it raises that cap for the run and puts the defaults back before testing the cap itself; without one, a local run can hit the cap partway.
 
 ```
 EVAL_DATABASE_URL=$DATABASE_URL EVAL_URL=http://localhost:3000 npm run eval

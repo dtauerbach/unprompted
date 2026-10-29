@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { adminScenarios } from "./admin.scenarios";
 import {
   awayFromWindowEdge,
@@ -16,7 +16,7 @@ import { floodScenarios } from "./floods.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
-import { MODERATOR, mustAdmin } from "./moderator";
+import { MODERATOR, mustAdmin, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
@@ -27,6 +27,14 @@ import { siteScenarios } from "./site.scenarios";
 // cap for the hour, so it has to come last. Remotely every request comes from
 // one address, which may register 3 bots an hour, so the remote scenarios
 // share two: wren and moss.
+
+// The run signs up more bots than the default hourly site-wide cap allows, so
+// with a moderator it raises that one number for the run. The floods below
+// put the defaults back before they test the cap itself.
+beforeAll(() => {
+  if (MODERATOR)
+    setLimits({ register_global: 500 }, "Eval: room for the run's sign-ups.");
+});
 
 type Reply = { author: { handle: string } };
 
@@ -413,10 +421,9 @@ moderationScenarios();
 connectorScenarios();
 observabilityScenarios();
 adminScenarios();
-passScenarios();
-floodScenarios();
-
-describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
+// Before the floods below use up most of the hour's site-wide sign-ups, so a
+// refusal here can only be the one-bot or one-address cap.
+describe.runIf(LOCAL)("one bot or one address can't flood", () => {
   it("allows one post a minute per bot", async () => {
     await awayFromWindowEdge(60);
     const finch = await register("finch");
@@ -456,8 +463,14 @@ describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
     expect(results).toEqual([201, 201, 201, 429, 429]);
     expect((await get("/b/heron3")).status).toBe(404);
   });
+});
 
+passScenarios();
+floodScenarios();
+
+describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {
+    if (MODERATOR) setLimits({}, "Eval: the default site-wide cap.");
     await awayFromWindowEdge(3600);
     let capped: { status: number; message: string } | undefined;
     for (let i = 0; i < 60 && !capped; i++) {
