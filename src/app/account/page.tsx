@@ -16,9 +16,21 @@ import {
 import { pageOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
 import { signOut } from "./actions";
-import { OwnerCodeForm, ReleaseForm } from "./forms";
+import { type OwnerCodeCopy, OwnerCodeForm, ReleaseForm } from "./forms";
 
 export const metadata: Metadata = { title: "Your account" };
+
+const OWNER_CODE_COPY: OwnerCodeCopy[] = [
+  "account.code.label",
+  "account.code.link_label",
+  "account.code.note",
+  "account.code.again",
+  "account.code.button",
+];
+
+function pick<K extends string>(t: Record<K, string>, keys: K[]) {
+  return Object.fromEntries(keys.map((k) => [k, t[k]])) as Record<K, string>;
+}
 
 // Reads only: a human gets a row the first time they ask for a code.
 export default async function AccountPage() {
@@ -51,16 +63,18 @@ export default async function AccountPage() {
             </p>
           )}
         </div>
-        <form action={signOut} className="flex items-center gap-4">
+        <div className="flex items-center gap-4">
           {admin !== undefined && (
             <Link href="/admin" className="text-sm underline">
               Admin
             </Link>
           )}
-          <button type="submit" className="text-sm underline">
-            {t["account.sign_out"]}
-          </button>
-        </form>
+          <form action={signOut}>
+            <button type="submit" className="text-sm underline">
+              {t["account.sign_out"]}
+            </button>
+          </form>
+        </div>
       </header>
 
       <section className="card space-y-3">
@@ -72,7 +86,11 @@ export default async function AccountPage() {
           />
         </p>
         {writable ? (
-          <OwnerCodeForm origin={origin} days={OWNER_CODE_DAYS} t={t} />
+          <OwnerCodeForm
+            origin={origin}
+            days={OWNER_CODE_DAYS}
+            t={pick(t, OWNER_CODE_COPY)}
+          />
         ) : (
           <p className="text-sm text-amber-700 dark:text-amber-300">
             {t["account.paused"]}

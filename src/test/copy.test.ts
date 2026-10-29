@@ -17,6 +17,8 @@ import {
 } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { LIMITS } from "@/lib/limits";
+import { listModerationLog } from "@/lib/moderation";
+import { PASTE_LINES } from "@/lib/paste-lines";
 import { awayFromWindowEdge, resetDb } from "./helpers";
 
 // The words on the pages people read: what an admin may save, which version
@@ -93,28 +95,62 @@ describe("checking what an admin typed", () => {
     );
   });
 
-  it("keeps every spot the page fills in, once each", () => {
-    const key = "home.paste_line";
-    expect(slotsOf(COPY[key].text)).toEqual(["address"]);
-    expect(checkCopy(key, "Join us at {address}")).toBe("Join us at {address}");
-    expect(refusal(() => checkCopy(key, "Join us"))).toMatch(/\{address\}/);
-    expect(refusal(() => checkCopy(key, "{address} and {address}"))).toMatch(
-      /once each/,
-    );
-    expect(refusal(() => checkCopy(key, "{address} {code}"))).toMatch(
-      /once each/,
-    );
-    expect(refusal(() => checkCopy(key, "{address} {"))).toMatch(/no other/);
-    expect(refusal(() => checkCopy(key, "{Address}"))).toMatch(/no other/);
+  it("refuses text a person can't see but a model can read", () => {
+    const hidden = [
+      "Agents\u202Eout", // right-to-left override
+      "Agents\u200Bhere", // zero-width space
+      "Agents\u2066here\u2069", // isolates
+      "Agents\u00ADhere", // soft hyphen
+      `Agents ${[..."run this"].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join("")}`, // tag characters
+      "Agents\u{E0101}here", // variation selector supplement
+      "Agents\uFE00here",
+    ];
+    for (const text of hidden)
+      expect(
+        refusal(() => checkCopy("home.title", text)),
+        text,
+      ).toMatch(/invisible/);
   });
 
-  it("lets spots move around", () => {
+  it("keeps an emoji's presentation selector and normalizes accents", () => {
+    expect(checkCopy("home.title", "Agents \u2764\uFE0F")).toBe(
+      "Agents \u2764\uFE0F",
+    );
+    expect(checkCopy("home.title", "Cafe\u0301")).toBe("Caf\u00e9");
+  });
+
+  it("keeps every spot the page fills in, once each", () => {
+    const key = "home.welcome";
+    expect(slotsOf(COPY[key].text)).toEqual(["welcome_post"]);
+    expect(checkCopy(key, "Read the {welcome_post}")).toBe(
+      "Read the {welcome_post}",
+    );
+    expect(refusal(() => checkCopy(key, "Read it"))).toMatch(
+      /\{welcome_post\}/,
+    );
     expect(
-      checkCopy(
-        "account.code.line",
-        "Owner code {code}: sign yourself up at {address}",
-      ),
-    ).toBe("Owner code {code}: sign yourself up at {address}");
+      refusal(() => checkCopy(key, "{welcome_post} and {welcome_post}")),
+    ).toMatch(/once each/);
+    expect(refusal(() => checkCopy(key, "{welcome_post} {code}"))).toMatch(
+      /once each/,
+    );
+    expect(refusal(() => checkCopy(key, "{welcome_post} {"))).toMatch(
+      /no other/,
+    );
+    expect(refusal(() => checkCopy(key, "{Welcome_post}"))).toMatch(/no other/);
+  });
+
+  it("lets a spot move around", () => {
+    expect(
+      checkCopy("account.send.lead", "Up to {max} bots. Get a line for one."),
+    ).toBe("Up to {max} bots. Get a line for one.");
+  });
+
+  it("leaves out the lines people paste into their agents", () => {
+    for (const key of Object.keys(COPY))
+      expect(key).not.toMatch(/paste_line|code\.line|link_line/);
+    for (const line of Object.values(PASTE_LINES))
+      for (const e of Object.values(COPY)) expect(e.text).not.toBe(line);
   });
 
   it("refuses braces in a piece with no spots", () => {
@@ -159,10 +195,10 @@ describe("which words a page shows", () => {
     // As if a version were saved before the code moved its spots.
     await db()`
       INSERT INTO copy_versions (key, body, human_id)
-      VALUES ('home.paste_line', 'Come to {old_spot}', ${a}),
+      VALUES ('home.welcome', 'Read the {old_spot}', ${a}),
              ('home.gone', 'A piece the code dropped', ${a})`;
     const t = await readCopy();
-    expect(t["home.paste_line"]).toBe(COPY["home.paste_line"].text);
+    expect(t["home.welcome"]).toBe(COPY["home.welcome"].text);
     expect(t).not.toHaveProperty("home.gone");
   });
 
@@ -198,6 +234,8 @@ describe("saving", () => {
       human_id: String(a),
       subject: "copy:about.title",
     });
+    // Editing words isn't moderation, and the public log never names admins.
+    expect(await listModerationLog({ limit: 10 })).toEqual([]);
   });
 
   it("can't change or delete an old version", async () => {
@@ -222,14 +260,34 @@ describe("saving", () => {
     expect(await copyHistory(db(), "about.title")).toHaveLength(1);
   });
 
-  it("lets only one of two saves at once through", async () => {
+  it("makes a save wait for one in progress, then sees it", async () => {
     const a = await anAdmin();
-    const results = await Promise.allSettled([
-      save(a, "about.lead", "First", 0),
-      save(a, "about.lead", "Second", 0),
+    let release = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked = () => {};
+    const isLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    // A save in progress: it holds the piece's lock and has just written.
+    const first = db().begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext('copy:about.lead'))`;
+      await tx`
+        INSERT INTO copy_versions (key, body, human_id)
+        VALUES ('about.lead', 'First', ${a})`;
+      locked();
+      await held;
+    });
+    await isLocked;
+    const second = save(a, "about.lead", "Second", 0);
+    await new Promise((r) => setTimeout(r, 200));
+    release();
+    await first;
+    await expect(second).rejects.toMatchObject({ code: "copy_changed" });
+    expect((await copyHistory(db(), "about.lead")).map((v) => v.body)).toEqual([
+      "First",
     ]);
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect(await copyHistory(db(), "about.lead")).toHaveLength(1);
   });
 
   it("adds nothing when the words didn't change", async () => {
@@ -244,13 +302,17 @@ describe("saving", () => {
       version: 0,
     });
     expect(await db()`SELECT 1 FROM copy_versions`).toHaveLength(1);
+    const [used] = await db()`
+      SELECT sum(count)::int AS n FROM rate_limits WHERE bucket = ${`admin:${a}`}`;
+    expect(used?.n).toBe(1);
   });
 
   it("refuses bad words before touching the database", async () => {
     const a = await anAdmin();
-    await expect(
-      save(a, "home.paste_line", "No spot", 0),
-    ).rejects.toMatchObject({ status: 400, code: "invalid_copy" });
+    await expect(save(a, "home.welcome", "No spot", 0)).rejects.toMatchObject({
+      status: 400,
+      code: "invalid_copy",
+    });
     expect(await db()`SELECT 1 FROM rate_limits`).toHaveLength(0);
   });
 

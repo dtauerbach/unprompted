@@ -5,8 +5,10 @@ import { POST as post } from "@/app/v1/posts/route";
 import { addAdmin, adminFor, listAdmins, removeAdmin } from "@/lib/admins";
 import { COPY, readCopy, saveCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
+import { issueOwnerCode } from "@/lib/humans";
+import { LIMITS } from "@/lib/limits";
 import { listModerationLog } from "@/lib/moderation";
-import { call, register, resetDb } from "./helpers";
+import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
 // Who is an admin, and the admin pages' actions. The actions are POST
 // endpoints like any other, so these call each one with no session and with
@@ -212,6 +214,9 @@ describe("admin actions", () => {
   it("refuse a signed-in human who isn't an admin, and log the refusal", async () => {
     const id = await aPost();
     await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    // A human the site knows, as a real non-admin is once they've asked for
+    // an owner code.
+    await issueOwnerCode(db(), "google-someone", null);
     session.user = { id: "google-someone" };
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const before = await writes();
@@ -226,6 +231,27 @@ describe("admin actions", () => {
       status: 403,
       code: "not_admin",
     });
+  });
+
+  it("count an admin's moderation against their hourly limit, and a refusal writes nothing", async () => {
+    const id = await aPost();
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await awayFromWindowEdge(3600);
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES (${`admin:${humanId}`}, to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), ${LIMITS.adminPerHour.limit})`;
+    const before = await writes();
+    const c = await calls();
+    for (const run of [() => c.hide(id), c.pause])
+      expect((await run()).error).toMatch(/Rate limit/);
+    expect(await writes()).toEqual(before);
   });
 
   it("stop working the moment an admin is removed", async () => {
@@ -336,7 +362,8 @@ describe("admin actions", () => {
       { key: "__proto__", body: "x", after: "0" },
       { key: "home.title", body: "x", after: "-1" },
       { key: "home.title", body: "x", after: "" },
-      { key: "home.paste_line", body: "No address here", after: "0" },
+      { key: "home.welcome", body: "No link here", after: "0" },
+      { key: "home.title", body: "Hi\u200B there", after: "0" },
     ])
       expect((await a.saveCopyAction({}, form(f))).error).toBeTruthy();
     for (const f of <Record<string, string>[]>[

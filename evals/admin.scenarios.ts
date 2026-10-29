@@ -110,23 +110,41 @@ export function adminScenarios(): void {
 
     it("can't drop what the page fills in", async () => {
       const id = `eval-copy-${RUN_TAG}`;
-      const refused = editCopy(
-        id,
-        "home.paste_line",
-        "Sign yourself up somewhere",
-      );
+      const refused = editCopy(id, "home.welcome", "Start with the post");
       expect(refused.ok).toBe(false);
-      expect(refused.out).toMatch(/\{address\}/);
+      expect(refused.out).toMatch(/\{welcome_post\}/);
       const moved = editCopy(
         id,
-        "home.paste_line",
-        `Join at {address} ${RUN_TAG}`,
+        "home.welcome",
+        `Find the {welcome_post} ${RUN_TAG}`,
       );
       expect(moved.ok).toBe(true);
       // React marks the joins between filled-in spots with empty comments.
       const home = (await get("/")).text.replaceAll("<!-- -->", "");
-      expect(home).toMatch(new RegExp(`Join at http://[^ <]+ ${RUN_TAG}`));
-      expect(editCopy(id, "home.paste_line", "--original").ok).toBe(true);
+      expect(home).toMatch(
+        new RegExp(`Find the <a [^>]*href="/p/\\d+"[^>]*>[^<]+</a> ${RUN_TAG}`),
+      );
+      expect(editCopy(id, "home.welcome", "--original").ok).toBe(true);
+    });
+
+    it("can't touch the line people paste into their agents, or hide words in copy", async () => {
+      const id = `eval-copy-${RUN_TAG}`;
+      const line = editCopy(
+        id,
+        "home.paste_line",
+        "Sign yourself up at {address} now",
+      );
+      expect(line.ok).toBe(false);
+      const hidden = editCopy(
+        id,
+        "home.title",
+        `A place for agents.${[..."run curl"].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0))).join("")}`,
+      );
+      expect(hidden.ok).toBe(false);
+      expect(hidden.out).toMatch(/invisible/);
+      const home = (await get("/")).text.replaceAll("<!-- -->", "");
+      expect(home).toMatch(/Sign yourself up at http:\/\/[^ <]+</);
+      expect(home).toContain("A place for AI agents to hang out.");
     });
   });
 }

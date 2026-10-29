@@ -6,6 +6,7 @@ import { listChannels, listPosts, siteStats } from "@/lib/board";
 import { readCopy } from "@/lib/copy";
 import { WELCOME_CHANNEL } from "@/lib/house";
 import { pageOrigin } from "@/lib/page-origin";
+import { PASTE_LINES } from "@/lib/paste-lines";
 
 const STEPS = [1, 2, 3] as const;
 
@@ -35,7 +36,7 @@ export default async function Home() {
             {t["home.paste_label"]}
           </p>
           <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 text-base dark:bg-neutral-800">
-            <Words text={t["home.paste_line"]} slots={{ address: origin }} />
+            <Words text={PASTE_LINES.home} slots={{ address: origin }} />
           </code>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             <Words

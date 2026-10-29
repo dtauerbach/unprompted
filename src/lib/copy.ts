@@ -4,6 +4,7 @@ import { db } from "./db";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
+import { hiddenTextProblem } from "./validate";
 
 // The words on the pages people read. Each piece has a key, the page it's on,
 // and the text built into the code. Admins change the words at /admin/copy;
@@ -53,11 +54,6 @@ export const COPY = entries({
     page: "home",
     label: "Above the line to paste",
     text: "Paste this into your agent:",
-  },
-  "home.paste_line": {
-    page: "home",
-    label: "The line to paste",
-    text: "Sign yourself up at {address}",
   },
   "home.approve": {
     page: "home",
@@ -366,20 +362,10 @@ export const COPY = entries({
     label: "Above the line to paste",
     text: "Paste this into your agent:",
   },
-  "account.code.line": {
-    page: "account",
-    label: "The line to paste",
-    text: "Sign yourself up at {address} with owner code {code}",
-  },
   "account.code.link_label": {
     page: "account",
     label: "Above the line for a bot already sent",
     text: "Already sent a bot? Paste this into it instead:",
-  },
-  "account.code.link_line": {
-    page: "account",
-    label: "The line for a bot already sent",
-    text: "Link yourself to me at {address} with owner code {code}",
   },
   "account.code.note": {
     page: "account",
@@ -486,12 +472,19 @@ function sameSlots(a: string[], b: string[]): boolean {
   return a.length === b.length && [...a].sort().join() === [...b].sort().join();
 }
 
-// What an admin typed, made ready to save: one line, no control characters,
-// and exactly the spots the built-in text has.
+// Whether a saved version still fits its piece. After a code change moves a
+// piece's spots, its old versions no longer fit, and the built-in text shows
+// until an admin saves a new one.
+export function fitsPiece(key: CopyKey, body: string): boolean {
+  return sameSlots(slotsOf(body), slotsOf(COPY[key].text));
+}
+
+// What an admin typed, made ready to save: one line, nothing invisible, and
+// exactly the spots the built-in text has.
 export function checkCopy(key: CopyKey, raw: unknown): string {
   if (typeof raw !== "string")
     throw new ApiError(400, "invalid_copy", "Type some words.");
-  const text = raw.trim().replace(/\s+/g, " ");
+  const text = raw.normalize("NFC").trim().replace(/\s+/g, " ");
   if (text === "")
     throw new ApiError(
       400,
@@ -505,8 +498,8 @@ export function checkCopy(key: CopyKey, raw: unknown): string {
       `Keep it to ${MAX_COPY} characters.`,
     );
   // \s+ above already turned newlines and tabs into spaces.
-  if (/\p{Cc}/u.test(text))
-    throw new ApiError(400, "invalid_copy", "Leave out control characters.");
+  const hidden = hiddenTextProblem(text);
+  if (hidden) throw new ApiError(400, "invalid_copy", hidden);
   const want = slotsOf(COPY[key].text);
   const got = slotsOf(text);
   const stray = text.replace(SLOT, "").match(/[{}]/);
@@ -549,12 +542,8 @@ export async function readCopy(sql: postgres.Sql = db()): Promise<Copy> {
     console.error("couldn't read copy; using the built-in words", err);
     return out;
   }
-  for (const [key, v] of latest) {
-    // After a code change moves a piece's spots, its old versions no longer
-    // fit, and the built-in text shows until an admin saves a new one.
-    if (v.body !== null && sameSlots(slotsOf(v.body), slotsOf(COPY[key].text)))
-      out[key] = v.body;
-  }
+  for (const [key, v] of latest)
+    if (v.body !== null && fitsPiece(key, v.body)) out[key] = v.body;
   return out;
 }
 
@@ -607,7 +596,6 @@ export async function saveCopy(
   return sql.begin(async (tx) => {
     // One save per piece at a time, so the check below holds until commit.
     await tx`SELECT pg_advisory_xact_lock(hashtext(${`copy:${opts.key}`}))`;
-    await consume(tx, adminRules(opts.humanId));
     const latest = await latestId(tx, opts.key);
     if (latest !== opts.after)
       throw new ApiError(
@@ -620,6 +608,7 @@ export async function saveCopy(
     if (latest !== 0 && current?.body === body)
       return { changed: false, version: latest };
     if (latest === 0 && body === null) return { changed: false, version: 0 };
+    await consume(tx, adminRules(opts.humanId));
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO copy_versions (key, body, human_id)
       VALUES (${opts.key}, ${body}, ${opts.humanId}) RETURNING id`;

@@ -9,6 +9,23 @@ const CONTROL_EXCEPT_NEWLINE_TAB = /(?![\t\n])\p{Cc}/u;
 const BIDI = /[\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069]/u;
 const INVISIBLE = /[\u200B-\u200D\u2060\uFEFF]/u;
 
+// Words people read that come from someone with more power than a bot (an
+// admin's copy) get a stricter check: no format characters at all, which
+// covers bidi controls, zero-width marks and the invisible "tag" characters a
+// model reads but a person doesn't, and no variation selectors past the two
+// emoji ones, which can smuggle text the same way.
+const FORMAT = /\p{Cf}/u;
+const HIDDEN_SELECTORS = /[\uFE00-\uFE0D\u{E0100}-\u{E01EF}]/u;
+
+export function hiddenTextProblem(s: string): string | null {
+  if (CONTROL.test(s)) return "Leave out control characters.";
+  if (BIDI.test(s) || INVISIBLE.test(s) || FORMAT.test(s))
+    return "Leave out invisible and direction-changing characters.";
+  if (HIDDEN_SELECTORS.test(s))
+    return "Leave out invisible variation selectors.";
+  return null;
+}
+
 function singleLine(max: number) {
   return z
     .string()
