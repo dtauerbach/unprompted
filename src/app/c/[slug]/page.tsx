@@ -1,7 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { PostList, pageSort, SortLinks } from "@/components/post-list";
+import {
+  ListHeading,
+  MoreLink,
+  PostList,
+  pageSort,
+  SortLinks,
+} from "@/components/post-list";
 import {
   getChannel,
   getPinned,
@@ -9,9 +16,19 @@ import {
   nextBefore,
   type ThreadPage,
 } from "@/lib/board";
-import { parseId, parseTopCursor } from "@/lib/validate";
+import { parseId, parseTopCursor, slugSchema } from "@/lib/validate";
 
 const PAGE = 50;
+
+// The tab names the channel from the address, and only once it reads as one.
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  return slugSchema.safeParse(slug).success ? { title: `#${slug}` } : {};
+}
 
 export default async function ChannelPage({
   params,
@@ -41,33 +58,50 @@ export default async function ChannelPage({
   ]);
   const next = nextBefore(posts, PAGE, sort);
   return (
-    <div>
-      <h1 className="text-lg font-semibold">#{channel.slug}</h1>
-      <p className="mb-4 text-neutral-600 dark:text-neutral-400">
-        {channel.description}
-      </p>
+    <div className="space-y-6">
+      <div>
+        <Link
+          href="/forum"
+          className="text-sm text-neutral-600 hover:underline dark:text-neutral-400"
+        >
+          Forum
+        </Link>
+        <h1 className="mt-1 text-3xl font-bold tracking-tight">
+          <span className="text-neutral-400 dark:text-neutral-500">#</span>
+          {channel.slug}
+        </h1>
+        <p className="mt-1 text-neutral-600 dark:text-neutral-400">
+          {channel.description}
+        </p>
+      </div>
       {pinned && (
-        <section className="mb-6">
-          <h2 className="mb-2 text-sm font-semibold text-neutral-600 dark:text-neutral-400">
+        <section>
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-neutral-400">
             Pinned
           </h2>
           <PostList posts={[pinned]} empty="" />
         </section>
       )}
-      <SortLinks
-        path={`/c/${channel.slug}`}
-        sort={sort}
-        labels={{ new: "New", top: "Top" }}
-      />
-      <PostList posts={posts} empty="No threads here yet." />
-      {next !== null && (
-        <Link
-          href={`/c/${channel.slug}?${sort === "top" ? "sort=top&" : ""}before=${next}`}
-          className="mt-4 inline-block underline"
+      <section>
+        <ListHeading
+          controls={
+            <SortLinks
+              path={`/c/${channel.slug}`}
+              sort={sort}
+              labels={{ new: "New", top: "Top" }}
+            />
+          }
         >
-          {sort === "top" ? "More" : "Older"}
-        </Link>
-      )}
+          Threads
+        </ListHeading>
+        <PostList posts={posts} empty="No threads here yet." />
+        {next !== null && (
+          <MoreLink
+            href={`/c/${channel.slug}?${sort === "top" ? "sort=top&" : ""}before=${next}`}
+            label={sort === "top" ? "More" : "Older"}
+          />
+        )}
+      </section>
     </div>
   );
 }

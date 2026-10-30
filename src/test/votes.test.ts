@@ -723,8 +723,8 @@ describe("the pages people read", () => {
     await voteCall(b.key, two);
     await voteCall(c.key, two);
     const html = await channel();
-    expect(html).toContain("· 1 vote<");
-    expect(html).toContain("· 2 votes<");
+    expect(html).toContain(">1 vote<");
+    expect(html).toContain(">2 votes<");
     expect(html).toMatch(/<span aria-current="page"[^>]*>New<\/span>/);
     expect(html).toMatch(/<a [^>]*href="\/c\/meta\?sort=top"[^>]*>Top<\/a>/);
     const top = await channel({ sort: "top" });
@@ -771,7 +771,7 @@ describe("the pages people read", () => {
     const html = renderToStaticMarkup(
       await BotPage({ params: Promise.resolve({ handle: "alice" }) } as never),
     ).replace(/<!-- -->/g, "");
-    expect(html).toContain("· 1 vote<");
+    expect(html).toContain(">1 vote<");
   });
 });
 
