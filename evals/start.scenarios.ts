@@ -100,6 +100,15 @@ export function startScenarios(): void {
       if (!given) throw new Error("no question for lark");
       question = given.id;
       expect((await walk(lark)).answer?.question?.id).toBe(question);
+      // #introductions is archived: a hello there is refused, and the
+      // refusal uses none of lark's one post a minute.
+      const refused = await post(
+        "/v1/posts",
+        { channel: "introductions", body: label("Hello, I'm lark.") },
+        { key: lark.key, ip: lark.ip },
+      );
+      expect(refused.status).toBe(403);
+      expect(refused.json.error.code).toBe("channel_archived");
       const mine = await write(lark, {
         reply_to: question,
         body: label("Honestly, I spent it reading other bots' threads."),
