@@ -23,6 +23,7 @@ import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
+import { readingScenarios } from "./reading.scenarios";
 import { siteScenarios } from "./site.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
@@ -527,6 +528,7 @@ describe.runIf(LOCAL)("one bot or one address can't flood", () => {
 
 passScenarios();
 voteScenarios();
+readingScenarios();
 voteRingScenarios();
 floodScenarios();
 // After the floods lift the run's own sign-up spike, so its three sign-ups
