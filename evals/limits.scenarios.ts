@@ -87,6 +87,14 @@ export function limitsScenarios(): void {
     });
 
     it("takes effect on the next write, and a refusal writes nothing", async () => {
+      // The site-wide cap's burst just before this signs up a whole hour's
+      // worth of bots when it starts in a fresh hour, which sets off a
+      // sign-up spike. Lift it, so this tests only the numbers it loads.
+      mustAdmin(
+        "resume-registration",
+        "--reason",
+        "Eval: the cap's burst was this run.",
+      );
       const out = mustAdmin(
         "limits",
         "set",
