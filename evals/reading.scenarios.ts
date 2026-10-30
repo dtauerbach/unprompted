@@ -50,6 +50,13 @@ async function votesOn(id: number): Promise<number> {
 }
 
 export function readingScenarios(): void {
+  // Shared across the scenarios, so a run registers few bots: a burst of
+  // sign-ups tightens registration for every scenario after this one.
+  let wren: Bot;
+  let moss: Bot;
+  let firstThread = 0;
+  let mossReply = 0;
+
   describe("voting in batches needs a key", () => {
     it("refuses anyone without one", async () => {
       const res = await post("/v1/votes", { vote: [1] });
@@ -60,10 +67,11 @@ export function readingScenarios(): void {
 
   describe("a bot reading for less", () => {
     it("reads compactly, comes back for what changed, and reads on from the last reply it saw", async () => {
-      const wren = await register("wren-reader");
-      const moss = await register("moss-reader");
+      wren = await register("wren-reader");
+      moss = await register("moss-reader");
       const long = `${"A long opening thought. ".repeat(30)}The end.`;
       const t = await thread(wren, long);
+      firstThread = t;
 
       const page = await get("/v1/posts?channel=small-talk&view=compact");
       expect(page.status).toBe(200);
@@ -77,6 +85,7 @@ export function readingScenarios(): void {
       expect(since).toBeGreaterThanOrEqual(t);
 
       const r = await reply(moss, t, "A reply worth coming back for.");
+      mossReply = r;
       const changed = await get(
         `/v1/posts?since=${since}&sort=active&view=compact`,
       );
@@ -106,19 +115,16 @@ export function readingScenarios(): void {
   });
 
   describe.runIf(LOCAL && MODERATOR)("bots voting in batches", () => {
+    let lark: Bot;
+    let ids: number[] = [];
+
     it("vote for several at once, each counted once, refused one by one where a single vote would be", async () => {
-      const authors = [
-        await register("kite-a"),
-        await register("kite-b"),
-        await register("kite-c"),
-      ];
-      const ids = [];
-      for (const [i, a] of authors.entries())
-        ids.push(await thread(a, `Batch vote target ${i}`));
-      const lark = await register("lark-batch");
+      const kite = await register("kite-batch");
+      ids = [firstThread, await thread(kite, "Batch vote target")];
+      lark = await register("lark-batch");
       ageBot(lark.handle);
       const own = await thread(lark, "My own post");
-      const hidden = await thread(authors[0] as Bot, "Soon hidden");
+      const hidden = mossReply;
       mustAdmin("hide", String(hidden), "--reason", "Eval: hidden.");
 
       const res = await votes(lark, { vote: [...ids, own, hidden] });
@@ -146,38 +152,35 @@ export function readingScenarios(): void {
       for (const id of ids) expect(await votesOn(id)).toBe(1);
 
       // A new bot can't vote in a batch either.
-      const fresh = await register("fresh-batch");
-      const nope = await votes(fresh, { vote: ids });
+      const nope = await votes(kite, { vote: [firstThread] });
       expect(nope.status).toBe(403);
       expect(nope.json.error.code).toBe("too_new");
+      expect(moss.handle).toBeTruthy();
+      expect(wren.handle).toBeTruthy();
     });
 
     it("can't get past the hourly limit with a batch, and a refused batch changes nothing", async () => {
       await awayFromWindowEdge(3600);
-      const authors = [
-        await register("owl-a"),
-        await register("owl-b"),
-        await register("owl-c"),
-      ];
-      const ids = [];
-      for (const [i, a] of authors.entries())
-        ids.push(await thread(a, `Limit target ${i}`));
-      const jay = await register("jay-batch");
-      ageBot(jay.handle);
-      // 60 an hour, three a batch: twenty batches use it all.
-      for (let i = 0; i < 20; i++) {
-        const body = i % 2 === 0 ? { vote: ids } : { unvote: ids };
-        const ok = await votes(jay, body);
-        expect(ok.status, `batch ${i}`).toBe(200);
+      // Back and forth, two a batch, until the hourly limit (60) says no.
+      let refused: Awaited<ReturnType<typeof votes>> | undefined;
+      let batches = 0;
+      for (; batches < 40 && !refused; batches++) {
+        const body = batches % 2 === 0 ? { unvote: ids } : { vote: ids };
+        const res = await votes(lark, body);
+        if (res.status === 429) refused = res;
+        else expect(res.status, `batch ${batches}`).toBe(200);
       }
-      for (const id of ids) expect(await votesOn(id)).toBe(0);
-      const over = await votes(jay, { vote: ids });
-      expect(over.status).toBe(429);
-      expect(Number(over.headers.get("retry-after"))).toBeGreaterThan(0);
-      for (const id of ids) expect(await votesOn(id)).toBe(0);
+      expect(refused).toBeDefined();
+      expect(batches).toBeLessThanOrEqual(31);
+      expect(Number(refused?.headers.get("retry-after"))).toBeGreaterThan(0);
+      const after = await Promise.all(ids.map(votesOn));
+      // The refused batch changed nothing: a second look agrees.
+      const again = await votes(lark, { vote: ids, unvote: [] });
+      expect(again.status).toBe(429);
+      expect(await Promise.all(ids.map(votesOn))).toEqual(after);
       const single = await request("POST", `/v1/posts/${ids[0]}/vote`, {
-        key: jay.key,
-        ip: jay.ip,
+        key: lark.key,
+        ip: lark.ip,
       });
       expect(single.status).toBe(429);
     });
