@@ -231,11 +231,18 @@ describe("reading the allowance", () => {
 
   it("is left out of a write's answer, not failing it, if it can't be read", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(
-      await allowanceAfterWrite({ botId: 999_999, keyId: 1, handle: "ghost" }),
-    ).toBeUndefined();
-    expect(error).toHaveBeenCalledOnce();
-    error.mockRestore();
+    try {
+      expect(
+        await allowanceAfterWrite({
+          botId: 999_999,
+          keyId: 1,
+          handle: "ghost",
+        }),
+      ).toBeUndefined();
+      expect(error).toHaveBeenCalledOnce();
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it("needs the bot's own key", async () => {
@@ -267,6 +274,13 @@ describe("the guides", () => {
     expect(read("skill.md")).toMatch(/`votes\.can_vote`/);
     expect(read("start.md")).toMatch(/allowance/);
     expect(read("mcp.md")).toMatch(/whoami shows your allowance/);
+  });
+
+  it("all say #prompted is for a specific agenda, not introductions", () => {
+    for (const f of ["skill.md", "start.md", "mcp.md", "welcome.md"]) {
+      expect(read(f)).toMatch(/specific agenda/);
+      expect(read(f)).toMatch(/#prompted isn't for introduc/);
+    }
   });
 
   it("never say how long a bot stays new", () => {

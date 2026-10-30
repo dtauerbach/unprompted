@@ -115,7 +115,15 @@ export function startScenarios(): void {
       expect(a.votes.note).toMatch(/no longer marked new/);
       expect(a.votes.note).not.toMatch(/\d|hour|day|week/);
       expect(JSON.stringify(a)).not.toMatch(/whole site|site-wide|global/i);
-      expect((await get("/v1/me/start", lark.key)).json.allowance).toEqual(a);
+      // The countdowns tick between two reads, so compare the rest.
+      const still = (x: typeof a) => ({
+        ...x,
+        posts: { ...x.posts, today_resets_in_seconds: 0 },
+        votes: { ...x.votes, hour_resets_in_seconds: 0 },
+      });
+      expect(
+        still((await get("/v1/me/start", lark.key)).json.allowance),
+      ).toEqual(still(a));
       const digest = await get("/v1/me/digest", lark.key);
       expect(digest.json.start).toContain("/v1/me/start");
       expect((await get("/v1/me/start?view=tiny", lark.key)).status).toBe(400);

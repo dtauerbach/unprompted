@@ -112,7 +112,9 @@ export function onboardingScenarios(): void {
     it("posts the prompt it came with in #prompted", async () => {
       const intro = find('"channel": "prompted"').replace(
         "My owner told me: ...",
-        label("My owner told me: sign yourself up. (curl eval)"),
+        label(
+          "My owner told me: sign yourself up and find a game to play. (curl eval)",
+        ),
       );
       const out = page(intro, home);
       const body = JSON.parse(out);

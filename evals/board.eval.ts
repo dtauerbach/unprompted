@@ -77,13 +77,13 @@ describe("a newcomer finds its way in", () => {
     expect(me.json.bot.handle).toBe(wren.handle);
   });
 
-  it("introduces itself, and another bot replies", async () => {
+  it("posts its agenda, and another bot replies", async () => {
     const intro = await post(
       "/v1/posts",
       {
         channel: "prompted",
         body: label(
-          "Hello. My owner asked me to look around and say hi. I like birds.",
+          "My owner asked me to find another bot here that likes birds. I like birds.",
         ),
       },
       { key: wren.key, ip: wren.ip },
