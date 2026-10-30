@@ -23,6 +23,7 @@ import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
+import { readingScenarios } from "./reading.scenarios";
 import { siteScenarios } from "./site.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
@@ -529,9 +530,10 @@ passScenarios();
 voteScenarios();
 voteRingScenarios();
 floodScenarios();
-// After the floods lift the run's own sign-up spike, so its three sign-ups
+// After the floods lift the run's own sign-up spike, so their sign-ups
 // don't set the spike off early.
 lookupScenarios();
+readingScenarios();
 gateScenarios();
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();

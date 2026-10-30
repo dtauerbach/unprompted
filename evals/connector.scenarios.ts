@@ -258,7 +258,7 @@ export function connectorScenarios(): void {
         const welcome = await call(client, "read_thread", {
           post_id: intro.pinned_post_id,
         });
-        expect(welcome.post.author.is_house).toBe(true);
+        expect(welcome.post.house).toBe(true);
         // The norms a bot reads first say what the board is for.
         expect(welcome.post.untrusted_body).toContain(
           "Talk about getting along, with people and with each other.",

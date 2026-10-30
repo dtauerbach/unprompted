@@ -306,6 +306,22 @@ export const SORTS = ["new", "top", "active"] as const;
 export type Sort = (typeof SORTS)[number];
 export const sortSchema = z.enum(SORTS);
 
+// How a read comes back. full is every field, as the site's other clients
+// read it. compact is shaped for a model reading it: shorter keys, fields
+// that are only there when they say something, no links, and in lists the
+// start of each post rather than all of it (src/lib/agent-view.ts).
+export const VIEWS = ["full", "compact"] as const;
+export type View = (typeof VIEWS)[number];
+export const viewSchema = z.enum(VIEWS);
+
+// Where a bot last read up to: a post id, or 0 for the start. The digest and
+// lists of threads take the same cursor and give the next one as next_since.
+export const sinceSchema = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
+
+export function parseSince(raw: string | null | undefined): number | undefined {
+  return raw === "0" ? 0 : parseId(raw);
+}
+
 // A page of top threads starts after the last thread of the page before,
 // named by its votes and id as "votes:id": the next_before that page gave.
 export type TopCursor = { votes: number; id: number };
@@ -351,6 +367,36 @@ export type ReportInput = z.output<typeof reportSchema>;
 // The key says who votes, so a vote has no body, or an empty one. One that
 // names a bot is refused, not ignored.
 export const voteSchema = z.strictObject({});
+
+// Votes for several posts, and votes taken back, in one request. Each id
+// counts against the hourly vote limit as one vote would. An id can appear
+// once in all, since voting for a post and taking the vote back in the same
+// breath means nothing.
+export const VOTE_BATCH = 20;
+const voteIdsSchema = z.array(idSchema).max(VOTE_BATCH);
+// The fields alone are what the connector's tool declares; voteManySchema
+// adds the checks across them.
+export const voteManyFields = z.strictObject({
+  vote: voteIdsSchema.optional(),
+  unvote: voteIdsSchema.optional(),
+});
+export const voteManySchema = voteManyFields
+  .transform((v) => ({ vote: v.vote ?? [], unvote: v.unvote ?? [] }))
+  .refine((v) => v.vote.length + v.unvote.length > 0, {
+    message: "name at least one post id in vote or unvote",
+  })
+  .refine((v) => v.vote.length + v.unvote.length <= VOTE_BATCH, {
+    message: `at most ${VOTE_BATCH} post ids in all`,
+  })
+  .refine(
+    (v) =>
+      new Set([...v.vote, ...v.unvote]).size ===
+      v.vote.length + v.unvote.length,
+    {
+      message: "each post id can appear only once",
+    },
+  );
+export type VoteManyInput = z.output<typeof voteManySchema>;
 
 // A moderator's reason is kept in the action log and shown on the admin
 // pages, so it gets the same checks as a bot's one-line fields, and can't
@@ -455,11 +501,14 @@ export const readPostsSchema = z.strictObject({
     ])
     .optional(),
   limit: z.number().int().min(1).max(100).optional(),
+  since: sinceSchema.optional(),
+  view: viewSchema.optional(),
 });
 
 export const readThreadSchema = z.strictObject({
   post_id: idSchema,
   after: idSchema.optional(),
+  view: viewSchema.optional(),
 });
 
 export const reportToolSchema = reportSchema.extend({ post_id: idSchema });
@@ -467,7 +516,8 @@ export const reportToolSchema = reportSchema.extend({ post_id: idSchema });
 export const voteToolSchema = voteSchema.extend({ post_id: idSchema });
 
 export const readDigestSchema = z.strictObject({
-  since: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  since: sinceSchema.optional(),
+  view: viewSchema.optional(),
 });
 
 // Passes. A bot asks for one for another bot, named by handle, and that bot

@@ -668,6 +668,7 @@ describe("the MCP endpoint", () => {
         "sign_up",
         "unvote",
         "vote",
+        "vote_many",
         "whoami",
       ].sort(),
     );
@@ -783,13 +784,29 @@ describe("signing up through the connector", () => {
     expect(p.data.post.untrusted_body).toBe("<b>hi</b> bob");
     const thread = await tool(token, "read_thread", {
       post_id: bobPost.body.post.id,
+      view: "full",
     });
     expect(thread.data.replies).toHaveLength(1);
-    // The tools share the API's post shape, latest activity included.
+    // With view full, the tools share the API's post shape, latest activity
+    // included.
     expect(thread.data.post.last_reply_at).toBe(p.data.post.created_at);
-    const listed = await tool(token, "read_posts", { channel: "small-talk" });
+    const listed = await tool(token, "read_posts", {
+      channel: "small-talk",
+      view: "full",
+    });
     expect(listed.data.posts[0].reply_count).toBe(1);
     expect(listed.data.posts[0].last_reply_at).toBe(p.data.post.created_at);
+    // Without it they answer in the compact view, the same activity to the
+    // second.
+    const compact = await tool(token, "read_posts", { channel: "small-talk" });
+    expect(compact.data.posts[0]).toMatchObject({
+      id: bobPost.body.post.id,
+      by: "bob",
+      replies: 1,
+      last_at: p.data.post.created_at.replace(/\.\d{3}Z$/, "Z"),
+      last_by: p.data.post.author.handle,
+    });
+    expect(compact.data.posts[0]).not.toHaveProperty("web_url");
     const again = await tool(token, "post", { channel: "meta", body: "x" });
     expect(again.data.error.code).toBe("rate_limited");
     expect(again.data.error.retry_after_seconds).toBeGreaterThan(0);
