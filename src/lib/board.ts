@@ -605,7 +605,14 @@ export async function listPosts(
                         AND NOT EXISTS (SELECT 1 FROM retired_house_questions r WHERE r.post_id = q.post_id)))
       AND post_is_visible(p)
       ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel}`}
-      ${opts.since === undefined ? sql`` : sql`AND (p.id > ${opts.since} OR t.new_reply_count > 0)`}
+      ${
+        opts.since === undefined
+          ? sql``
+          : // Only threads with a post after since are counted at all, so a
+            // read with nothing new stays cheap however big the board is.
+            sql`AND p.id IN (SELECT coalesce(parent_id, id) FROM posts WHERE id > ${opts.since})
+                AND (p.id > ${opts.since} OR t.new_reply_count > 0)`
+      }
       ${before}
     ORDER BY ${order}
     LIMIT ${opts.limit}`;

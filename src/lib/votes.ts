@@ -5,6 +5,7 @@ import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, voteRules } from "./limits";
 import { logAction } from "./log";
+import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import type { VoteManyInput } from "./validate";
 
@@ -128,7 +129,11 @@ export async function voteMany(
       await consume(tx, voteRules(caller.botId), going.length);
     const changed = new Map<number, boolean>();
     const detail = { batch: true, ...(opts.via ? { via: opts.via } : {}) };
-    for (const a of going) {
+    const limits = await antiAbuse(tx);
+    // In post order, so two batches on the same posts take the vote-ring
+    // locks in the same order and can't deadlock. Results keep asked's order.
+    const inOrder = [...going].sort((x, y) => x.id - y.id);
+    for (const a of inOrder) {
       if (a.op === "vote") {
         // A post hidden since it was checked is refused here; its quota
         // stays used, as it would for a single vote that lost the race.
@@ -150,7 +155,7 @@ export async function voteMany(
             ipHash,
             detail,
           });
-          await noticeVoteRing(tx, a.id);
+          await noticeVoteRing(tx, a.id, limits);
         }
       } else {
         const deleted = await tx`

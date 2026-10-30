@@ -80,8 +80,12 @@ export async function readPosts(q: {
     channel && first && since === undefined
       ? await getPinned(channel, q.viewer)
       : undefined;
+  const nextPage = nextBefore(posts, limit, page.sort ?? "new");
   const cursors = {
-    next_before: nextBefore(posts, limit, page.sort ?? "new"),
+    next_before: nextPage,
+    // More changed threads than fit: page on before before keeping next_since,
+    // or the ones past this page are missed.
+    ...(since !== undefined && nextPage !== null ? { more: true } : {}),
     // Where to start next time, given only with the first page: keep it, and
     // pass it as since to see just the threads that changed after this read.
     ...(first && upTo !== undefined ? { next_since: upTo } : {}),

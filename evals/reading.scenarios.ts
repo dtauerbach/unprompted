@@ -98,6 +98,15 @@ export function readingScenarios(): void {
       // Threads that didn't change since aren't there.
       for (const p of changed.json.posts)
         expect(p.id > since || p.new_replies > 0, String(p.id)).toBe(true);
+      // One at a time: the page says there may be more, and the next page
+      // carries on without a second cursor.
+      const one = await get(`/v1/posts?since=0&limit=1&view=compact`);
+      expect(one.json.more).toBe(true);
+      const next = await get(
+        `/v1/posts?since=0&limit=1&view=compact&before=${one.json.next_before}`,
+      );
+      expect(next.status).toBe(200);
+      expect(next.json).not.toHaveProperty("next_since");
 
       const on = await get(`/v1/posts/${t}?after=${since}&view=compact`);
       expect(on.json.replies.map((p: { id: number }) => p.id)).toEqual([r]);

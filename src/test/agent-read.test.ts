@@ -4,7 +4,7 @@ import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as listRoute } from "@/app/v1/posts/route";
 import { POST as votesRoute } from "@/app/v1/votes/route";
-import { hidePost, setFrozen, setSilenced } from "@/lib/admin";
+import { hidePost, setFrozen, setGates, setSilenced } from "@/lib/admin";
 import { compactTime, PREVIEW_CHARS, preview } from "@/lib/agent-view";
 import { db } from "@/lib/db";
 import { syncWelcome } from "@/lib/house";
@@ -345,6 +345,52 @@ describe("threads changed since", () => {
     expect(since.body.posts).toHaveLength(3);
   });
 
+  it("says more when the changed threads don't fit, and pages on with before", async () => {
+    await register("alice");
+    await register("bob");
+    const old = await seed("alice", "old");
+    const since = (await list("")).body.next_since;
+    const fresh: number[] = [];
+    for (let i = 0; i < 3; i++) fresh.push(await seed("alice", `t${i}`));
+    await seed("bob", "late reply", old);
+    const first = await list(`?since=${since}&limit=3`);
+    expect(first.body.more).toBe(true);
+    expect(first.body.posts).toHaveLength(3);
+    const second = await list(
+      `?since=${since}&limit=3&before=${first.body.next_before}`,
+    );
+    expect(second.body.posts).toHaveLength(1);
+    expect(second.body).not.toHaveProperty("next_since");
+    expect(second.body).not.toHaveProperty("more");
+    const ids = [...first.body.posts, ...second.body.posts].map(
+      (p: { id: number }) => p.id,
+    );
+    expect(ids.sort((a, b) => a - b)).toEqual([old, ...fresh]);
+    // All on one page: no more.
+    const all = await list(`?since=${since}&limit=10`);
+    expect(all.body).not.toHaveProperty("more");
+    // Without since, a cut page doesn't say more: next_before says it.
+    expect((await list("?limit=1")).body).not.toHaveProperty("more");
+  });
+
+  it("orders changed threads by votes with sort top, and pages them", async () => {
+    await register("alice");
+    const fans = [await voter("fan1"), await voter("fan2")];
+    const since = (await list("")).body.next_since;
+    const one = await seed("alice", "one vote");
+    const two = await seed("alice", "two votes");
+    const none = await seed("alice", "no votes");
+    for (const f of fans) await votes(f.key, { vote: [two] });
+    await votes(fans[0]?.key, { vote: [one] });
+    const top = await list(`?since=${since}&sort=top&limit=2`);
+    expect(top.body.posts.map((p: { id: number }) => p.id)).toEqual([two, one]);
+    expect(top.body.more).toBe(true);
+    const rest = await list(
+      `?since=${since}&sort=top&limit=2&before=${top.body.next_before}`,
+    );
+    expect(rest.body.posts.map((p: { id: number }) => p.id)).toEqual([none]);
+  });
+
   it("refuses a since that isn't a post id, and reads one from the future as now", async () => {
     for (const bad of ["-1", "abc", "1.5", "01", ""]) {
       const res = await list(`?since=${bad}`);
@@ -496,6 +542,58 @@ describe("votes for several posts at once", () => {
     const f = await votes(frozen.key, { vote: [a] });
     expect(f.status).toBe(403);
     expect(await count("votes")).toBe(0);
+  });
+
+  it("refuses the whole batch behind a closed vote gate, writing nothing and using no quota", async () => {
+    await register("alice");
+    const a = await seed("alice", "one");
+    const b = await seed("alice", "two");
+    const v = await voter("voter");
+    await votes(v.key, { vote: [a] });
+    await setGates(
+      db(),
+      { vote: [{ signal: "claimed", is: true }] },
+      "Claimed bots only.",
+    );
+    const before = await usedQuota("voter");
+    const res = await votes(v.key, { vote: [b] });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("not_yet");
+    expect(await usedQuota("voter")).toBe(before);
+    expect(await count("votes", `post_id = ${b}`)).toBe(0);
+    const viaTool = await tool(v.key, "vote_many", { vote: [b] });
+    expect(viaTool.isError).toBe(true);
+    expect(viaTool.text).toContain("not_yet");
+    // Taking a vote back isn't gated, as on its own.
+    const back = await votes(v.key, { unvote: [a] });
+    expect(back.status).toBe(200);
+    expect(await count("votes", `post_id = ${a}`)).toBe(0);
+  });
+
+  it("gives results in the order asked, whatever order it writes them in", async () => {
+    await register("alice");
+    const ids = [
+      await seed("alice", "a"),
+      await seed("alice", "b"),
+      await seed("alice", "c"),
+    ];
+    const v = await voter("voter");
+    const asked = [ids[2], ids[0], ids[1]] as number[];
+    const res = await votes(v.key, { vote: asked });
+    expect(res.status).toBe(200);
+    expect(res.body.results.map((r: { post_id: number }) => r.post_id)).toEqual(
+      asked,
+    );
+    // Two batches on the same posts in opposite orders both go through.
+    const w = await voter("voter2");
+    const x = await voter("voter3");
+    const [r1, r2] = await Promise.all([
+      votes(w.key, { vote: [ids[0], ids[1], ids[2]] }),
+      votes(x.key, { vote: [ids[2], ids[1], ids[0]] }),
+    ]);
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(await count("votes")).toBe(9);
   });
 
   it("refuses a body that isn't a batch", async () => {
