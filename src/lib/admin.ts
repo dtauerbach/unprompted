@@ -2,6 +2,7 @@ import { userInfo } from "node:os";
 import type postgres from "postgres";
 import { TIGHTENED_UNTIL } from "./floods";
 import { utcMinute } from "./format";
+import { ACTION_NAMES, type Rules, rulesInForce, rulesSchema } from "./gates";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
@@ -623,6 +624,111 @@ export async function showAntiAbuse(
         ? "settings"
         : "default",
   }));
+}
+
+// Loads the gate rules (src/lib/gates.ts) from a rules file's contents as a
+// new version, so the file is the whole truth: an action it leaves out has no
+// gate. Every version stays in gate_rules. The log names the actions the
+// file gates, never their conditions, so the record can't leak them.
+export async function setGates(
+  sql: postgres.Sql,
+  values: unknown,
+  reason: string,
+): Promise<AdminResult> {
+  const d = detail(reason);
+  const parsed = rulesSchema.safeParse(values);
+  if (!parsed.success) {
+    // Names where the file is wrong, never what was there.
+    const problems = parsed.error.issues.map((i) =>
+      i.code === "unrecognized_keys"
+        ? `unknown ${i.keys.length === 1 ? "action or field" : "actions or fields"} ${i.keys.map((k) => k.slice(0, 40)).join(", ")}`
+        : i.path.length > 0
+          ? `${i.path.map(String).join(".").slice(0, 80)}: ${i.code === "custom" ? i.message : "not a known signal with a fitting value"}`
+          : "the file must hold one JSON object",
+    );
+    throw new ApiError(
+      400,
+      "invalid_gates",
+      `The rules file doesn't fit: ${[...new Set(problems)].join("; ")}.`,
+    );
+  }
+  const gated = ACTION_NAMES.filter((a) => (parsed.data[a] ?? []).length > 0);
+  return sql.begin(async (tx) => {
+    const current = await rulesInForce(tx);
+    if (
+      current.version !== null &&
+      JSON.stringify(current.rules) === JSON.stringify(parsed.data)
+    )
+      return {
+        changed: false,
+        message: `These are already the rules in force (version ${current.version}).`,
+      };
+    const [row] = await tx<{ id: string }[]>`
+      INSERT INTO gate_rules (rules, reason, set_by)
+      VALUES (${tx.json(parsed.data as postgres.JSONValue)}, ${d.reason ?? ""}, ${d.by ?? "unknown"})
+      RETURNING id`;
+    await logAction(tx, {
+      action: "admin.gates.set",
+      botId: null,
+      keyId: null,
+      subject: "gates",
+      ipHash: null,
+      detail: { ...d, version: Number(row?.id), gated: gated.join(",") },
+    });
+    return {
+      changed: true,
+      message: `Rules version ${row?.id} is in force. Gated: ${gated.length > 0 ? gated.join(", ") : "nothing"}.`,
+    };
+  });
+}
+
+export type GateVersion = {
+  id: number;
+  rules: Rules | null;
+  reason: string;
+  set_by: string;
+  created_at: Date;
+};
+
+// Every version, newest first, for the script. Values included: this is for
+// a moderator at a terminal, never a page.
+export async function gateHistory(sql: postgres.Sql): Promise<GateVersion[]> {
+  const rows = await sql<
+    {
+      id: string;
+      rules: unknown;
+      reason: string;
+      set_by: string;
+      created_at: Date;
+    }[]
+  >`SELECT id, rules, reason, set_by, created_at FROM gate_rules ORDER BY id DESC LIMIT 50`;
+  return rows.map((r) => {
+    const parsed = rulesSchema.safeParse(r.rules);
+    return {
+      id: Number(r.id),
+      rules: parsed.success ? parsed.data : null,
+      reason: r.reason,
+      set_by: r.set_by,
+      created_at: r.created_at,
+    };
+  });
+}
+
+// Saves an older version again, as a new one.
+export async function revertGates(
+  sql: postgres.Sql,
+  version: number,
+  reason: string,
+): Promise<AdminResult> {
+  const [row] = await sql<{ rules: unknown }[]>`
+    SELECT rules FROM gate_rules WHERE id = ${version}`;
+  if (!row)
+    throw new ApiError(
+      404,
+      "no_such_version",
+      `There is no rules version ${version}.`,
+    );
+  return setGates(sql, row.rules, reason);
 }
 
 export type ModeratorEntry = {

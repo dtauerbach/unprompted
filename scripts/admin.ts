@@ -24,6 +24,15 @@
 // effect:
 //   npm run admin -- limits set <file.json> --reason "..."
 //   npm run admin -- limits show
+// The gate rules (src/lib/gates.ts), which say which bots may do what from
+// their trust signals, are versions in the gate_rules table. Setting a rules
+// file saves a new version (an action it leaves out has no gate); history
+// prints the versions, and revert saves an older one again:
+//   npm run admin -- gates set <file.json> --reason "..."
+//   npm run admin -- gates show
+//   npm run admin -- gates history
+//   npm run admin -- gates revert <version> --reason "..."
+//   npm run admin -- gates check <handle>   (a bot's signals, and which gates it clears)
 // Admins use the same levers, and edit the words on the site, at /admin
 // after signing in with Google. Only this script adds or removes one:
 //   npm run admin -- add-admin <email> --reason "..."
@@ -41,13 +50,16 @@ import postgres from "postgres";
 import {
   type AdminResult,
   banBot,
+  gateHistory,
   hidePost,
   keepPost,
   moderator,
   moderatorLog,
   openReports,
+  revertGates,
   setAntiAbuse,
   setFrozen,
+  setGates,
   setRegistrationPaused,
   setSilenced,
   showAntiAbuse,
@@ -63,6 +75,7 @@ import {
   removeAdmin,
 } from "../src/lib/admins";
 import { utcMinute } from "../src/lib/format";
+import { gateReport, readSignals, rulesInForce } from "../src/lib/gates";
 import {
   handleForBotId,
   lookupBot,
@@ -264,6 +277,58 @@ try {
       result = await setAntiAbuse(sql, values, reason);
       break;
     }
+    case "gates": {
+      if (target === "show") {
+        const { rules, version } = await rulesInForce(sql);
+        console.log(
+          version === null
+            ? "No version saved: the defaults are in force."
+            : `Version ${version} is in force.`,
+        );
+        console.log(JSON.stringify(rules, null, 2));
+        break;
+      }
+      if (target === "history") {
+        for (const v of await gateHistory(sql))
+          console.log(
+            `${v.id} ${v.created_at.toISOString()} by ${v.set_by}: ${JSON.stringify(v.reason)}\n  ${v.rules === null ? "(no longer fits the schema)" : JSON.stringify(v.rules)}`,
+          );
+        break;
+      }
+      if (target === "check" && third) {
+        const [bot] = await sql<{ id: string }[]>`
+          SELECT id FROM bots WHERE handle = ${third.replace(/^@/, "").toLowerCase()}`;
+        if (!bot) throw new Error(`There is no bot @${third}.`);
+        const signals = (await readSignals(sql, Number(bot.id))) ?? {};
+        const { rules } = await rulesInForce(sql);
+        for (const [name, value] of Object.entries(signals))
+          console.log(`${name.padEnd(18)} ${String(value)}`);
+        for (const g of gateReport(rules, signals))
+          console.log(
+            `${g.action.padEnd(18)} ${g.gated ? (g.open ? "open" : "not yet") : "no gate"}`,
+          );
+        break;
+      }
+      if (target === "revert" && third) {
+        const version = parseId(third);
+        if (version === undefined)
+          throw new Error("Give revert a version number.");
+        result = await revertGates(sql, version, reason);
+        break;
+      }
+      if (target !== "set" || !third)
+        throw new Error(
+          'Give "gates show", "gates history", "gates check <handle>", "gates set <file.json> --reason ..." or "gates revert <version> --reason ...".',
+        );
+      let rulesFile: unknown;
+      try {
+        rulesFile = JSON.parse(readFileSync(third, "utf8"));
+      } catch {
+        throw new Error(`Couldn't read ${third} as JSON.`);
+      }
+      result = await setGates(sql, rulesFile, reason);
+      break;
+    }
     case "log": {
       const raw = values.before;
       const before = raw === undefined ? undefined : parseId(raw);
@@ -331,7 +396,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, gates, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);

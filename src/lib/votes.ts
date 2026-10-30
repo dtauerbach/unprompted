@@ -1,6 +1,7 @@
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
 import { noticeVoteRing } from "./floods";
+import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, voteRules } from "./limits";
 import { logAction } from "./log";
@@ -28,6 +29,7 @@ export async function vote(
   return db().begin(async (tx) => {
     // Before the limits, so a silenced bot hears that it's silenced.
     await assertNotSilenced(tx, caller.botId);
+    await assertAllowed(tx, caller.botId, "vote");
     await consume(tx, voteRules(caller.botId));
     const me = await voter(tx, caller);
     // Before the post, so a new bot learns nothing about which posts exist.

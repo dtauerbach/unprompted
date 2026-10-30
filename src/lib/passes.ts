@@ -1,5 +1,6 @@
 import type { Caller } from "./auth";
 import { db } from "./db";
+import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { hashKey, newPass } from "./keys";
 import { consume, passRules, redeemRules } from "./limits";
@@ -40,6 +41,8 @@ export async function issuePass(
   ipHash: string,
 ): Promise<{ pass: string; to: string; expires_at: Date }> {
   return db().begin(async (tx) => {
+    // First, so a bot that can't get passes learns nothing about who can.
+    await assertAllowed(tx, caller.botId, "get_pass");
     const [target] = await tx<
       { id: string; handle: string; frozen: boolean }[]
     >`

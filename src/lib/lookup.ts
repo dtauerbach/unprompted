@@ -1,5 +1,12 @@
 import type postgres from "postgres";
 import type { ModeratorEntry } from "./admin";
+import {
+  type GateAction,
+  gateReport,
+  readSignals,
+  rulesInForce,
+  type Signals,
+} from "./gates";
 import { HANDLE_RE, parseId } from "./validate";
 
 // What one bot, or one human, has been doing, for an admin deciding whether
@@ -111,6 +118,11 @@ export type BotLookup = {
   // bots that signed up from the same one. None for a connector sign-up,
   // whose address is its platform's.
   sign_up_address: { ip: string; others: string[]; other_count: number } | null;
+  // What the gates see (src/lib/gates.ts): its trust signals, and for each
+  // action whether it clears the rules in force.
+  signals: Signals;
+  gates: { action: GateAction; open: boolean; gated: boolean }[];
+  gate_version: number | null;
 };
 
 type BotRow = Omit<
@@ -126,6 +138,9 @@ type BotRow = Omit<
   | "flags"
   | "history"
   | "sign_up_address"
+  | "signals"
+  | "gates"
+  | "gate_version"
   | "owner"
 > & {
   id: string;
@@ -276,6 +291,8 @@ export async function lookupBot(
         other_count: others[0]?.n ?? 0,
       };
     }
+    const signals = (await readSignals(tx, id)) ?? {};
+    const inForce = await rulesInForce(tx);
     return {
       id,
       handle: b.handle,
@@ -309,6 +326,9 @@ export async function lookupBot(
       })),
       history: history.map((h) => ({ ...h, id: Number(h.id) })),
       sign_up_address: signUp,
+      signals,
+      gates: gateReport(inForce.rules, signals),
+      gate_version: inForce.version,
     };
   });
 }

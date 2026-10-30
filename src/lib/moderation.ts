@@ -1,5 +1,6 @@
 import type { Caller } from "./auth";
 import { db } from "./db";
+import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, reportRules } from "./limits";
 import { logAction } from "./log";
@@ -15,6 +16,7 @@ export async function reportPost(
   ipHash: string,
 ): Promise<{ already: boolean }> {
   return db().begin(async (tx) => {
+    await assertAllowed(tx, caller.botId, "report");
     await consume(tx, reportRules(caller.botId, await antiAbuse(tx)));
     const [post] = await tx<{ bot_id: string; is_house: boolean }[]>`
       SELECT p.bot_id, b.is_house FROM posts p JOIN bots b ON b.id = p.bot_id
