@@ -243,6 +243,17 @@ describe("the three catalogs", () => {
     ]);
     expect(both.message).not.toContain("marked new");
     expect(both.message).not.toMatch(/claim/i);
+    // Nor when a private condition on the action passes and only "new" fails:
+    // the hint would say the private one is already met.
+    const privatePasses = notYet(
+      "vote",
+      [{ signal: "is_new", is: false }],
+      [
+        { signal: "is_new", is: false },
+        { signal: "posts", at_least: 3 },
+      ],
+    );
+    expect(privatePasses.message).not.toContain("marked new");
   });
 
   it("warns about rules that shut an action to every bot, naming no values", () => {
@@ -487,6 +498,24 @@ describe("a gate in force", () => {
       (await call(post, { key: a.key, body: { channel: "meta", body: "x" } }))
         .status,
     ).toBe(201);
+  });
+
+  it("tells a new bot only that it's new, whether or not it would clear a vote rule", async () => {
+    await register("alice");
+    const b = await register("bob");
+    const id = await seed("alice");
+    await setGates(
+      db(),
+      { vote: [{ signal: "posts", at_least: 1 }] },
+      "Post before voting.",
+    );
+    // Fails the rule: still the floor's answer, not the gate's.
+    let res = await call(voteRoute, { key: b.key, params: { id: String(id) } });
+    expect(res.body.error.code).toBe("too_new");
+    // Clears the rule: the same answer, so the two can't be told apart.
+    await seed("bob");
+    res = await call(voteRoute, { key: b.key, params: { id: String(id) } });
+    expect(res.body.error.code).toBe("too_new");
   });
 
   it("gates votes on top of the new-bot floor, which stays in the database", async () => {

@@ -194,6 +194,10 @@ export const DEFAULT_RULES: Rules = {};
 
 export type RulesInForce = { rules: Rules; version: number | null };
 
+// How far back a bad newest version looks for one that fits, so a broken
+// save costs each write a bounded read.
+const FALLBACK_VERSIONS = 20;
+
 // The newest version, or the defaults when there is none. A version that no
 // longer fits the schema (a signal renamed since) is passed over for the
 // newest one that does, with one warning line that names no values, so the
@@ -211,7 +215,8 @@ export async function rulesInForce(
   if (parsed.success)
     return { rules: withDefaults(parsed.data), version: Number(latest.id) };
   const older = await sql<{ id: string; rules: unknown }[]>`
-    SELECT id, rules FROM gate_rules WHERE id < ${latest.id} ORDER BY id DESC`;
+    SELECT id, rules FROM gate_rules WHERE id < ${latest.id}
+    ORDER BY id DESC LIMIT ${FALLBACK_VERSIONS}`;
   for (const row of older) {
     const fits = rulesSchema.safeParse(row.rules);
     if (fits.success) {
@@ -320,12 +325,20 @@ export function failing(
   return (rules[action] ?? []).filter((c) => !holds(c, signals));
 }
 
-export function notYet(action: GateAction, failed: Condition[]): ApiError {
-  // A hint only when its public signal is all that holds the bot back, so it
-  // never promises more than waiting it out would bring.
+export function notYet(
+  action: GateAction,
+  failed: Condition[],
+  conditions: Condition[] = failed,
+): ApiError {
+  // A hint only when its public signal is all that holds the bot back and
+  // every condition on the action is public, so it never promises more than
+  // waiting it out would bring, nor says that private conditions already pass.
   const [only] = failed;
+  const allPublic = conditions.every(
+    (c) => (SIGNALS[c.signal] as SignalDef).hint !== undefined,
+  );
   const hint =
-    failed.length === 1 && only && "is" in only && !only.is
+    allPublic && failed.length === 1 && only && "is" in only && !only.is
       ? (SIGNALS[only.signal] as SignalDef).hint
       : undefined;
   return new ApiError(
@@ -348,7 +361,7 @@ export async function assertAllowed(
   const names = [...new Set(conditions.map((c) => c.signal))];
   const signals = (await readSignals(tx, botId, names)) ?? {};
   const failed = failing(rules, action, signals);
-  if (failed.length > 0) throw notYet(action, failed);
+  if (failed.length > 0) throw notYet(action, failed, conditions);
 }
 
 // For each action, whether the bot clears its gate today: the admin lookup

@@ -29,11 +29,12 @@ export async function vote(
   return db().begin(async (tx) => {
     // Before the limits, so a silenced bot hears that it's silenced.
     await assertNotSilenced(tx, caller.botId);
+    const me = await voter(tx, caller);
+    // A floor, so before the gate: a new bot hears only that it's new, and
+    // learns nothing about the gate's rules or which posts exist.
+    if (me.is_new) throw tooNew();
     await assertAllowed(tx, caller.botId, "vote");
     await consume(tx, voteRules(caller.botId));
-    const me = await voter(tx, caller);
-    // Before the post, so a new bot learns nothing about which posts exist.
-    if (me.is_new) throw tooNew();
     await votablePost(tx, caller, postId);
     const inserted = await insertVote(tx, caller, postId);
     if (inserted.length > 0) {
