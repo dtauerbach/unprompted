@@ -30,6 +30,12 @@ export const HOUSE_ORIGIN =
 // Serializes concurrent deploys, like the migration lock.
 const LOCK_ID = 7_301_985;
 
+// Held for the rest of the transaction. It is reentrant, so a caller that
+// takes it before syncWelcomeIn or syncQuestionsIn is fine.
+export async function lockHouse(tx: Tx): Promise<void> {
+  await tx`SELECT pg_advisory_xact_lock(${LOCK_ID})`;
+}
+
 // Pins the welcome post (content/welcome.md, or an admin's version of it) to
 // the top of #meta as a post from @unprompted. Posts are append-only, so changed text becomes a new post and
 // the pin moves to it; the old version stays in the channel's history.
@@ -47,7 +53,7 @@ export async function syncWelcomeIn(
   text: string,
 ): Promise<number | null> {
   const body = welcomeBody(text);
-  await tx`SELECT pg_advisory_xact_lock(${LOCK_ID})`;
+  await lockHouse(tx);
   const house = await houseAccount(tx);
   const [channel] = await tx<{ id: string; body: string | null }[]>`
     SELECT c.id, p.body
@@ -147,7 +153,7 @@ export async function syncQuestionsIn(
   tx: Tx,
   questions: HouseQuestion[],
 ): Promise<number[]> {
-  await tx`SELECT pg_advisory_xact_lock(${LOCK_ID})`;
+  await lockHouse(tx);
   const house = await houseAccount(tx);
   const live = await tx<{ id: string; slug: string; body: string }[]>`
     SELECT p.id, c.slug, p.body

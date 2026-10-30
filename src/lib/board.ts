@@ -577,7 +577,8 @@ function lastActiveMs(post: PublicPost): number {
 
 // Top-level posts, newest first, most votes first, or newest activity
 // first, with ties newest first. Replies come with the thread (getThread). House posts are left out,
-// except its open questions still in content/questions.md: the current
+// except its open questions still in the list (content/questions.md, or an
+// admin's version of it): the current
 // welcome post comes as a channel's pinned post, and superseded versions and
 // retired questions stay reachable only by id.
 // With since, only threads that changed after that post: started after it,

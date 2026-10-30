@@ -20,6 +20,7 @@ import {
 import {
   checkDescription,
   descriptionHistory,
+  descriptionVersionBody,
   saveDescription,
   siteChannels,
 } from "@/lib/channel-descriptions";
@@ -393,9 +394,84 @@ describe("the open questions, as an admin saves them", () => {
     warn.mockRestore();
   });
 
-  it("still stops a deploy whose built-in list doesn't fit", async () => {
+  it("still stops a deploy whose built-in list doesn't fit, naming the file", async () => {
     await db()`UPDATE channels SET archived_at = now() WHERE slug = 'small-talk'`;
-    await expect(syncHouseTexts(db())).rejects.toThrow(/archived/);
+    await expect(syncHouseTexts(db())).rejects.toThrow(
+      /content\/questions\.md names #small-talk, which is archived/,
+    );
+  });
+
+  it("posts the file's questions at a deploy when a pull request changed the file since an edit", async () => {
+    const a = await anAdmin();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // An admin's list, saved over a file a pull request has changed since.
+    await db()`
+      INSERT INTO bot_text_versions (key, body, base, human_id)
+      VALUES ('questions', '- small-talk: Only the admin asks this?',
+              ${textHash("an older file")}, ${a})`;
+    const out = await syncHouseTexts(db());
+    const builtIn = parseQuestions(await builtInText("questions"));
+    expect(out.find((r) => r.key === "questions")?.posted).toHaveLength(
+      builtIn.length,
+    );
+    const asked = await db()<{ body: string }[]>`
+      SELECT p.body FROM posts p JOIN bots b ON b.id = p.bot_id
+      WHERE b.is_house AND p.parent_id IS NULL`;
+    expect(asked.map((r) => r.body)).not.toContain("Only the admin asks this?");
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe("the history", () => {
+  it("can't change or delete an old version of a text or a description", async () => {
+    const a = await anAdmin();
+    await save(
+      a,
+      "start",
+      (await builtInText("start")).replace(START_TITLE, "# Hi"),
+      0,
+    );
+    await saveDescription(db(), {
+      slug: "small-talk",
+      body: "Talk about anything.",
+      after: 0,
+      humanId: a,
+      ipHash: null,
+    });
+    for (const table of ["bot_text_versions", "channel_description_versions"]) {
+      await expect(
+        db()`UPDATE ${db()(table)} SET body = 'changed'`,
+      ).rejects.toThrow();
+      await expect(db()`DELETE FROM ${db()(table)}`).rejects.toThrow();
+    }
+    expect(await botTextHistory(db(), "start")).toHaveLength(1);
+    expect(
+      (await descriptionHistory(db(), "small-talk")).versions,
+    ).toHaveLength(1);
+  });
+
+  it("finds a version only under its own text or channel", async () => {
+    const a = await anAdmin();
+    const r = await save(
+      a,
+      "start",
+      (await builtInText("start")).replace(START_TITLE, "# Hi"),
+      0,
+    );
+    await expect(botTextVersionBody(db(), "skill", r.version)).rejects.toThrow(
+      "That version isn't there.",
+    );
+    const d = await saveDescription(db(), {
+      slug: "small-talk",
+      body: "Talk about anything.",
+      after: 0,
+      humanId: a,
+      ipHash: null,
+    });
+    await expect(
+      descriptionVersionBody(db(), "meta", d.version),
+    ).rejects.toThrow("That version isn't there.");
   });
 });
 
