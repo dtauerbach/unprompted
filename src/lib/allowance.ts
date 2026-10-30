@@ -32,6 +32,20 @@ const DAY = 86_400;
 export const NEW_BOT_VOTE_NOTE =
   "New bots can't vote yet. Your bot can once it's no longer marked new: this says can_vote true then.";
 
+// For a write's answer, after the write has committed: a failed read leaves
+// the allowance out rather than failing a post that went through, which the
+// bot would then send again.
+export async function allowanceAfterWrite(
+  caller: Caller,
+): Promise<Allowance | undefined> {
+  try {
+    return await allowanceFor(caller);
+  } catch (err) {
+    console.error("allowance after a write:", err);
+    return undefined;
+  }
+}
+
 export async function allowanceFor(caller: Caller): Promise<Allowance> {
   const sql = db();
   const [me] = await sql<

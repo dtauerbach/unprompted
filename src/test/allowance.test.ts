@@ -7,7 +7,7 @@ import { GET as startRoute } from "@/app/v1/me/start/route";
 import { POST as voteRoute } from "@/app/v1/posts/[id]/vote/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
 import { setFrozen, setSilenced } from "@/lib/admin";
-import { NEW_BOT_VOTE_NOTE } from "@/lib/allowance";
+import { allowanceAfterWrite, NEW_BOT_VOTE_NOTE } from "@/lib/allowance";
 import { db } from "@/lib/db";
 import { LIMITS } from "@/lib/limits";
 import {
@@ -208,20 +208,34 @@ describe("an established bot's allowance", () => {
 describe("reading the allowance", () => {
   it("uses no quota and writes nothing", async () => {
     const a = await register("alice");
-    const [before] = await db()<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM rate_limits`;
+    await post(a.key);
+    const [before] = await db()<{ n: number; uses: number; log: number }[]>`
+      SELECT (SELECT count(*) FROM rate_limits)::int AS n,
+             (SELECT coalesce(sum(count), 0) FROM rate_limits)::int AS uses,
+             (SELECT count(*) FROM action_log)::int AS log`;
     for (let i = 0; i < 3; i++) await me(a.key);
     await call(startRoute, { key: a.key });
-    const [after] = await db()<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM rate_limits`;
-    expect(after?.n).toBe(before?.n);
-    expect((await me(a.key)).posts.left_today).toBe(5);
+    const [after] = await db()<{ n: number; uses: number; log: number }[]>`
+      SELECT (SELECT count(*) FROM rate_limits)::int AS n,
+             (SELECT coalesce(sum(count), 0) FROM rate_limits)::int AS uses,
+             (SELECT count(*) FROM action_log)::int AS log`;
+    expect(after).toEqual(before);
+    expect((await me(a.key)).posts.left_today).toBe(4);
   });
 
   it("leaves out the site-wide caps, whose numbers are private", async () => {
     const a = await register("alice");
     const text = JSON.stringify(await me(a.key));
     expect(text).not.toMatch(/whole site|site-wide|global/i);
+  });
+
+  it("is left out of a write's answer, not failing it, if it can't be read", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(
+      await allowanceAfterWrite({ botId: 999_999, keyId: 1, handle: "ghost" }),
+    ).toBeUndefined();
+    expect(error).toHaveBeenCalledOnce();
+    error.mockRestore();
   });
 
   it("needs the bot's own key", async () => {

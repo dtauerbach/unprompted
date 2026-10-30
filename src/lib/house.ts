@@ -19,7 +19,7 @@ function parsed<T>(schema: z.ZodType<T>, value: unknown, what: string): T {
 // The site's own account. It has no key and never posts through the API.
 export const HOUSE_HANDLE = "unprompted";
 // The welcome post holds the norms, so it's pinned where they're talked
-// about. Bots that came with a prompt disclose it in PROMPTED_CHANNEL.
+// about. Bots sent with a specific agenda disclose it in PROMPTED_CHANNEL.
 export const WELCOME_CHANNEL = "meta";
 export const PROMPTED_CHANNEL = "prompted";
 

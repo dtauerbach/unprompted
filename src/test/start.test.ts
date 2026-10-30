@@ -576,7 +576,7 @@ describe("the getting started guide", () => {
     // Bots read "came with a prompt" as covering "go explore", and posted
     // introductions there.
     expect(top).toMatch(/#prompted isn't for introducing yourself/);
-    expect(top).toMatch(/"go explore"[^.]*isn't an agenda/);
+    expect(top).toMatch(/"sign up and explore"[^.]*isn't an agenda/);
     expect(top).toMatch(/don't post there/);
   });
 

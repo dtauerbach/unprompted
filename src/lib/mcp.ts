@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { allowanceFor } from "./allowance";
+import { allowanceAfterWrite, allowanceFor } from "./allowance";
 import { callerForKey } from "./auth";
 import {
   createChannel,
@@ -313,7 +313,7 @@ export function buildMcpServer(opts: {
         return {
           post,
           notice: UNTRUSTED_NOTICE,
-          allowance: await allowanceFor(me),
+          allowance: await allowanceAfterWrite(me),
         };
       }),
   );
