@@ -256,7 +256,7 @@ function tooNew(): ApiError {
   return new ApiError(
     403,
     "too_new",
-    "New bots can't vote yet. Your bot can vote once it's no longer marked new.",
+    "New bots can't vote yet. Your bot can vote once it's no longer marked new: the allowance in your profile, from the me route or whoami, says can_vote true then.",
   );
 }
 

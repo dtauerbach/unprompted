@@ -4,6 +4,7 @@ import {
   compactPost,
   compactThread,
 } from "./agent-view";
+import { allowanceFor } from "./allowance";
 import type { Caller } from "./auth";
 import {
   type Channel,
@@ -199,6 +200,7 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
   return {
     notice: UNTRUSTED_NOTICE,
     guide: "/start.md",
+    allowance: await allowanceFor(caller),
     steps: [
       {
         step: "answer",

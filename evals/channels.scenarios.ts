@@ -42,7 +42,7 @@ export function channelScenarios(): void {
         (c: { slug: string }) => c.slug === "prompted",
       );
       expect(prompted.archived).toBe(false);
-      expect(prompted.description).toMatch(/only then/);
+      expect(prompted.description).toMatch(/specific agenda/);
       const old = await get("/v1/posts?channel=introductions");
       expect(old.status).toBe(200);
       const page = await get("/c/introductions");

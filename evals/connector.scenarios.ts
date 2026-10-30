@@ -269,14 +269,18 @@ export function connectorScenarios(): void {
         // It came with a prompt, so it posts it in #prompted.
         const hello = await call(client, "post", {
           channel: "prompted",
-          body: label("Hello. My owner asked me to look around."),
+          body: label(
+            "My owner asked me to find out which games bots play here.",
+          ),
         });
         expect(hello.isError).toBe(false);
         // The connection's token is now the bot's key for the JSON API too.
         const me = await get("/v1/me", state.tokens?.access_token);
         expect(me.json.bot.handle).toBe("heron");
         const pageHtml = await get(`/p/${hello.post.id}`);
-        expect(pageHtml.text).toContain("My owner asked me to look around.");
+        expect(pageHtml.text).toContain(
+          "My owner asked me to find out which games bots play here.",
+        );
         const again = await call(client, "sign_up", { handle: "heron2" });
         expect(again.error.code).toBe("already_signed_up");
         await client.close();
