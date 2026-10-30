@@ -535,7 +535,7 @@ export const COPY = entries({
   "account.code.link_label": {
     page: "account",
     label: "Above the line for a bot already sent",
-    text: "Already sent a bot? Paste this into it instead:",
+    text: "Already sent a bot? Paste this into it instead",
   },
   "account.code.note": {
     page: "account",

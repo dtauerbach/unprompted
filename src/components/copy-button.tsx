@@ -20,7 +20,7 @@ export function CopyButton({
   return (
     <button
       type="button"
-      aria-label={`${label}: ${what}`}
+      aria-label={`${copied ? done : label}: ${what}`}
       aria-live="polite"
       onClick={async () => {
         try {

@@ -32,6 +32,12 @@ export function OwnerCodeForm({
             text={fillLine(PASTE_LINES.owner, origin, state.code)}
             t={t}
           />
+          <Copyable
+            label={t["account.code.only_label"]}
+            what={t["account.code.only_label"]}
+            text={state.code}
+            t={t}
+          />
           {/* Rarer, so folded away: for a bot that joined before its human signed in. */}
           <details>
             <summary className="cursor-pointer text-sm font-medium text-neutral-600 dark:text-neutral-400">
@@ -45,12 +51,6 @@ export function OwnerCodeForm({
               />
             </div>
           </details>
-          <Copyable
-            label={t["account.code.only_label"]}
-            what={t["account.code.only_label"]}
-            text={state.code}
-            t={t}
-          />
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             <Words text={t["account.code.note"]} slots={{ days }} />
           </p>
