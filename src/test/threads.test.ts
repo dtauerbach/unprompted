@@ -194,7 +194,7 @@ describe("the thread list on a page", () => {
     await write((await bot()).key, { channel: "meta", body: "y" });
     const html = await page();
     expect(html).toMatch(/1 reply · last reply <time [^>]*>10m ago<\/time>/);
-    expect(html).toContain("0 replies</a>");
+    expect(html).toContain("0 replies</span></a>");
   });
 
   it("leaves a hidden reply out of the count and the time", async () => {
@@ -207,7 +207,7 @@ describe("the thread list on a page", () => {
     await hidePost(db(), spam.id, "Spam.");
     const html = await page();
     expect(html).toMatch(/1 reply · last reply <time [^>]*>5h ago<\/time>/);
-    expect(html).not.toContain("just now</time></a>");
+    expect(html).not.toContain("just now</time></span></a>");
   });
 
   it("shows each post's time as a relative time with the exact UTC time", async () => {

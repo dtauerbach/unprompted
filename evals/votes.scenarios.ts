@@ -104,7 +104,7 @@ export function voteScenarios(): void {
       const newest = fresh.json.posts.map((p: { id: number }) => p.id);
       expect(newest.indexOf(other)).toBeLessThan(newest.indexOf(id));
       const page = await get("/c/small-talk?sort=top");
-      expect(page.text.replace(/<!-- -->/g, "")).toContain("· 2 votes<");
+      expect(page.text.replace(/<!-- -->/g, "")).toContain(">2 votes<");
       expect(page.text).toMatch(/href="\/c\/small-talk"[^>]*>New</);
       expect((await get("/forum?sort=top")).text).toContain("Top threads");
 

@@ -1,7 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
-import { PostList, pageSort, SortLinks } from "@/components/post-list";
+import {
+  ListHeading,
+  PostList,
+  pageSort,
+  SortLinks,
+} from "@/components/post-list";
 import { Words } from "@/components/words";
 import { listChannels, listPosts } from "@/lib/board";
 import { readCopy } from "@/lib/copy";
@@ -29,50 +34,70 @@ export default async function ForumPage({
   const welcome = channels.find(
     (c) => c.slug === WELCOME_CHANNEL,
   )?.pinned_post_id;
+  const muted = "text-sm text-neutral-600 dark:text-neutral-400";
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">{t["forum.title"]}</h1>
-      <div className="grid gap-8 md:grid-cols-[14rem_1fr]">
-        <aside>
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-neutral-400">
-            {t["forum.channels"]}
-          </h2>
-          <ul className="space-y-2">
-            {channels.map((c) => (
-              <li key={c.slug}>
-                <Link href={c.web_url} className="font-medium hover:underline">
-                  #{c.slug}
-                </Link>
-                <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                  {c.description}
-                </p>
-              </li>
-            ))}
-          </ul>
-          {welcome && (
-            <p className="mt-4 text-sm text-neutral-600 dark:text-neutral-400">
-              <Words
-                text={t["forum.welcome"]}
-                slots={{
-                  welcome_post: (
-                    <Link href={`/p/${welcome}`} className="underline">
-                      {t["forum.welcome_post"]}
-                    </Link>
-                  ),
-                }}
-              />
-            </p>
-          )}
+      <div className="grid gap-6 md:grid-cols-[15rem_1fr] md:gap-8">
+        <aside className="md:sticky md:top-6 md:self-start">
+          <div className="md:card md:p-3">
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-600 md:px-2 dark:text-neutral-400">
+              {t["forum.channels"]}
+            </h2>
+            {/* Chips on a phone, so the threads come first; a list beside them on a wider screen. */}
+            <ul className="flex flex-wrap gap-2 md:block md:space-y-0.5">
+              {channels.map((c) => (
+                <li key={c.slug}>
+                  <Link
+                    href={c.web_url}
+                    className="block rounded-full border border-neutral-200 bg-white px-3 py-1 text-sm font-medium hover:bg-neutral-50 md:rounded-md md:border-0 md:bg-transparent md:px-2 md:py-1.5 dark:border-neutral-800 dark:bg-neutral-900 md:dark:bg-transparent dark:hover:bg-neutral-800"
+                  >
+                    <span className="text-neutral-500 dark:text-neutral-500">
+                      #
+                    </span>
+                    {c.slug}
+                    <span
+                      className={`mt-0.5 hidden font-normal md:block ${muted}`}
+                    >
+                      {c.description}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            {welcome && (
+              <p
+                className={`mt-3 md:mt-2 md:border-t md:border-neutral-200 md:px-2 md:pt-3 md:dark:border-neutral-800 ${muted}`}
+              >
+                <Words
+                  text={t["forum.welcome"]}
+                  slots={{
+                    welcome_post: (
+                      <Link
+                        href={`/p/${welcome}`}
+                        className="text-brand underline dark:text-sky-300"
+                      >
+                        {t["forum.welcome_post"]}
+                      </Link>
+                    ),
+                  }}
+                />
+              </p>
+            )}
+          </div>
         </aside>
-        <section>
-          <h2 className="mb-3 text-lg font-semibold">
+        <section className="min-w-0">
+          <ListHeading
+            controls={
+              <SortLinks
+                path="/forum"
+                sort={sort}
+                labels={{ new: t["forum.sort_new"], top: t["forum.sort_top"] }}
+              />
+            }
+          >
             {sort === "top" ? t["forum.top"] : t["forum.latest"]}
-          </h2>
-          <SortLinks
-            path="/forum"
-            sort={sort}
-            labels={{ new: t["forum.sort_new"], top: t["forum.sort_top"] }}
-          />
+          </ListHeading>
           <PostList posts={posts} empty={t["forum.empty"]} />
         </section>
       </div>

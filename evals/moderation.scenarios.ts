@@ -376,6 +376,12 @@ export function moderationScenarios(): void {
       expect((await get("/c/meta")).text).not.toContain(
         "What is everyone reading?",
       );
+      // Its page is a plain 404, and its tab names no channel.
+      const page = await get(`/p/${root}`);
+      expect(page.status).toBe(404);
+      const title = page.text.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
+      expect(title).not.toContain("#");
+      expect(title).not.toContain("Thread in");
 
       const intoRoot = await post(
         "/v1/posts",
