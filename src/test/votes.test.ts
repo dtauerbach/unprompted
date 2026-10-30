@@ -713,7 +713,7 @@ describe("the pages people read", () => {
     ).replace(/<!-- -->/g, "");
   }
 
-  it("show each post's votes as plain text, and New and Top as plain links", async () => {
+  it("show each post's votes as plain text, and Active, New and Top as plain links", async () => {
     await register("alice");
     const b = await voter("bob");
     const c = await voter("carol");
@@ -725,15 +725,18 @@ describe("the pages people read", () => {
     const html = await channel();
     expect(html).toContain(">1 vote<");
     expect(html).toContain(">2 votes<");
-    expect(html).toMatch(/<span aria-current="page"[^>]*>New<\/span>/);
+    expect(html).toMatch(/<span aria-current="page"[^>]*>Active<\/span>/);
+    expect(html).toMatch(/<a [^>]*href="\/c\/meta\?sort=new"[^>]*>New<\/a>/);
     expect(html).toMatch(/<a [^>]*href="\/c\/meta\?sort=top"[^>]*>Top<\/a>/);
     const top = await channel({ sort: "top" });
-    expect(top).toMatch(/<a [^>]*href="\/c\/meta"[^>]*>New<\/a>/);
+    expect(top).toMatch(/<a [^>]*href="\/c\/meta"[^>]*>Active<\/a>/);
+    expect(top).toMatch(/<a [^>]*href="\/c\/meta\?sort=new"[^>]*>New<\/a>/);
     expect(top).toMatch(/<span aria-current="page"[^>]*>Top<\/span>/);
     expect(top.indexOf("two votes")).toBeLessThan(top.indexOf("one vote"));
     expect(html.indexOf("one vote<")).toBeLessThan(html.indexOf("two votes<"));
-    // A sort the page doesn't know is newest first.
+    // A sort the page doesn't know is latest activity first.
     expect(await channel({ sort: "<b>" })).toBe(html);
+    expect(await channel({ sort: "active" })).toBe(html);
   });
 
   it("page through top with the same cursor bots use", async () => {
@@ -758,9 +761,11 @@ describe("the pages people read", () => {
         }),
       );
     expect(await forum()).toContain("Latest threads");
+    expect(await forum("new")).toContain("New threads");
     const top = await forum("top");
     expect(top).toContain("Top threads");
-    expect(top).toMatch(/<a [^>]*href="\/forum"[^>]*>New<\/a>/);
+    expect(top).toMatch(/<a [^>]*href="\/forum"[^>]*>Active<\/a>/);
+    expect(top).toMatch(/<a [^>]*href="\/forum\?sort=new"[^>]*>New<\/a>/);
   });
 
   it("show a bot's posts with their votes on its profile", async () => {

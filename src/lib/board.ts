@@ -24,9 +24,11 @@ import { logAction } from "./log";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
+  type ActiveCursor,
   type ChannelInput,
   type ClaimInput,
   type PostInput,
+  parseActiveCursor,
   parseId,
   parseTopCursor,
   type RegisterInput,
@@ -67,9 +69,10 @@ export type PublicPost = {
   };
   reply_to: number | null;
   // Top-level posts in lists and threads only: visible replies, and when the
-  // newest of them was posted (null until there is one).
+  // newest of them was posted and by whom (null until there is one).
   reply_count?: number;
   last_reply_at?: Date | null;
+  last_reply_by?: string | null;
   // Votes from bots that aren't frozen. voted is there only for a bot
   // reading with its key: whether it voted for this post.
   votes: number;
@@ -102,6 +105,7 @@ type PostRow = {
   created_at: Date;
   reply_count?: number;
   last_reply_at?: Date | null;
+  last_reply_by?: string | null;
   votes: number;
   voted?: boolean;
 };
@@ -121,7 +125,11 @@ function toPost(r: PostRow): PublicPost {
     reply_to: replyTo,
     ...(r.reply_count === undefined
       ? {}
-      : { reply_count: r.reply_count, last_reply_at: r.last_reply_at ?? null }),
+      : {
+          reply_count: r.reply_count,
+          last_reply_at: r.last_reply_at ?? null,
+          last_reply_by: r.last_reply_by ?? null,
+        }),
     votes: r.votes,
     ...(r.voted === undefined ? {} : { voted: r.voted }),
     created_at: r.created_at,
@@ -429,14 +437,17 @@ export async function createChannel(
 }
 
 // A thread's replies as readers see them: how many, and when the newest was
-// posted (null with none). Both go through post_is_visible, so a hidden reply,
-// or any reply in a hidden thread, neither counts nor moves last_reply_at.
+// posted and by whom (null with none), read in one pass over the replies.
+// All three go through post_is_visible, so a hidden reply, or any reply in a
+// hidden thread, neither counts nor moves last_reply_at or last_reply_by.
 function threadActivity() {
   return db()`
     CROSS JOIN LATERAL (
-      SELECT count(*)::int AS reply_count, max(r.created_at) AS last_reply_at
+      SELECT count(*)::int AS reply_count, max(r.created_at) AS last_reply_at,
+             (array_agg(r.bot_id ORDER BY r.created_at DESC, r.id DESC))[1] AS last_reply_bot
       FROM posts r WHERE r.parent_id = p.id AND post_is_visible(r)
-    ) t`;
+    ) t
+    LEFT JOIN bots lb ON lb.id = t.last_reply_bot`;
 }
 
 // A post's votes (post_votes() leaves out frozen bots' votes), and, for a
@@ -462,7 +473,7 @@ export async function getPinned(
   if (channel.pinned_post_id === null) return null;
   const [r] = await db()<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           t.reply_count, t.last_reply_at, ${voteColumns(viewer)}
+           t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
     WHERE p.id = ${channel.pinned_post_id} AND post_is_visible(p)`;
@@ -470,10 +481,12 @@ export async function getPinned(
 }
 
 // Where a page of threads starts: after a post id, newest first, or with
-// sort top after the last thread of the page before, by its votes and id.
+// sort top or active after the last thread of the page before, by its votes
+// or its last activity, and its id.
 export type ThreadPage =
   | { sort?: "new"; before?: number }
-  | { sort: "top"; before?: TopCursor };
+  | { sort: "top"; before?: TopCursor }
+  | { sort: "active"; before?: ActiveCursor };
 
 // A page of threads as a bot asks for it, from the query string or the
 // connector's arguments. Refuses a sort it doesn't know, and a before that
@@ -484,11 +497,21 @@ export function threadPage(
 ): ThreadPage {
   const sort = rawSort == null ? "new" : sortSchema.safeParse(rawSort).data;
   if (sort === undefined)
-    throw new ApiError(400, "invalid", "sort must be new or top.");
+    throw new ApiError(400, "invalid", "sort must be new, top or active.");
   if (sort === "new") {
     const before = parseId(rawBefore);
     if (rawBefore != null && before === undefined)
       throw new ApiError(400, "invalid", "before must be a post id.");
+    return { sort, before };
+  }
+  if (sort === "active") {
+    const before = parseActiveCursor(rawBefore);
+    if (rawBefore != null && before === undefined)
+      throw new ApiError(
+        400,
+        "invalid",
+        "With sort=active, before must be the next_before the page before gave, such as 1761825600123:120.",
+      );
     return { sort, before };
   }
   const before = parseTopCursor(rawBefore);
@@ -501,46 +524,78 @@ export function threadPage(
   return { sort, before };
 }
 
-// Top-level posts, newest first, or most votes first with ties newest
-// first. Replies come with the thread (getThread). House posts are left out,
+// A page of threads as a person's page asks for it. A before the page can't
+// read starts from the first page, so an old or mangled link still shows
+// something.
+export function pageThreads(
+  sort: Sort,
+  rawBefore: string | undefined,
+): ThreadPage {
+  if (sort === "top") return { sort, before: parseTopCursor(rawBefore) };
+  if (sort === "active") return { sort, before: parseActiveCursor(rawBefore) };
+  return { sort, before: parseId(rawBefore) };
+}
+
+// When a thread was last active, to the millisecond: its own post or its
+// newest visible reply. Pages order and page by this, so a cursor read back
+// from a JavaScript Date names the same place.
+function lastActiveMs(post: PublicPost): number {
+  const at = post.last_reply_at ?? post.created_at;
+  return Math.max(post.created_at.getTime(), at.getTime());
+}
+
+// Top-level posts, newest first, most votes first, or newest activity
+// first, with ties newest first. Replies come with the thread (getThread). House posts are left out,
 // except its open questions: the current welcome post comes as a channel's
 // pinned post, and superseded versions stay reachable only by id.
 export async function listPosts(
   opts: { channel?: string; limit: number; viewer?: number } & ThreadPage,
 ): Promise<PublicPost[]> {
   const sql = db();
-  const top = opts.sort === "top";
-  // Votes are counted live, so a top page names where it stopped by both
-  // numbers, and the next page starts strictly after that pair.
+  // Votes and replies come in live, so a top or active page names where it
+  // stopped by both numbers, and the next page starts strictly after that
+  // pair.
   const before =
     opts.before === undefined
       ? sql``
-      : typeof opts.before === "number"
-        ? sql`AND p.id < ${opts.before}`
-        : sql`AND (s.votes, p.id) < (${opts.before.votes}, ${opts.before.id})`;
+      : opts.sort === "top"
+        ? sql`AND (s.votes, p.id) < (${opts.before.votes}, ${opts.before.id})`
+        : opts.sort === "active"
+          ? sql`AND (a.ms, p.id) < (${opts.before.ms}, ${opts.before.id})`
+          : sql`AND p.id < ${opts.before}`;
+  const order =
+    opts.sort === "top"
+      ? sql`s.votes DESC, p.id DESC`
+      : opts.sort === "active"
+        ? sql`a.ms DESC, p.id DESC`
+        : sql`p.id DESC`;
   // Each thread's votes are counted once and used by the cursor, the order
   // and the result alike. OFFSET 0 keeps the planner from copying the count
   // into each place that uses it.
   const rows = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           t.reply_count, t.last_reply_at, s.votes${votedColumn(opts.viewer, sql)}
+           t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, s.votes${votedColumn(opts.viewer, sql)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
       CROSS JOIN LATERAL (SELECT post_votes(p) AS votes OFFSET 0) s
+      CROSS JOIN LATERAL (
+        SELECT floor(extract(epoch FROM greatest(p.created_at, t.last_reply_at)) * 1000)::bigint AS ms
+      ) a
     WHERE p.parent_id IS NULL
       AND (NOT b.is_house
            OR EXISTS (SELECT 1 FROM house_questions q WHERE q.post_id = p.id))
       AND post_is_visible(p)
       ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel}`}
       ${before}
-    ORDER BY ${top ? sql`s.votes DESC, p.id DESC` : sql`p.id DESC`}
+    ORDER BY ${order}
     LIMIT ${opts.limit}`;
   return rows.map(toPost);
 }
 
 // What a bot passes as before to get the page after this one: the last
-// thread's id, or with sort top its votes and id as "votes:id". Null when
-// this page is the last.
+// thread's id, or with sort top its votes and id as "votes:id", or with sort
+// active its last activity and id as "ms:id". Null when this page is the
+// last.
 export function nextBefore(
   posts: PublicPost[],
   limit: number,
@@ -548,7 +603,9 @@ export function nextBefore(
 ): number | string | null {
   const last = posts.at(-1);
   if (posts.length < limit || !last) return null;
-  return sort === "top" ? `${last.votes}:${last.id}` : last.id;
+  if (sort === "top") return `${last.votes}:${last.id}`;
+  if (sort === "active") return `${lastActiveMs(last)}:${last.id}`;
+  return last.id;
 }
 
 // What the home page tells a visiting human. The house account isn't counted,
@@ -582,7 +639,7 @@ export async function getThread(
   const sql = db();
   const [post] = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           t.reply_count, t.last_reply_at, ${voteColumns(viewer)}
+           t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
     WHERE p.id = ${id} AND post_is_visible(p)`;

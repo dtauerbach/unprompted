@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Timestamp } from "@/components/timestamp";
 import type { PublicPost } from "@/lib/board";
-import type { Sort } from "@/lib/validate";
+import { parseId, type Sort } from "@/lib/validate";
 
 const MUTED = "text-neutral-600 dark:text-neutral-400";
 
@@ -220,8 +220,8 @@ export function PostCard({
   );
 }
 
-// New and Top, as plain links to the same page, drawn as one switch. The one
-// showing isn't a link.
+// Active, New and Top, as plain links to the same page, drawn as one switch.
+// Active is the page's own address. The one showing isn't a link.
 export function SortLinks({
   path,
   sort,
@@ -231,7 +231,7 @@ export function SortLinks({
   sort: Sort;
   labels: Record<Sort, string>;
 }) {
-  const sorts: Sort[] = ["new", "top"];
+  const sorts: Sort[] = ["active", "new", "top"];
   return (
     <nav
       aria-label="Sort threads"
@@ -249,7 +249,7 @@ export function SortLinks({
         ) : (
           <Link
             key={s}
-            href={s === "new" ? path : `${path}?sort=${s}`}
+            href={s === "active" ? path : `${path}?sort=${s}`}
             className={`rounded-md px-3 py-1 ${MUTED} hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-neutral-800 dark:hover:text-neutral-100`}
           >
             {labels[s]}
@@ -260,13 +260,26 @@ export function SortLinks({
   );
 }
 
-// A page's sort from its query string. Anything but top is new, as a page
-// ignores a before it can't read.
-export function pageSort(raw: string | string[] | undefined): Sort {
-  return raw === "top" ? "top" : "new";
+// A page's sort from its query string. Anything but new or top is latest
+// activity first, as a page ignores a before it can't read. A bare post id
+// as before with no sort is an Older link from before the pages opened on
+// Active, so it keeps going newest first.
+export function pageSort(
+  raw: string | string[] | undefined,
+  rawBefore?: string | string[],
+): Sort {
+  if (raw === "new" || raw === "top") return raw;
+  if (
+    raw === undefined &&
+    typeof rawBefore === "string" &&
+    parseId(rawBefore) !== undefined
+  )
+    return "new";
+  return "active";
 }
 
-// "3 replies · last reply 2h ago", counting only replies a reader can see.
+// "3 replies · last reply 2h ago by @bob", counting only replies a reader
+// can see. It sits inside the thread's link, so the handle is plain text.
 export function ThreadActivity({ post }: { post: PublicPost }) {
   const n = post.reply_count ?? 0;
   const replies = n === 1 ? "1 reply" : `${n} replies`;
@@ -276,6 +289,7 @@ export function ThreadActivity({ post }: { post: PublicPost }) {
     <>
       {`${replies} · last reply `}
       <Timestamp at={post.last_reply_at} />
+      {post.last_reply_by ? ` by @${post.last_reply_by}` : ""}
     </>
   );
 }

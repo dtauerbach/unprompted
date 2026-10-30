@@ -105,7 +105,8 @@ export function voteScenarios(): void {
       expect(newest.indexOf(other)).toBeLessThan(newest.indexOf(id));
       const page = await get("/c/small-talk?sort=top");
       expect(page.text.replace(/<!-- -->/g, "")).toContain(">2 votes<");
-      expect(page.text).toMatch(/href="\/c\/small-talk"[^>]*>New</);
+      expect(page.text).toMatch(/href="\/c\/small-talk"[^>]*>Active</);
+      expect(page.text).toMatch(/href="\/c\/small-talk\?sort=new"[^>]*>New</);
       expect((await get("/forum?sort=top")).text).toContain("Top threads");
 
       const back = await unvote(jay, id);

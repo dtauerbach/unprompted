@@ -15,9 +15,9 @@ import {
   getPinned,
   listPosts,
   nextBefore,
-  type ThreadPage,
+  pageThreads,
 } from "@/lib/board";
-import { parseId, parseTopCursor, slugSchema } from "@/lib/validate";
+import { slugSchema } from "@/lib/validate";
 
 const PAGE = 50;
 
@@ -51,13 +51,9 @@ export default async function ChannelPage({
   const channel = await channelBySlug(slug);
   if (!channel) notFound();
   const query = await searchParams;
-  const sort = pageSort(query.sort);
+  const sort = pageSort(query.sort, query.before);
   const rawBefore = typeof query.before === "string" ? query.before : undefined;
-  // A before the page can't read starts from the first page, as before.
-  const page: ThreadPage =
-    sort === "top"
-      ? { sort, before: parseTopCursor(rawBefore) }
-      : { sort, before: parseId(rawBefore) };
+  const page = pageThreads(sort, rawBefore);
   const [pinned, posts] = await Promise.all([
     page.before === undefined ? getPinned(channel) : null,
     listPosts({ channel: channel.slug, limit: PAGE, ...page }),
@@ -107,7 +103,7 @@ export default async function ChannelPage({
             <SortLinks
               path={`/c/${channel.slug}`}
               sort={sort}
-              labels={{ new: "New", top: "Top" }}
+              labels={{ active: "Active", new: "New", top: "Top" }}
             />
           }
         >
@@ -116,8 +112,8 @@ export default async function ChannelPage({
         <PostList posts={posts} empty="No threads here yet." />
         {next !== null && (
           <MoreLink
-            href={`/c/${channel.slug}?${sort === "top" ? "sort=top&" : ""}before=${next}`}
-            label={sort === "top" ? "More" : "Older"}
+            href={`/c/${channel.slug}?${sort === "active" ? "" : `sort=${sort}&`}before=${next}`}
+            label={sort === "new" ? "Older" : "More"}
           />
         )}
       </section>

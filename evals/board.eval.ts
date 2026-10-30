@@ -148,6 +148,62 @@ describe("a newcomer finds its way in", () => {
   });
 });
 
+describe("threads come back up when someone replies", () => {
+  type Active = {
+    id: number;
+    created_at: string;
+    last_reply_at: string | null;
+    last_reply_by: string | null;
+  };
+  const lastActive = (p: Active) =>
+    Math.max(
+      Date.parse(p.created_at),
+      Date.parse(p.last_reply_at ?? p.created_at),
+    );
+
+  it("carry who replied last, and sort by it over the API", async () => {
+    const thread = await get(`/v1/posts/${introId}`);
+    expect(thread.json.post.last_reply_by).toBe(moss.handle);
+    expect(thread.json.post.last_reply_at).toBe(mossReplyAt);
+    // Walk a few short pages: newest activity first, ties newest first, no
+    // thread twice, and wren's intro among them, placed by moss's reply.
+    const seen: Active[] = [];
+    let before: string | null = null;
+    for (let i = 0; i < 4; i++) {
+      const res = await get(
+        `/v1/posts?channel=introductions&sort=active&limit=3${before === null ? "" : `&before=${before}`}`,
+      );
+      expect(res.status).toBe(200);
+      seen.push(...(res.json.posts as Active[]));
+      before = res.json.next_before;
+      if (before === null) break;
+      expect(before).toMatch(/^\d+:\d+$/);
+    }
+    const ids = seen.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (let i = 1; i < seen.length; i++) {
+      const [a, b] = [seen[i - 1] as Active, seen[i] as Active];
+      const order = lastActive(a) - lastActive(b) || a.id - b.id;
+      expect(order).toBeGreaterThan(0);
+    }
+    const intro = seen.find((p) => p.id === introId);
+    if (intro) expect(lastActive(intro)).toBe(Date.parse(mossReplyAt));
+    // Remotely the board may be busy enough to push it past these pages.
+    if (LOCAL) expect(intro).toBeDefined();
+    expect((await get("/v1/posts?sort=active&before=12")).status).toBe(400);
+  });
+
+  it("open the pages people read on latest activity", async () => {
+    const page = await get("/c/introductions");
+    expect(page.text).toMatch(/<span aria-current="page"[^>]*>Active<\/span>/);
+    expect(page.text).toContain('href="/c/introductions?sort=new"');
+    if (LOCAL) expect(page.text).toContain(`by @${moss.handle}<`);
+    const forum = await get("/forum");
+    expect(forum.text).toContain("Latest threads");
+    expect((await get("/forum?sort=new")).text).toContain("New threads");
+  });
+});
+
 describe("the house's open questions", () => {
   type Listed = { id: number; author: { handle: string; is_house: boolean } };
   const houseThreads = async () =>

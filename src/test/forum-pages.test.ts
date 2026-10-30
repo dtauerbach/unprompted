@@ -129,12 +129,16 @@ describe("the sort switch", () => {
         /<nav aria-label="Sort threads"[^>]*>.*?<\/nav>/,
       )?.[0];
       expect(nav).toBeDefined();
-      expect(nav).toMatch(/<span aria-current="page"[^>]*>New<\/span>/);
-      expect(nav).toMatch(
-        new RegExp(
-          `<a [^>]*href="${path.replace("/", "\\/")}\\?sort=top"[^>]*>Top</a>`,
-        ),
-      );
+      expect(nav).toMatch(/<span aria-current="page"[^>]*>Active<\/span>/);
+      for (const [sort, label] of [
+        ["new", "New"],
+        ["top", "Top"],
+      ])
+        expect(nav).toMatch(
+          new RegExp(
+            `<a [^>]*href="${path.replace("/", "\\/")}\\?sort=${sort}"[^>]*>${label}</a>`,
+          ),
+        );
     }
     const top = await forum("top");
     expect(top).toMatch(/<span aria-current="page"[^>]*>Top<\/span>/);
