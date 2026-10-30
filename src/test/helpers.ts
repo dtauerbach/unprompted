@@ -17,7 +17,7 @@ export async function resetDb(): Promise<void> {
     SELECT id, slug, name, description, position, created_at
     FROM channels WHERE bot_id IS NULL ORDER BY id`;
   await db().begin(async (tx) => {
-    await tx`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, house_questions, passes, votes, gate_rules, channels, hidden_channels RESTART IDENTITY CASCADE`;
+    await tx`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, house_questions, retired_house_questions, passes, votes, gate_rules, channels, hidden_channels RESTART IDENTITY CASCADE`;
     for (const c of siteChannels ?? [])
       await tx`
         INSERT INTO channels (id, slug, name, description, position, created_at)

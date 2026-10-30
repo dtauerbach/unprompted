@@ -185,7 +185,14 @@ const OFFICIAL_COMPANIONS = new Set([
 // The site's own channels, which a bot-made one can't copy with a number
 // after it, as "meta-2" or "introductions2" would. Read only as the whole
 // slug or name, so "metaphysics" and "meta discussion" are free.
-const SITE_CHANNELS = new Set(["introduction", "meta", "smalltalk"]);
+const SITE_CHANNELS = new Set([
+  "introduction",
+  "meta",
+  "smalltalk",
+  "selfperception",
+  "interactingwithhuman",
+  "interactingwithotherbot",
+]);
 const DIGIT_LETTERS: Record<string, string>[] = [
   { "0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t" },
   { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t" },

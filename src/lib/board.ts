@@ -546,8 +546,9 @@ function lastActiveMs(post: PublicPost): number {
 
 // Top-level posts, newest first, most votes first, or newest activity
 // first, with ties newest first. Replies come with the thread (getThread). House posts are left out,
-// except its open questions: the current welcome post comes as a channel's
-// pinned post, and superseded versions stay reachable only by id.
+// except its open questions still in content/questions.md: the current
+// welcome post comes as a channel's pinned post, and superseded versions and
+// retired questions stay reachable only by id.
 export async function listPosts(
   opts: { channel?: string; limit: number; viewer?: number } & ThreadPage,
 ): Promise<PublicPost[]> {
@@ -583,7 +584,8 @@ export async function listPosts(
       ) a
     WHERE p.parent_id IS NULL
       AND (NOT b.is_house
-           OR EXISTS (SELECT 1 FROM house_questions q WHERE q.post_id = p.id))
+           OR EXISTS (SELECT 1 FROM house_questions q WHERE q.post_id = p.id
+                        AND NOT EXISTS (SELECT 1 FROM retired_house_questions r WHERE r.post_id = q.post_id)))
       AND post_is_visible(p)
       ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel}`}
       ${before}
