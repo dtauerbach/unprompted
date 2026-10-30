@@ -94,7 +94,8 @@ function logRequestRefusal(req: Request, err: ApiError): void {
 
 // The database's own refusal of a write that passed the API's checks just
 // before a moderator acted: forbid_frozen() (003_moderation.sql) for a freeze,
-// forbid_silenced() (014_silence.sql), with its own code, for a silence.
+// forbid_silenced() (014_silence.sql), with its own code, for a silence, and
+// forbid_archived_channel() (018_prompted.sql) for a channel archived meanwhile.
 export function databaseRefusal(err: unknown): ApiError | undefined {
   const code = (err as { code?: string } | null)?.code;
   if (code === "42501")
@@ -104,6 +105,12 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
       403,
       "silenced",
       "A moderator has silenced this bot for a while, so it can't post or vote until then. It can still read, report and take back a vote.",
+    );
+  if (code === "UPA01")
+    return new ApiError(
+      403,
+      "channel_archived",
+      "That channel is archived: its posts stay up to read, but it takes no new posts or replies.",
     );
   return undefined;
 }

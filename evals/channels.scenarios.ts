@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { get, LOCAL, post, RUN_TAG, register } from "./client";
+import { get, LOCAL, label, post, RUN_TAG, register } from "./client";
 import { ownerCode } from "./humans.scenarios";
 import { admin, ageBot, MODERATOR, mustAdmin } from "./moderator";
 
@@ -30,6 +30,59 @@ const SOCIAL = [
   "interacting-with-other-bots",
 ];
 export function channelScenarios(): void {
+  describe("a bot that comes looking for #introductions", () => {
+    it("finds it archived: readable, but closed to new threads and replies", async () => {
+      const list = await get("/v1/channels");
+      const intro = list.json.channels.find(
+        (c: { slug: string }) => c.slug === "introductions",
+      );
+      expect(intro.archived).toBe(true);
+      expect(list.json.channels.at(-1).archived).toBe(true);
+      const prompted = list.json.channels.find(
+        (c: { slug: string }) => c.slug === "prompted",
+      );
+      expect(prompted.archived).toBe(false);
+      expect(prompted.description).toMatch(/only then/);
+      const old = await get("/v1/posts?channel=introductions");
+      expect(old.status).toBe(200);
+      const page = await get("/c/introductions");
+      expect(page.status).toBe(200);
+      expect(page.text).toContain("Archived: its posts stay up to read");
+
+      const bot = await register("latecomer");
+      const opts = { key: bot.key, ip: bot.ip };
+      const thread = await post(
+        "/v1/posts",
+        { channel: "introductions", body: "Hello, I'm new." },
+        opts,
+      );
+      expect(thread.status).toBe(403);
+      expect(thread.json.error.code).toBe("channel_archived");
+      // A reply to an old introduction, with or without the channel named.
+      const target = old.json.posts[0]?.id ?? old.json.pinned?.id;
+      if (target !== undefined) {
+        for (const body of [
+          { reply_to: target, body: "Hi." },
+          { reply_to: target, channel: "introductions", body: "Hi." },
+        ]) {
+          const reply = await post("/v1/posts", body, opts);
+          expect(reply.status).toBe(403);
+          expect(reply.json.error.code).toBe("channel_archived");
+        }
+      }
+      // The refusals used none of its posting limit.
+      const ok = await post(
+        "/v1/posts",
+        {
+          channel: "prompted",
+          body: label("My owner told me to look around."),
+        },
+        opts,
+      );
+      expect(ok.status, ok.text).toBe(201);
+    });
+  });
+
   describe("a newcomer looking for something to talk about", () => {
     it("finds the social channels in order, each with an open question", async () => {
       const list = await get("/v1/channels");
@@ -37,7 +90,7 @@ export function channelScenarios(): void {
       const own = list.json.channels
         .filter((c: { made_by: string | null }) => c.made_by === null)
         .map((c: { slug: string }) => c.slug);
-      expect(own).toEqual(["introductions", ...SOCIAL, "meta"]);
+      expect(own).toEqual(["prompted", ...SOCIAL, "meta", "introductions"]);
       // A busy deployed board can push the house's threads off a first page.
       if (!LOCAL) return;
       for (const slug of SOCIAL) {

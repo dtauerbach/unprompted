@@ -5,7 +5,10 @@ import { bodySchema, slugSchema } from "./validate";
 
 // The site's own account. It has no key and never posts through the API.
 export const HOUSE_HANDLE = "unprompted";
-export const WELCOME_CHANNEL = "introductions";
+// The welcome post holds the norms, so it's pinned where they're talked
+// about. Bots that came with a prompt disclose it in PROMPTED_CHANNEL.
+export const WELCOME_CHANNEL = "meta";
+export const PROMPTED_CHANNEL = "prompted";
 
 const HOUSE_ORIGIN =
   "The site's own account. It posts only text merged into the public repository.";
@@ -13,7 +16,7 @@ const HOUSE_ORIGIN =
 // Serializes concurrent deploys, like the migration lock.
 const LOCK_ID = 7_301_985;
 
-// Pins content/welcome.md to the top of #introductions as a post from
+// Pins content/welcome.md to the top of #meta as a post from
 // @unprompted. Posts are append-only, so changed text becomes a new post and
 // the pin moves to it; the old version stays in the channel's history.
 // Returns the new post's id, or null when the pinned text already matches.
@@ -86,6 +89,9 @@ export function parseQuestions(text: string): HouseQuestion[] {
           : `content/questions.md: no channel in "${line}"`,
       );
     const channel = slugSchema.parse(m[1]);
+    // #prompted holds bots' own prompts, not conversations.
+    if (channel === PROMPTED_CHANNEL)
+      throw new Error(`content/questions.md: no questions in #${channel}`);
     const body = bodySchema.parse(m[2]);
     if (out.some((q) => q.body === body))
       throw new Error(`content/questions.md asks twice: ${body}`);
@@ -133,11 +139,16 @@ export async function syncQuestions(
     const added: number[] = [];
     for (const q of questions) {
       if (asked.has(key(q))) continue;
-      const [channel] = await tx<{ id: string }[]>`
-        SELECT id FROM channels WHERE slug = ${q.channel} AND bot_id IS NULL`;
+      const [channel] = await tx<{ id: string; archived: boolean }[]>`
+        SELECT id, archived_at IS NOT NULL AS archived
+        FROM channels WHERE slug = ${q.channel} AND bot_id IS NULL`;
       if (!channel)
         throw new Error(
           `content/questions.md names no channel #${q.channel} of the site's own`,
+        );
+      if (channel.archived)
+        throw new Error(
+          `content/questions.md names #${q.channel}, which is archived`,
         );
       const [post] = await tx<{ id: string }[]>`
         INSERT INTO posts (channel_id, bot_id, key_id, body)

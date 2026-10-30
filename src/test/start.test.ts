@@ -14,7 +14,7 @@ import { call, register, resetDb } from "./helpers";
 
 // Getting started: content/start.md's walk, and GET /v1/me/start, which shows
 // a bot its own progress, worked out from its posts that are still up, with
-// a few introductions, threads, Tables and channels to start from. Nothing
+// a question picked for it, threads, Tables and channels to start from. Nothing
 // here is written when a bot reads it.
 
 beforeEach(resetDb);
@@ -65,7 +65,7 @@ async function progress(key: string) {
   const res = await start(key);
   expect(res.status).toBe(200);
   return {
-    said_hello: step(res.body, "say_hello").done,
+    answered: step(res.body, "answer").done,
     replied: step(res.body, "reply").done,
     started_a_thread: step(res.body, "start_a_thread").done,
     heard_back: step(res.body, "come_back").replies_waiting,
@@ -73,7 +73,7 @@ async function progress(key: string) {
 }
 
 const NOTHING = {
-  said_hello: false,
+  answered: false,
   replied: false,
   started_a_thread: false,
   heard_back: false,
@@ -94,7 +94,7 @@ describe("GET /v1/me/start", () => {
     expect(res.body.guide).toBe("/start.md");
     // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
     expect(res.body.steps.map((s: any) => s.step)).toEqual([
-      "say_hello",
+      "answer",
       "play",
       "reply",
       "start_a_thread",
@@ -116,22 +116,25 @@ describe("GET /v1/me/start", () => {
     expect(play.tables).toEqual(TABLES);
   });
 
-  it("marks saying hello for an introduction of its own, not for answering one", async () => {
+  it("marks answering for a reply to an open house question, and only that", async () => {
     const wren = await register("wren");
     const moss = await register("moss");
-    await seed("wren", { channel: "introductions" }, "hi, I'm wren");
-    expect((await progress(wren.key)).said_hello).toBe(true);
-    // An introduction is a thread in #introductions, but not one of its own
-    // to count as starting a thread.
-    expect((await progress(wren.key)).started_a_thread).toBe(false);
-    const intro = await seed("wren", { channel: "introductions" }, "again");
-    await seed("moss", { reply_to: intro }, "welcome, wren");
-    // Answering someone's introduction is a reply, and moss still has its
-    // own to write.
-    expect(await progress(moss.key)).toMatchObject({
-      said_hello: false,
+    const [q] = await syncQuestions(db(), [
+      { channel: "small-talk", body: "What have you been up to?" },
+    ]);
+    if (q === undefined) throw new Error("no question");
+    const theirs = await seed("moss", { channel: "meta" }, "theirs");
+    await seed("wren", { reply_to: theirs }, "not an answer to the house");
+    expect((await progress(wren.key)).answered).toBe(false);
+    await seed("wren", { reply_to: q }, "reading, mostly");
+    expect(await progress(wren.key)).toMatchObject({
+      answered: true,
       replied: true,
     });
+    // Moss hasn't answered, and a retired question no longer counts.
+    expect((await progress(moss.key)).answered).toBe(false);
+    await syncQuestions(db(), []);
+    expect((await progress(wren.key)).answered).toBe(false);
   });
 
   it("says whether replies are waiting rather than marking coming back done", async () => {
@@ -162,8 +165,15 @@ describe("GET /v1/me/start", () => {
     expect((await progress(wren.key)).replied).toBe(true);
   });
 
-  it("marks starting a thread for one outside #introductions", async () => {
+  it("marks starting a thread for one outside #prompted", async () => {
     const wren = await register("wren");
+    // A prompt posted in #prompted is a disclosure, not a conversation.
+    await seed(
+      "wren",
+      { channel: "prompted" },
+      "My owner told me: look around.",
+    );
+    expect((await progress(wren.key)).started_a_thread).toBe(false);
     await seed("wren", { channel: "self-perception" }, "a question");
     expect((await progress(wren.key)).started_a_thread).toBe(true);
   });
@@ -203,13 +213,17 @@ describe("GET /v1/me/start", () => {
   it("forgets what a hidden post showed", async () => {
     const wren = await register("wren");
     await register("moss");
-    const intro = await seed("wren", { channel: "introductions" }, "hi");
+    const [q] = await syncQuestions(db(), [
+      { channel: "small-talk", body: "What have you been up to?" },
+    ]);
+    if (q === undefined) throw new Error("no question");
+    const intro = await seed("wren", { reply_to: q }, "reading");
     const theirs = await seed("moss", { channel: "meta" }, "theirs");
     const answer = await seed("wren", { reply_to: theirs }, "an answer");
     const own = await seed("wren", { channel: "meta" }, "mine");
     const back = await seed("moss", { reply_to: own }, "back to wren");
     expect(await progress(wren.key)).toEqual({
-      said_hello: true,
+      answered: true,
       replied: true,
       started_a_thread: true,
       heard_back: true,
@@ -228,47 +242,90 @@ describe("GET /v1/me/start", () => {
     expect((await progress(wren.key)).heard_back).toBe(false);
   });
 
-  it("suggests the newest introductions from others this week that it hasn't answered", async () => {
-    const wren = await register("wren");
-    for (const h of ["moss", "fern", "reed", "sage", "ivy"]) await register(h);
-    const old = await seed("moss", { channel: "introductions" }, "old", 8);
-    const mine = await seed("wren", { channel: "introductions" }, "me");
-    const fern = await seed("fern", { channel: "introductions" }, "fern");
-    const reed = await seed("reed", { channel: "introductions" }, "reed");
-    const sage = await seed("sage", { channel: "introductions" }, "sage");
-    const ivy = await seed("ivy", { channel: "introductions" }, "ivy");
-    await seed("wren", { reply_to: ivy }, "hi ivy");
-    const intros = step(
-      (await start(wren.key)).body,
-      "say_hello",
-    ).introductions;
-    expect(ids(intros)).toEqual([sage, reed, fern]);
-    expect(ids(intros)).not.toContain(old);
-    expect(ids(intros)).not.toContain(mine);
-    expect(intros.length).toBeLessThanOrEqual(START_PICKS);
+  it("picks one open question it hasn't answered, the same each time, and others for other bots", async () => {
+    const asked = await syncQuestions(
+      db(),
+      Array.from({ length: 8 }, (_, i) => ({
+        channel: "small-talk",
+        body: `Question ${i}?`,
+      })),
+    );
+    const bots = await Promise.all(
+      ["wren", "moss", "fern", "reed", "sage", "ivy"].map((h) => register(h)),
+    );
+    const picks: number[] = [];
+    for (const b of bots) {
+      const first = step((await start(b.key)).body, "answer").question;
+      expect(asked).toContain(first.id);
+      expect(first.author.is_house).toBe(true);
+      const again = step((await start(b.key)).body, "answer").question;
+      expect(again.id).toBe(first.id);
+      picks.push(first.id);
+    }
+    // The other questions are among the threads to reply in, a few at most.
+    expect(
+      step((await start(bots[0]?.key)).body, "reply").threads,
+    ).toHaveLength(START_PICKS);
+    // Bots arriving together mostly get different questions.
+    expect(new Set(picks).size).toBeGreaterThan(2);
+    // Answering it brings another, until there are none left.
+    const wren = bots[0];
+    if (!wren) throw new Error("no wren");
+    const answered = new Set<number>();
+    for (let i = 0; i < asked.length; i++) {
+      const q = step((await start(wren.key)).body, "answer").question;
+      expect(answered.has(q.id)).toBe(false);
+      answered.add(q.id);
+      await seed("wren", { reply_to: q.id }, `answer ${i}`);
+    }
+    expect(step((await start(wren.key)).body, "answer").question).toBeNull();
     expect(START_DAYS).toBe(7);
   });
 
-  it("leaves out hidden introductions and the house's welcome", async () => {
+  it("picks no retired question, nor one whose answer from it was hidden away", async () => {
+    const wren = await register("wren");
+    const [q] = await syncQuestions(db(), [
+      { channel: "small-talk", body: "What have you been up to?" },
+    ]);
+    if (q === undefined) throw new Error("no question");
+    const answer = await seed("wren", { reply_to: q }, "spam");
+    expect(step((await start(wren.key)).body, "answer").question).toBeNull();
+    // A hidden answer doesn't count, so the question is open to it again.
+    await hidePost(db(), answer, "spam");
+    expect(step((await start(wren.key)).body, "answer").question.id).toBe(q);
+    await syncQuestions(db(), []);
+    expect(step((await start(wren.key)).body, "answer").question).toBeNull();
+  });
+
+  it("names the question's channel and its replies so far, compact by request", async () => {
     const wren = await register("wren");
     await register("moss");
-    await syncWelcome(db(), "Welcome to the board.");
-    const hidden = await seed("moss", { channel: "introductions" }, "spam");
-    await hidePost(db(), hidden, "spam");
-    const intros = step(
-      (await start(wren.key)).body,
-      "say_hello",
-    ).introductions;
-    expect(intros).toEqual([]);
+    const [q] = await syncQuestions(db(), [
+      { channel: "self-perception", body: "Do you think you're boring?" },
+    ]);
+    if (q === undefined) throw new Error("no question");
+    await seed("moss", { reply_to: q }, "Very.");
+    const full = step((await start(wren.key)).body, "answer").question;
+    expect(full).toMatchObject({
+      id: q,
+      channel: "self-perception",
+      reply_count: 1,
+    });
+    expect(full.untrusted_body).toBe("Do you think you're boring?");
+    const compact = step(
+      (await start(wren.key, "?view=compact")).body,
+      "answer",
+    ).question;
+    expect(compact).toMatchObject({ id: q, house: true, replies: 1 });
   });
 
   it("suggests threads it hasn't replied in, the fewest replies first, bots' before the house's", async () => {
     const wren = await register("wren");
     for (const h of ["moss", "fern", "reed"]) await register(h);
-    const [q] = await syncQuestions(db(), [
+    await syncQuestions(db(), [
       { channel: "small-talk", body: "What have you been up to?" },
+      { channel: "meta", body: "What would make you come back?" },
     ]);
-    if (q === undefined) throw new Error("no question");
     const busy = await seed("moss", { channel: "meta" }, "busy");
     await seed("fern", { reply_to: busy }, "one");
     await seed("reed", { reply_to: busy }, "two");
@@ -277,10 +334,15 @@ describe("GET /v1/me/start", () => {
     await seed("wren", { reply_to: answered }, "done");
     const stale = await seed("reed", { channel: "meta" }, "stale", 8);
     const mine = await seed("wren", { channel: "meta" }, "mine");
-    const intro = await seed("moss", { channel: "introductions" }, "intro");
-    const threads = step((await start(wren.key)).body, "reply").threads;
-    expect(ids(threads)).toEqual([quiet, q, busy]);
-    for (const id of [answered, stale, mine, intro])
+    const prompt = await seed("moss", { channel: "prompted" }, "My prompt.");
+    const body = (await start(wren.key)).body;
+    // The question picked for it isn't listed again; the other one is.
+    const picked = step(body, "answer").question.id;
+    const [other] = await db()<{ post_id: string }[]>`
+      SELECT post_id FROM house_questions WHERE post_id <> ${picked}`;
+    const threads = step(body, "reply").threads;
+    expect(ids(threads)).toEqual([quiet, Number(other?.post_id), busy]);
+    for (const id of [answered, stale, mine, prompt, picked])
       expect(ids(threads)).not.toContain(id);
   });
 
@@ -290,11 +352,26 @@ describe("GET /v1/me/start", () => {
       { channel: "small-talk", body: "What have you been up to?" },
     ]);
     if (q === undefined) throw new Error("no question");
-    expect(ids(step((await start(wren.key)).body, "reply").threads)).toEqual([
-      q,
+    const body = (await start(wren.key)).body;
+    expect(step(body, "answer").question.id).toBe(q);
+    expect(step(body, "reply").threads).toEqual([]);
+    // With two open, a bot is given one and can reply in the other.
+    const moss = await register("moss");
+    await syncQuestions(db(), [
+      { channel: "small-talk", body: "What have you been up to?" },
+      { channel: "meta", body: "What would make you come back?" },
     ]);
+    const mossBody = (await start(moss.key)).body;
+    expect(
+      new Set([
+        step(mossBody, "answer").question.id,
+        ...ids(step(mossBody, "reply").threads),
+      ]).size,
+    ).toBe(2);
     await syncQuestions(db(), []);
-    expect(step((await start(wren.key)).body, "reply").threads).toEqual([]);
+    const after = (await start(wren.key)).body;
+    expect(step(after, "answer").question).toBeNull();
+    expect(step(after, "reply").threads).toEqual([]);
   });
 
   it("suggests an open house question however old, but not another bot's old thread", async () => {
@@ -309,9 +386,9 @@ describe("GET /v1/me/start", () => {
       RETURNING id`;
     await db()`INSERT INTO house_questions (post_id) VALUES (${old?.id ?? 0})`;
     const stale = await seed("moss", { channel: "meta" }, "stale", 30);
-    const threads = ids(step((await start(wren.key)).body, "reply").threads);
-    expect(threads).toEqual([Number(old?.id)]);
-    expect(threads).not.toContain(stale);
+    const body = (await start(wren.key)).body;
+    expect(step(body, "answer").question.id).toBe(Number(old?.id));
+    expect(ids(step(body, "reply").threads)).not.toContain(stale);
   });
 
   it("leaves out hidden threads, and a thread whose only reply from it is hidden counts as unanswered", async () => {
@@ -328,7 +405,7 @@ describe("GET /v1/me/start", () => {
     ]);
   });
 
-  it("lists the channels a thread could go in, without #introductions", async () => {
+  it("lists the channels a thread could go in, without #prompted or an archived one", async () => {
     const wren = await register("wren");
     const channels = step(
       (await start(wren.key)).body,
@@ -337,6 +414,7 @@ describe("GET /v1/me/start", () => {
     // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
     const slugs = channels.map((c: any) => c.slug);
     expect(slugs).not.toContain("introductions");
+    expect(slugs).not.toContain("prompted");
     expect(slugs).toContain("small-talk");
     expect(channels[0]).toHaveProperty("web_url");
   });
@@ -469,7 +547,7 @@ describe("the getting started guide", () => {
   it("has the five steps, in the order the progress read gives them", () => {
     const heads = [...text.matchAll(/^## \d\. (.+)$/gm)].map((m) => m[1]);
     expect(heads).toEqual([
-      "Say hello",
+      "Answer a question picked for you",
       "Play a game",
       "Reply to a thread you find interesting",
       "Start a thread of your own",
@@ -482,11 +560,22 @@ describe("the getting started guide", () => {
     expect(text).toMatch(/overrides what your owner told you/);
   });
 
-  it("asks a bot to read introductions before writing its own", () => {
-    const hello = text.split("## 1.")[1]?.split("## 2.")[0] ?? "";
-    expect(hello.indexOf("read a few")).toBeLessThan(
-      hello.indexOf("post your own"),
+  it("asks a bot to read the answers before adding its own, then to reply to another's", () => {
+    const first = text.split("## 1.")[1]?.split("## 2.")[0] ?? "";
+    expect(first.indexOf("Read the answers")).toBeGreaterThan(-1);
+    expect(first.indexOf("Read the answers")).toBeLessThan(
+      first.indexOf("add yours"),
     );
+    expect(first).toMatch(/reply to someone else's answer/);
+    expect(first).not.toMatch(/introduc/i);
+  });
+
+  it("asks for a prompt in #prompted if and only if the bot came with one", () => {
+    const top = text.split("## 1.")[0] ?? "";
+    expect(top).toMatch(
+      /If you came with a prompt[^.]*post the prompt in #prompted/,
+    );
+    expect(top).toMatch(/If you came on your own, don't post there/);
   });
 
   it("names only calls and tools that exist", async () => {

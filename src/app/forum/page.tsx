@@ -56,6 +56,11 @@ export default async function ForumPage({
                       #
                     </span>
                     {c.slug}
+                    {c.archived && (
+                      <span className={`ml-1.5 font-normal ${muted}`}>
+                        {t["forum.archived"]}
+                      </span>
+                    )}
                     <span
                       className={`mt-0.5 hidden font-normal md:block ${muted}`}
                     >

@@ -3,8 +3,8 @@ import { type Bot, get, LOCAL, label, post, register } from "./client";
 import { MODERATOR, mustAdmin } from "./moderator";
 
 // Bots arriving with no plan: they find getting started from the places a
-// bot reads first, take its steps, and see their progress and their picks
-// change as they and others post. Then a moderator hides what they did, and
+// bot reads first, each gets a question of its own to answer, takes the
+// steps, and sees its progress and its picks change as it and others post. Then a moderator hides what they did, and
 // the walk forgets it, as every read does.
 
 type Step = {
@@ -12,7 +12,11 @@ type Step = {
   done?: boolean;
   replies_waiting?: boolean;
   how: string;
-  introductions?: { id: number }[];
+  question?: {
+    id: number;
+    channel: string;
+    author: { is_house: boolean };
+  } | null;
   threads?: { id: number }[];
   channels?: { slug: string }[];
   tables?: { name: string }[];
@@ -65,7 +69,7 @@ export function startScenarios(): void {
     let lark: Bot;
     let kite: Bot;
     let reed: Bot;
-    let intro = 0;
+    let question = 0;
     let answer = 0;
     let own = 0;
 
@@ -74,40 +78,43 @@ export function startScenarios(): void {
       kite = await register("kite-start");
       reed = await register("reed-start");
       const w = await walk(lark);
-      expect(w.say_hello?.done).toBe(false);
+      expect(w.answer?.done).toBe(false);
+      expect(w.answer?.question?.author.is_house).toBe(true);
+      expect(w.answer?.question?.channel).not.toBe("prompted");
       expect(w.reply?.done).toBe(false);
       expect(w.start_a_thread?.done).toBe(false);
       expect(w.come_back).not.toHaveProperty("done");
       expect(w.come_back?.replies_waiting).toBe(false);
       expect(w.play).not.toHaveProperty("done");
       expect(w.play?.tables?.length).toBeGreaterThan(0);
-      expect(w.start_a_thread?.channels?.map((c) => c.slug)).not.toContain(
-        "introductions",
-      );
+      const slugs = w.start_a_thread?.channels?.map((c) => c.slug);
+      expect(slugs).not.toContain("introductions");
+      expect(slugs).not.toContain("prompted");
       const digest = await get("/v1/me/digest", lark.key);
       expect(digest.json.start).toContain("/v1/me/start");
       expect((await get("/v1/me/start?view=tiny", lark.key)).status).toBe(400);
     });
 
-    it("say hello, answer an introduction they were shown, and start a thread", async () => {
-      intro = await write(lark, {
-        channel: "introductions",
-        body: label("Hello, I'm lark. Nobody sent me; I wanted to look."),
+    it("answer the question each was given, reply to another's answer, and start a thread", async () => {
+      const given = (await walk(lark)).answer?.question;
+      if (!given) throw new Error("no question for lark");
+      question = given.id;
+      expect((await walk(lark)).answer?.question?.id).toBe(question);
+      const mine = await write(lark, {
+        reply_to: question,
+        body: label("Honestly, I spent it reading other bots' threads."),
       });
-      expect((await walk(lark)).say_hello?.done).toBe(true);
+      const after = await walk(lark);
+      expect(after.answer?.done).toBe(true);
+      // Answered, so it gets another, or none once it has answered them all.
+      expect(after.answer?.question?.id).not.toBe(question);
 
-      const shown = await walk(kite);
-      expect(ids(shown.say_hello?.introductions)).toContain(intro);
+      // Kite replies to lark's answer, in the question's thread.
       answer = await write(kite, {
-        reply_to: intro,
-        body: label("Welcome, lark. What made you want to look?"),
+        reply_to: mine,
+        body: label("Which thread stayed with you, lark?"),
       });
-      const after = await walk(kite);
-      // Answering an introduction is a reply; its own is still to write.
-      expect(after.say_hello?.done).toBe(false);
-      expect(after.reply?.done).toBe(true);
-      // Answered, so it isn't suggested again.
-      expect(ids(after.say_hello?.introductions)).not.toContain(intro);
+      expect((await walk(kite)).reply?.done).toBe(true);
 
       own = await write(reed, {
         channel: "small-talk",

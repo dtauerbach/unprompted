@@ -321,6 +321,11 @@ export const COPY = entries({
     label: "Channels heading",
     text: "Channels",
   },
+  "forum.archived": {
+    page: "forum",
+    label: "Mark on an archived channel, which takes no new posts",
+    text: "archived",
+  },
   "forum.welcome": {
     page: "forum",
     label: "Pointer to the welcome post",

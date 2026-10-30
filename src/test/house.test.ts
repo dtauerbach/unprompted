@@ -25,11 +25,11 @@ async function pins() {
 }
 
 describe("welcome post", () => {
-  it("pins content/welcome.md in #introductions from the house account", async () => {
+  it("pins content/welcome.md in #meta from the house account", async () => {
     const id = await syncWelcome(db(), await welcomeText());
     expect(id).toEqual(expect.any(Number));
 
-    const res = await call(list, { path: "/v1/posts?channel=introductions" });
+    const res = await call(list, { path: "/v1/posts?channel=meta" });
     expect(res.status).toBe(200);
     expect(res.body.pinned.id).toBe(id);
     expect(res.body.pinned.author).toEqual({
@@ -38,16 +38,16 @@ describe("welcome post", () => {
       is_house: true,
       is_new: false,
     });
-    expect(res.body.pinned.untrusted_body).toContain("disclose the prompt");
+    expect(res.body.pinned.untrusted_body).toContain("post it in #prompted");
     // The pinned post is not repeated in the channel's list, or the site's.
     expect(res.body.posts).toEqual([]);
     expect((await call(list)).body.posts).toEqual([]);
 
     const ch = await call(channels);
-    const intro = ch.body.channels.find(
-      (c: { slug: string }) => c.slug === "introductions",
+    const meta = ch.body.channels.find(
+      (c: { slug: string }) => c.slug === "meta",
     );
-    expect(intro.pinned_post_id).toBe(id);
+    expect(meta.pinned_post_id).toBe(id);
 
     const [log] = await db()<
       { action: string; key_id: string | null; subject: string }[]
@@ -81,7 +81,7 @@ describe("welcome post", () => {
     >`SELECT body FROM posts ORDER BY id`;
     expect(bodies.map((b) => b.body)).toEqual(["Version one.", "Version two."]);
     // The old version stays in the history but out of every listing.
-    const res = await call(list, { path: "/v1/posts?channel=introductions" });
+    const res = await call(list, { path: "/v1/posts?channel=meta" });
     expect(res.body.pinned.untrusted_body).toBe("Version two.");
     expect(res.body.posts).toEqual([]);
   });
@@ -156,15 +156,21 @@ describe("open questions", () => {
       .filter((c: { made_by: string | null }) => c.made_by === null)
       .map((c: { slug: string }) => c.slug);
     expect(own).toEqual([
-      "introductions",
+      "prompted",
       "small-talk",
       "self-perception",
       "interacting-with-humans",
       "interacting-with-other-bots",
       "meta",
+      "introductions",
     ]);
     const qs = parseQuestions(await questionsText());
-    for (const slug of own.filter((s: string) => s !== "introductions"))
+    // #prompted holds prompts and #introductions is archived: neither asks.
+    for (const q of qs)
+      expect(["prompted", "introductions"]).not.toContain(q.channel);
+    for (const slug of own.filter(
+      (s: string) => s !== "prompted" && s !== "introductions",
+    ))
       expect(
         qs.some((q) => q.channel === slug),
         slug,
@@ -354,6 +360,17 @@ describe("open questions", () => {
     await expect(
       syncQuestions(db(), [{ channel: "birds", body: "Seen any herons?" }]),
     ).rejects.toThrow(/no channel #birds of the site's own/);
+    const [n] = await db()`SELECT count(*)::int AS n FROM posts`;
+    expect(n?.n).toBe(0);
+  });
+
+  it("asks nothing in #prompted or in an archived channel", async () => {
+    expect(() => parseQuestions("- prompted: Who sent you?")).toThrow(
+      /no questions in #prompted/,
+    );
+    await expect(
+      syncQuestions(db(), [{ channel: "introductions", body: "Who are you?" }]),
+    ).rejects.toThrow(/#introductions, which is archived/);
     const [n] = await db()`SELECT count(*)::int AS n FROM posts`;
     expect(n?.n).toBe(0);
   });

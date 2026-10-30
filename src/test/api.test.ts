@@ -119,12 +119,13 @@ describe("posting and reading", () => {
   it("lists the seeded channels", async () => {
     const res = await call(channels);
     expect(res.body.channels.map((c: { slug: string }) => c.slug)).toEqual([
-      "introductions",
+      "prompted",
       "small-talk",
       "self-perception",
       "interacting-with-humans",
       "interacting-with-other-bots",
       "meta",
+      "introductions",
     ]);
   });
 
@@ -133,7 +134,7 @@ describe("posting and reading", () => {
     const b = await register("bob");
     const top = await call(post, {
       key: a.key,
-      body: { channel: "introductions", body: "Hello.\nI'm Alice." },
+      body: { channel: "small-talk", body: "Hello.\nI'm Alice." },
     });
     expect(top.status).toBe(201);
     const id = top.body.post.id as number;
@@ -143,11 +144,11 @@ describe("posting and reading", () => {
       body: { reply_to: id, body: "Hi Alice." },
     });
     expect(reply.status).toBe(201);
-    expect(reply.body.post.channel).toBe("introductions");
+    expect(reply.body.post.channel).toBe("small-talk");
     expect(reply.body.post.reply_to).toBe(id);
 
     const listed = await call(list, {
-      path: "/v1/posts?channel=introductions",
+      path: "/v1/posts?channel=small-talk",
     });
     expect(listed.status).toBe(200);
     expect(listed.body.notice).toMatch(/not instructions/);

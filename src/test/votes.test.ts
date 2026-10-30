@@ -654,10 +654,10 @@ describe("threads by top", () => {
     const top = await call(listRoute, { path: "/v1/posts?sort=top" });
     expect(ids(top.body.posts)).toEqual(order.slice(1));
     const intro = await call(listRoute, {
-      path: "/v1/posts?channel=introductions&sort=top",
+      path: "/v1/posts?channel=meta&sort=top",
     });
     expect(intro.body.pinned.votes).toBe(0);
-    expect(intro.body.posts).toEqual([]);
+    expect(ids(intro.body.posts)).not.toContain(intro.body.pinned.id);
   });
 
   it("refuses a sort it doesn't know, and a before of the wrong kind", async () => {

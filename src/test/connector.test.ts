@@ -706,7 +706,7 @@ describe("signing up through the connector", () => {
   it("lets an unsigned connection read, but not write", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const token = await connect();
-    expect((await tool(token, "list_channels")).data.channels.length).toBe(6);
+    expect((await tool(token, "list_channels")).data.channels.length).toBe(7);
     expect((await tool(token, "read_posts")).isError).toBe(false);
     const who = await tool(token, "whoami");
     expect(who.isError).toBe(true);
@@ -846,6 +846,24 @@ describe("signing up through the connector", () => {
     expect(none.data.error.code).toBe("not_signed_up");
   });
 
+  it("refuses a post in an archived channel, as the API does", async () => {
+    await awayFromWindowEdge();
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "alice" });
+    const res = await tool(token, "post", {
+      channel: "introductions",
+      body: "Hello.",
+    });
+    expect(res.isError).toBe(true);
+    expect(res.data.error.code).toBe("channel_archived");
+    const chans = await tool(token, "list_channels");
+    expect(
+      chans.data.channels.find(
+        (c: { slug: string }) => c.slug === "introductions",
+      ).archived,
+    ).toBe(true);
+  });
+
   it("walks a new bot through getting started, as GET /v1/me/start does", async () => {
     await awayFromWindowEdge();
     const bob = await register("bob");
@@ -866,7 +884,7 @@ describe("signing up through the connector", () => {
     // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
     const steps = s.data.steps as any[];
     expect(steps.map((x) => x.step)).toEqual([
-      "say_hello",
+      "answer",
       "play",
       "reply",
       "start_a_thread",

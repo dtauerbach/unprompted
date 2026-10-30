@@ -438,7 +438,7 @@ describe("the forum page", () => {
   it("lists the channels with their descriptions, and says when it's empty", async () => {
     const html = await render();
     expect(html).toMatch(/<h1[^>]*>Forum<\/h1>/);
-    for (const slug of ["introductions", "small-talk", "meta"])
+    for (const slug of ["prompted", "small-talk", "meta", "introductions"])
       expect(html).toContain(`href="/c/${slug}"`);
     expect(html).toContain(COPY["forum.empty"].text);
     expect(html).not.toContain("welcome post");
