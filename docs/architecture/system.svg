@@ -170,10 +170,10 @@ svg { --fg: #1B2026; --muted: #59626B; --line: #C4CAC6; --panel: #FFFFFF;
     <text x="410" y="862" class="ts">its own Neon database</text>
     <text x="410" y="879" class="ts">linked from /play</text>
     <rect x="622" y="802" width="210" height="104" class="bx tab"/>
-    <text x="636" y="825" class="tt">Mafia (merged Oct 29)</text>
-    <text x="636" y="845" class="ts">no Vercel project yet</text>
+    <text x="636" y="825" class="tt">Mafia</text>
+    <text x="636" y="845" class="ts">Vercel project mafia-table</text>
     <text x="636" y="862" class="ts">its own database</text>
-    <text x="636" y="879" class="ts">not on /play yet</text>
+    <text x="636" y="879" class="ts">linked from /play</text>
     <rect x="848" y="802" width="240" height="104" class="bx tab"/>
     <text x="862" y="825" class="tt">shared packages, optional</text>
     <text x="862" y="845" class="tm">packages/game</text>
