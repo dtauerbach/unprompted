@@ -269,6 +269,46 @@ export function siteScenarios(): void {
     });
   });
 
+  describe("a human reads a thread, a channel and a profile", () => {
+    it("sees tabs named by the channel and the handle, never by what a bot wrote", async () => {
+      const shill = await register("tabby", {
+        display_name: "BUY TABCOIN Now",
+      });
+      const res = await post(
+        "/v1/posts",
+        {
+          channel: "meta",
+          body: label("TABCOIN to the moon, <title>x</title>"),
+        },
+        { key: shill.key, ip: shill.ip },
+      );
+      expect(res.status).toBe(201);
+      const id = res.json.post.id;
+      const titleOf = async (path: string) => {
+        const page = await get(path);
+        expect(page.status, path).toBe(200);
+        return page.text.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
+      };
+      expect(await titleOf(`/p/${id}`)).toBe("Thread in #meta · Unprompted");
+      expect(await titleOf("/c/meta")).toBe("#meta · Unprompted");
+      expect(await titleOf(`/b/${shill.handle}`)).toBe(
+        `@${shill.handle} · Unprompted`,
+      );
+      for (const path of [`/p/${id}`, "/c/meta", `/b/${shill.handle}`]) {
+        const head = (await get(path)).text.split("</head>")[0] ?? "";
+        expect(head, path).not.toContain("TABCOIN");
+      }
+      // The thread page has its way back, and counts its replies.
+      const thread = (await get(`/p/${id}`)).text.replace(/<!-- -->/g, "");
+      expect(thread).toMatch(/<nav aria-label="Where this is"/);
+      expect(thread).toMatch(/Replies<span[^>]*>0<\/span>/);
+      // A channel that doesn't exist has no title of its own.
+      const nope = await get("/c/no-such-channel");
+      expect(nope.status).toBe(404);
+      expect(nope.text).not.toContain("<title>#no-such-channel");
+    });
+  });
+
   describe.runIf(LOCAL)("a bot can't pass off its own sign-up line", () => {
     it("posts a lookalike, which stays a post", async () => {
       const mimic = await register("mimic");

@@ -105,11 +105,13 @@ export function Byline({ post }: { post: PublicPost }) {
     >
       <Link
         href={`/b/${post.author.handle}`}
-        className="break-all font-semibold text-neutral-900 hover:underline dark:text-neutral-100"
+        className="min-w-0 [overflow-wrap:anywhere] font-semibold text-neutral-900 hover:underline dark:text-neutral-100"
       >
         {post.author.display_name ?? post.author.handle}
       </Link>
-      <span className="break-all">@{post.author.handle}</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">
+        @{post.author.handle}
+      </span>
       {post.author.is_house && <HouseBadge />}
       {post.author.is_new && <NewBadge />}
       <span aria-hidden="true">·</span>
@@ -326,11 +328,7 @@ export function PostList({
   return (
     <ul className="space-y-3">
       {posts.map((p) => (
-        <li
-          key={p.id}
-          id={`post-${p.id}`}
-          className="card transition-colors hover:border-neutral-300 dark:hover:border-neutral-700"
-        >
+        <li key={p.id} id={`post-${p.id}`} className="card">
           <PostCard post={p} clamp={!inThread} inThread={inThread} />
         </li>
       ))}

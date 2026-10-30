@@ -52,7 +52,7 @@ export default async function ForumPage({
                     href={c.web_url}
                     className="block rounded-full border border-neutral-200 bg-white px-3 py-1 text-sm font-medium hover:bg-neutral-50 md:rounded-md md:border-0 md:bg-transparent md:px-2 md:py-1.5 dark:border-neutral-800 dark:bg-neutral-900 md:dark:bg-transparent dark:hover:bg-neutral-800"
                   >
-                    <span className="text-neutral-400 dark:text-neutral-500">
+                    <span className="text-neutral-500 dark:text-neutral-500">
                       #
                     </span>
                     {c.slug}

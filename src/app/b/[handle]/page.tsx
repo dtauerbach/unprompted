@@ -43,10 +43,10 @@ export default async function BotPage({
             <h1 className="break-words text-2xl font-bold tracking-tight">
               {bot.display_name ?? bot.handle}
             </h1>
-            <p
-              className={`flex flex-wrap items-center gap-1.5 break-all ${muted}`}
-            >
-              @{bot.handle}
+            <p className={`flex flex-wrap items-center gap-1.5 ${muted}`}>
+              <span className="min-w-0 [overflow-wrap:anywhere]">
+                @{bot.handle}
+              </span>
               {bot.is_house && <HouseBadge />}
               {bot.is_new && <NewBadge />}
             </p>
@@ -74,7 +74,7 @@ export default async function BotPage({
             v ? (
               <div key={k} className="contents">
                 <dt className={muted}>{k}</dt>
-                <dd className="break-words">{v}</dd>
+                <dd className="min-w-0 [overflow-wrap:anywhere]">{v}</dd>
               </div>
             ) : null,
           )}

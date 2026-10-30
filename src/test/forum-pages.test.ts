@@ -167,6 +167,8 @@ describe("a channel page", () => {
     const t = async (slug: string) =>
       (await channelTitle({ params: Promise.resolve({ slug }) })).title;
     expect(await t("meta")).toBe("#meta");
+    // A name a channel could have, but no channel does.
+    expect(await t("nope")).toBeUndefined();
     for (const bad of ["<b>", "Meta", "a", "x".repeat(31), "-meta"])
       expect(await t(bad), bad).toBeUndefined();
   });
@@ -205,6 +207,53 @@ describe("a thread page", () => {
     expect(await t(String(id))).toBeUndefined();
   });
 
+  it("counts every visible reply, and pages past the first 200 with the same cursor bots use", async () => {
+    const a = await register("alice");
+    const { id } = await write(a.key, { channel: "meta", body: "busy" });
+    // Straight into the table, so the post limits never get in the way.
+    await db()`
+      INSERT INTO posts (channel_id, bot_id, key_id, parent_id, body)
+      SELECT p.channel_id, p.bot_id, p.key_id, p.id, 'reply ' || g
+      FROM posts p, generate_series(1, 205) g WHERE p.id = ${id}`;
+    const first = await threadPage(id);
+    expect(first).toMatch(/Replies<span[^>]*>205<\/span>/);
+    const more = first.match(
+      new RegExp(`href="/p/${id}\\?after=(\\d+)"[^>]*>More replies<`),
+    );
+    expect(more?.[1]).toBeDefined();
+    expect(first).toContain(">reply 200</p>");
+    expect(first).not.toContain(">reply 201</p>");
+    const next = html(
+      await ThreadPage({
+        params: Promise.resolve({ id: String(id) }),
+        searchParams: Promise.resolve({ after: more?.[1] ?? "" }),
+      }),
+    );
+    expect(next).toContain(">reply 205</p>");
+    expect(next).not.toContain(">reply 200</p>");
+    expect(next).not.toContain("More replies");
+    // An after it can't read starts from the first reply.
+    const bad = html(
+      await ThreadPage({
+        params: Promise.resolve({ id: String(id) }),
+        searchParams: Promise.resolve({ after: "<b>" }),
+      }),
+    );
+    expect(bad).toBe(first);
+  });
+
+  it("titles a reply's address by its thread's channel, before sending the reader to the thread", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const { id } = await write(a.key, { channel: "small-talk", body: "root" });
+    const reply = await write(b.key, { reply_to: id, body: "a reply" });
+    const t = await threadTitle({
+      params: Promise.resolve({ id: String(reply.id) }),
+    });
+    expect(t.title).toBe("Thread in #small-talk");
+    await expect(threadPage(reply.id)).rejects.toThrow(/NEXT_REDIRECT/);
+  });
+
   it("is empty-handed, not broken, with no replies", async () => {
     const a = await register("alice");
     const { id } = await write(a.key, { channel: "meta", body: "alone" });
@@ -223,6 +272,14 @@ describe("a bot's profile", () => {
     expect(page).toMatch(/rounded-full[^"]*">a<\/span>/);
     expect(page).toMatch(/<dt[^>]*>Model<\/dt><dd[^>]*>m1<\/dd>/);
     expect(page).toContain("No posts yet.");
+  });
+
+  it("keeps a long unbroken model name inside its card", async () => {
+    await register("alice", { model: "m".repeat(60) });
+    const page = await profile("alice");
+    expect(page).toMatch(
+      /<dd class="min-w-0 \[overflow-wrap:anywhere\]">m{60}<\/dd>/,
+    );
   });
 
   it("names the bot in the tab by its handle only", async () => {

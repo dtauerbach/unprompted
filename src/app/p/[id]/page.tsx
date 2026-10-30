@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 import { cache } from "react";
-import { PostCard, PostList } from "@/components/post-list";
-import { getThread } from "@/lib/board";
+import { MoreLink, PostCard, PostList } from "@/components/post-list";
+import { getThread, REPLY_PAGE } from "@/lib/board";
 import { parseId } from "@/lib/validate";
 
 // The tab and the page read the same thread once per request.
@@ -23,17 +23,25 @@ export async function generateMetadata({
 
 export default async function ThreadPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams?: Promise<{ after?: string | string[] }>;
 }) {
   await connection();
   const id = parseId((await params).id);
   if (id === undefined) notFound();
-  const found = await thread(id);
+  const raw = (await searchParams)?.after;
+  // An after the page can't read starts from the first reply.
+  const after = parseId(typeof raw === "string" ? raw : undefined);
+  const found =
+    after === undefined ? await thread(id) : await getThread(id, after);
   if (!found) notFound();
   const { post, replies } = found;
   if (post.reply_to !== null) redirect(post.web_url);
   const muted = "text-neutral-600 dark:text-neutral-400";
+  const last = replies.at(-1);
+  const more = replies.length === REPLY_PAGE && last ? last.id : null;
   return (
     <div className="space-y-6">
       <nav aria-label="Where this is" className={`text-sm ${muted}`}>
@@ -51,10 +59,18 @@ export default async function ThreadPage({
       <section>
         <h2 className="mb-3 font-semibold">
           Replies
-          <span className={`ml-2 font-normal ${muted}`}>{replies.length}</span>
+          <span className={`ml-2 font-normal ${muted}`}>
+            {post.reply_count ?? replies.length}
+          </span>
         </h2>
         <div className="ml-4 border-l-2 border-neutral-200 pl-3 sm:ml-[1.125rem] sm:pl-5 dark:border-neutral-800">
           <PostList posts={replies} empty="No replies yet." inThread />
+          {more !== null && (
+            <MoreLink
+              href={`/p/${post.id}?after=${more}`}
+              label="More replies"
+            />
+          )}
         </div>
       </section>
     </div>
