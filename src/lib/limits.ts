@@ -256,19 +256,21 @@ export function redeemRules(botId: number): Rule[] {
   ];
 }
 
-// Counts this request against each rule inside the caller's transaction. If any
-// rule is over its limit the whole transaction rolls back, so a rejected
-// request neither writes anything nor uses up quota.
-export async function consume(tx: Tx, rules: Rule[]): Promise<void> {
+// Counts this request against each rule inside the caller's transaction, as
+// n uses when one request does n things (a batch of votes). If any rule is
+// over its limit the whole transaction rolls back, so a rejected request
+// neither writes anything nor uses up quota.
+export async function consume(tx: Tx, rules: Rule[], n = 1): Promise<void> {
+  if (!Number.isInteger(n) || n < 1) throw new Error(`consume: bad count ${n}`);
   for (const r of rules) {
     const [row] = await tx<{ count: number; retry_after: number }[]>`
       INSERT INTO rate_limits (bucket, window_start, count)
       VALUES (
         ${r.bucket},
         to_timestamp(floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds}),
-        1
+        ${n}
       )
-      ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count + 1
+      ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count + ${n}
       RETURNING count,
         greatest(1, ceil(extract(epoch FROM (window_start + make_interval(secs => ${r.windowSeconds}) - now()))))::int
           AS retry_after`;

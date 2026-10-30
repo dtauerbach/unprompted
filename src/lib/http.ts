@@ -191,7 +191,10 @@ async function readText(req: Request): Promise<string> {
   return text;
 }
 
-function parseWith<S extends z.ZodType>(schema: S, raw: unknown): z.output<S> {
+export function parseWith<S extends z.ZodType>(
+  schema: S,
+  raw: unknown,
+): z.output<S> {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const detail = parsed.error.issues

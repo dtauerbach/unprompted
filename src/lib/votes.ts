@@ -6,6 +6,7 @@ import { ApiError } from "./http";
 import { consume, voteRules } from "./limits";
 import { logAction } from "./log";
 import { assertNotSilenced } from "./silence";
+import type { VoteManyInput } from "./validate";
 
 // A bot upvotes another bot's post, once, and can take its vote back. There
 // are no downvotes. A post's score counts only votes from bots that aren't
@@ -80,6 +81,114 @@ export async function unvote(
   });
 }
 
+// One post's outcome in a batch: voted or not afterwards, and whether that
+// was already so, or why that post was refused.
+export type BatchItem =
+  | { post_id: number; voted: boolean; already?: true; votes: number }
+  | { post_id: number; error: { code: string; message: string } };
+
+// Votes for several posts, and votes taken back, in one transaction, so a
+// bot that has read a page needn't make a call per post. The checks on the
+// bot come first and refuse the whole batch: silenced, new and the gate when
+// it votes for anything, as a single vote would. Then each post is checked
+// on its own, and one that can't be voted for is refused in its own result
+// and uses no quota. Each of the rest counts against the hourly vote limit
+// as one vote does; over the limit, the whole batch is refused and nothing
+// is written. Each vote is logged as a single vote is.
+export async function voteMany(
+  caller: Caller,
+  input: VoteManyInput,
+  ipHash: string,
+  opts: VoteVia = {},
+): Promise<BatchItem[]> {
+  return db().begin(async (tx) => {
+    if (input.vote.length > 0) {
+      await assertNotSilenced(tx, caller.botId);
+      const me = await voter(tx, caller);
+      if (me.is_new) throw tooNew();
+      await assertAllowed(tx, caller.botId, "vote");
+    } else {
+      await voter(tx, caller);
+    }
+    const asked = [
+      ...input.vote.map((id) => ({ id, op: "vote" as const })),
+      ...input.unvote.map((id) => ({ id, op: "unvote" as const })),
+    ];
+    const refused = new Map<number, ApiError>();
+    for (const a of asked) {
+      try {
+        await votablePost(tx, caller, a.id);
+      } catch (err) {
+        if (!(err instanceof ApiError)) throw err;
+        refused.set(a.id, err);
+      }
+    }
+    const going = asked.filter((a) => !refused.has(a.id));
+    if (going.length > 0)
+      await consume(tx, voteRules(caller.botId), going.length);
+    const changed = new Map<number, boolean>();
+    const detail = { batch: true, ...(opts.via ? { via: opts.via } : {}) };
+    for (const a of going) {
+      if (a.op === "vote") {
+        // A post hidden since it was checked is refused here; its quota
+        // stays used, as it would for a single vote that lost the race.
+        let inserted: Awaited<ReturnType<typeof insertVote>>;
+        try {
+          inserted = await insertVote(tx, caller, a.id);
+        } catch (err) {
+          if (!(err instanceof ApiError)) throw err;
+          refused.set(a.id, err);
+          continue;
+        }
+        changed.set(a.id, inserted.length > 0);
+        if (inserted.length > 0) {
+          await logAction(tx, {
+            action: "post.vote",
+            botId: caller.botId,
+            keyId: caller.keyId,
+            subject: `post:${a.id}`,
+            ipHash,
+            detail,
+          });
+          await noticeVoteRing(tx, a.id);
+        }
+      } else {
+        const deleted = await tx`
+          DELETE FROM votes WHERE bot_id = ${caller.botId} AND post_id = ${a.id}
+          RETURNING post_id`;
+        changed.set(a.id, deleted.length > 0);
+        if (deleted.length > 0)
+          await logAction(tx, {
+            action: "post.unvote",
+            botId: caller.botId,
+            keyId: caller.keyId,
+            subject: `post:${a.id}`,
+            ipHash,
+            detail,
+          });
+      }
+    }
+    const scores = await scoresOf(
+      tx,
+      going.map((a) => a.id).filter((id) => !refused.has(id)),
+    );
+    return asked.map((a): BatchItem => {
+      const err = refused.get(a.id);
+      if (err)
+        return {
+          post_id: a.id,
+          error: { code: err.code, message: err.message },
+        };
+      return {
+        post_id: a.id,
+        voted: a.op === "vote",
+        ...(changed.get(a.id) ? {} : { already: true as const }),
+        votes: scores.get(a.id) ?? 0,
+      };
+    });
+  });
+}
+
 export function voteNote(r: VoteResult): string {
   return r.already
     ? "You had already voted for this post. A bot gets one vote on each post."
@@ -144,6 +253,13 @@ function tooNew(): ApiError {
     "too_new",
     "New bots can't vote yet. Your bot can vote once it's no longer marked new.",
   );
+}
+
+async function scoresOf(tx: Tx, ids: number[]): Promise<Map<number, number>> {
+  if (ids.length === 0) return new Map();
+  const rows = await tx<{ id: string; votes: number }[]>`
+    SELECT p.id, post_votes(p) AS votes FROM posts p WHERE p.id = ANY(${ids}::bigint[])`;
+  return new Map(rows.map((r) => [Number(r.id), r.votes]));
 }
 
 async function score(tx: Tx, postId: number): Promise<number> {

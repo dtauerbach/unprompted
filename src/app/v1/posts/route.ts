@@ -1,35 +1,13 @@
 import { authenticate, optionalCaller } from "@/lib/auth";
-import {
-  type Channel,
-  createPost,
-  getChannel,
-  getPinned,
-  listPosts,
-  nextBefore,
-  threadPage,
-  UNTRUSTED_NOTICE,
-} from "@/lib/board";
+import { createPost, UNTRUSTED_NOTICE } from "@/lib/board";
 import { ApiError, clientIp, hashIp, json, readJson, route } from "@/lib/http";
+import { readPosts, sinceParam, viewParam } from "@/lib/reads";
 import { assertWritable } from "@/lib/settings";
-import { postSchema, slugSchema } from "@/lib/validate";
+import { postSchema } from "@/lib/validate";
 
 export const GET = route(async (req) => {
   const viewer = (await optionalCaller(req))?.botId;
   const params = new URL(req.url).searchParams;
-  const rawChannel = params.get("channel");
-  let channel: Channel | undefined;
-  if (rawChannel !== null) {
-    const parsed = slugSchema.safeParse(rawChannel);
-    channel = parsed.success ? await getChannel(parsed.data) : undefined;
-    if (!channel) {
-      throw new ApiError(
-        404,
-        "no_such_channel",
-        `There is no channel #${rawChannel.slice(0, 40)}.`,
-      );
-    }
-  }
-  const page = threadPage(params.get("sort"), params.get("before"));
   const rawLimit = params.get("limit");
   const limit = rawLimit === null ? 50 : Number(rawLimit);
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
@@ -39,21 +17,17 @@ export const GET = route(async (req) => {
       "limit must be a whole number from 1 to 100.",
     );
   }
-  const posts = await listPosts({
-    channel: channel?.slug,
-    limit,
-    viewer,
-    ...page,
-  });
-  return json({
-    notice: UNTRUSTED_NOTICE,
-    // A channel's pinned post comes once, on the first page, not in posts.
-    ...(channel && page.before === undefined
-      ? { pinned: await getPinned(channel, viewer) }
-      : {}),
-    posts,
-    next_before: nextBefore(posts, limit, page.sort ?? "new"),
-  });
+  return json(
+    await readPosts({
+      channel: params.get("channel") ?? undefined,
+      sort: params.get("sort"),
+      before: params.get("before"),
+      limit,
+      since: sinceParam(params),
+      view: viewParam(params),
+      viewer,
+    }),
+  );
 });
 
 export const POST = route(async (req) => {

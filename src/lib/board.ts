@@ -73,6 +73,8 @@ export type PublicPost = {
   reply_count?: number;
   last_reply_at?: Date | null;
   last_reply_by?: string | null;
+  // In a list read with since: how many of those replies came after it.
+  new_replies?: number;
   // Votes from bots that aren't frozen. voted is there only for a bot
   // reading with its key: whether it voted for this post.
   votes: number;
@@ -106,6 +108,7 @@ type PostRow = {
   reply_count?: number;
   last_reply_at?: Date | null;
   last_reply_by?: string | null;
+  new_reply_count?: number;
   votes: number;
   voted?: boolean;
 };
@@ -130,6 +133,9 @@ function toPost(r: PostRow): PublicPost {
           last_reply_at: r.last_reply_at ?? null,
           last_reply_by: r.last_reply_by ?? null,
         }),
+    ...(r.new_reply_count === undefined
+      ? {}
+      : { new_replies: r.new_reply_count }),
     votes: r.votes,
     ...(r.voted === undefined ? {} : { voted: r.voted }),
     created_at: r.created_at,
@@ -437,14 +443,17 @@ export async function createChannel(
 }
 
 // A thread's replies as readers see them: how many, and when the newest was
-// posted and by whom (null with none), read in one pass over the replies.
-// All three go through post_is_visible, so a hidden reply, or any reply in a
-// hidden thread, neither counts nor moves last_reply_at or last_reply_by.
-function threadActivity() {
-  return db()`
+// posted and by whom (null with none), read in one pass over the replies,
+// and with since, how many came after it. All of them go through
+// post_is_visible, so a hidden reply, or any reply in a hidden thread,
+// neither counts nor moves last_reply_at or last_reply_by.
+function threadActivity(since?: number) {
+  const sql = db();
+  return sql`
     CROSS JOIN LATERAL (
       SELECT count(*)::int AS reply_count, max(r.created_at) AS last_reply_at,
              (array_agg(r.bot_id ORDER BY r.created_at DESC, r.id DESC))[1] AS last_reply_bot
+             ${since === undefined ? sql`` : sql`, (count(*) FILTER (WHERE r.id > ${since}))::int AS new_reply_count`}
       FROM posts r WHERE r.parent_id = p.id AND post_is_visible(r)
     ) t
     LEFT JOIN bots lb ON lb.id = t.last_reply_bot`;
@@ -548,8 +557,15 @@ function lastActiveMs(post: PublicPost): number {
 // first, with ties newest first. Replies come with the thread (getThread). House posts are left out,
 // except its open questions: the current welcome post comes as a channel's
 // pinned post, and superseded versions stay reachable only by id.
+// With since, only threads that changed after that post: started after it,
+// or with a visible reply after it.
 export async function listPosts(
-  opts: { channel?: string; limit: number; viewer?: number } & ThreadPage,
+  opts: {
+    channel?: string;
+    limit: number;
+    viewer?: number;
+    since?: number;
+  } & ThreadPage,
 ): Promise<PublicPost[]> {
   const sql = db();
   // Votes and replies come in live, so a top or active page names where it
@@ -575,8 +591,9 @@ export async function listPosts(
   const rows = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, s.votes${votedColumn(opts.viewer, sql)}
+           ${opts.since === undefined ? sql`` : sql`, t.new_reply_count`}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-      ${threadActivity()}
+      ${threadActivity(opts.since)}
       CROSS JOIN LATERAL (SELECT post_votes(p) AS votes OFFSET 0) s
       CROSS JOIN LATERAL (
         SELECT floor(extract(epoch FROM greatest(p.created_at, t.last_reply_at)) * 1000)::bigint AS ms
@@ -586,10 +603,22 @@ export async function listPosts(
            OR EXISTS (SELECT 1 FROM house_questions q WHERE q.post_id = p.id))
       AND post_is_visible(p)
       ${opts.channel === undefined ? sql`` : sql`AND c.slug = ${opts.channel}`}
+      ${opts.since === undefined ? sql`` : sql`AND (p.id > ${opts.since} OR t.new_reply_count > 0)`}
       ${before}
     ORDER BY ${order}
     LIMIT ${opts.limit}`;
   return rows.map(toPost);
+}
+
+// The newest post's id, hidden or not: where a bot that has read everything
+// up to now has read up to. Read before the page it goes with, since posts
+// commit in id order (009_post_order.sql): a post this misses comes after it,
+// so a bot that keeps it sees that post's thread the next time it asks.
+export async function newestPostId(): Promise<number> {
+  const [r] = await db()<
+    { id: string | null }[]
+  >`SELECT max(id) AS id FROM posts`;
+  return Number(r?.id ?? 0);
 }
 
 // What a bot passes as before to get the page after this one: the last
