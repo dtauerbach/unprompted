@@ -19,11 +19,13 @@ import { GET as list, POST as post } from "@/app/v1/posts/route";
 import { GET as index } from "@/app/v1/route";
 import { GET as welcome } from "@/app/welcome.md/route";
 import {
+  banBot,
   hidePost,
   keepPost,
   moderatorLog,
   setFrozen,
   setRegistrationPaused,
+  setSilenced,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { call, register, resetDb } from "./helpers";
@@ -81,6 +83,14 @@ describe("the public moderation log", () => {
       "utf8",
     );
     expect(mcp).not.toMatch(/action_log|moderatorLog|"admin\./);
+    // The lookup screen reads one bot's or one human's record, for the admin
+    // pages only.
+    const lookups = filesUnder(path.join(process.cwd(), "src"))
+      .filter((f) => /\.(ts|tsx)$/.test(f) && !f.includes("/test/"))
+      .filter((f) => /from "(@\/lib|\.)\/lookup"/.test(readFileSync(f, "utf8")))
+      .map((f) => path.relative(process.cwd(), f));
+    expect(lookups.length).toBeGreaterThan(0);
+    for (const f of lookups) expect(f).toMatch(/^src\/app\/admin\//);
     // Only the admin lib reads moderator entries out of the action log.
     for (const f of filesUnder(APP).filter((f) => !f.includes("/admin/")))
       expect(readFileSync(f, "utf8"), f).not.toMatch(/'admin\.%'|action_log/);
@@ -92,10 +102,14 @@ describe("a moderator's reason", () => {
   const FREEZE = "Frozen-for-reason-k2m: flooding.";
   const KEEP = "Kept-for-reason-p4z: reads as a joke.";
   const PAUSE = "Paused-for-reason-w9c: a burst.";
+  const SILENCE = "Silenced-for-reason-s3v: shouting.";
+  const BAN = "Banned-for-reason-b8n: a ring.";
 
   async function setUp() {
     const a = await register("alice");
     const b = await register("bob");
+    const c = await register("carol");
+    await register("dave");
     const root = (
       await call(post, { key: a.key, body: { channel: "meta", body: "hi" } })
     ).body.post.id as number;
@@ -111,11 +125,13 @@ describe("a moderator's reason", () => {
     await setFrozen(db(), "bob", true, FREEZE);
     await setRegistrationPaused(db(), true, PAUSE);
     await setRegistrationPaused(db(), false, "Reopened.");
-    return { a, b, root, spam };
+    await setSilenced(db(), "carol", 6, SILENCE);
+    await banBot(db(), "dave", BAN);
+    return { a, b, c, root, spam };
   }
 
   function expectNoReason(where: string, text: string) {
-    for (const r of [HIDE, FREEZE, KEEP, PAUSE, "-for-reason-"])
+    for (const r of [HIDE, FREEZE, KEEP, PAUSE, SILENCE, BAN, "-for-reason-"])
       expect(text, where).not.toContain(r);
   }
 
@@ -125,12 +141,12 @@ describe("a moderator's reason", () => {
       (e) => e.reason,
     );
     expect(reasons).toEqual(
-      expect.arrayContaining([HIDE, FREEZE, KEEP, PAUSE]),
+      expect.arrayContaining([HIDE, FREEZE, KEEP, PAUSE, SILENCE, BAN]),
     );
   });
 
   it("never shows in an API response, to a visitor or to the bots involved", async () => {
-    const { a, b, root, spam } = await setUp();
+    const { a, b, c, root, spam } = await setUp();
     const responses: [string, unknown][] = [];
     const seen = <R extends { body: unknown }>(name: string, res: R): R => {
       responses.push([name, res.body]);
@@ -158,6 +174,7 @@ describe("a moderator's reason", () => {
     for (const [who, key] of [
       ["alice", a.key],
       ["bob", b.key],
+      ["carol", c.key],
     ] as const) {
       seen(`me ${who}`, await call(me, { path: "/v1/me", key }));
       seen(`digest ${who}`, await call(digest, { path: "/v1/me/digest", key }));
@@ -172,6 +189,16 @@ describe("a moderator's reason", () => {
     );
     expect(refused.status).toBe(403);
     expect(refused.body.error.message).not.toMatch(/\/moderation|log/);
+    // The silenced bot's says when it ends, not why.
+    const quiet = seen(
+      "silenced write",
+      await call(post, {
+        key: c.key,
+        body: { channel: "meta", body: "hello?" },
+      }),
+    );
+    expect(quiet.status).toBe(403);
+    expect(quiet.body.error.code).toBe("silenced");
     seen("skill.md", await call(skill, { path: "/skill.md" }));
     seen("llms.txt", await call(llms, { path: "/llms.txt" }));
     seen("welcome.md", await call(welcome, { path: "/welcome.md" }));
@@ -215,7 +242,7 @@ describe("a moderator's reason", () => {
       ],
     ];
     const { default: BotPage } = await import("@/app/b/[handle]/page");
-    for (const handle of ["alice", "bob"])
+    for (const handle of ["alice", "bob", "carol", "dave"])
       pages.push([
         `bot ${handle}`,
         renderToStaticMarkup(
@@ -230,5 +257,7 @@ describe("a moderator's reason", () => {
     expect(pages.find(([n]) => n === "bot bob")?.[1]).toContain(
       "Frozen by the moderators",
     );
+    // A silence isn't on the bot's page at all.
+    expect(pages.find(([n]) => n === "bot carol")?.[1]).not.toMatch(/silenc/i);
   });
 });

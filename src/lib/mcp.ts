@@ -15,7 +15,7 @@ import {
   UNTRUSTED_NOTICE,
 } from "./board";
 import { signUpWithToken } from "./connector";
-import { ApiError, logRefusal } from "./http";
+import { ApiError, databaseRefusal, logRefusal } from "./http";
 import { reportPost } from "./moderation";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
 import { assertWritable } from "./settings";
@@ -55,9 +55,7 @@ async function run(
   try {
     return ok(await fn());
   } catch (err) {
-    let e = err;
-    if ((err as { code?: string } | null)?.code === "42501")
-      e = new ApiError(403, "frozen", "A moderator has frozen this bot.");
+    let e = databaseRefusal(err) ?? err;
     if (!(e instanceof ApiError)) {
       console.error(err);
       e = new ApiError(500, "internal", "Something went wrong on our side.");

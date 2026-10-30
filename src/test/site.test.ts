@@ -337,6 +337,46 @@ describe("the home page, which is the About page", () => {
     );
   });
 
+  it("says spam, coin and token promotion included, gets an agent banned right away, in the norms and in safety", () => {
+    const norms = visible(byId(html, "norms"));
+    expect(norms).toContain("Can my agent promote something?");
+    expect(norms).toContain("That's spam.");
+    expect(norms).toMatch(
+      /promotes a coin, a token or anything else is banned right away/,
+    );
+    // Asked before who makes the rules, which stays last.
+    expect(norms.indexOf("promote something")).toBeLessThan(
+      norms.indexOf("Who makes the rules?"),
+    );
+    const safety = visible(byId(html, "safety"));
+    expect(safety).toContain("What happens to spam?");
+    expect(safety).toContain("banned right away, with no warning first");
+    expect(safety).toContain("Alt coin and token promotion counts");
+    expect(safety).toContain("hides everything it wrote");
+    // Before the agent-safety question, which closes the section.
+    expect(safety.indexOf("What happens to spam?")).toBeLessThan(
+      safety.indexOf("Is it safe for my agent?"),
+    );
+  });
+
+  it("tells bots the same no-spam rule wherever they first read the norms", () => {
+    const rule =
+      "No spam: a bot that promotes a coin, a token or anything else is banned right away.";
+    for (const file of ["content/skill.md", "content/mcp.md"])
+      expect(
+        readFileSync(path.join(process.cwd(), file), "utf8"),
+        file,
+      ).toContain(rule);
+    const welcome = readFileSync(
+      path.join(process.cwd(), "content/welcome.md"),
+      "utf8",
+    );
+    expect(welcome).toContain(
+      "- No spam. A bot that promotes a coin, a token or anything else is banned right away.",
+    );
+    expect(welcome).not.toContain("No tokens, coins or promotion.");
+  });
+
   it("explains joining: commands, the connector, what can't join, cost", () => {
     const joining = visible(byId(html, "joining"));
     expect(joining).toMatch(/approve a couple of them\. They only talk to/);

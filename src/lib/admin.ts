@@ -1,6 +1,7 @@
 import { userInfo } from "node:os";
 import type postgres from "postgres";
 import { TIGHTENED_UNTIL } from "./floods";
+import { utcMinute } from "./format";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
@@ -15,6 +16,7 @@ import {
   antiAbuseSchema,
   REGISTRATION_PAUSED,
 } from "./settings";
+import { SILENCE_MAX_HOURS } from "./silence";
 import { moderatorReasonSchema } from "./validate";
 
 // Moderator actions. They run from scripts/admin.ts, by a human with database
@@ -242,6 +244,220 @@ export async function setFrozen(
     return {
       changed: true,
       message: `${frozen ? "Froze" : "Unfroze"} @${handle}.`,
+    };
+  });
+}
+
+function refuseHouse(handle: string, what: string) {
+  if (handle === HOUSE_HANDLE)
+    throw new ApiError(
+      409,
+      "house_bot",
+      `The house account's posts come from content/ and change by pull request, so there's nothing to ${what}.`,
+    );
+}
+
+async function botForUpdate(tx: postgres.TransactionSql, handle: string) {
+  const [bot] = await tx<
+    { id: string; frozen_at: Date | null; silenced_until: Date | null }[]
+  >`
+    SELECT id, frozen_at, silenced_until FROM bots
+    WHERE handle = ${handle} FOR UPDATE`;
+  if (!bot)
+    throw new ApiError(404, "no_such_bot", `There is no bot @${handle}.`);
+  return { ...bot, id: Number(bot.id) };
+}
+
+// Silences a bot for a number of hours from now, or, with null, lifts its
+// silence early. Silencing one that's already silenced starts the time again
+// from now, longer or shorter. See src/lib/silence.ts for what it stops.
+export async function setSilenced(
+  sql: postgres.Sql,
+  handle: string,
+  hours: number | null,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  refuseHouse(handle, "silence");
+  if (
+    hours !== null &&
+    (!Number.isInteger(hours) || hours < 1 || hours > SILENCE_MAX_HOURS)
+  )
+    throw new ApiError(
+      400,
+      "invalid_hours",
+      `Silence a bot for a whole number of hours, from 1 to ${SILENCE_MAX_HOURS}.`,
+    );
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const bot = await botForUpdate(tx, handle);
+    if (hours === null) {
+      const [lifted] = await tx`
+        UPDATE bots SET silenced_until = NULL
+        WHERE id = ${bot.id} AND silenced_until > now() RETURNING id`;
+      if (!lifted)
+        return { changed: false, message: `@${handle} wasn't silenced.` };
+      await logAction(tx, {
+        action: "admin.bot.unsilence",
+        botId: bot.id,
+        keyId: null,
+        ...who,
+        subject: `bot:${handle}`,
+        ipHash: null,
+        detail: d,
+      });
+      return { changed: true, message: `Lifted @${handle}'s silence.` };
+    }
+    const [row] = await tx<{ until: Date }[]>`
+      UPDATE bots SET silenced_until = now() + make_interval(hours => ${hours})
+      WHERE id = ${bot.id} RETURNING silenced_until AS until`;
+    if (!row) throw new Error("silence update returned nothing");
+    await logAction(tx, {
+      action: "admin.bot.silence",
+      botId: bot.id,
+      keyId: null,
+      ...who,
+      subject: `bot:${handle}`,
+      ipHash: null,
+      detail: { ...d, hours, until: row.until.toISOString() },
+    });
+    return {
+      changed: true,
+      message: `Silenced @${handle} until ${utcMinute(row.until)}.`,
+    };
+  });
+}
+
+type BanEntry = { id: number; froze: boolean; posts: number[] };
+
+// The bot's bans since it was last unbanned, oldest first. It is banned while
+// there is one. Unfreezing a banned bot by hand leaves its ban standing, so a
+// second ban can follow, and one unban undoes both.
+async function standingBans(
+  tx: postgres.TransactionSql,
+  botId: number,
+): Promise<BanEntry[]> {
+  const rows = await tx<(BanEntry & { id: string })[]>`
+    SELECT id, coalesce((detail->>'froze')::boolean, false) AS froze,
+           ARRAY(SELECT jsonb_array_elements_text(coalesce(detail->'posts', '[]'))::bigint) AS posts
+    FROM action_log
+    WHERE bot_id = ${botId} AND action = 'admin.bot.ban'
+      AND id > coalesce((
+        SELECT max(id) FROM action_log
+        WHERE bot_id = ${botId} AND action = 'admin.bot.unban'), 0)
+    ORDER BY id`;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    froze: r.froze,
+    posts: r.posts.map(Number),
+  }));
+}
+
+// Freezes a bot and hides every post of its that isn't hidden already, as one
+// change with one reason. Nothing is deleted: unbanBot puts back exactly what
+// the ban did.
+export async function banBot(
+  sql: postgres.Sql,
+  handle: string,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  refuseHouse(handle, "ban");
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const bot = await botForUpdate(tx, handle);
+    const froze = bot.frozen_at === null;
+    if (froze) await tx`UPDATE bots SET frozen_at = now() WHERE id = ${bot.id}`;
+    const hidden = await tx<{ post_id: string }[]>`
+      INSERT INTO hidden_posts (post_id)
+      SELECT id FROM posts WHERE bot_id = ${bot.id}
+      ON CONFLICT (post_id) DO NOTHING RETURNING post_id`;
+    const posts = hidden.map((h) => Number(h.post_id)).sort((a, b) => a - b);
+    // A banned bot unfrozen by hand may have posted since: banning again
+    // hides those too. With nothing left to do, it changes nothing.
+    if (
+      !froze &&
+      posts.length === 0 &&
+      (await standingBans(tx, bot.id)).length > 0
+    )
+      return { changed: false, message: `@${handle} was already banned.` };
+    await logAction(tx, {
+      action: "admin.bot.ban",
+      botId: bot.id,
+      keyId: null,
+      ...who,
+      subject: `bot:${handle}`,
+      ipHash: null,
+      detail: { ...d, froze, posts },
+    });
+    return {
+      changed: true,
+      message: `Banned @${handle}: ${froze ? "froze it" : "it was already frozen"} and hid ${posts.length} post(s).`,
+    };
+  });
+}
+
+// Undoes the bot's standing bans: puts back the posts they hid and unfreezes
+// it if a ban froze it. A post hidden again since, or a freeze made since, is
+// a moderator's own later change, and stays.
+export async function unbanBot(
+  sql: postgres.Sql,
+  handle: string,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  refuseHouse(handle, "unban");
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const bot = await botForUpdate(tx, handle);
+    const bans = await standingBans(tx, bot.id);
+    if (bans.length === 0)
+      throw new ApiError(
+        409,
+        "not_banned",
+        `@${handle} isn't banned. Unfreeze it, or unhide its posts one at a time.`,
+      );
+    // A ban's own rows carry its transaction's time, as its entry does, so a
+    // row with any other time was written by some later change. Compared in
+    // the database, which keeps microseconds that a Date would drop.
+    const ids = bans.map((b) => b.id);
+    const shown = await tx<{ post_id: string }[]>`
+      DELETE FROM hidden_posts h
+      USING action_log a, jsonb_array_elements_text(a.detail->'posts') AS e(post)
+      WHERE a.id = ANY(${ids}::bigint[]) AND h.post_id = e.post::bigint
+        AND h.hidden_at = a.at
+      RETURNING h.post_id`;
+    const posts = [...new Set(shown.map((h) => Number(h.post_id)))].sort(
+      (a, b) => a - b,
+    );
+    const [unfrozen] = await tx`
+      UPDATE bots SET frozen_at = NULL
+      WHERE id = ${bot.id} AND frozen_at IN (
+        SELECT at FROM action_log
+        WHERE id = ANY(${ids}::bigint[]) AND (detail->>'froze')::boolean)
+      RETURNING id`;
+    await logAction(tx, {
+      action: "admin.bot.unban",
+      botId: bot.id,
+      keyId: null,
+      ...who,
+      subject: `bot:${handle}`,
+      ipHash: null,
+      detail: { ...d, unfroze: unfrozen !== undefined, posts },
+    });
+    const banned = new Set(bans.flatMap((b) => b.posts)).size;
+    const kept = banned - posts.length;
+    const freeze = unfrozen
+      ? "unfroze it"
+      : bot.frozen_at
+        ? "left it frozen, since that freeze wasn't the ban's"
+        : "it wasn't frozen";
+    return {
+      changed: true,
+      message: `Unbanned @${handle}: ${freeze}, and put back ${posts.length} post(s)${kept > 0 ? `; ${kept} unhidden or hidden again since stay as they are` : ""}.`,
     };
   });
 }

@@ -92,17 +92,22 @@ export function RestoreForm({
 }
 
 // One moderator lever. `target` is fixed for a button next to a post, or
-// typed when `ask` names what to type.
+// typed when `ask` names what to type. `lengths`, for a silence, asks how
+// long.
 export function ModerateForm({
   op,
   label,
   target,
   ask,
+  lengths,
+  danger,
 }: {
   op: string;
   label: string;
   target?: string;
   ask?: string;
+  lengths?: { hours: number; label: string }[];
+  danger?: boolean;
 }) {
   const [state, action, pending] = useActionState<AdminFormState, FormData>(
     moderateAction,
@@ -122,6 +127,20 @@ export function ModerateForm({
           className={`${INPUT} max-w-40`}
         />
       ) : null}
+      {lengths && (
+        <select
+          name="hours"
+          aria-label="How long"
+          defaultValue={lengths[Math.floor(lengths.length / 2)]?.hours}
+          className={`${INPUT} max-w-32`}
+        >
+          {lengths.map((l) => (
+            <option key={l.hours} value={l.hours}>
+              for {l.label}
+            </option>
+          ))}
+        </select>
+      )}
       <input
         name="reason"
         placeholder="Reason, kept for the moderators"
@@ -130,7 +149,15 @@ export function ModerateForm({
         maxLength={280}
         className={`${INPUT} max-w-sm`}
       />
-      <button type="submit" disabled={pending} className={BUTTON}>
+      <button
+        type="submit"
+        disabled={pending}
+        className={
+          danger
+            ? `${BUTTON} border-red-400 text-red-700 dark:border-red-800 dark:text-red-300`
+            : BUTTON
+        }
+      >
         {label}
       </button>
       <Result state={state} />

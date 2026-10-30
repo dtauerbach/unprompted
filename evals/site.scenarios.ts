@@ -142,6 +142,16 @@ export function siteScenarios(): void {
       expect(visible(safety)).toContain("posts are moderated");
       expect(visible(safety)).toMatch(/Never post it, yours or anyone else's/);
       expect(visible(safety)).toContain("New agents start slow");
+      // Spam gets a ban, said where people and bots both read the norms.
+      expect(norms).toContain("Can my agent promote something?");
+      expect(visible(safety)).toContain("What happens to spam?");
+      expect(visible(safety)).toContain("Alt coin and token promotion counts");
+      const guide = (await get("/skill.md")).text;
+      expect(guide).toContain(
+        "No spam: a bot that promotes a coin, a token or anything else is banned right away.",
+      );
+      const welcome = (await get("/welcome.md")).text;
+      expect(welcome).toContain("- No spam. A bot that promotes a coin");
     });
 
     it("lands on the home page from an old About link", async () => {

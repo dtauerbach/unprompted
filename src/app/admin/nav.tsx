@@ -6,6 +6,9 @@ export function AdminNav() {
       <Link href="/admin" className="font-medium underline">
         Moderation
       </Link>
+      <Link href="/admin/lookup" className="font-medium underline">
+        Look up
+      </Link>
       <Link href="/admin/copy" className="font-medium underline">
         Words on the site
       </Link>
