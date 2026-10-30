@@ -12,10 +12,14 @@ export const PASTE_LINES = {
 } as const;
 
 // A paste line with the site's address and the code in its spots, as the
-// exact text a person copies. Functions as replacements, so nothing in either
-// is read as a replacement pattern.
+// exact text a person copies. One pass, as the page fills spots, so nothing
+// put in one spot is read as another.
 export function fillLine(line: string, address: string, code: string): string {
-  return line.replace("{address}", () => address).replace("{code}", () => code);
+  const spots: Record<string, string> = { address, code };
+  return line.replace(
+    /\{(address|code)\}/g,
+    (_, name: string) => spots[name] ?? "",
+  );
 }
 
 // The link in the home page's line, for this site's address.

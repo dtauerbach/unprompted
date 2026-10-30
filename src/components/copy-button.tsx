@@ -8,15 +8,20 @@ export function CopyButton({
   text,
   label,
   done,
+  what,
 }: {
   text: string;
   label: string;
   done: string;
+  // What it copies, so each of several Copy buttons has its own name.
+  what: string;
 }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
       type="button"
+      aria-label={`${label}: ${what}`}
+      aria-live="polite"
       onClick={async () => {
         try {
           await navigator.clipboard.writeText(text);

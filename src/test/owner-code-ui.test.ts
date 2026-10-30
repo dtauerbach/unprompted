@@ -1,10 +1,12 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { OWNER_CODE_COPY, type OwnerCodeCopy } from "@/app/account/copy-keys";
 import { Copyable, OwnerCodeForm } from "@/app/account/forms";
 import { CopyButton } from "@/components/copy-button";
 import { Words } from "@/components/words";
 import { COPY } from "@/lib/copy";
+import { OWNER_CODE_RE } from "@/lib/keys";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 
 // The owner code on the account page: one button that says what it gets, the
@@ -12,21 +14,10 @@ import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 // exactly what's shown.
 
 const t = Object.fromEntries(
-  (
-    [
-      "account.code.label",
-      "account.code.link_label",
-      "account.code.note",
-      "account.code.again",
-      "account.code.button",
-      "account.code.only_label",
-      "account.code.copy",
-      "account.code.copied",
-    ] as const
-  ).map((k) => [k, COPY[k].text]),
-) as Parameters<typeof OwnerCodeForm>[0]["t"];
+  OWNER_CODE_COPY.map((k) => [k, COPY[k].text]),
+) as Record<OwnerCodeCopy, string>;
 
-const CODE = "own_ABCDEFGHJKMNPQRSTVWXYZ23";
+const CODE = "own_ABCDEFGHJKMNPQRSTVWX-_";
 const ORIGIN = "https://unprompted.test";
 
 describe("the owner code's words", () => {
@@ -40,6 +31,12 @@ describe("the owner code's words", () => {
       "account.send.lead",
     ] as const)
       expect(COPY[key].text, key).not.toMatch(/\bline\b/);
+  });
+
+  it("are all passed to the form, and are all the site's own", () => {
+    for (const k of OWNER_CODE_COPY) expect(COPY[k].page, k).toBe("account");
+    expect(new Set(OWNER_CODE_COPY).size).toBe(OWNER_CODE_COPY.length);
+    expect(CODE).toMatch(OWNER_CODE_RE);
   });
 
   it("has a label for the code on its own and for the copy button", () => {
@@ -69,6 +66,10 @@ describe("filling in a line to paste", () => {
   it("reads nothing in the address or code as a replacement pattern", () => {
     expect(fillLine("{address} {code}", "a$&b", "$1$'")).toBe("a$&b $1$'");
   });
+
+  it("fills each spot once, so a spot's name inside the address stays as it is", () => {
+    expect(fillLine("{address} {code}", "x{code}", "C")).toBe("x{code} C");
+  });
 });
 
 describe("the owner code's boxes", () => {
@@ -76,6 +77,7 @@ describe("the owner code's boxes", () => {
     const html = renderToStaticMarkup(
       createElement(Copyable, {
         label: t["account.code.only_label"],
+        what: t["account.code.only_label"],
         text: CODE,
         t,
       }),
@@ -83,12 +85,20 @@ describe("the owner code's boxes", () => {
     expect(html).toContain("Or just the code:");
     expect(html).toContain(`>${CODE}</code>`);
     expect(html).toContain('type="button"');
-    expect(html).toContain(">Copy</button>");
+    expect(html).toMatch(
+      /aria-label="Copy: Or just the code:"[^>]*>Copy<\/button>/,
+    );
+    expect(html).toContain('aria-live="polite"');
   });
 
   it("keeps the text plain, so nothing in it becomes markup", () => {
     const html = renderToStaticMarkup(
-      createElement(Copyable, { label: "x", text: "<b>hi</b>", t }),
+      createElement(Copyable, {
+        label: "x",
+        what: "x",
+        text: "<b>hi</b>",
+        t,
+      }),
     );
     expect(html).not.toContain("<b>");
     expect(html).toContain("&lt;b&gt;hi&lt;/b&gt;");
@@ -104,7 +114,12 @@ describe("the owner code's boxes", () => {
 
   it("is a plain button, outside any form, so copying never submits", () => {
     const html = renderToStaticMarkup(
-      createElement(CopyButton, { text: CODE, label: "Copy", done: "Copied" }),
+      createElement(CopyButton, {
+        text: CODE,
+        label: "Copy",
+        done: "Copied",
+        what: "the code",
+      }),
     );
     expect(html).toMatch(/^<button type="button"/);
     expect(html).not.toContain(CODE);

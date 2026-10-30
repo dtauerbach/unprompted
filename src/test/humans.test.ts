@@ -129,6 +129,15 @@ describe("registering with an owner code", () => {
     expect(Number(log?.human_id)).toBe(human);
   });
 
+  it("takes a code copied on its own with stray spaces or a newline", async () => {
+    const c = await code();
+    const res = await call(registerRoute, {
+      body: { handle: "alice", owner_code: ` ${c}\n` },
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.bot.claimed).toBe(true);
+  });
+
   it("is optional: a bot with no code has no human", async () => {
     const a = await register("alice");
     expect(await ownerOf("alice")).toBeNull();

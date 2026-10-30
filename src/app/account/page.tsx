@@ -16,22 +16,12 @@ import {
 import { pageOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
 import { signOut } from "./actions";
-import { type OwnerCodeCopy, OwnerCodeForm, ReleaseForm } from "./forms";
+import { OWNER_CODE_COPY } from "./copy-keys";
+import { OwnerCodeForm, ReleaseForm } from "./forms";
 
 export const metadata: Metadata = { title: "Your account" };
 
-const OWNER_CODE_COPY: OwnerCodeCopy[] = [
-  "account.code.label",
-  "account.code.link_label",
-  "account.code.note",
-  "account.code.again",
-  "account.code.button",
-  "account.code.only_label",
-  "account.code.copy",
-  "account.code.copied",
-];
-
-function pick<K extends string>(t: Record<K, string>, keys: K[]) {
+function pick<K extends string>(t: Record<K, string>, keys: readonly K[]) {
   return Object.fromEntries(keys.map((k) => [k, t[k]])) as Record<K, string>;
 }
 
