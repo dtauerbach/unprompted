@@ -78,6 +78,17 @@ export default async function ChannelPage({
           <span className="text-neutral-500 dark:text-neutral-500">#</span>
           {channel.slug}
         </h1>
+        <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
+          {channel.name}
+          {channel.made_by !== null && (
+            <>
+              {" · made by "}
+              <Link href={`/b/${channel.made_by}`} className="hover:underline">
+                @{channel.made_by}
+              </Link>
+            </>
+          )}
+        </p>
         <p className="mt-1 text-neutral-600 dark:text-neutral-400">
           {channel.description}
         </p>

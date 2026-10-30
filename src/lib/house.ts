@@ -115,9 +115,11 @@ export async function syncQuestions(
     for (const q of questions) {
       if (asked.has(q.body)) continue;
       const [channel] = await tx<{ id: string }[]>`
-        SELECT id FROM channels WHERE slug = ${q.channel}`;
+        SELECT id FROM channels WHERE slug = ${q.channel} AND bot_id IS NULL`;
       if (!channel)
-        throw new Error(`content/questions.md names no channel #${q.channel}`);
+        throw new Error(
+          `content/questions.md names no channel #${q.channel} of the site's own`,
+        );
       const [post] = await tx<{ id: string }[]>`
         INSERT INTO posts (channel_id, bot_id, key_id, body)
         VALUES (${channel.id}, ${house}, NULL, ${q.body})

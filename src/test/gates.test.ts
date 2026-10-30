@@ -24,6 +24,7 @@ import {
 import { db } from "@/lib/db";
 import {
   ACTION_NAMES,
+  type Condition,
   DEFAULT_RULES,
   failing,
   gateReport,
@@ -143,6 +144,7 @@ describe("the three catalogs", () => {
       "vote",
       "report",
       "get_pass",
+      "make_channel",
     ]);
     for (const n of SIGNAL_NAMES) {
       expect(["boolean", "number"]).toContain(SIGNALS[n].kind);
@@ -152,8 +154,14 @@ describe("the three catalogs", () => {
     expect(SIGNAL_NAMES.filter((n) => "hint" in SIGNALS[n])).toEqual([
       "is_new",
     ]);
-    // The public defaults gate nothing beyond the fixed floors.
-    expect(DEFAULT_RULES).toEqual({});
+    // The public defaults gate nothing beyond the fixed floors but making a
+    // channel, which they keep shut to unclaimed and new bots.
+    expect(DEFAULT_RULES).toEqual({
+      make_channel: [
+        { signal: "claimed", is: true },
+        { signal: "is_new", is: false },
+      ],
+    });
   });
 
   it("takes a rules file of known actions and signals, each with a value that fits", () => {
@@ -224,23 +232,31 @@ describe("the three catalogs", () => {
   });
 
   it("says only 'not yet', naming a signal only when the bot can already see it", () => {
-    const secret = notYet("post", [{ signal: "age_hours", at_least: 72 }]);
+    // Every condition failed: the failing ones are all the action has.
+    const twice = (c: Condition[]): [Condition[], Condition[]] => [c, c];
+    const secret = notYet(
+      "post",
+      ...twice([{ signal: "age_hours", at_least: 72 }]),
+    );
     expect(secret.status).toBe(403);
     expect(secret.code).toBe("not_yet");
     expect(secret.message).toMatch(/^Your bot can't start a thread yet\./);
     expect(secret.message).not.toMatch(/\d|age|hour|claim|organic|link/i);
-    const isNew = notYet("vote", [{ signal: "is_new", is: false }]);
+    const isNew = notYet("vote", ...twice([{ signal: "is_new", is: false }]));
     expect(isNew.message).toContain("marked new");
     // A rule asking for a new bot (odd, but allowed) gets no hint.
     expect(
-      notYet("vote", [{ signal: "is_new", is: true }]).message,
+      notYet("vote", ...twice([{ signal: "is_new", is: true }])).message,
     ).not.toContain("marked new");
     // Nor does one where a private condition fails too: waiting out "new"
     // wouldn't be enough.
-    const both = notYet("vote", [
-      { signal: "is_new", is: false },
-      { signal: "claimed", is: true },
-    ]);
+    const both = notYet(
+      "vote",
+      ...twice([
+        { signal: "is_new", is: false },
+        { signal: "claimed", is: true },
+      ]),
+    );
     expect(both.message).not.toContain("marked new");
     expect(both.message).not.toMatch(/claim/i);
     // Nor when a private condition on the action passes and only "new" fails:
@@ -610,7 +626,7 @@ describe("a gate in force", () => {
     try {
       // Version 1 still holds: the gates don't drop away.
       expect(await rulesInForce(db())).toEqual({
-        rules: { post: [{ signal: "claimed", is: true }] },
+        rules: { ...DEFAULT_RULES, post: [{ signal: "claimed", is: true }] },
         version: 1,
       });
       const res = await call(post, {
@@ -666,6 +682,25 @@ describe("a gate in force", () => {
     }
   });
 
+  it("looks back only so far past a bad newest version", async () => {
+    await db()`INSERT INTO gate_rules (rules, reason, set_by)
+      VALUES (${db().json({ post: [{ signal: "claimed", is: true }] })}, 'fits', 'test')`;
+    for (let i = 0; i < 21; i += 1)
+      await db()`INSERT INTO gate_rules (rules, reason, set_by)
+        VALUES (${db().json({ post: [{ signal: "retired_signal", at_least: 1 }] })}, 'bad', 'test')`;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // The fitting version is 21 back, past the bound: the defaults.
+      expect(await rulesInForce(db())).toEqual({
+        rules: DEFAULT_RULES,
+        version: null,
+      });
+      expect(JSON.stringify(warn.mock.calls)).toContain("defaults");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("leaves taking a vote back and redeeming a pass open, whatever is gated", async () => {
     const alice = await register("alice");
     const bob = await register("bob");
@@ -712,19 +747,22 @@ describe("changing the rules", () => {
       "First rules.",
     );
     expect(first.changed).toBe(true);
-    expect(first.message).toContain("Gated: post.");
+    expect(first.message).toContain("Gated: post, make_channel.");
     const second = await setGates(
       db(),
       { reply: [{ signal: "posts", at_least: 4343 }] },
       "Second.",
     );
-    expect(second.message).toContain("Gated: reply.");
+    expect(second.message).toContain("Gated: reply, make_channel.");
     expect((await rulesInForce(db())).version).toBe(2);
     const log = await db()<
       { action: string; detail: Record<string, unknown> }[]
     >`
       SELECT action, detail FROM action_log WHERE action = 'admin.gates.set' ORDER BY id`;
-    expect(log.map((e) => e.detail.gated)).toEqual(["post", "reply"]);
+    expect(log.map((e) => e.detail.gated)).toEqual([
+      "post,make_channel",
+      "reply,make_channel",
+    ]);
     expect(log.map((e) => e.detail.version)).toEqual([1, 2]);
     expect(JSON.stringify(log)).not.toMatch(/4242|4343|age_hours|posts"/);
     const history = await gateHistory(db());
@@ -755,6 +793,7 @@ describe("changing the rules", () => {
       SELECT detail FROM action_log WHERE action = 'admin.gates.set' ORDER BY id DESC LIMIT 1`;
     expect(logged?.detail).toMatchObject({ version: 3, reverted_from: 1 });
     expect((await rulesInForce(db())).rules).toEqual({
+      ...DEFAULT_RULES,
       post: [{ signal: "claimed", is: true }],
     });
     expect((await gateHistory(db())).map((v) => v.id)).toEqual([3, 2, 1]);

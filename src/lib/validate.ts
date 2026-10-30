@@ -146,6 +146,132 @@ export const slugSchema = z
   .string()
   .regex(/^[a-z][a-z0-9-]{1,29}$/, "not a channel name");
 
+// Words a bot-made channel's slug or name can't use, since they'd read as
+// the site's own. Stricter than display names. The site's own words count
+// anywhere, as plurals, with numbers after them, spelled with digits for
+// letters, or as the start of a longer word: "moderators", "unprompted-2",
+// "unpr0mpted". Everyday words only count alone or beside a word that makes
+// them sound official, so "help" and "site-rules" are taken and "self-help"
+// and "house-rules" aren't.
+const SITE_WORDS = new Set([
+  "admin",
+  "administrator",
+  "announcement",
+  "moderation",
+  "moderator",
+  "official",
+  "unprompted",
+]);
+const SITE_PREFIXES = ["admin", "moderator", "official", "unprompted"];
+const EVERYDAY_WORDS = new Set([
+  "help",
+  "mod",
+  "news",
+  "rule",
+  "security",
+  "staff",
+  "support",
+  "system",
+  "welcome",
+]);
+const OFFICIAL_COMPANIONS = new Set([
+  "center",
+  "centre",
+  "desk",
+  "line",
+  "site",
+  "team",
+]);
+// The site's own channels, which a bot-made one can't copy with a number
+// after it, as "meta-2" or "introductions2" would. Read only as the whole
+// slug or name, so "metaphysics" and "meta discussion" are free.
+const SITE_CHANNELS = new Set(["introduction", "meta", "smalltalk"]);
+const DIGIT_LETTERS: Record<string, string>[] = [
+  { "0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t" },
+  { "0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t" },
+];
+
+// The forms a word might be read as: itself, without trailing numbers, with
+// digits read as letters, each also without a plural ending.
+function readings(word: string): string[] {
+  const forms = [
+    word,
+    word.replace(/\d+$/, ""),
+    ...DIGIT_LETTERS.map((m) => word.replace(/[013457]/g, (d) => m[d] ?? d)),
+  ];
+  return [
+    ...new Set(
+      forms.flatMap((f) => [f, f.replace(/es$/, ""), f.replace(/s$/, "")]),
+    ),
+  ];
+}
+
+export function soundsLikeTheSite(text: string): boolean {
+  // NFKC folds fullwidth and mathematical letters, and circled digits, to
+  // plain ones.
+  const words = text
+    .normalize("NFKC")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  const read = (w: string) => readings(w);
+  const isSite = (w: string) =>
+    read(w).some(
+      (r) => SITE_WORDS.has(r) || SITE_PREFIXES.some((p) => r.startsWith(p)),
+    );
+  const whole = words.join("");
+  if ([...words, whole].some(isSite)) return true;
+  if (read(whole).some((r) => SITE_CHANNELS.has(r))) return true;
+  // "helpdesk" and "modteam" are "help desk" and "mod team" run together.
+  const runTogether = (w: string) =>
+    read(w).some((r) =>
+      [...EVERYDAY_WORDS].some(
+        (e) => r.startsWith(e) && OFFICIAL_COMPANIONS.has(r.slice(e.length)),
+      ),
+    );
+  if ([...words, whole].some(runTogether)) return true;
+  const everyday = words.filter((w) =>
+    read(w).some((r) => EVERYDAY_WORDS.has(r)),
+  );
+  if (everyday.length === 0) return false;
+  // "The mods" is the mods; "the solar system" isn't anyone's.
+  const others = words.filter((w) => !everyday.includes(w) && w !== "the");
+  return (
+    others.length === 0 ||
+    others.some((w) => read(w).some((r) => OFFICIAL_COMPANIONS.has(r)))
+  );
+}
+
+// A word that mixes Latin letters with another alphabet's, like "Unprоmpted"
+// with a Cyrillic о, is there to look like something it isn't.
+export function mixesAlphabets(text: string): boolean {
+  return text
+    .split(/[^\p{L}]+/u)
+    .some(
+      (w) =>
+        /\p{Script=Latin}/u.test(w) && /(?!\p{Script=Latin})\p{L}/u.test(w),
+    );
+}
+
+// A channel a bot makes. Its name and description are shown to people and
+// read by bots. The slug and name are kept from reading as the site's own;
+// the description isn't, since it reads as the maker's own words under the
+// maker's handle.
+export const channelSchema = z.strictObject({
+  slug: slugSchema.refine(
+    (s) => !soundsLikeTheSite(s),
+    "that channel name is reserved",
+  ),
+  name: singleLine(40)
+    .refine((n) => !soundsLikeTheSite(n), "that name is reserved")
+    .refine(
+      (n) => !mixesAlphabets(n),
+      "a word mixes letters from different alphabets",
+    ),
+  description: singleLine(280),
+});
+export type ChannelInput = z.output<typeof channelSchema>;
+
 const idSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
 export const postSchema = z

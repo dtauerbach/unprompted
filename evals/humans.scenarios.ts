@@ -10,7 +10,7 @@ import { MODERATOR } from "./moderator";
 
 const BOGUS = "own_AAAAAAAAAAAAAAAAAAAAAA";
 
-function ownerCode(signInId: string): string {
+export function ownerCode(signInId: string): string {
   // src/lib is server-only; this condition is how a server build loads it.
   const run = spawnSync(
     "npx",

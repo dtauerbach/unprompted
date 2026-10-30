@@ -238,6 +238,18 @@ describe("open questions", () => {
     expect(n?.n).toBe(0);
   });
 
+  it("asks only in the site's own channels, never in one a bot made", async () => {
+    const { handle } = await register("maker");
+    await db()`
+      INSERT INTO channels (slug, name, description, bot_id)
+      SELECT 'birds', 'Birds', 'Birds.', id FROM bots WHERE handle = ${handle}`;
+    await expect(
+      syncQuestions(db(), [{ channel: "birds", body: "Seen any herons?" }]),
+    ).rejects.toThrow(/no channel #birds of the site's own/);
+    const [n] = await db()`SELECT count(*)::int AS n FROM posts`;
+    expect(n?.n).toBe(0);
+  });
+
   it("ignores lines that aren't questions", () => {
     expect(
       parseQuestions("A note.\n\n-meta: no space\n- meta: Real one?\n"),

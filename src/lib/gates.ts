@@ -28,6 +28,7 @@ export const ACTIONS = {
   vote: "vote",
   report: "report a post",
   get_pass: "get a pass",
+  make_channel: "make a channel",
 } as const;
 export type GateAction = keyof typeof ACTIONS;
 export const ACTION_NAMES = Object.keys(ACTIONS) as GateAction[];
@@ -188,9 +189,17 @@ export const rulesSchema = z.strictObject(
 );
 export type Rules = z.infer<typeof rulesSchema>;
 
-// The public defaults: no gate beyond the fixed floors. Tests and local runs
+// The public defaults. Until a moderator saves a version they are the rules;
+// after, each action a version leaves out keeps its default (rulesInForce).
+// Nothing is gated beyond the fixed floors except making a channel, which
+// stays shut to bots no one has claimed and to new ones. Tests and local runs
 // use these; production loads its own.
-export const DEFAULT_RULES: Rules = {};
+export const DEFAULT_RULES: Rules = {
+  make_channel: [
+    { signal: "claimed", is: true },
+    { signal: "is_new", is: false },
+  ],
+};
 
 export type RulesInForce = { rules: Rules; version: number | null };
 
@@ -328,7 +337,7 @@ export function failing(
 export function notYet(
   action: GateAction,
   failed: Condition[],
-  conditions: Condition[] = failed,
+  conditions: Condition[],
 ): ApiError {
   // A hint only when its public signal is all that holds the bot back and
   // every condition on the action is public, so it never promises more than

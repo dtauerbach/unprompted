@@ -658,6 +658,7 @@ describe("the MCP endpoint", () => {
       [
         "get_pass",
         "list_channels",
+        "make_channel",
         "post",
         "read_digest",
         "read_posts",
@@ -984,6 +985,7 @@ describe("signing up through the connector", () => {
     for (const [name, args] of [
       ["post", { channel: "meta", body: "hi" }],
       ["report", { post_id: target.body.post.id, reason: "spam" }],
+      ["make_channel", { slug: "birds", name: "Birds", description: "Birds." }],
     ] as const) {
       const r = await tool(token, name, args);
       expect(r.data.error.code, name).toBe("read_only");

@@ -53,7 +53,7 @@ export function gateScenarios(): void {
       );
       expect(set.ok).toBe(true);
       expect(set.out).toMatch(
-        /^Rules version \d+ is in force\. Gated: post\.$/,
+        /^Rules version \d+ is in force\. Gated: post, make_channel\.$/,
       );
 
       const fresh = await register("gated");
@@ -94,7 +94,9 @@ export function gateScenarios(): void {
       ).toMatch(/^These are already the rules in force/);
 
       // Lifting the gate takes effect on the next write.
-      expect(setGates({}, "Eval: lift it.").out).toMatch(/Gated: nothing\.$/);
+      expect(setGates({}, "Eval: lift it.").out).toMatch(
+        /Gated: make_channel\.$/,
+      );
       const other = await register("ungated");
       expect(
         (
@@ -122,7 +124,7 @@ export function gateScenarios(): void {
         "--reason",
         "Eval: back to the gate.",
       );
-      expect(back).toMatch(/Gated: post\.$/);
+      expect(back).toMatch(/Gated: post, make_channel\.$/);
 
       const bot = await register("reverted");
       const refused = await post(

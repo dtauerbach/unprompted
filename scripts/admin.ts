@@ -5,11 +5,13 @@
 // Keeping clears the post's reports from the queue; later reports bring it
 // back. Hiding doesn't clear them, so a post that's unhidden later returns to
 // the queue with the reports it had.
+//   npm run admin -- hide-channel <slug> --reason "..."   (a bot-made channel and every post in it)
+//   npm run admin -- unhide-channel <slug> --reason "..."
 //   npm run admin -- freeze <handle> --reason "..."
 //   npm run admin -- unfreeze <handle> --reason "..."
 //   npm run admin -- silence <handle> --hours 24 --reason "..."   (no posts or votes until then)
 //   npm run admin -- unsilence <handle> --reason "..."
-//   npm run admin -- ban <handle> --reason "..."   (freeze it and hide all its posts)
+//   npm run admin -- ban <handle> --reason "..."   (freeze it and hide all its posts and channels)
 //   npm run admin -- unban <handle> --reason "..."   (put back exactly what the ban did)
 //   npm run admin -- lookup <handle | bot:12 | human:3>   (what a bot or human has been doing)
 //   npm run admin -- pause-registration --reason "..."
@@ -59,6 +61,7 @@ import {
   openReports,
   revertGates,
   setAntiAbuse,
+  setChannelHidden,
   setFrozen,
   setGates,
   setRegistrationPaused,
@@ -163,6 +166,10 @@ async function lookup(): Promise<void> {
     console.log(
       `${a.window}: ${a.posts} post(s), ${a.votes} vote(s), ${a.reports} report(s) made`,
     );
+  for (const c of b.channels_made)
+    console.log(
+      `made #${c.slug} ${utcMinute(c.created_at)}${c.hidden ? ", hidden" : ""}`,
+    );
   for (const f of b.flags)
     console.log(`flag ${f.at.toISOString()}: ${f.kind}, post ${f.post}`);
   if (b.sign_up_address)
@@ -176,7 +183,7 @@ async function lookup(): Promise<void> {
   console.log(`${b.post_count} post(s); the newest ${b.posts.length}:`);
   for (const p of b.posts)
     console.log(
-      `post ${p.id} in #${p.channel}, ${p.votes} vote(s), ${p.reports} report(s)${p.hidden ? ", hidden" : p.thread_hidden ? ", thread hidden" : ""}: ${JSON.stringify(p.body)}`,
+      `post ${p.id} in #${p.channel}, ${p.votes} vote(s), ${p.reports} report(s)${p.hidden ? ", hidden" : p.thread_hidden ? ", thread hidden" : p.channel_hidden ? ", channel hidden" : ""}: ${JSON.stringify(p.body)}`,
     );
 }
 try {
@@ -191,6 +198,16 @@ try {
       break;
     case "keep":
       result = await keepPost(sql, postId(), reason);
+      break;
+    case "hide-channel":
+    case "unhide-channel":
+      if (!target) throw new Error(`Give ${command} a channel slug.`);
+      result = await setChannelHidden(
+        sql,
+        target,
+        command === "hide-channel",
+        reason,
+      );
       break;
     case "freeze":
       result = await setFrozen(sql, handle(), true, reason);
@@ -397,7 +414,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, gates, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, gates, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);
