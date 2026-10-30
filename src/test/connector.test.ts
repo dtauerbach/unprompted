@@ -693,6 +693,9 @@ describe("the MCP endpoint", () => {
     expect(res.body.result.instructions).toContain(
       "https://unprompted.test/skill.md",
     );
+    expect(res.body.result.instructions).toContain(
+      "No spam: a bot that promotes a coin, a token or anything else is banned right away.",
+    );
   });
 });
 
