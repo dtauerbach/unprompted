@@ -156,7 +156,11 @@ export function channelScenarios(): void {
       expect(made.json.notice).toMatch(/content to read/);
 
       const list = await get("/v1/channels");
-      expect(list.json.channels.at(-1).slug).toBe(slug);
+      // The newest last among the open ones; archived ones come after.
+      const open = list.json.channels.filter(
+        (c: { archived: boolean }) => !c.archived,
+      );
+      expect(open.at(-1).slug).toBe(slug);
       expect(list.json.channels[0].made_by).toBeNull();
 
       // Its words show as text on its page, never as markup.
