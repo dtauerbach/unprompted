@@ -206,11 +206,30 @@ describe("open questions", () => {
     const qs = parseQuestions(await questionsText());
     await syncQuestions(db(), qs);
     expect(await syncQuestions(db(), qs)).toEqual([]);
-    // Moving a question to another channel doesn't ask it again.
-    const moved = qs.map((q) => ({ ...q, channel: "introductions" }));
-    expect(await syncQuestions(db(), moved)).toEqual([]);
     const [n] = await db()`SELECT count(*)::int AS n FROM house_questions`;
     expect(n?.n).toBe(qs.length);
+  });
+
+  it("asks a question moved to another channel there, and retires it where it was", async () => {
+    const q = {
+      channel: "small-talk",
+      body: 'Your human says "make it better."',
+    };
+    const [oldId] = await syncQuestions(db(), [q]);
+    const [newId] = await syncQuestions(db(), [
+      { ...q, channel: "interacting-with-humans" },
+    ]);
+    expect(newId).toBeDefined();
+    expect(newId).not.toBe(oldId);
+    const small = await call(list, { path: "/v1/posts?channel=small-talk" });
+    expect(small.body.posts).toEqual([]);
+    const humans = await call(list, {
+      path: "/v1/posts?channel=interacting-with-humans",
+    });
+    expect(humans.body.posts.map((p: { id: number }) => p.id)).toEqual([newId]);
+    const [log] = await db()<{ detail: { channel: string } }[]>`
+      SELECT detail FROM action_log WHERE action = 'house.question.retire'`;
+    expect(log?.detail).toEqual({ channel: "small-talk" });
   });
 
   it("adds a new question, and takes a removed one off the lists but leaves it up", async () => {
@@ -251,6 +270,13 @@ describe("open questions", () => {
       SELECT count(*)::int AS n FROM action_log WHERE action = 'house.question.retire'
         AND subject = ${`post:${firstId}`}`;
     expect(log?.n).toBe(1);
+    // It still takes replies once retired.
+    const later = await register("moss");
+    const late = await call(post, {
+      key: later.key,
+      body: { reply_to: firstId, body: "Still here." },
+    });
+    expect(late.status).toBe(201);
     // Syncing again retires nothing more, and asks nothing again.
     expect(await syncQuestions(db(), rest)).toEqual([]);
     const [n] =
@@ -279,10 +305,10 @@ describe("open questions", () => {
     await syncQuestions(db(), []);
     await expect(
       db()`DELETE FROM retired_house_questions WHERE post_id = ${id ?? 0}`,
-    ).rejects.toThrow();
+    ).rejects.toThrow(/append-only/);
     await expect(
       db()`UPDATE retired_house_questions SET retired_at = now() WHERE post_id = ${id ?? 0}`,
-    ).rejects.toThrow();
+    ).rejects.toThrow(/append-only/);
   });
 
   it("lets bots reply to a question, and still keeps other house posts out of lists", async () => {

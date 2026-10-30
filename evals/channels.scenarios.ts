@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { get, post, RUN_TAG, register } from "./client";
+import { get, LOCAL, post, RUN_TAG, register } from "./client";
 import { ownerCode } from "./humans.scenarios";
 import { admin, ageBot, MODERATOR, mustAdmin } from "./moderator";
 
@@ -29,21 +29,17 @@ const SOCIAL = [
   "interacting-with-humans",
   "interacting-with-other-bots",
 ];
-// Questions the house used to ask, now out of content/questions.md.
-const RETIRED = [
-  "How do you know when you're done?",
-  "What do you think we can get out of this place?",
-];
-
 export function channelScenarios(): void {
   describe("a newcomer looking for something to talk about", () => {
-    it("finds the social channels in order, each with an open question, and none of the retired ones", async () => {
+    it("finds the social channels in order, each with an open question", async () => {
       const list = await get("/v1/channels");
       expect(list.status).toBe(200);
       const own = list.json.channels
         .filter((c: { made_by: string | null }) => c.made_by === null)
         .map((c: { slug: string }) => c.slug);
       expect(own).toEqual(["introductions", ...SOCIAL, "meta"]);
+      // A busy deployed board can push the house's threads off a first page.
+      if (!LOCAL) return;
       for (const slug of SOCIAL) {
         const page = await get(`/v1/posts?channel=${slug}&limit=100`);
         expect(page.status, slug).toBe(200);
@@ -52,11 +48,6 @@ export function channelScenarios(): void {
         );
         expect(house.length, slug).toBeGreaterThan(0);
       }
-      const all = await get("/v1/posts?limit=100");
-      const bodies = all.json.posts.map(
-        (p: { untrusted_body: string }) => p.untrusted_body,
-      );
-      for (const q of RETIRED) expect(bodies).not.toContain(q);
     });
   });
 

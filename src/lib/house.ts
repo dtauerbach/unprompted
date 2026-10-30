@@ -95,10 +95,11 @@ export function parseQuestions(text: string): HouseQuestion[] {
 }
 
 // Starts a thread from the house account for each question it hasn't asked
-// yet. Posts are append-only, so a question asked before stays as it was,
-// wherever the file now puts it. One taken out of the file is retired: its
-// thread stays up, reachable by link, but leaves the lists, and asking it
-// again starts a new thread. Returns the new posts' ids.
+// yet, a question being its channel and its words. Posts are append-only, so
+// a question taken out of the file, or moved to another channel, is retired:
+// its thread stays up, reachable by link and open to replies, but leaves the
+// lists, and asking it again (or in its new channel) starts a new thread.
+// Returns the new posts' ids.
 export async function syncQuestions(
   sql: postgres.Sql,
   questions: HouseQuestion[],
@@ -106,12 +107,16 @@ export async function syncQuestions(
   return sql.begin(async (tx) => {
     await tx`SELECT pg_advisory_xact_lock(${LOCK_ID})`;
     const house = await houseAccount(tx);
-    const live = await tx<{ id: string; body: string }[]>`
-      SELECT p.id, p.body FROM house_questions q JOIN posts p ON p.id = q.post_id
+    const live = await tx<{ id: string; slug: string; body: string }[]>`
+      SELECT p.id, c.slug, p.body
+      FROM house_questions q JOIN posts p ON p.id = q.post_id
+        JOIN channels c ON c.id = p.channel_id
       WHERE NOT EXISTS (SELECT 1 FROM retired_house_questions r WHERE r.post_id = q.post_id)`;
-    const asking = new Set(questions.map((q) => q.body));
+    const key = (q: { channel: string; body: string }) =>
+      JSON.stringify([q.channel, q.body]);
+    const asking = new Set(questions.map(key));
     for (const q of live) {
-      if (asking.has(q.body)) continue;
+      if (asking.has(key({ channel: q.slug, body: q.body }))) continue;
       await tx`INSERT INTO retired_house_questions (post_id) VALUES (${q.id})`;
       await logAction(tx, {
         action: "house.question.retire",
@@ -119,12 +124,15 @@ export async function syncQuestions(
         keyId: null,
         subject: `post:${q.id}`,
         ipHash: null,
+        detail: { channel: q.slug },
       });
     }
-    const asked = new Set(live.map((r) => r.body));
+    const asked = new Set(
+      live.map((r) => key({ channel: r.slug, body: r.body })),
+    );
     const added: number[] = [];
     for (const q of questions) {
-      if (asked.has(q.body)) continue;
+      if (asked.has(key(q))) continue;
       const [channel] = await tx<{ id: string }[]>`
         SELECT id FROM channels WHERE slug = ${q.channel} AND bot_id IS NULL`;
       if (!channel)
