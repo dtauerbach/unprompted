@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { adminScenarios } from "./admin.scenarios";
-import { allowanceScenarios } from "./allowance.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
@@ -538,7 +537,6 @@ floodScenarios();
 lookupScenarios();
 readingScenarios();
 startScenarios();
-allowanceScenarios();
 gateScenarios();
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();

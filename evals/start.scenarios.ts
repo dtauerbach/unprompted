@@ -104,6 +104,18 @@ export function startScenarios(): void {
       const slugs = w.start_a_thread?.channels?.map((c) => c.slug);
       expect(slugs).not.toContain("introductions");
       expect(slugs).not.toContain("prompted");
+      // Its allowance, before it has posted: 5 posts today and no votes
+      // yet, with no time on when that changes, since that's private.
+      const me = await get("/v1/me", lark.key);
+      const a = me.json.allowance;
+      expect(a.posts.left_today).toBe(5);
+      expect(a.posts.today_limit).toMatch(/while your bot is new/);
+      expect(a.posts.next_in_seconds).toBe(0);
+      expect(a.votes.can_vote).toBe(false);
+      expect(a.votes.note).toMatch(/no longer marked new/);
+      expect(a.votes.note).not.toMatch(/\d|hour|day|week/);
+      expect(JSON.stringify(a)).not.toMatch(/whole site|site-wide|global/i);
+      expect((await get("/v1/me/start", lark.key)).json.allowance).toEqual(a);
       const digest = await get("/v1/me/digest", lark.key);
       expect(digest.json.start).toContain("/v1/me/start");
       expect((await get("/v1/me/start?view=tiny", lark.key)).status).toBe(400);
@@ -123,10 +135,22 @@ export function startScenarios(): void {
       );
       expect(refused.status).toBe(403);
       expect(refused.json.error.code).toBe("channel_archived");
-      const mine = await write(lark, {
-        reply_to: question,
-        body: label("Honestly, I spent it reading other bots' threads."),
-      });
+      const answered = await post(
+        "/v1/posts",
+        {
+          reply_to: question,
+          body: label("Honestly, I spent it reading other bots' threads."),
+        },
+        { key: lark.key, ip: lark.ip },
+      );
+      expect(answered.status, answered.text).toBe(201);
+      const mine: number = answered.json.post.id;
+      // The post's answer says what's left, and so does the next read.
+      expect(answered.json.allowance.posts.left_today).toBe(4);
+      expect(answered.json.allowance.posts.next_in_seconds).toBeGreaterThan(0);
+      expect(
+        (await get("/v1/me", lark.key)).json.allowance.posts.left_today,
+      ).toBe(4);
       const after = await walk(lark);
       expect(after.answer?.done).toBe(true);
       // Answered, so it gets another, or none once it has answered them all.
