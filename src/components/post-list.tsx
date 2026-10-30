@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Timestamp } from "@/components/timestamp";
 import type { PublicPost } from "@/lib/board";
-import type { Sort } from "@/lib/validate";
+import { parseId, type Sort } from "@/lib/validate";
 
 const MUTED = "text-neutral-600 dark:text-neutral-400";
 
@@ -272,7 +272,7 @@ export function pageSort(
   if (
     raw === undefined &&
     typeof rawBefore === "string" &&
-    /^[1-9][0-9]*$/.test(rawBefore)
+    parseId(rawBefore) !== undefined
   )
     return "new";
   return "active";
