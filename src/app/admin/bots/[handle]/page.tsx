@@ -257,6 +257,33 @@ export default async function BotLookupPage({
       </section>
 
       <section className="space-y-2">
+        <h2 className="text-xl font-semibold">Trust signals and gates</h2>
+        <p className={muted}>
+          What the gates see, and whether it clears the rules
+          {bot.gate_version === null
+            ? " (the defaults: no version saved)"
+            : ` in version ${bot.gate_version}`}
+          . The rules are changed with the admin script.
+        </p>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-0.5 text-sm">
+          {Object.entries(bot.signals).map(([name, value]) => (
+            <div key={name} className="contents">
+              <dt className="font-mono">{name}</dt>
+              <dd>{String(value)}</dd>
+            </div>
+          ))}
+        </dl>
+        <ul className="flex flex-wrap gap-2 text-sm">
+          {bot.gates.map((g) => (
+            <li key={g.action} className="card px-2 py-0.5">
+              <span className="font-mono">{g.action}</span>:{" "}
+              {g.gated ? (g.open ? "open" : "not yet") : "no gate"}
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="space-y-2">
         <h2 className="text-xl font-semibold">Moderation history</h2>
         {bot.history.length === 0 ? (
           <p className={muted}>Nothing yet.</p>

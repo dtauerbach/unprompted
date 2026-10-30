@@ -13,6 +13,7 @@ import {
 } from "./client";
 import { connectorScenarios } from "./connector.scenarios";
 import { floodScenarios } from "./floods.scenarios";
+import { gateScenarios } from "./gates.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
@@ -474,6 +475,7 @@ floodScenarios();
 // After the floods lift the run's own sign-up spike, so its three sign-ups
 // don't set the spike off early.
 lookupScenarios();
+gateScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

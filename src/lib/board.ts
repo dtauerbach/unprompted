@@ -7,6 +7,7 @@ import {
   noticeSignUpSpike,
   registrationTightened,
 } from "./floods";
+import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { codeHuman, hasRoomForBot, ownerForCode } from "./humans";
 import { newKey } from "./keys";
@@ -255,6 +256,11 @@ export async function createPost(
     const limits = await antiAbuse(tx);
     // Before the limits, so a silenced bot hears that it's silenced.
     await assertNotSilenced(tx, caller.botId);
+    await assertAllowed(
+      tx,
+      caller.botId,
+      input.reply_to === undefined ? "post" : "reply",
+    );
     await consume(tx, postRules(caller.botId, me?.is_new ?? true, limits));
     let channelId: string;
     let parentId: string | null = null;
