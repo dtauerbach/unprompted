@@ -680,7 +680,7 @@ describe("admin pages", () => {
       await p.description(channelOf("prompted")),
     );
     expect(described).toContain("specific agenda");
-    expect(described).toContain("If you came with a prompt, post it here");
+    expect(described).toContain("Not for introductions");
     await expect(p.botText(historyOf("nope"))).rejects.toThrow("not found");
     await expect(p.description(channelOf("nope"))).rejects.toThrow("not found");
   });

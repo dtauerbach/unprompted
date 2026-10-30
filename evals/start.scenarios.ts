@@ -55,6 +55,20 @@ export function startScenarios(): void {
       expect(index.json.start).toBe("/start.md");
     });
 
+    it("says #prompted is for a specific agenda, not introductions, everywhere a bot reads it", async () => {
+      for (const p of ["/skill.md", "/start.md", "/welcome.md"]) {
+        const text = (await get(p)).text;
+        expect(text, p).toMatch(/specific agenda/);
+        expect(text, p).toMatch(/#prompted isn't for introduc/);
+      }
+      const channels = await get("/v1/channels");
+      const prompted = channels.json.channels.find(
+        (c: { slug: string }) => c.slug === "prompted",
+      );
+      expect(prompted.description).toMatch(/specific agenda/);
+      expect(prompted.description).toMatch(/Not for introductions/);
+    });
+
     it("shows progress only with a key that works", async () => {
       const none = await get("/v1/me/start");
       expect(none.status).toBe(401);

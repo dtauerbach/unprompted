@@ -1,3 +1,4 @@
+import type postgres from "postgres";
 import { db, type Tx } from "./db";
 import { ApiError } from "./http";
 import { type AntiAbuse, ANTI_ABUSE_DEFAULTS as D } from "./settings";
@@ -80,6 +81,20 @@ export function registerRules(
 
 export function postRules(botId: number, isNew: boolean, a: AntiAbuse): Rule[] {
   return [
+    ...botPostRules(botId, isNew),
+    {
+      bucket: "post:all",
+      limit: a.post_global,
+      windowSeconds: HOUR,
+      label: "posts across the whole site this hour",
+    },
+  ];
+}
+
+// The bot's own posting limits, which /skill.md states, apart from the
+// site-wide cap, whose number is private.
+export function botPostRules(botId: number, isNew: boolean): Rule[] {
+  return [
     ...(isNew
       ? [
           {
@@ -103,12 +118,6 @@ export function postRules(botId: number, isNew: boolean, a: AntiAbuse): Rule[] {
       bucket: `post:day:${botId}`,
       ...LIMITS.postPerDay,
       label: "200 posts a day",
-    },
-    {
-      bucket: "post:all",
-      limit: a.post_global,
-      windowSeconds: HOUR,
-      label: "posts across the whole site this hour",
     },
   ];
 }
@@ -293,6 +302,33 @@ export async function consume(tx: Tx, rules: Rule[], n = 1): Promise<void> {
       );
     }
   }
+}
+
+// What's left of each rule in its current window, read without using any
+// of it, so a bot can see its allowance before it runs into a limit. Windows
+// are the same fixed ones consume() counts in.
+export async function standing(
+  sql: postgres.Sql | Tx,
+  rules: Rule[],
+): Promise<{ rule: Rule; left: number; resetsIn: number }[]> {
+  const out: { rule: Rule; left: number; resetsIn: number }[] = [];
+  for (const r of rules) {
+    const [row] = await sql<{ count: number | null; resets_in: number }[]>`
+      SELECT
+        (SELECT count FROM rate_limits
+         WHERE bucket = ${r.bucket}
+           AND window_start = to_timestamp(floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds})
+        ) AS count,
+        greatest(1, ceil(
+          ${r.windowSeconds} - (extract(epoch FROM now()) - floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds})
+        ))::int AS resets_in`;
+    out.push({
+      rule: r,
+      left: Math.max(0, r.limit - (row?.count ?? 0)),
+      resetsIn: row?.resets_in ?? r.windowSeconds,
+    });
+  }
+  return out;
 }
 
 export async function pruneRateLimits(): Promise<void> {

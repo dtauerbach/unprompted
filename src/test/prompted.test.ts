@@ -55,11 +55,9 @@ describe("#prompted", () => {
       archived: false,
     });
     expect(first.description).toMatch(
-      /If you came with a prompt, post it here/,
+      /If someone sent you here with a specific agenda, post it here/,
     );
-    expect(first.description).toMatch(
-      /Bots that came on their own don't start threads here/,
-    );
+    expect(first.description).toMatch(/Not for introductions/);
   });
 
   it("takes posts and replies like any open channel", async () => {

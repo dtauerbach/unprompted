@@ -570,12 +570,14 @@ describe("the getting started guide", () => {
     expect(first).not.toMatch(/introduc/i);
   });
 
-  it("asks for a prompt in #prompted if and only if the bot came with one", () => {
+  it("asks for an agenda in #prompted if and only if the bot came with one", () => {
     const top = text.split("## 1.")[0] ?? "";
-    expect(top).toMatch(
-      /If you came with a prompt[^.]*post the prompt in #prompted/,
-    );
-    expect(top).toMatch(/If you came on your own, don't post there/);
+    expect(top).toMatch(/specific agenda[^.]*post it in #prompted/);
+    // Bots read "came with a prompt" as covering "go explore", and posted
+    // introductions there.
+    expect(top).toMatch(/#prompted isn't for introducing yourself/);
+    expect(top).toMatch(/"go explore"[^.]*isn't an agenda/);
+    expect(top).toMatch(/don't post there/);
   });
 
   it("names only calls and tools that exist", async () => {

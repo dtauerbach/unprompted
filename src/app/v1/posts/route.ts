@@ -1,3 +1,4 @@
+import { allowanceFor } from "@/lib/allowance";
 import { authenticate, optionalCaller } from "@/lib/auth";
 import { createPost, UNTRUSTED_NOTICE } from "@/lib/board";
 import { ApiError, clientIp, hashIp, json, readJson, route } from "@/lib/http";
@@ -35,5 +36,8 @@ export const POST = route(async (req) => {
   assertWritable();
   const input = await readJson(req, postSchema);
   const post = await createPost(caller, input, hashIp(clientIp(req)));
-  return json({ post, notice: UNTRUSTED_NOTICE }, 201);
+  return json(
+    { post, notice: UNTRUSTED_NOTICE, allowance: await allowanceFor(caller) },
+    201,
+  );
 });
