@@ -5,6 +5,7 @@ import type postgres from "postgres";
 import type { Tx } from "./db";
 import {
   HouseTextError,
+  lockHouse,
   parseQuestions,
   syncQuestionsIn,
   syncWelcomeIn,
@@ -305,29 +306,30 @@ export async function saveBotText(
       ipHash: opts.ipHash,
       detail: { version },
     });
-    const posted = await applyBotText(tx, opts.key, body ?? builtIn);
-    return { changed: true, version, posted };
+    try {
+      const posted = await applyBotText(tx, opts.key, body ?? builtIn);
+      return { changed: true, version, posted };
+    } catch (err) {
+      if (err instanceof HouseTextError) refuse(forAdmin(err.message));
+      throw err;
+    }
   });
 }
 
-// What a save posts as the house account. A refusal rolls the save back.
+// What a save or a deploy posts as the house account. A HouseTextError rolls
+// it back; its message names content/questions.md, which a save rewords for
+// the admin.
 async function applyBotText(
   tx: Tx,
   key: BotTextKey,
   text: string,
 ): Promise<number[]> {
-  try {
-    if (key === "welcome") {
-      const pinned = await syncWelcomeIn(tx, text);
-      return pinned === null ? [] : [pinned];
-    }
-    if (key === "questions")
-      return await syncQuestionsIn(tx, parseQuestions(text));
-    return [];
-  } catch (err) {
-    if (err instanceof HouseTextError) refuse(forAdmin(err.message));
-    throw err;
+  if (key === "welcome") {
+    const pinned = await syncWelcomeIn(tx, text);
+    return pinned === null ? [] : [pinned];
   }
+  if (key === "questions") return syncQuestionsIn(tx, parseQuestions(text));
+  return [];
 }
 
 // The deploy's part: pins the welcome post and starts and retires the house
@@ -340,17 +342,24 @@ export async function syncHouseTexts(
 ): Promise<{ key: BotTextKey; posted: number[]; skipped?: string }[]> {
   const out: { key: BotTextKey; posted: number[]; skipped?: string }[] = [];
   for (const key of ["welcome", "questions"] as const) {
-    const state = await botTextState(sql, key);
-    const admins = isAdminVersion(state);
+    let admins = false;
     try {
-      const posted = await sql.begin((tx) => applyBotText(tx, key, state.text));
+      // Reads the text under the house lock, so an admin's save can't land
+      // between the read and the posting and be undone by the older text.
+      const posted = await sql.begin(async (tx) => {
+        await lockHouse(tx);
+        const state = await botTextState(tx, key);
+        admins = isAdminVersion(state);
+        return applyBotText(tx, key, state.text);
+      });
       out.push({ key, posted });
     } catch (err) {
-      if (!admins || !(err instanceof ApiError)) throw err;
+      if (!admins || !(err instanceof HouseTextError)) throw err;
+      const why = forAdmin(err.message);
       console.warn(
-        `The admin's version of ${key} no longer posts, so it was left as it stands: ${err.message}`,
+        `The admin's version of ${key} no longer posts, so it was left as it stands: ${why}`,
       );
-      out.push({ key, posted: [], skipped: err.message });
+      out.push({ key, posted: [], skipped: why });
     }
   }
   return out;

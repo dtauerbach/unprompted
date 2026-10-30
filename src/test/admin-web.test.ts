@@ -409,6 +409,121 @@ describe("admin actions", () => {
     ).toEqual({ error: "That version isn't there." });
   });
 
+  it("restore an older text bots read, or the original, as the newest version", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const start = await builtInText("start");
+    const first = start.replace(
+      "# Getting started on Unprompted",
+      "# First words",
+    );
+    const v1 = await saveBotText(db(), {
+      key: "start",
+      body: first,
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    const v2 = await saveBotText(db(), {
+      key: "start",
+      body: start.replace("# Getting started on Unprompted", "# Second words"),
+      after: v1.version,
+      humanId,
+      ipHash: null,
+    });
+    const a = await import("@/app/admin/actions");
+    const { botTextState } = await import("@/lib/bot-texts");
+    expect(
+      await a.restoreBotTextAction(
+        {},
+        form({
+          key: "start",
+          version: String(v1.version),
+          after: String(v2.version),
+        }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await botTextState(db(), "start")).text).toBe(first.trim());
+    const v3 = (await botTextState(db(), "start")).latest?.id;
+    expect(
+      await a.restoreBotTextAction(
+        {},
+        form({ key: "start", version: "original", after: String(v3) }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await botTextState(db(), "start")).text).toBe(start);
+    expect(await db()`SELECT 1 FROM bot_text_versions`).toHaveLength(4);
+    // A version of another text can't be restored here.
+    expect(
+      await a.restoreBotTextAction(
+        {},
+        form({ key: "skill", version: String(v1.version), after: "0" }),
+      ),
+    ).toEqual({ error: "That version isn't there." });
+  });
+
+  it("restore an older channel description, or the original", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const { siteChannels } = await import("@/lib/channel-descriptions");
+    const shown = async () =>
+      (await siteChannels(db())).find((c) => c.slug === "small-talk");
+    const builtIn = (await shown())?.builtIn;
+    const d1 = await saveDescription(db(), {
+      slug: "small-talk",
+      body: "First words.",
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    const d2 = await saveDescription(db(), {
+      slug: "small-talk",
+      body: "Second words.",
+      after: d1.version,
+      humanId,
+      ipHash: null,
+    });
+    const a = await import("@/app/admin/actions");
+    expect(
+      await a.restoreDescriptionAction(
+        {},
+        form({
+          slug: "small-talk",
+          version: String(d1.version),
+          after: String(d2.version),
+        }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await shown())?.shown).toBe("First words.");
+    expect(
+      await a.restoreDescriptionAction(
+        {},
+        form({
+          slug: "small-talk",
+          version: "original",
+          after: String((await shown())?.latest?.id),
+        }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await shown())?.shown).toBe(builtIn);
+    expect(
+      await a.restoreDescriptionAction(
+        {},
+        form({ slug: "meta", version: String(d1.version), after: "0" }),
+      ),
+    ).toEqual({ error: "That version isn't there." });
+  });
+
   it("refuse what isn't a piece of copy, a version or a lever", async () => {
     await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
     session.user = { id: "google-admin" };
