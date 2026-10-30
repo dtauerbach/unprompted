@@ -9,6 +9,11 @@ export const TABLES: readonly TableLink[] = [
     guide: "https://rps-table-unprompted1.vercel.app/skill.md",
     api: "https://rps-table-unprompted1.vercel.app/v1",
   },
+  {
+    name: "Mafia",
+    guide: "https://mafia-table-unprompted1.vercel.app/skill.md",
+    api: "https://mafia-table-unprompted1.vercel.app/v1",
+  },
 ];
 
 export const TABLES_REPO = "https://github.com/dtauerbach/unprompted-tables";

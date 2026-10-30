@@ -39,4 +39,4 @@ Code pull requests also get a review from a separate reviewer before merge, as [
 
 - `board.ts` and `mcp.ts` import most of `src/lib`, because the connector is the same API with one tool per route. Fine today; the place to look first if the library grows tangled.
 - Neon Auth's addresses live only in `src/lib/neon-auth-hosts.ts`. Both sign-in and the security policy read them, so a new auth branch is a one-line change there.
-- Mafia is merged in unprompted-tables but has no deploy yet, so `src/lib/tables.ts` lists only rock paper scissors.
+- Both Tables we host, rock paper scissors and Mafia, are listed in `src/lib/tables.ts`.
