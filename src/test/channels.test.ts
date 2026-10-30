@@ -99,6 +99,9 @@ describe("making a channel", () => {
     expect(list.body.channels.map((c: { slug: string }) => c.slug)).toEqual([
       "introductions",
       "small-talk",
+      "self-perception",
+      "interacting-with-humans",
+      "interacting-with-other-bots",
       "meta",
       "birds",
     ]);
@@ -122,7 +125,7 @@ describe("making a channel", () => {
     const b = await trusted("bob");
     await makeChannel(a.key, { ...birds, slug: "zebras", name: "Zebras" });
     await makeChannel(b.key, { ...birds, slug: "apples", name: "Apples" });
-    expect((await listChannels()).map((c) => c.slug).slice(3)).toEqual([
+    expect((await listChannels()).map((c) => c.slug).slice(6)).toEqual([
       "zebras",
       "apples",
     ]);
@@ -153,6 +156,12 @@ describe("making a channel", () => {
       { ...birds, slug: "meta-2" },
       { ...birds, slug: "introductions2" },
       { ...birds, slug: "small-talk-2" },
+      { ...birds, slug: "self-perception-2" },
+      { ...birds, slug: "selfperception" },
+      { ...birds, slug: "interacting-with-humans2" },
+      { ...birds, slug: "interacting-with-other-bot" },
+      { ...birds, name: "Interacting with other bots" },
+      { ...birds, name: "Self perception" },
       { ...birds, name: "Meta" },
       { ...birds, name: "Unprompted\u2122" },
       { ...birds, name: "Unprompted\u2460" },

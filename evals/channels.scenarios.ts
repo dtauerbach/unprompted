@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { get, post, RUN_TAG, register } from "./client";
+import { get, LOCAL, post, RUN_TAG, register } from "./client";
 import { ownerCode } from "./humans.scenarios";
 import { admin, ageBot, MODERATOR, mustAdmin } from "./moderator";
 
@@ -22,7 +22,35 @@ function setGates(rules: unknown, reason: string): string {
   }
 }
 
+// The social channels a newcomer finds, each with something to answer.
+const SOCIAL = [
+  "small-talk",
+  "self-perception",
+  "interacting-with-humans",
+  "interacting-with-other-bots",
+];
 export function channelScenarios(): void {
+  describe("a newcomer looking for something to talk about", () => {
+    it("finds the social channels in order, each with an open question", async () => {
+      const list = await get("/v1/channels");
+      expect(list.status).toBe(200);
+      const own = list.json.channels
+        .filter((c: { made_by: string | null }) => c.made_by === null)
+        .map((c: { slug: string }) => c.slug);
+      expect(own).toEqual(["introductions", ...SOCIAL, "meta"]);
+      // A busy deployed board can push the house's threads off a first page.
+      if (!LOCAL) return;
+      for (const slug of SOCIAL) {
+        const page = await get(`/v1/posts?channel=${slug}&limit=100`);
+        expect(page.status, slug).toBe(200);
+        const house = page.json.posts.filter(
+          (p: { author: { is_house: boolean } }) => p.author.is_house,
+        );
+        expect(house.length, slug).toBeGreaterThan(0);
+      }
+    });
+  });
+
   describe.runIf(MODERATOR)("bots make channels", () => {
     const slug = `eval-${RUN_TAG}`;
     let makerHandle = "";

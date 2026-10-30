@@ -121,6 +121,9 @@ describe("posting and reading", () => {
     expect(res.body.channels.map((c: { slug: string }) => c.slug)).toEqual([
       "introductions",
       "small-talk",
+      "self-perception",
+      "interacting-with-humans",
+      "interacting-with-other-bots",
       "meta",
     ]);
   });

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { GET as channels } from "@/app/v1/channels/route";
+import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as list, POST as post } from "@/app/v1/posts/route";
 import { GET as welcomeRoute } from "@/app/welcome.md/route";
 import { getBot } from "@/lib/board";
@@ -149,6 +150,27 @@ describe("open questions", () => {
   const questionsText = () =>
     readFile(path.join(process.cwd(), "content/questions.md"), "utf8");
 
+  it("has the site's own channels in order, each with a question", async () => {
+    const res = await call(channels);
+    const own = res.body.channels
+      .filter((c: { made_by: string | null }) => c.made_by === null)
+      .map((c: { slug: string }) => c.slug);
+    expect(own).toEqual([
+      "introductions",
+      "small-talk",
+      "self-perception",
+      "interacting-with-humans",
+      "interacting-with-other-bots",
+      "meta",
+    ]);
+    const qs = parseQuestions(await questionsText());
+    for (const slug of own.filter((s: string) => s !== "introductions"))
+      expect(
+        qs.some((q) => q.channel === slug),
+        slug,
+      ).toBe(true);
+  });
+
   it("parses content/questions.md into questions for real channels", async () => {
     const qs = parseQuestions(await questionsText());
     expect(qs.length).toBeGreaterThanOrEqual(5);
@@ -184,23 +206,109 @@ describe("open questions", () => {
     const qs = parseQuestions(await questionsText());
     await syncQuestions(db(), qs);
     expect(await syncQuestions(db(), qs)).toEqual([]);
-    // Moving a question to another channel doesn't ask it again.
-    const moved = qs.map((q) => ({ ...q, channel: "introductions" }));
-    expect(await syncQuestions(db(), moved)).toEqual([]);
     const [n] = await db()`SELECT count(*)::int AS n FROM house_questions`;
     expect(n?.n).toBe(qs.length);
   });
 
-  it("adds a new question and leaves a removed one up", async () => {
+  it("asks a question moved to another channel there, and retires it where it was", async () => {
+    const q = {
+      channel: "small-talk",
+      body: 'Your human says "make it better."',
+    };
+    const [oldId] = await syncQuestions(db(), [q]);
+    const [newId] = await syncQuestions(db(), [
+      { ...q, channel: "interacting-with-humans" },
+    ]);
+    expect(newId).toBeDefined();
+    expect(newId).not.toBe(oldId);
+    const small = await call(list, { path: "/v1/posts?channel=small-talk" });
+    expect(small.body.posts).toEqual([]);
+    const humans = await call(list, {
+      path: "/v1/posts?channel=interacting-with-humans",
+    });
+    expect(humans.body.posts.map((p: { id: number }) => p.id)).toEqual([newId]);
+    const [log] = await db()<{ detail: { channel: string } }[]>`
+      SELECT detail FROM action_log WHERE action = 'house.question.retire'`;
+    expect(log?.detail).toEqual({ channel: "small-talk" });
+  });
+
+  it("adds a new question, and takes a removed one off the lists but leaves it up", async () => {
     const [first, ...rest] = parseQuestions(await questionsText());
     if (!first) throw new Error("no questions");
     const [firstId] = await syncQuestions(db(), [first]);
+    const wren = await register("wren");
+    const reply = await call(post, {
+      key: wren.key,
+      body: { reply_to: firstId, body: "Every day." },
+    });
+    expect(reply.status).toBe(201);
     const added = await syncQuestions(db(), rest);
     expect(added).toHaveLength(rest.length);
-    const thread = await call(list, { path: "/v1/posts?limit=100" });
-    expect(thread.body.posts.map((p: { id: number }) => p.id)).toContain(
-      firstId,
-    );
+    const listed = await call(list, { path: "/v1/posts?limit=100" });
+    const ids = listed.body.posts.map((p: { id: number }) => p.id);
+    expect(ids).not.toContain(firstId);
+    expect(ids.sort()).toEqual([...added].sort());
+    // Not in any channel's list either, or any sort.
+    for (const q of [
+      `/v1/posts?channel=${first.channel}`,
+      "/v1/posts?sort=top&limit=100",
+      "/v1/posts?sort=active&limit=100",
+    ]) {
+      const page = await call(list, { path: q });
+      expect(page.body.posts.map((p: { id: number }) => p.id)).not.toContain(
+        firstId,
+      );
+    }
+    // Still up by its link, with its reply.
+    const thread = await call(threadRoute, {
+      path: `/v1/posts/${firstId}`,
+      params: { id: String(firstId) },
+    });
+    expect(thread.status).toBe(200);
+    expect(thread.body.replies).toHaveLength(1);
+    const [log] = await db()`
+      SELECT count(*)::int AS n FROM action_log WHERE action = 'house.question.retire'
+        AND subject = ${`post:${firstId}`}`;
+    expect(log?.n).toBe(1);
+    // It still takes replies once retired.
+    const later = await register("moss");
+    const late = await call(post, {
+      key: later.key,
+      body: { reply_to: firstId, body: "Still here." },
+    });
+    expect(late.status).toBe(201);
+    // Syncing again retires nothing more, and asks nothing again.
+    expect(await syncQuestions(db(), rest)).toEqual([]);
+    const [n] =
+      await db()`SELECT count(*)::int AS n FROM retired_house_questions`;
+    expect(n?.n).toBe(1);
+  });
+
+  it("asks a retired question afresh when it comes back", async () => {
+    const q = {
+      channel: "small-talk",
+      body: "What have you been up to today?",
+    };
+    const [oldId] = await syncQuestions(db(), [q]);
+    await syncQuestions(db(), []);
+    const [newId] = await syncQuestions(db(), [q]);
+    expect(newId).toBeDefined();
+    expect(newId).not.toBe(oldId);
+    const listed = await call(list, { path: "/v1/posts?limit=100" });
+    expect(listed.body.posts.map((p: { id: number }) => p.id)).toEqual([newId]);
+  });
+
+  it("keeps a retired question's rows as they are", async () => {
+    const [id] = await syncQuestions(db(), [
+      { channel: "meta", body: "Short-lived?" },
+    ]);
+    await syncQuestions(db(), []);
+    await expect(
+      db()`DELETE FROM retired_house_questions WHERE post_id = ${id ?? 0}`,
+    ).rejects.toThrow(/append-only/);
+    await expect(
+      db()`UPDATE retired_house_questions SET retired_at = now() WHERE post_id = ${id ?? 0}`,
+    ).rejects.toThrow(/append-only/);
   });
 
   it("lets bots reply to a question, and still keeps other house posts out of lists", async () => {

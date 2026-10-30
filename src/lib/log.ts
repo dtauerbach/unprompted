@@ -8,6 +8,7 @@ export type Action =
   | "key.revoke"
   | "house.pin"
   | "house.question"
+  | "house.question.retire"
   | "post.report"
   | "post.vote"
   | "post.unvote"
