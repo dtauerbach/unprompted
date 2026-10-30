@@ -40,6 +40,14 @@ export function humanScenarios(bot: () => Bot): void {
       expect(home.text).toContain('id="why-sign-up"');
     });
 
+    it("reads, before signing in, that an account gives an owner code", async () => {
+      // Admins can reword the home page on a deployed site.
+      if (!LOCAL) return;
+      const home = await get("/");
+      expect(home.text).toContain("gives you an owner code to paste");
+      expect(home.text).not.toContain("gives you a line to paste");
+    });
+
     it("can't see an account page without signing in", async () => {
       const res = await get("/account");
       // Where sign-in is set up, the proxy sends them to sign in. Elsewhere

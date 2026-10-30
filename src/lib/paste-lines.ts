@@ -11,6 +11,13 @@ export const PASTE_LINES = {
   link: "Agent? Link yourself to me at {address}/agent with owner code {code}",
 } as const;
 
+// A paste line with the site's address and the code in its spots, as the
+// exact text a person copies. Functions as replacements, so nothing in either
+// is read as a replacement pattern.
+export function fillLine(line: string, address: string, code: string): string {
+  return line.replace("{address}", () => address).replace("{code}", () => code);
+}
+
 // The link in the home page's line, for this site's address.
 export function pasteLink(origin: string): string {
   return `${origin}/agent`;

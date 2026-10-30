@@ -26,6 +26,9 @@ const OWNER_CODE_COPY: OwnerCodeCopy[] = [
   "account.code.note",
   "account.code.again",
   "account.code.button",
+  "account.code.only_label",
+  "account.code.copy",
+  "account.code.copied",
 ];
 
 function pick<K extends string>(t: Record<K, string>, keys: K[]) {

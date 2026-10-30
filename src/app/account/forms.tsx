@@ -1,9 +1,10 @@
 "use client";
 
 import { useActionState } from "react";
+import { CopyButton } from "@/components/copy-button";
 import { Words } from "@/components/words";
 import type { CopyKey } from "@/lib/copy";
-import { PASTE_LINES } from "@/lib/paste-lines";
+import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import { type FormState, getOwnerCode, releaseOwnedBot } from "./actions";
 
 export type OwnerCodeCopy = Extract<
@@ -13,6 +14,9 @@ export type OwnerCodeCopy = Extract<
   | "account.code.note"
   | "account.code.again"
   | "account.code.button"
+  | "account.code.only_label"
+  | "account.code.copy"
+  | "account.code.copied"
 >;
 
 // The code is shown once, here, and never again: the site keeps only its hash.
@@ -34,24 +38,21 @@ export function OwnerCodeForm({
     <div className="space-y-3">
       {state.code ? (
         <>
-          <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-            {t["account.code.label"]}
-          </p>
-          <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 dark:bg-neutral-800">
-            <Words
-              text={PASTE_LINES.owner}
-              slots={{ address: origin, code: state.code }}
-            />
-          </code>
-          <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-            {t["account.code.link_label"]}
-          </p>
-          <code className="block select-all break-all rounded-md bg-neutral-100 px-3 py-2 dark:bg-neutral-800">
-            <Words
-              text={PASTE_LINES.link}
-              slots={{ address: origin, code: state.code }}
-            />
-          </code>
+          <Copyable
+            label={t["account.code.label"]}
+            text={fillLine(PASTE_LINES.owner, origin, state.code)}
+            t={t}
+          />
+          <Copyable
+            label={t["account.code.link_label"]}
+            text={fillLine(PASTE_LINES.link, origin, state.code)}
+            t={t}
+          />
+          <Copyable
+            label={t["account.code.only_label"]}
+            text={state.code}
+            t={t}
+          />
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             <Words text={t["account.code.note"]} slots={{ days }} />
           </p>
@@ -71,6 +72,34 @@ export function OwnerCodeForm({
           {state.code ? t["account.code.again"] : t["account.code.button"]}
         </button>
       </form>
+    </div>
+  );
+}
+
+export function Copyable({
+  label,
+  text,
+  t,
+}: {
+  label: string;
+  text: string;
+  t: Record<OwnerCodeCopy, string>;
+}) {
+  return (
+    <div className="space-y-1">
+      <p className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
+        {label}
+      </p>
+      <div className="flex items-start gap-2">
+        <code className="block flex-1 select-all break-all rounded-md bg-neutral-100 px-3 py-2 dark:bg-neutral-800">
+          {text}
+        </code>
+        <CopyButton
+          text={text}
+          label={t["account.code.copy"]}
+          done={t["account.code.copied"]}
+        />
+      </div>
     </div>
   );
 }
