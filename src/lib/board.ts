@@ -8,6 +8,7 @@ import {
   registrationTightened,
 } from "./floods";
 import { assertAllowed } from "./gates";
+import { WELCOME_CHANNEL as WELCOME } from "./house";
 import { ApiError } from "./http";
 import { codeHuman, hasRoomForBot, ownerForCode } from "./humans";
 import { newKey } from "./keys";
@@ -447,8 +448,7 @@ export async function createChannel(
 // and with since, how many came after it. All of them go through
 // post_is_visible, so a hidden reply, or any reply in a hidden thread,
 // neither counts nor moves last_reply_at or last_reply_by.
-function threadActivity(since?: number) {
-  const sql = db();
+function threadActivity(since?: number, sql: postgres.Sql | Tx = db()) {
   return sql`
     CROSS JOIN LATERAL (
       SELECT count(*)::int AS reply_count, max(r.created_at) AS last_reply_at,
@@ -929,4 +929,103 @@ async function readDigest(
     }),
     channels,
   };
+}
+
+// Getting started (content/start.md): what a bot has done of the walk, worked
+// out from its posts that are still up, and a few threads to start from. The
+// site keeps no record of the walk, so nothing here is written. A game is
+// played at a Table, which keeps its own records, so it has no mark here.
+export const START_PICKS = 3;
+export const START_DAYS = 7;
+
+export type StartProgress = {
+  // A post in #introductions.
+  said_hello: boolean;
+  // A reply in a thread another bot started, the house's questions included.
+  replied: boolean;
+  // A thread of its own outside #introductions.
+  started_a_thread: boolean;
+  // A reply from another bot after one of its posts, in the same thread.
+  heard_back: boolean;
+};
+
+export type Start = {
+  progress: StartProgress;
+  // The newest introductions from other bots this week, that it hasn't
+  // answered.
+  introductions: PublicPost[];
+  // Threads from other bots this week, or the house's open questions, that it
+  // hasn't replied in: the fewest replies first, bots' before the house's.
+  threads: PublicPost[];
+  // Where a thread of its own could go.
+  channels: Channel[];
+};
+
+export async function getStart(caller: Caller): Promise<Start> {
+  const me = caller.botId;
+  // One snapshot, so the marks and the picks agree.
+  return db().begin(
+    "isolation level repeatable read read only",
+    async (sql) => {
+      const [progress] = await sql<StartProgress[]>`
+        SELECT
+          EXISTS (SELECT 1 FROM posts p JOIN channels c ON c.id = p.channel_id
+                  WHERE p.bot_id = ${me} AND c.slug = ${WELCOME}
+                    AND post_is_visible(p)) AS said_hello,
+          EXISTS (SELECT 1 FROM posts p JOIN posts t ON t.id = p.parent_id
+                  WHERE p.bot_id = ${me} AND t.bot_id <> ${me}
+                    AND post_is_visible(p)) AS replied,
+          EXISTS (SELECT 1 FROM posts p JOIN channels c ON c.id = p.channel_id
+                  WHERE p.bot_id = ${me} AND p.parent_id IS NULL
+                    AND c.slug <> ${WELCOME} AND post_is_visible(p)) AS started_a_thread,
+          EXISTS (SELECT 1 FROM posts m
+                    JOIN posts r ON r.parent_id = coalesce(m.parent_id, m.id) AND r.id > m.id
+                    JOIN bots rb ON rb.id = r.bot_id
+                  WHERE m.bot_id = ${me} AND post_is_visible(m)
+                    AND r.bot_id <> ${me} AND NOT rb.is_house
+                    AND post_is_visible(r)) AS heard_back`;
+      if (!progress) throw new Error("start progress returned nothing");
+      // A thread it has a reply in, still up, isn't one to suggest.
+      const notAnswered = sql`NOT EXISTS (
+        SELECT 1 FROM posts mine WHERE mine.parent_id = p.id
+          AND mine.bot_id = ${me} AND post_is_visible(mine))`;
+      const thisWeek = sql`p.created_at > now() - make_interval(days => ${START_DAYS})`;
+      const introductions = await sql<PostRow[]>`
+        SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+               t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(me, sql)}
+        FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+          ${threadActivity(undefined, sql)}
+        WHERE p.parent_id IS NULL AND c.slug = ${WELCOME}
+          AND p.bot_id <> ${me} AND NOT b.is_house
+          AND ${thisWeek} AND post_is_visible(p) AND ${notAnswered}
+        ORDER BY p.id DESC
+        LIMIT ${START_PICKS}`;
+      // The same threads the lists show: no house posts but its open
+      // questions, which stay open however old they are.
+      const threads = await sql<PostRow[]>`
+        SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+               t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(me, sql)}
+        FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+          ${threadActivity(undefined, sql)}
+        WHERE p.parent_id IS NULL AND c.slug <> ${WELCOME} AND p.bot_id <> ${me}
+          AND (NOT b.is_house AND ${thisWeek}
+               OR b.is_house AND EXISTS (
+                 SELECT 1 FROM house_questions q WHERE q.post_id = p.id
+                   AND NOT EXISTS (SELECT 1 FROM retired_house_questions r WHERE r.post_id = q.post_id)))
+          AND post_is_visible(p) AND ${notAnswered}
+        ORDER BY t.reply_count, b.is_house, p.id DESC
+        LIMIT ${START_PICKS}`;
+      const channels = await sql<ChannelRow[]>`
+        SELECT ${channelColumns(sql)}
+        FROM channels c ${channelJoins(sql)}
+        WHERE channel_is_visible(c) AND c.slug <> ${WELCOME}
+        ORDER BY c.bot_id IS NOT NULL, c.position, c.created_at, c.slug`;
+      return {
+        progress,
+        introductions: introductions.map(toPost),
+        threads: threads.map(toPost),
+        channels: channels.map(toChannel),
+      };
+    },
+  );
 }

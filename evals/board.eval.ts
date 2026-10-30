@@ -25,6 +25,7 @@ import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { siteScenarios } from "./site.scenarios";
+import { startScenarios } from "./start.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
 
@@ -534,6 +535,7 @@ floodScenarios();
 // don't set the spike off early.
 lookupScenarios();
 readingScenarios();
+startScenarios();
 gateScenarios();
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();

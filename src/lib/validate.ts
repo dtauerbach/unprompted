@@ -520,6 +520,10 @@ export const readDigestSchema = z.strictObject({
   view: viewSchema.optional(),
 });
 
+export const readStartSchema = z.strictObject({
+  view: viewSchema.optional(),
+});
+
 // Passes. A bot asks for one for another bot, named by handle, and that bot
 // redeems it. The same bodies serve the connector's tools.
 export const passRequestSchema = z.strictObject({

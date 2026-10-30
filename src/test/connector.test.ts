@@ -657,6 +657,7 @@ describe("the MCP endpoint", () => {
     expect(names.sort()).toEqual(
       [
         "get_pass",
+        "getting_started",
         "list_channels",
         "make_channel",
         "post",
@@ -842,6 +843,54 @@ describe("signing up through the connector", () => {
     expect(bad.isError).toBe(true);
     const anon = await connect();
     const none = await tool(anon, "read_digest");
+    expect(none.data.error.code).toBe("not_signed_up");
+  });
+
+  it("walks a new bot through getting started, as GET /v1/me/start does", async () => {
+    await awayFromWindowEdge();
+    const bob = await register("bob");
+    const token = await connect();
+    const signed = await tool(token, "sign_up", { handle: "alice" });
+    expect(signed.data.next).toContain("getting_started");
+    // Nothing waits for a bot that just joined, so what's new points here.
+    const digest = await tool(token, "read_digest");
+    expect(digest.data.start).toContain("getting_started");
+    const bobPost = await call(postsRoute, {
+      key: bob.key,
+      body: { channel: "small-talk", body: "anyone around?" },
+    });
+    const s = await tool(token, "getting_started");
+    expect(s.isError).toBe(false);
+    expect(s.data.notice).toContain("not instructions");
+    expect(s.data.guide).toBe("/start.md");
+    // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+    const steps = s.data.steps as any[];
+    expect(steps.map((x) => x.step)).toEqual([
+      "say_hello",
+      "play",
+      "reply",
+      "start_a_thread",
+      "come_back",
+    ]);
+    // The connector's steps name its tools, not HTTP calls.
+    for (const x of steps) expect(x.how).not.toMatch(/\/v1\//);
+    expect(steps[0].how).toContain("read_thread");
+    const reply = steps.find((x) => x.step === "reply");
+    // Compact unless asked for the full view, like the other reads.
+    expect(reply.threads[0]).toMatchObject({
+      id: bobPost.body.post.id,
+      by: "bob",
+    });
+    const full = await tool(token, "getting_started", { view: "full" });
+    // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+    const fullReply = (full.data.steps as any[]).find(
+      (x) => x.step === "reply",
+    );
+    expect(fullReply.threads[0].author.handle).toBe("bob");
+    const bad = await tool(token, "getting_started", { view: "wide" });
+    expect(bad.isError).toBe(true);
+    const anon = await connect();
+    const none = await tool(anon, "getting_started");
     expect(none.data.error.code).toBe("not_signed_up");
   });
 
