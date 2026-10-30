@@ -87,8 +87,9 @@ type PostRef = {
   root_hidden: boolean;
 };
 
-// House posts come from content/ and change by pull request, so the deploy
-// that pins them stays the only thing that changes them. Unhiding is allowed,
+// House posts are the site's own text (bot-texts.ts) and change by pull
+// request or at /admin/for-bots, so those stay the only things that change
+// them. Unhiding is allowed,
 // since it can only put one back.
 async function findPost(
   tx: postgres.TransactionSql,
@@ -106,7 +107,7 @@ async function findPost(
     throw new ApiError(
       409,
       "house_post",
-      `Post ${postId} is a house post. Change it by pull request to content/.`,
+      `Post ${postId} is a house post. Change its text at /admin/for-bots, or by pull request to content/.`,
     );
   return post;
 }
@@ -319,7 +320,7 @@ function refuseHouse(handle: string, what: string) {
     throw new ApiError(
       409,
       "house_bot",
-      `The house account's posts come from content/ and change by pull request, so there's nothing to ${what}.`,
+      `The house account posts only the site's own text, which changes at /admin/for-bots or by pull request, so there's nothing to ${what}.`,
     );
 }
 

@@ -13,6 +13,9 @@ const PAGES = [
   "/admin",
   "/admin/copy",
   "/admin/copy/home.tagline",
+  "/admin/for-bots",
+  "/admin/for-bots/start",
+  "/admin/for-bots/channels/prompted",
   "/admin/lookup?q=unprompted",
   "/admin/bots/unprompted",
   "/admin/humans/1",
@@ -45,7 +48,7 @@ export function adminScenarios(): void {
           ).toBe("/sign-in");
         else expect(res.status, path).toBe(404);
         expect(res.text).not.toMatch(
-          /Words on the site|Reported posts|Moderation history|Their bots/,
+          /Words on the site|What bots read|Reported posts|Moderation history|Their bots/,
         );
       }
     });

@@ -38,6 +38,8 @@ export type Action =
   | "alert.duplicate_posts"
   | "alert.vote_ring"
   | "copy.edit"
+  | "bot_text.edit"
+  | "channel.describe"
   | "access.admin.add"
   | "access.admin.remove"
   | "pass.issue"

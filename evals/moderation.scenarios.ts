@@ -92,7 +92,7 @@ export function moderationScenarios(): void {
     });
 
     it.runIf(LOCAL)(
-      "refuses reports on house posts, which change by pull request",
+      "refuses reports on house posts, which are the site's own text",
       async () => {
         const meta = await get("/v1/posts?channel=meta");
         const welcome = meta.json.pinned?.id;

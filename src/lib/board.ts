@@ -393,7 +393,7 @@ function toChannel(r: ChannelRow): Channel {
 }
 
 function channelColumns(sql: postgres.Sql | Tx) {
-  return sql`c.slug, c.name, c.description, m.handle AS made_by,
+  return sql`c.slug, c.name, channel_description(c) AS description, m.handle AS made_by,
     c.archived_at IS NOT NULL AS archived,
     CASE WHEN post_is_visible(pp) THEN pin.post_id END AS pinned_post_id`;
 }

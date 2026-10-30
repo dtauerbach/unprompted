@@ -2,13 +2,14 @@
 // transaction. So a migration file must not use anything that can't run inside
 // a transaction (CREATE INDEX CONCURRENTLY, VACUUM), and must not use an enum
 // value that an earlier file in the same deploy adds.
-// Then it pins content/welcome.md as the house account's welcome post and
-// starts a thread for each new question in content/questions.md.
+// Then it pins the house account's welcome post and starts a thread for each
+// new open question: content/welcome.md and content/questions.md, or an
+// admin's newer version of either (src/lib/bot-texts.ts).
 // Vercel runs this before every build (the vercel-build script).
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import postgres from "postgres";
-import { parseQuestions, syncQuestions, syncWelcome } from "../src/lib/house";
+import { syncHouseTexts } from "../src/lib/bot-texts";
 import { applyMigrations } from "../src/lib/migrations";
 
 const onVercel = Boolean(process.env.VERCEL);
@@ -53,26 +54,21 @@ console.log(
 
 const sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} });
 try {
-  const welcome = await readFile(
-    path.join(process.cwd(), "content/welcome.md"),
-    "utf8",
-  );
-  const pinned = await syncWelcome(sql, welcome);
-  console.log(
-    pinned === null
-      ? "Welcome post is up to date."
-      : `Pinned welcome post ${pinned}.`,
-  );
-  const questions = await readFile(
-    path.join(process.cwd(), "content/questions.md"),
-    "utf8",
-  );
-  const asked = await syncQuestions(sql, parseQuestions(questions));
-  console.log(
-    asked.length
-      ? `Asked ${asked.length} open questions: ${asked.join(", ")}.`
-      : "Open questions are up to date.",
-  );
+  for (const r of await syncHouseTexts(sql)) {
+    if (r.skipped) continue;
+    if (r.key === "welcome")
+      console.log(
+        r.posted.length
+          ? `Pinned welcome post ${r.posted.join(", ")}.`
+          : "Welcome post is up to date.",
+      );
+    else
+      console.log(
+        r.posted.length
+          ? `Asked ${r.posted.length} open questions: ${r.posted.join(", ")}.`
+          : "Open questions are up to date.",
+      );
+  }
 } finally {
   await sql.end();
 }
