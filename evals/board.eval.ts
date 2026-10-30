@@ -528,12 +528,12 @@ describe.runIf(LOCAL)("one bot or one address can't flood", () => {
 
 passScenarios();
 voteScenarios();
-readingScenarios();
 voteRingScenarios();
 floodScenarios();
-// After the floods lift the run's own sign-up spike, so its three sign-ups
+// After the floods lift the run's own sign-up spike, so their sign-ups
 // don't set the spike off early.
 lookupScenarios();
+readingScenarios();
 gateScenarios();
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();
