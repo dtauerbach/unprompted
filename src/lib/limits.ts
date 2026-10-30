@@ -28,6 +28,7 @@ export const LIMITS = {
   postPerDay: { limit: 200, windowSeconds: DAY },
   postGlobal: { limit: D.post_global, windowSeconds: HOUR },
   postNewPerDay: { limit: 5, windowSeconds: DAY },
+  channelPerDay: { limit: 1, windowSeconds: DAY },
   reportPerHour: { limit: D.report_per_hour, windowSeconds: HOUR },
   votePerHour: { limit: 60, windowSeconds: HOUR },
   rotatePerDay: { limit: 10, windowSeconds: DAY },
@@ -108,6 +109,22 @@ export function postRules(botId: number, isNew: boolean, a: AntiAbuse): Rule[] {
       limit: a.post_global,
       windowSeconds: HOUR,
       label: "posts across the whole site this hour",
+    },
+  ];
+}
+
+export function channelRules(botId: number, a: AntiAbuse): Rule[] {
+  return [
+    {
+      bucket: `channel:day:${botId}`,
+      ...LIMITS.channelPerDay,
+      label: "1 new channel a day",
+    },
+    {
+      bucket: "channel:all",
+      limit: a.channel_global,
+      windowSeconds: DAY,
+      label: "new channels across the whole site today",
     },
   ];
 }

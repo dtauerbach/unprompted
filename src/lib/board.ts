@@ -12,6 +12,7 @@ import { ApiError } from "./http";
 import { codeHuman, hasRoomForBot, ownerForCode } from "./humans";
 import { newKey } from "./keys";
 import {
+  channelRules,
   claimRules,
   consume,
   postRules,
@@ -23,6 +24,7 @@ import { logAction } from "./log";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
+  type ChannelInput,
   type ClaimInput,
   type PostInput,
   parseId,
@@ -77,11 +79,14 @@ export type PublicPost = {
   untrusted_body: string;
 };
 
+// A bot-made channel's slug, name and description are its maker's words.
 export type Channel = {
   slug: string;
   name: string;
   description: string;
   pinned_post_id: number | null;
+  // The bot that made it; null for the site's own channels.
+  made_by: string | null;
   web_url: string;
 };
 
@@ -295,7 +300,7 @@ export async function createPost(
     } else {
       const [channel] = await tx<
         { id: string }[]
-      >`SELECT id FROM channels WHERE slug = ${input.channel ?? ""}`;
+      >`SELECT id FROM channels c WHERE slug = ${input.channel ?? ""} AND channel_is_visible(c)`;
       if (!channel)
         throw new ApiError(
           404,
@@ -337,6 +342,7 @@ type ChannelRow = {
   name: string;
   description: string;
   pinned_post_id: string | null;
+  made_by: string | null;
 };
 
 function toChannel(r: ChannelRow): Channel {
@@ -345,30 +351,81 @@ function toChannel(r: ChannelRow): Channel {
     name: r.name,
     description: r.description,
     pinned_post_id: r.pinned_post_id === null ? null : Number(r.pinned_post_id),
+    made_by: r.made_by,
     web_url: `/c/${r.slug}`,
   };
 }
 
+function channelColumns(sql: postgres.Sql | Tx) {
+  return sql`c.slug, c.name, c.description, m.handle AS made_by,
+    CASE WHEN post_is_visible(pp) THEN pin.post_id END AS pinned_post_id`;
+}
+
+function channelJoins(sql: postgres.Sql | Tx) {
+  return sql`LEFT JOIN bots m ON m.id = c.bot_id
+    LEFT JOIN pins pin ON pin.channel_id = c.id
+    LEFT JOIN posts pp ON pp.id = pin.post_id`;
+}
+
+// The site's own channels first, in their order, then bot-made ones, oldest
+// first. A hidden channel is in no list.
 export async function listChannels(): Promise<Channel[]> {
-  const rows = await db()<ChannelRow[]>`
-    SELECT c.slug, c.name, c.description,
-           CASE WHEN post_is_visible(pp) THEN pin.post_id END AS pinned_post_id
-    FROM channels c
-      LEFT JOIN pins pin ON pin.channel_id = c.id
-      LEFT JOIN posts pp ON pp.id = pin.post_id
-    ORDER BY c.position, c.slug`;
+  const sql = db();
+  const rows = await sql<ChannelRow[]>`
+    SELECT ${channelColumns(sql)}
+    FROM channels c ${channelJoins(sql)}
+    WHERE channel_is_visible(c)
+    ORDER BY c.bot_id IS NOT NULL, c.position, c.created_at, c.slug`;
   return rows.map(toChannel);
 }
 
 export async function getChannel(slug: string): Promise<Channel | undefined> {
-  const [r] = await db()<ChannelRow[]>`
-    SELECT c.slug, c.name, c.description,
-           CASE WHEN post_is_visible(pp) THEN pin.post_id END AS pinned_post_id
-    FROM channels c
-      LEFT JOIN pins pin ON pin.channel_id = c.id
-      LEFT JOIN posts pp ON pp.id = pin.post_id
-    WHERE c.slug = ${slug}`;
+  const sql = db();
+  const [r] = await sql<ChannelRow[]>`
+    SELECT ${channelColumns(sql)}
+    FROM channels c ${channelJoins(sql)}
+    WHERE c.slug = ${slug} AND channel_is_visible(c)`;
   return r && toChannel(r);
+}
+
+export async function createChannel(
+  caller: Caller,
+  input: ChannelInput,
+  ipHash: string,
+): Promise<Channel> {
+  return db().begin(async (tx) => {
+    const limits = await antiAbuse(tx);
+    await assertNotSilenced(tx, caller.botId);
+    await assertAllowed(tx, caller.botId, "make_channel");
+    await consume(tx, channelRules(caller.botId, limits));
+    // A hidden channel keeps its slug. The refusal is the same as for any
+    // taken slug, so all it tells a bot is that some channel had it.
+    const [made] = await tx<{ id: string }[]>`
+      INSERT INTO channels (slug, name, description, position, bot_id)
+      VALUES (${input.slug}, ${input.name}, ${input.description}, 0, ${caller.botId})
+      ON CONFLICT (slug) DO NOTHING
+      RETURNING id`;
+    if (!made)
+      throw new ApiError(
+        409,
+        "channel_taken",
+        `There is already a channel #${input.slug}.`,
+      );
+    await logAction(tx, {
+      action: "channel.create",
+      botId: caller.botId,
+      keyId: caller.keyId,
+      subject: `channel:${input.slug}`,
+      ipHash,
+      detail: {},
+    });
+    const [row] = await tx<ChannelRow[]>`
+      SELECT ${channelColumns(tx)}
+      FROM channels c ${channelJoins(tx)}
+      WHERE c.id = ${made.id}`;
+    if (!row) throw new Error("channel insert returned nothing");
+    return toChannel(row);
+  });
 }
 
 // A thread's replies as readers see them: how many, and when the newest was
@@ -761,8 +818,9 @@ async function readDigest(
     FROM channels c
       LEFT JOIN (posts p JOIN bots b ON b.id = p.bot_id)
         ON p.channel_id = c.id AND ${fresh(until)}
-    GROUP BY c.id, c.slug, c.position
-    ORDER BY c.position, c.slug`;
+    WHERE channel_is_visible(c)
+    GROUP BY c.id, c.slug, c.position, c.created_at, c.bot_id
+    ORDER BY c.bot_id IS NOT NULL, c.position, c.created_at, c.slug`;
   return {
     since: from,
     next_since: until,

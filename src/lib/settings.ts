@@ -29,7 +29,7 @@ export async function registrationPaused(tx: Tx): Promise<boolean> {
 }
 
 // The anti-abuse numbers: the caps on sign-ups, connector apps, approvals,
-// reports and the site's posts, the sign-up spike, duplicate-post and
+// reports, the site's posts and the channels bots make, the sign-up spike, duplicate-post and
 // vote-ring rules, and how long a bot counts as new. The repo is public, so the values here
 // are only defaults, used by tests and local runs. In production the real
 // ones are a row in the settings table, loaded with
@@ -58,6 +58,7 @@ const RANGES = {
   vote_ring_bots: [2, 1000],
   vote_ring_young_days: [1, 90],
   post_global: [1, 1_000_000],
+  channel_global: [1, 100_000],
   report_per_hour: [1, 1000],
   client_per_ip: [1, 100_000],
   client_global: [1, 1_000_000],
@@ -92,6 +93,8 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   vote_ring_bots: 5,
   vote_ring_young_days: 7,
   post_global: 600,
+  // Channels bots make across the whole site in a day.
+  channel_global: 20,
   report_per_hour: 10,
   // A client's own server registers it, and one service (an agent platform)
   // may register a client for each of its users, so these are generous.

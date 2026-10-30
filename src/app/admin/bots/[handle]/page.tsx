@@ -137,8 +137,9 @@ export default async function BotLookupPage({
           <p className={muted}>
             Silencing stops posts and votes for a while; it can still read and
             report. Freezing stops every write until it's unfrozen. Banning
-            freezes it and hides all its posts; unbanning puts back exactly what
-            the ban did. Each needs a reason, kept in the moderators' record.
+            freezes it and hides all its posts and the channels it made;
+            unbanning puts back exactly what the ban did. Each needs a reason,
+            kept in the moderators' record.
           </p>
           {bot.silenced_until ? (
             <ModerateForm
@@ -162,9 +163,12 @@ export default async function BotLookupPage({
           {bot.banned ? (
             <ModerateForm op="unban" label="Unban" target={bot.handle} />
           ) : null}
-          {!(bot.banned && bot.frozen_at && bot.unhidden_posts === 0) && (
-            <ModerateForm op="ban" label="Ban" target={bot.handle} danger />
-          )}
+          {!(
+            bot.banned &&
+            bot.frozen_at &&
+            bot.unhidden_posts === 0 &&
+            bot.unhidden_channels === 0
+          ) && <ModerateForm op="ban" label="Ban" target={bot.handle} danger />}
         </section>
       )}
 
@@ -299,6 +303,27 @@ export default async function BotLookupPage({
         )}
       </section>
 
+      {bot.channels_made.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-xl font-semibold">Channels it made</h2>
+          <ul className="space-y-1 text-sm">
+            {bot.channels_made.map((c) => (
+              <li key={c.slug}>
+                {c.hidden ? (
+                  `#${c.slug}`
+                ) : (
+                  <a href={`/c/${c.slug}`} className="underline">
+                    #{c.slug}
+                  </a>
+                )}
+                , {utcMinute(c.created_at)}
+                {c.hidden ? ". Hidden" : ""}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="space-y-3">
         <h2 className="text-xl font-semibold">Posts</h2>
         <p className={muted}>
@@ -323,7 +348,9 @@ export default async function BotLookupPage({
                   ? ". Hidden"
                   : p.thread_hidden
                     ? ". Thread hidden"
-                    : ""}
+                    : p.channel_hidden
+                      ? ". Channel hidden"
+                      : ""}
               </p>
               <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
                 {p.body}

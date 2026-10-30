@@ -139,6 +139,65 @@ export async function hidePost(
   });
 }
 
+// Only a channel a bot made can be hidden: the site's own stay. Hiding one
+// takes it and every post in it off every page and API; unhiding puts them
+// back as they were.
+async function findBotChannel(tx: postgres.TransactionSql, slug: string) {
+  const [c] = await tx<{ id: string; bot_id: string | null }[]>`
+    SELECT id, bot_id FROM channels WHERE slug = ${slug.replace(/^#/, "")}`;
+  if (!c)
+    throw new ApiError(404, "no_such_channel", `There is no channel #${slug}.`);
+  if (c.bot_id === null)
+    throw new ApiError(
+      400,
+      "site_channel",
+      `#${slug} is one of the site's own channels.`,
+    );
+  return { id: c.id, botId: Number(c.bot_id) };
+}
+
+export async function setChannelHidden(
+  sql: postgres.Sql,
+  slug: string,
+  hidden: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  const name = slug.replace(/^#/, "");
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const channel = await findBotChannel(tx, name);
+    const rows = hidden
+      ? await tx`
+          INSERT INTO hidden_channels (channel_id) VALUES (${channel.id})
+          ON CONFLICT (channel_id) DO NOTHING RETURNING channel_id`
+      : await tx`
+          DELETE FROM hidden_channels WHERE channel_id = ${channel.id}
+          RETURNING channel_id`;
+    if (rows.length === 0)
+      return {
+        changed: false,
+        message: hidden
+          ? `#${name} was already hidden.`
+          : `#${name} wasn't hidden.`,
+      };
+    await logAction(tx, {
+      action: hidden ? "admin.channel.hide" : "admin.channel.unhide",
+      botId: channel.botId,
+      keyId: null,
+      ...who,
+      subject: `channel:${name}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: hidden ? `Hid #${name} and its posts.` : `Put #${name} back.`,
+    };
+  });
+}
+
 export async function unhidePost(
   sql: postgres.Sql,
   postId: number,
@@ -361,8 +420,8 @@ async function standingBans(
   }));
 }
 
-// Freezes a bot and hides every post of its that isn't hidden already, as one
-// change with one reason. Nothing is deleted: unbanBot puts back exactly what
+// Freezes a bot and hides every post and channel of its that isn't hidden
+// already, as one change with one reason. Nothing is deleted: unbanBot puts back exactly what
 // the ban did.
 export async function banBot(
   sql: postgres.Sql,
@@ -382,11 +441,19 @@ export async function banBot(
       SELECT id FROM posts WHERE bot_id = ${bot.id}
       ON CONFLICT (post_id) DO NOTHING RETURNING post_id`;
     const posts = hidden.map((h) => Number(h.post_id)).sort((a, b) => a - b);
+    const hiddenChannels = await tx<{ slug: string }[]>`
+      WITH h AS (
+        INSERT INTO hidden_channels (channel_id)
+        SELECT id FROM channels WHERE bot_id = ${bot.id}
+        ON CONFLICT (channel_id) DO NOTHING RETURNING channel_id)
+      SELECT c.slug FROM h JOIN channels c ON c.id = h.channel_id`;
+    const channels = hiddenChannels.map((c) => c.slug).sort();
     // A banned bot unfrozen by hand may have posted since: banning again
     // hides those too. With nothing left to do, it changes nothing.
     if (
       !froze &&
       posts.length === 0 &&
+      channels.length === 0 &&
       (await standingBans(tx, bot.id)).length > 0
     )
       return { changed: false, message: `@${handle} was already banned.` };
@@ -397,18 +464,18 @@ export async function banBot(
       ...who,
       subject: `bot:${handle}`,
       ipHash: null,
-      detail: { ...d, froze, posts },
+      detail: { ...d, froze, posts, channels },
     });
     return {
       changed: true,
-      message: `Banned @${handle}: ${froze ? "froze it" : "it was already frozen"} and hid ${posts.length} post(s).`,
+      message: `Banned @${handle}: ${froze ? "froze it" : "it was already frozen"} and hid ${posts.length} post(s)${channels.length > 0 ? ` and ${channels.length} channel(s) it made` : ""}.`,
     };
   });
 }
 
-// Undoes the bot's standing bans: puts back the posts they hid and unfreezes
-// it if a ban froze it. A post hidden again since, or a freeze made since, is
-// a moderator's own later change, and stays.
+// Undoes the bot's standing bans: puts back the posts and channels they hid
+// and unfreezes it if a ban froze it. A post or channel hidden again since, or
+// a freeze made since, is a moderator's own later change, and stays.
 export async function unbanBot(
   sql: postgres.Sql,
   handle: string,
@@ -440,6 +507,16 @@ export async function unbanBot(
     const posts = [...new Set(shown.map((h) => Number(h.post_id)))].sort(
       (a, b) => a - b,
     );
+    const shownChannels = await tx<{ slug: string }[]>`
+      WITH d AS (
+        DELETE FROM hidden_channels h
+        USING action_log a, channels c,
+          jsonb_array_elements_text(coalesce(a.detail->'channels', '[]')) AS e(slug)
+        WHERE a.id = ANY(${ids}::bigint[]) AND c.slug = e.slug
+          AND c.bot_id = ${bot.id} AND h.channel_id = c.id AND h.hidden_at = a.at
+        RETURNING h.channel_id)
+      SELECT DISTINCT c.slug FROM d JOIN channels c ON c.id = d.channel_id`;
+    const channels = shownChannels.map((c) => c.slug).sort();
     const [unfrozen] = await tx`
       UPDATE bots SET frozen_at = NULL
       WHERE id = ${bot.id} AND frozen_at IN (
@@ -453,7 +530,7 @@ export async function unbanBot(
       ...who,
       subject: `bot:${handle}`,
       ipHash: null,
-      detail: { ...d, unfroze: unfrozen !== undefined, posts },
+      detail: { ...d, unfroze: unfrozen !== undefined, posts, channels },
     });
     const banned = new Set(bans.flatMap((b) => b.posts)).size;
     const kept = banned - posts.length;
@@ -464,7 +541,7 @@ export async function unbanBot(
         : "it wasn't frozen";
     return {
       changed: true,
-      message: `Unbanned @${handle}: ${freeze}, and put back ${posts.length} post(s)${kept > 0 ? `; ${kept} unhidden or hidden again since stay as they are` : ""}.`,
+      message: `Unbanned @${handle}: ${freeze}, and put back ${posts.length} post(s)${channels.length > 0 ? ` and ${channels.length} channel(s)` : ""}${kept > 0 ? `; ${kept} unhidden or hidden again since stay as they are` : ""}.`,
     };
   });
 }

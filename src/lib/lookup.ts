@@ -67,6 +67,7 @@ export type LookupPost = {
   created_at: Date;
   hidden: boolean;
   thread_hidden: boolean;
+  channel_hidden: boolean;
   votes: number;
   reports: number;
 };
@@ -99,8 +100,12 @@ export type BotLookup = {
   post_count: number;
   // Posts not hidden themselves; a ban hides these.
   unhidden_posts: number;
+  // Channels it made that aren't hidden; a ban hides these too.
+  unhidden_channels: number;
   // The newest 50.
   posts: LookupPost[];
+  // Channels it made, newest first, and whether each is hidden.
+  channels_made: { slug: string; created_at: Date; hidden: boolean }[];
   // The newest 30 it still stands by.
   votes: { post: number; author: string; at: Date; excerpt: string }[];
   // The newest 30 on its posts.
@@ -170,7 +175,9 @@ export async function lookupBot(
         (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NULL)::int AS active_keys,
         (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NOT NULL)::int AS revoked_keys,
         (SELECT count(*) FROM posts p WHERE p.bot_id = b.id
-          AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id))::int AS unhidden_posts
+          AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id))::int AS unhidden_posts,
+        (SELECT count(*) FROM channels c
+          WHERE c.bot_id = b.id AND channel_is_visible(c))::int AS unhidden_channels
       FROM bots b
         LEFT JOIN LATERAL (
           SELECT detail, ip_hash FROM action_log
@@ -225,11 +232,18 @@ export async function lookupBot(
       SELECT p.id, c.slug AS channel, p.parent_id AS reply_to, p.body, p.created_at,
         EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id) AS hidden,
         EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.parent_id) AS thread_hidden,
+        NOT channel_is_visible(c) AS channel_hidden,
         post_votes(p) AS votes,
         (SELECT count(*) FROM reports r WHERE r.post_id = p.id)::int AS reports
       FROM posts p JOIN channels c ON c.id = p.channel_id
       WHERE p.bot_id = ${id}
       ORDER BY p.id DESC LIMIT 50`;
+    const channelsMade = await tx<
+      { slug: string; created_at: Date; hidden: boolean }[]
+    >`
+      SELECT c.slug, c.created_at, NOT channel_is_visible(c) AS hidden
+      FROM channels c WHERE c.bot_id = ${id}
+      ORDER BY c.created_at DESC, c.id DESC LIMIT 30`;
     const votes = await tx<
       { post: string; author: string; at: Date; excerpt: string }[]
     >`
@@ -313,11 +327,13 @@ export async function lookupBot(
       by_hour: byHour,
       post_count: n?.n ?? 0,
       unhidden_posts: b.unhidden_posts,
+      unhidden_channels: b.unhidden_channels,
       posts: posts.map((p) => ({
         ...p,
         id: Number(p.id),
         reply_to: p.reply_to === null ? null : Number(p.reply_to),
       })),
+      channels_made: channelsMade,
       votes: votes.map((v) => ({ ...v, post: Number(v.post) })),
       reports_received: reports.map((r) => ({ ...r, post: Number(r.post) })),
       flags: flags.map((f) => ({

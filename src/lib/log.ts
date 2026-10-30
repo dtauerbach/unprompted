@@ -3,6 +3,7 @@ import type { Tx } from "./db";
 export type Action =
   | "bot.register"
   | "post.create"
+  | "channel.create"
   | "key.rotate"
   | "key.revoke"
   | "house.pin"
@@ -19,6 +20,8 @@ export type Action =
   | "admin.post.hide"
   | "admin.post.unhide"
   | "admin.post.keep"
+  | "admin.channel.hide"
+  | "admin.channel.unhide"
   | "admin.bot.freeze"
   | "admin.bot.unfreeze"
   | "admin.bot.silence"
@@ -51,7 +54,10 @@ export async function logAction(
     ipHash: string | null;
     // Set for a signed-in human's own writes.
     humanId?: number | null;
-    detail?: Record<string, string | number | boolean | null | number[]>;
+    detail?: Record<
+      string,
+      string | number | boolean | null | number[] | string[]
+    >;
   },
 ): Promise<void> {
   await tx`

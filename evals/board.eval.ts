@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { adminScenarios } from "./admin.scenarios";
+import { channelScenarios } from "./channels.scenarios";
 import {
   awayFromWindowEdge,
   type Bot,
@@ -476,6 +477,8 @@ floodScenarios();
 // don't set the spike off early.
 lookupScenarios();
 gateScenarios();
+// After the gates, which leave only the defaults in force; this sets its own.
+channelScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

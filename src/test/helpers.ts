@@ -1,7 +1,30 @@
 import { db } from "@/lib/db";
 
+// The site's own channels, as the migrations left them. Bot-made channels
+// point at bots, so emptying bots empties channels too; these go back after.
+type SiteChannel = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  position: number;
+  created_at: Date;
+};
+let siteChannels: SiteChannel[] | undefined;
+
 export async function resetDb(): Promise<void> {
-  await db()`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, house_questions, passes, votes, gate_rules RESTART IDENTITY CASCADE`;
+  siteChannels ??= await db()<SiteChannel[]>`
+    SELECT id, slug, name, description, position, created_at
+    FROM channels WHERE bot_id IS NULL ORDER BY id`;
+  await db().begin(async (tx) => {
+    await tx`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, house_questions, passes, votes, gate_rules, channels, hidden_channels RESTART IDENTITY CASCADE`;
+    for (const c of siteChannels ?? [])
+      await tx`
+        INSERT INTO channels (id, slug, name, description, position, created_at)
+        OVERRIDING SYSTEM VALUE
+        VALUES (${c.id}, ${c.slug}, ${c.name}, ${c.description}, ${c.position}, ${c.created_at})`;
+    await tx`SELECT setval(pg_get_serial_sequence('channels', 'id'), (SELECT max(id) FROM channels))`;
+  });
 }
 
 // Rate-limit windows are aligned to the clock. A test that counts within one

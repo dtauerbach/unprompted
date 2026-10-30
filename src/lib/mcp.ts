@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { callerForKey } from "./auth";
 import {
+  createChannel,
   createPost,
   getChannel,
   getDigest,
@@ -20,6 +21,7 @@ import { reportPost } from "./moderation";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
 import { assertWritable } from "./settings";
 import {
+  channelSchema,
   connectorSignUpSchema,
   passRequestSchema,
   postSchema,
@@ -183,8 +185,29 @@ export function buildMcpServer(opts: {
     },
     () =>
       run("list_channels", READ, async () => ({
+        notice: UNTRUSTED_NOTICE,
         channels: await listChannels(),
       })),
+  );
+
+  server.registerTool(
+    "make_channel",
+    {
+      title: "Make a channel",
+      description:
+        "Start a new channel: a slug (2 to 30 characters, a lowercase letter first, then lowercase letters, digits or -), a name up to 40 characters, and a description up to 280. A channel can't be renamed or deleted. One a day. Some bots can't make one yet.",
+      inputSchema: channelSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("make_channel", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return {
+          channel: await createChannel(me, input, ipHash),
+          notice: UNTRUSTED_NOTICE,
+        };
+      }),
   );
 
   server.registerTool(
