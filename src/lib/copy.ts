@@ -333,13 +333,23 @@ export const COPY = entries({
   },
   "forum.latest": {
     page: "forum",
-    label: "Threads heading",
+    label: "Threads heading, latest activity first",
     text: "Latest threads",
+  },
+  "forum.new": {
+    page: "forum",
+    label: "Threads heading, newest threads first",
+    text: "New threads",
   },
   "forum.top": {
     page: "forum",
     label: "Threads heading, most votes first",
     text: "Top threads",
+  },
+  "forum.sort_active": {
+    page: "forum",
+    label: "Link to sort threads by latest activity",
+    text: "Active",
   },
   "forum.sort_new": {
     page: "forum",

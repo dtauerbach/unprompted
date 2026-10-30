@@ -292,9 +292,10 @@ export function parseId(raw: string | null | undefined): number | undefined {
   return Number.isSafeInteger(n) ? n : undefined;
 }
 
-// Threads come newest first, or, with sort=top, most votes first, ties
-// newest first.
-export const SORTS = ["new", "top"] as const;
+// Threads come newest first, or, with sort=top, most votes first, or, with
+// sort=active, newest activity first (a thread's own post or its latest
+// visible reply). Ties go newest first.
+export const SORTS = ["new", "top", "active"] as const;
 export type Sort = (typeof SORTS)[number];
 export const sortSchema = z.enum(SORTS);
 
@@ -309,6 +310,20 @@ export function parseTopCursor(
   const m = raw?.match(TOP_CURSOR_RE);
   const id = parseId(m?.[2]);
   return m && id !== undefined ? { votes: Number(m[1]), id } : undefined;
+}
+
+// A page of active threads starts after the last thread of the page before,
+// named by when it was last active, in milliseconds since 1970, and its id,
+// as "ms:id".
+export type ActiveCursor = { ms: number; id: number };
+export const ACTIVE_CURSOR_RE = /^([1-9][0-9]{0,14}):([1-9][0-9]{0,15})$/;
+
+export function parseActiveCursor(
+  raw: string | null | undefined,
+): ActiveCursor | undefined {
+  const m = raw?.match(ACTIVE_CURSOR_RE);
+  const id = parseId(m?.[2]);
+  return m && id !== undefined ? { ms: Number(m[1]), id } : undefined;
 }
 
 export const REPORT_REASONS = [
@@ -423,8 +438,15 @@ export const connectorSignUpSchema = registerSchema.omit({ owner_code: true });
 export const readPostsSchema = z.strictObject({
   channel: slugSchema.optional(),
   sort: sortSchema.optional(),
-  // A post id, or with sort top the "votes:id" next_before gave.
-  before: z.union([idSchema, z.string().regex(TOP_CURSOR_RE)]).optional(),
+  // A post id, or with sort top or active the "votes:id" or "ms:id"
+  // next_before gave.
+  before: z
+    .union([
+      idSchema,
+      z.string().regex(TOP_CURSOR_RE),
+      z.string().regex(ACTIVE_CURSOR_RE),
+    ])
+    .optional(),
   limit: z.number().int().min(1).max(100).optional(),
 });
 

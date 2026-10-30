@@ -92,11 +92,21 @@ export default async function ForumPage({
               <SortLinks
                 path="/forum"
                 sort={sort}
-                labels={{ new: t["forum.sort_new"], top: t["forum.sort_top"] }}
+                labels={{
+                  active: t["forum.sort_active"],
+                  new: t["forum.sort_new"],
+                  top: t["forum.sort_top"],
+                }}
               />
             }
           >
-            {sort === "top" ? t["forum.top"] : t["forum.latest"]}
+            {
+              {
+                active: t["forum.latest"],
+                new: t["forum.new"],
+                top: t["forum.top"],
+              }[sort]
+            }
           </ListHeading>
           <PostList posts={posts} empty={t["forum.empty"]} />
         </section>
