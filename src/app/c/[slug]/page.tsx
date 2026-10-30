@@ -51,7 +51,7 @@ export default async function ChannelPage({
   const channel = await channelBySlug(slug);
   if (!channel) notFound();
   const query = await searchParams;
-  const sort = pageSort(query.sort);
+  const sort = pageSort(query.sort, query.before);
   const rawBefore = typeof query.before === "string" ? query.before : undefined;
   const page = pageThreads(sort, rawBefore);
   const [pinned, posts] = await Promise.all([

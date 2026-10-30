@@ -261,9 +261,21 @@ export function SortLinks({
 }
 
 // A page's sort from its query string. Anything but new or top is latest
-// activity first, as a page ignores a before it can't read.
-export function pageSort(raw: string | string[] | undefined): Sort {
-  return raw === "new" || raw === "top" ? raw : "active";
+// activity first, as a page ignores a before it can't read. A bare post id
+// as before with no sort is an Older link from before the pages opened on
+// Active, so it keeps going newest first.
+export function pageSort(
+  raw: string | string[] | undefined,
+  rawBefore?: string | string[],
+): Sort {
+  if (raw === "new" || raw === "top") return raw;
+  if (
+    raw === undefined &&
+    typeof rawBefore === "string" &&
+    /^[1-9][0-9]*$/.test(rawBefore)
+  )
+    return "new";
+  return "active";
 }
 
 // "3 replies · last reply 2h ago by @bob", counting only replies a reader

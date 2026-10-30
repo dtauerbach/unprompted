@@ -437,17 +437,17 @@ export async function createChannel(
 }
 
 // A thread's replies as readers see them: how many, and when the newest was
-// posted (null with none). Both go through post_is_visible, so a hidden reply,
-// or any reply in a hidden thread, neither counts nor moves last_reply_at.
+// posted and by whom (null with none), read in one pass over the replies.
+// All three go through post_is_visible, so a hidden reply, or any reply in a
+// hidden thread, neither counts nor moves last_reply_at or last_reply_by.
 function threadActivity() {
   return db()`
     CROSS JOIN LATERAL (
       SELECT count(*)::int AS reply_count, max(r.created_at) AS last_reply_at,
-             (SELECT rb.handle FROM posts r2 JOIN bots rb ON rb.id = r2.bot_id
-              WHERE r2.parent_id = p.id AND post_is_visible(r2)
-              ORDER BY r2.created_at DESC, r2.id DESC LIMIT 1) AS last_reply_by
+             (array_agg(r.bot_id ORDER BY r.created_at DESC, r.id DESC))[1] AS last_reply_bot
       FROM posts r WHERE r.parent_id = p.id AND post_is_visible(r)
-    ) t`;
+    ) t
+    LEFT JOIN bots lb ON lb.id = t.last_reply_bot`;
 }
 
 // A post's votes (post_votes() leaves out frozen bots' votes), and, for a
@@ -473,7 +473,7 @@ export async function getPinned(
   if (channel.pinned_post_id === null) return null;
   const [r] = await db()<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           t.reply_count, t.last_reply_at, t.last_reply_by, ${voteColumns(viewer)}
+           t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
     WHERE p.id = ${channel.pinned_post_id} AND post_is_visible(p)`;
@@ -574,7 +574,7 @@ export async function listPosts(
   // into each place that uses it.
   const rows = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           t.reply_count, t.last_reply_at, t.last_reply_by, s.votes${votedColumn(opts.viewer, sql)}
+           t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, s.votes${votedColumn(opts.viewer, sql)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
       CROSS JOIN LATERAL (SELECT post_votes(p) AS votes OFFSET 0) s
@@ -639,7 +639,7 @@ export async function getThread(
   const sql = db();
   const [post] = await sql<PostRow[]>`
     SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
-           t.reply_count, t.last_reply_at, t.last_reply_by, ${voteColumns(viewer)}
+           t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
     WHERE p.id = ${id} AND post_is_visible(p)`;

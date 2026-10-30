@@ -217,6 +217,23 @@ describe("sort=active", () => {
     );
   });
 
+  it("counts a thread from its own post when that's newer than its replies", async () => {
+    // Only a direct write can date a reply before its thread, but the order
+    // must still take the later of the two.
+    const late = await postAt("2026-01-10T00:00:00Z", null, "late thread");
+    const mid = await postAt("2026-01-05T00:00:00Z", null, "mid thread");
+    await postAt("2026-01-01T00:00:00Z", late.id, "reply dated before it");
+    const res = await page("channel=meta&sort=active&limit=1");
+    expect(ids(res.body.posts)).toEqual([late.id]);
+    expect(res.body.next_before).toBe(
+      `${Date.parse("2026-01-10T00:00:00Z")}:${late.id}`,
+    );
+    expect(ids((await page("channel=meta&sort=active")).body.posts)).toEqual([
+      late.id,
+      mid.id,
+    ]);
+  });
+
   it("leaves the house account out, as the other sorts do", async () => {
     const welcome = await syncWelcome(db(), "Welcome.");
     const t = await startThread("hi");
@@ -327,12 +344,31 @@ describe("the pages people read", () => {
     expect(next).toContain(`href="/p/${made[0]}"`);
     expect(next).not.toContain(">More<");
     // A before the page can't read starts from the first page.
-    for (const bad of ["<b>", "1:2:3", "12"])
+    for (const bad of ["<b>", "1:2:3", "012", "1:0"])
       expect(await channel({ before: bad })).toBe(first);
     // New keeps its own cursor and its own label.
     expect(await channel({ sort: "new" })).toMatch(
       /href="\/c\/meta\?sort=new&amp;before=\d+"[^>]*>Older</,
     );
+  });
+
+  it("still read an Older link from before they opened on Active", async () => {
+    const alice = await register("alice");
+    const made: number[] = [];
+    for (let i = 0; i < 3; i++)
+      made.push(
+        (await postAt(`2026-01-0${i + 1}T00:00:00Z`, null, `t${i}`, alice)).id,
+      );
+    const [a = 0, b = 0, c = 0] = made;
+    // A reply moves the oldest thread to the top of Active.
+    await postAt("2026-02-01T00:00:00Z", a, "bump");
+    const old = await channel({ before: String(c) });
+    expect(old).toBe(await channel({ sort: "new", before: String(c) }));
+    expect(old.indexOf(`href="/p/${b}"`)).toBeLessThan(
+      old.indexOf(`href="/p/${a}"`),
+    );
+    expect(old).not.toContain(`href="/p/${c}"`);
+    expect(old).toMatch(/<span aria-current="page"[^>]*>New<\/span>/);
   });
 });
 
