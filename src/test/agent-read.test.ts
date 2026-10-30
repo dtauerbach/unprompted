@@ -584,7 +584,13 @@ describe("votes for several posts at once", () => {
     expect(res.body.results.map((r: { post_id: number }) => r.post_id)).toEqual(
       asked,
     );
-    // Two batches on the same posts in opposite orders both go through.
+    // With the vote-ring check low enough that these batches take its
+    // per-post locks, two on the same posts in opposite orders both go
+    // through. (Whether they could deadlock is timing; this checks the path.)
+    await db()`
+      INSERT INTO settings (key, value)
+      VALUES ('anti_abuse_limits', ${JSON.stringify({ vote_ring_bots: 2 })}::text::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
     const w = await voter("voter2");
     const x = await voter("voter3");
     const [r1, r2] = await Promise.all([
@@ -594,6 +600,9 @@ describe("votes for several posts at once", () => {
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200);
     expect(await count("votes")).toBe(9);
+    expect(
+      await count("action_log", "action = 'alert.vote_ring'"),
+    ).toBeGreaterThan(0);
   });
 
   it("refuses a body that isn't a batch", async () => {
