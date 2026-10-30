@@ -633,8 +633,8 @@ export async function showAntiAbuse(
 }
 
 // Loads the gate rules (src/lib/gates.ts) from a rules file's contents as a
-// new version, so the file is the whole truth: an action it leaves out has no
-// gate. Every version stays in gate_rules. The log names the actions the
+// new version. An action it leaves out keeps its default; an empty list opens
+// it. Every version stays in gate_rules. The log names the actions the
 // file gates, never their conditions, so the record can't leak them.
 export async function setGates(
   sql: postgres.Sql,

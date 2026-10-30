@@ -26,7 +26,8 @@
 //   npm run admin -- limits show
 // The gate rules (src/lib/gates.ts), which say which bots may do what from
 // their trust signals, are versions in the gate_rules table. Setting a rules
-// file saves a new version (an action it leaves out has no gate); history
+// file saves a new version (an action it leaves out keeps its default, and an
+// empty list opens it); history
 // prints the versions, and revert saves an older one again:
 //   npm run admin -- gates set <file.json> --reason "..."
 //   npm run admin -- gates show
@@ -283,7 +284,7 @@ try {
         console.log(
           version === null
             ? "No version saved: the defaults are in force."
-            : `Version ${version} is in force.`,
+            : `Version ${version} is in force. Actions it leaves out keep their defaults, shown here too.`,
         );
         console.log(JSON.stringify(rules, null, 2));
         break;

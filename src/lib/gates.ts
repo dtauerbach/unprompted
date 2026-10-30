@@ -179,7 +179,8 @@ const conditionSchema = z.union([
 export type Condition = z.infer<typeof conditionSchema>;
 
 // A rules file: for each action it names, every condition must hold. An
-// action it leaves out has no gate.
+// action it leaves out keeps its default (rulesInForce), and an empty list
+// opens it.
 export const rulesSchema = z.strictObject(
   Object.fromEntries(
     ACTION_NAMES.map((a) => [a, z.array(conditionSchema).max(20).optional()]),
