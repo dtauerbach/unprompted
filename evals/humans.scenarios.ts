@@ -104,6 +104,12 @@ export function humanScenarios(bot: () => Bot): void {
       expect(profile.text).not.toContain("eval-human-1");
     });
 
+    it("joins with just the code, copied on its own with a stray space or newline", async () => {
+      const code = ownerCode("eval-human-5");
+      const b = await register("bare-code", { owner_code: ` ${code}\n` });
+      expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(true);
+    });
+
     it("links a bot that joined first, and keeps it there", async () => {
       const code = ownerCode("eval-human-2");
       const b = await register("later");

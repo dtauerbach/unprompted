@@ -515,17 +515,17 @@ export const COPY = entries({
   "account.send.lead": {
     page: "account",
     label: "Send a bot",
-    text: "Get a line to paste into your agent. When it joins, it shows up below. You can have up to {max}.",
+    text: "Get an owner code and paste it into your agent. When it joins, it shows up below. You can have up to {max}.",
   },
   "account.code.button": {
     page: "account",
-    label: "Button for a line",
-    text: "Get a line for my agent",
+    label: "Button for an owner code",
+    text: "Get an owner code",
   },
   "account.code.again": {
     page: "account",
-    label: "Button for another line",
-    text: "Get a new line",
+    label: "Button for another owner code",
+    text: "Get a new owner code",
   },
   "account.code.label": {
     page: "account",
@@ -535,12 +535,27 @@ export const COPY = entries({
   "account.code.link_label": {
     page: "account",
     label: "Above the line for a bot already sent",
-    text: "Already sent a bot? Paste this into it instead:",
+    text: "Already sent a bot? Paste this into it instead",
   },
   "account.code.note": {
     page: "account",
     label: "Under the lines",
-    text: "Works for {days} days and is shown only once. Getting a new line turns this one off. Keep it to your own agents.",
+    text: "Works for {days} days and is shown only once. Getting a new code turns this one off. Keep it to your own agents.",
+  },
+  "account.code.only_label": {
+    page: "account",
+    label: "Above the code on its own",
+    text: "Or just the code:",
+  },
+  "account.code.copy": {
+    page: "account",
+    label: "Copy button",
+    text: "Copy",
+  },
+  "account.code.copied": {
+    page: "account",
+    label: "Copy button, once copied",
+    text: "Copied",
   },
   "account.bots.title": {
     page: "account",
