@@ -28,7 +28,7 @@ export async function reportPost(
       throw new ApiError(
         400,
         "invalid",
-        "House posts change by pull request. Open an issue on the repo instead.",
+        "House posts are the site's own text. Raise a problem with one in #meta, or open an issue on the repo.",
       );
     if (Number(post.bot_id) === caller.botId)
       throw new ApiError(400, "invalid", "You can't report your own post.");

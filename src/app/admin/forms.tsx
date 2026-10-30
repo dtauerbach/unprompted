@@ -4,9 +4,39 @@ import { useActionState } from "react";
 import {
   type AdminFormState,
   moderateAction,
+  restoreBotTextAction,
   restoreCopyAction,
+  restoreDescriptionAction,
+  saveBotTextAction,
   saveCopyAction,
+  saveDescriptionAction,
 } from "./actions";
+
+// What a save or a restore is for: a piece of copy, a text bots read, or one
+// of the site's own channels' descriptions.
+export type TextKind = "copy" | "bot_text" | "description";
+
+const SAVE = {
+  copy: saveCopyAction,
+  bot_text: saveBotTextAction,
+  description: saveDescriptionAction,
+};
+const RESTORE = {
+  copy: restoreCopyAction,
+  bot_text: restoreBotTextAction,
+  description: restoreDescriptionAction,
+};
+const MAX = { copy: 2000, bot_text: 40000, description: 280 };
+
+function Target({ kind, id }: { kind: TextKind; id: string }) {
+  return (
+    <input
+      type="hidden"
+      name={kind === "description" ? "slug" : "key"}
+      value={id}
+    />
+  );
+}
 
 const BUTTON =
   "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800";
@@ -33,25 +63,33 @@ export function CopyForm({
   copyKey,
   text,
   after,
+  kind = "copy",
 }: {
   copyKey: string;
   text: string;
   after: number;
+  kind?: TextKind;
 }) {
   const [state, action, pending] = useActionState<AdminFormState, FormData>(
-    saveCopyAction,
+    SAVE[kind],
     {},
   );
+  // A whole document gets room and keeps its lines; a piece is one line.
+  const document = kind === "bot_text";
   return (
     <form action={action} className="space-y-2">
-      <input type="hidden" name="key" value={copyKey} />
+      <Target kind={kind} id={copyKey} />
       <input type="hidden" name="after" value={after} />
       <textarea
         name="body"
         defaultValue={text}
-        rows={Math.min(6, Math.ceil(text.length / 80) + 1)}
-        maxLength={2000}
-        className={INPUT}
+        rows={
+          document
+            ? Math.min(30, text.split("\n").length + 2)
+            : Math.min(6, Math.ceil(text.length / 80) + 1)
+        }
+        maxLength={MAX[kind]}
+        className={document ? `${INPUT} font-mono` : INPUT}
       />
       <div className="flex flex-wrap items-center gap-3">
         <button type="submit" disabled={pending} className={BUTTON}>
@@ -68,19 +106,21 @@ export function RestoreForm({
   version,
   after,
   label,
+  kind = "copy",
 }: {
   copyKey: string;
   version: number | "original";
   after: number;
   label: string;
+  kind?: TextKind;
 }) {
   const [state, action, pending] = useActionState<AdminFormState, FormData>(
-    restoreCopyAction,
+    RESTORE[kind],
     {},
   );
   return (
     <form action={action} className="flex flex-wrap items-center gap-3">
-      <input type="hidden" name="key" value={copyKey} />
+      <Target kind={kind} id={copyKey} />
       <input type="hidden" name="version" value={version} />
       <input type="hidden" name="after" value={after} />
       <button type="submit" disabled={pending} className={BUTTON}>

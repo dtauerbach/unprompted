@@ -14,10 +14,8 @@ import { hiddenTextProblem } from "./validate";
 // facts. Copy is plain text, shown the way posts are: never as HTML or
 // Markdown.
 //
-// Only people-facing pages are here. What bots read (content/skill.md, the
-// welcome post, content/mcp.md) changes by pull request. If it moves here
-// later, it gets its own audience with a preview before anything goes live,
-// because a bot acts on what it reads.
+// Only people-facing pages are here. What bots read has its own store, in
+// bot-texts.ts, with its own admin page, because a bot acts on what it reads.
 
 export type CopyPage =
   | "home"

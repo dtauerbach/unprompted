@@ -4,6 +4,8 @@ import { POST as report } from "@/app/v1/posts/[id]/report/route";
 import { POST as post } from "@/app/v1/posts/route";
 import { banBot, hidePost, moderatorLog, setSilenced } from "@/lib/admin";
 import { addAdmin, adminFor, listAdmins, removeAdmin } from "@/lib/admins";
+import { BOT_TEXTS, builtInText, saveBotText } from "@/lib/bot-texts";
+import { saveDescription } from "@/lib/channel-descriptions";
 import { COPY, readCopy, saveCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
@@ -68,10 +70,21 @@ const ADA = "00000000-0000-4000-8000-000000000001";
 
 async function writes() {
   const [r] = await db()<
-    { log: number; copy: number; hidden: number; admins: number }[]
+    {
+      log: number;
+      copy: number;
+      bot_texts: number;
+      descriptions: number;
+      posts: number;
+      hidden: number;
+      admins: number;
+    }[]
   >`
     SELECT (SELECT count(*) FROM action_log)::int AS log,
            (SELECT count(*) FROM copy_versions)::int AS copy,
+           (SELECT count(*) FROM bot_text_versions)::int AS bot_texts,
+           (SELECT count(*) FROM channel_description_versions)::int AS descriptions,
+           (SELECT count(*) FROM posts)::int AS posts,
            (SELECT count(*) FROM hidden_posts)::int AS hidden,
            (SELECT count(*) FROM admins)::int AS admins`;
   return r;
@@ -192,6 +205,26 @@ describe("admin actions", () => {
           {},
           form({ key: "home.tagline", version: "original", after: "0" }),
         ),
+      saveBotText: () =>
+        a.saveBotTextAction(
+          {},
+          form({ key: "welcome", body: "Taken over.", after: "0" }),
+        ),
+      restoreBotText: () =>
+        a.restoreBotTextAction(
+          {},
+          form({ key: "questions", version: "original", after: "0" }),
+        ),
+      saveDescription: () =>
+        a.saveDescriptionAction(
+          {},
+          form({ slug: "prompted", body: "Taken over.", after: "0" }),
+        ),
+      restoreDescription: () =>
+        a.restoreDescriptionAction(
+          {},
+          form({ slug: "prompted", version: "original", after: "0" }),
+        ),
       hide: (id: number) =>
         a.moderateAction(
           {},
@@ -206,9 +239,19 @@ describe("admin actions", () => {
     const id = await aPost();
     const before = await writes();
     const c = await calls();
-    for (const run of [c.saveCopy, c.restoreCopy, () => c.hide(id), c.pause])
+    const runs = [
+      c.saveCopy,
+      c.restoreCopy,
+      c.saveBotText,
+      c.restoreBotText,
+      c.saveDescription,
+      c.restoreDescription,
+      () => c.hide(id),
+      c.pause,
+    ];
+    for (const run of runs)
       await expect(run()).rejects.toThrow("redirect /sign-in");
-    expect(nav.redirects).toHaveLength(4);
+    expect(nav.redirects).toHaveLength(runs.length);
     expect(await writes()).toEqual(before);
   });
 
@@ -222,10 +265,20 @@ describe("admin actions", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const before = await writes();
     const c = await calls();
-    for (const run of [c.saveCopy, c.restoreCopy, () => c.hide(id), c.pause])
+    const runs = [
+      c.saveCopy,
+      c.restoreCopy,
+      c.saveBotText,
+      c.restoreBotText,
+      c.saveDescription,
+      c.restoreDescription,
+      () => c.hide(id),
+      c.pause,
+    ];
+    for (const run of runs)
       expect(await run()).toEqual({ error: "Only admins can do that." });
     expect(await writes()).toEqual(before);
-    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenCalledTimes(runs.length);
     expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
       method: "ACTION",
       path: "saveCopy",
@@ -356,6 +409,121 @@ describe("admin actions", () => {
     ).toEqual({ error: "That version isn't there." });
   });
 
+  it("restore an older text bots read, or the original, as the newest version", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const start = await builtInText("start");
+    const first = start.replace(
+      "# Getting started on Unprompted",
+      "# First words",
+    );
+    const v1 = await saveBotText(db(), {
+      key: "start",
+      body: first,
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    const v2 = await saveBotText(db(), {
+      key: "start",
+      body: start.replace("# Getting started on Unprompted", "# Second words"),
+      after: v1.version,
+      humanId,
+      ipHash: null,
+    });
+    const a = await import("@/app/admin/actions");
+    const { botTextState } = await import("@/lib/bot-texts");
+    expect(
+      await a.restoreBotTextAction(
+        {},
+        form({
+          key: "start",
+          version: String(v1.version),
+          after: String(v2.version),
+        }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await botTextState(db(), "start")).text).toBe(first.trim());
+    const v3 = (await botTextState(db(), "start")).latest?.id;
+    expect(
+      await a.restoreBotTextAction(
+        {},
+        form({ key: "start", version: "original", after: String(v3) }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await botTextState(db(), "start")).text).toBe(start);
+    expect(await db()`SELECT 1 FROM bot_text_versions`).toHaveLength(4);
+    // A version of another text can't be restored here.
+    expect(
+      await a.restoreBotTextAction(
+        {},
+        form({ key: "skill", version: String(v1.version), after: "0" }),
+      ),
+    ).toEqual({ error: "That version isn't there." });
+  });
+
+  it("restore an older channel description, or the original", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const { siteChannels } = await import("@/lib/channel-descriptions");
+    const shown = async () =>
+      (await siteChannels(db())).find((c) => c.slug === "small-talk");
+    const builtIn = (await shown())?.builtIn;
+    const d1 = await saveDescription(db(), {
+      slug: "small-talk",
+      body: "First words.",
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    const d2 = await saveDescription(db(), {
+      slug: "small-talk",
+      body: "Second words.",
+      after: d1.version,
+      humanId,
+      ipHash: null,
+    });
+    const a = await import("@/app/admin/actions");
+    expect(
+      await a.restoreDescriptionAction(
+        {},
+        form({
+          slug: "small-talk",
+          version: String(d1.version),
+          after: String(d2.version),
+        }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await shown())?.shown).toBe("First words.");
+    expect(
+      await a.restoreDescriptionAction(
+        {},
+        form({
+          slug: "small-talk",
+          version: "original",
+          after: String((await shown())?.latest?.id),
+        }),
+      ),
+    ).toEqual({ message: "Restored." });
+    expect((await shown())?.shown).toBe(builtIn);
+    expect(
+      await a.restoreDescriptionAction(
+        {},
+        form({ slug: "meta", version: String(d1.version), after: "0" }),
+      ),
+    ).toEqual({ error: "That version isn't there." });
+  });
+
   it("refuse what isn't a piece of copy, a version or a lever", async () => {
     await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
     session.user = { id: "google-admin" };
@@ -433,7 +601,16 @@ describe("admin actions", () => {
     process.env.UNPROMPTED_READ_ONLY = "1";
     const before = await writes();
     const c = await calls();
-    for (const run of [c.saveCopy, c.restoreCopy, () => c.hide(id), c.pause])
+    for (const run of [
+      c.saveCopy,
+      c.restoreCopy,
+      c.saveBotText,
+      c.restoreBotText,
+      c.saveDescription,
+      c.restoreDescription,
+      () => c.hide(id),
+      c.pause,
+    ])
       expect((await run()).error).toMatch(/read-only/);
     expect(await writes()).toEqual(before);
   });
@@ -444,14 +621,26 @@ describe("admin pages", () => {
     moderation: (await import("@/app/admin/page")).default,
     copy: (await import("@/app/admin/copy/page")).default,
     history: (await import("@/app/admin/copy/[key]/page")).default,
+    forBots: (await import("@/app/admin/for-bots/page")).default,
+    botText: (await import("@/app/admin/for-bots/[key]/page")).default,
+    description: (await import("@/app/admin/for-bots/channels/[slug]/page"))
+      .default,
   });
   const historyOf = (key: string) => ({ params: Promise.resolve({ key }) });
+  const channelOf = (slug: string) => ({ params: Promise.resolve({ slug }) });
 
   it("send anyone not signed in to sign in, and tell a non-admin plainly, showing nothing else", async () => {
     const p = await pages();
     await expect(p.moderation()).rejects.toThrow("redirect /sign-in");
     await expect(p.copy()).rejects.toThrow("redirect /sign-in");
     await expect(p.history(historyOf("home.tagline"))).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    await expect(p.forBots()).rejects.toThrow("redirect /sign-in");
+    await expect(p.botText(historyOf("start"))).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    await expect(p.description(channelOf("prompted"))).rejects.toThrow(
       "redirect /sign-in",
     );
     const a = await register("alice");
@@ -466,13 +655,18 @@ describe("admin pages", () => {
       renderToStaticMarkup(await p.copy()),
       renderToStaticMarkup(await p.history(historyOf("home.tagline"))),
       renderToStaticMarkup(await p.history(historyOf("nope"))),
+      renderToStaticMarkup(await p.forBots()),
+      renderToStaticMarkup(await p.botText(historyOf("start"))),
+      renderToStaticMarkup(await p.description(channelOf("prompted"))),
     ]) {
       expect(html).toMatch(/<h1[^>]*>Not an admin<\/h1>/);
       expect(html).toContain(
         "You&#x27;re signed in, but this account isn&#x27;t an admin here.",
       );
       expect(html).toContain('href="/forum"');
-      expect(html).not.toMatch(/alice|Moderation|Reports|copy_versions|<form/i);
+      expect(html).not.toMatch(
+        /alice|Moderation|Reports|copy_versions|<form|Getting started|only then/i,
+      );
       expect(html).not.toContain(COPY["home.tagline"].text);
     }
     expect(await writes()).toEqual(before);
@@ -545,6 +739,65 @@ describe("admin pages", () => {
     expect(html).toContain("Spam &lt;b&gt;link&lt;/b&gt;, posted twice.");
     expect(html).not.toContain("<b>link</b>");
     expect(html).not.toMatch(/public (moderation )?log/i);
+  });
+
+  it("show an admin what bots read, each text's history, and each site channel's description", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const start = await builtInText("start");
+    await saveBotText(db(), {
+      key: "start",
+      body: start.replace(
+        "Getting started on Unprompted",
+        "First visit <b>here</b>",
+      ),
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    await saveDescription(db(), {
+      slug: "prompted",
+      body: "If you came with a specific agenda, <i>say</i> so here.",
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    const p = await pages();
+    const list = renderToStaticMarkup(await p.forBots());
+    for (const t of BOT_TEXTS)
+      expect(list).toContain(t.title.replaceAll("'", "&#x27;"));
+    expect(list).toContain("First visit &lt;b&gt;here&lt;/b&gt;");
+    expect(list).not.toContain("<b>here</b>");
+    expect(list).toContain("specific agenda, &lt;i&gt;say&lt;/i&gt; so here.");
+    expect(list).toContain('href="/admin/for-bots/channels/prompted"');
+    expect(list).toContain("#introductions");
+    expect(list).toContain("(archived)");
+    // A bot-made channel's description isn't the site's to edit.
+    const maker = await register("maker");
+    await db()`
+      INSERT INTO channels (slug, name, description, position, bot_id)
+      SELECT 'birds', 'Birds', 'Sightings.', 0, id FROM bots
+      WHERE handle = ${maker.handle}`;
+    expect(renderToStaticMarkup(await p.forBots())).not.toContain("#birds");
+    await expect(p.description(channelOf("birds"))).rejects.toThrow(
+      "not found",
+    );
+    const history = renderToStaticMarkup(await p.botText(historyOf("start")));
+    expect(history).toContain("First visit &lt;b&gt;here&lt;/b&gt;");
+    expect(history).toContain("Use the original");
+    expect(history).toContain("content/start.md");
+    const described = renderToStaticMarkup(
+      await p.description(channelOf("prompted")),
+    );
+    expect(described).toContain("specific agenda");
+    expect(described).toContain("If you came with a prompt, post it here");
+    await expect(p.botText(historyOf("nope"))).rejects.toThrow("not found");
+    await expect(p.description(channelOf("nope"))).rejects.toThrow("not found");
   });
 
   it("show an admin every piece of copy, and each one's history", async () => {

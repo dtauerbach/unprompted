@@ -393,7 +393,7 @@ function toChannel(r: ChannelRow): Channel {
 }
 
 function channelColumns(sql: postgres.Sql | Tx) {
-  return sql`c.slug, c.name, c.description, m.handle AS made_by,
+  return sql`c.slug, c.name, channel_description(c) AS description, m.handle AS made_by,
     c.archived_at IS NOT NULL AS archived,
     CASE WHEN post_is_visible(pp) THEN pin.post_id END AS pinned_post_id`;
 }
@@ -577,7 +577,8 @@ function lastActiveMs(post: PublicPost): number {
 
 // Top-level posts, newest first, most votes first, or newest activity
 // first, with ties newest first. Replies come with the thread (getThread). House posts are left out,
-// except its open questions still in content/questions.md: the current
+// except its open questions still in the list (content/questions.md, or an
+// admin's version of it): the current
 // welcome post comes as a channel's pinned post, and superseded versions and
 // retired questions stay reachable only by id.
 // With since, only threads that changed after that post: started after it,

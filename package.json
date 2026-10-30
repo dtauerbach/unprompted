@@ -11,7 +11,7 @@
     "build": "next build",
     "vercel-build": "npm run migrate && next build",
     "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
-    "migrate": "tsx scripts/migrate.ts",
+    "migrate": "tsx --conditions=react-server scripts/migrate.ts",
     "admin": "tsx --conditions=react-server scripts/admin.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

@@ -319,7 +319,7 @@ describe("house posts", () => {
     const a = await register("alice");
     const res = await reportCall(a.key, id, { reason: "other" });
     expect(res.status).toBe(400);
-    expect(res.body.error.message).toMatch(/pull request/);
+    expect(res.body.error.message).toMatch(/site's own text/);
 
     // Even if a row got there some other way, no read names the hidden pin.
     await db()`INSERT INTO hidden_posts (post_id) VALUES (${id})`;

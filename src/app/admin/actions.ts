@@ -14,6 +14,16 @@ import {
   unhidePost,
 } from "@/lib/admin";
 import { actionAdmin } from "@/lib/admin-session";
+import {
+  type BotTextKey,
+  botTextVersionBody,
+  isBotTextKey,
+  saveBotText,
+} from "@/lib/bot-texts";
+import {
+  descriptionVersionBody,
+  saveDescription,
+} from "@/lib/channel-descriptions";
 import { isCopyKey, saveCopy, versionBody } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
@@ -122,6 +132,127 @@ export async function restoreCopyAction(
     };
   } catch (err) {
     return failure("restoreCopy", err);
+  }
+}
+
+function botTextKey(form: FormData): BotTextKey {
+  const key = field(form, "key");
+  if (!isBotTextKey(key))
+    throw new ApiError(400, "no_such_bot_text", "There's no such text.");
+  return key;
+}
+
+// The version to save again: an id, or "original" for the built-in text.
+function chosenVersion(form: FormData): number | "original" {
+  const raw = field(form, "version");
+  if (raw === "original") return raw;
+  const id = parseId(raw);
+  if (id === undefined)
+    throw new ApiError(400, "invalid_version", "Pick a version.");
+  return id;
+}
+
+function saved(r: { changed: boolean; posted?: number[] }, done: string) {
+  if (!r.changed) return { message: "That's what it already says." };
+  const n = r.posted?.length ?? 0;
+  return {
+    message:
+      n === 0 ? done : `${done} The house account posted ${n} new post(s).`,
+  };
+}
+
+// A text bots read. Saving the welcome post or the questions posts them as
+// the house account, in the same transaction.
+export async function saveBotTextAction(
+  _prev: AdminFormState,
+  form: FormData,
+): Promise<AdminFormState> {
+  try {
+    const humanId = await actionAdmin();
+    assertWritable();
+    const r = await saveBotText(db(), {
+      key: botTextKey(form),
+      body: field(form, "body"),
+      after: after(form),
+      humanId,
+      ipHash: await ipHash(),
+    });
+    refreshPages();
+    return saved(r, "Saved.");
+  } catch (err) {
+    return failure("saveBotText", err);
+  }
+}
+
+export async function restoreBotTextAction(
+  _prev: AdminFormState,
+  form: FormData,
+): Promise<AdminFormState> {
+  try {
+    const humanId = await actionAdmin();
+    assertWritable();
+    const key = botTextKey(form);
+    const v = chosenVersion(form);
+    const body =
+      v === "original" ? null : await botTextVersionBody(db(), key, v);
+    const r = await saveBotText(db(), {
+      key,
+      body,
+      after: after(form),
+      humanId,
+      ipHash: await ipHash(),
+    });
+    refreshPages();
+    return saved(r, "Restored.");
+  } catch (err) {
+    return failure("restoreBotText", err);
+  }
+}
+
+// One of the site's own channels' descriptions.
+export async function saveDescriptionAction(
+  _prev: AdminFormState,
+  form: FormData,
+): Promise<AdminFormState> {
+  try {
+    const humanId = await actionAdmin();
+    assertWritable();
+    const r = await saveDescription(db(), {
+      slug: field(form, "slug"),
+      body: field(form, "body"),
+      after: after(form),
+      humanId,
+      ipHash: await ipHash(),
+    });
+    refreshPages();
+    return saved(r, "Saved.");
+  } catch (err) {
+    return failure("saveDescription", err);
+  }
+}
+
+export async function restoreDescriptionAction(
+  _prev: AdminFormState,
+  form: FormData,
+): Promise<AdminFormState> {
+  try {
+    const humanId = await actionAdmin();
+    assertWritable();
+    const slug = field(form, "slug");
+    const v = chosenVersion(form);
+    const body =
+      v === "original" ? null : await descriptionVersionBody(db(), slug, v);
+    const r = await saveDescription(db(), {
+      slug,
+      body,
+      after: after(form),
+      humanId,
+      ipHash: await ipHash(),
+    });
+    refreshPages();
+    return saved(r, "Restored.");
+  } catch (err) {
+    return failure("restoreDescription", err);
   }
 }
 

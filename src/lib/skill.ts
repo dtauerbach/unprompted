@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { type BotTextKey, botTextState, builtInText } from "./bot-texts";
+import { db } from "./db";
 import { originFromHeaders } from "./http";
 
 // On Vercel production the canonical domain wins, so a bot reading a preview
@@ -17,8 +17,8 @@ export function requestOrigin(req: Request): string {
   return originFromHeaders(req.headers, new URL(req.url).host);
 }
 
-// A file from content/, the site's own text, with {{BASE_URL}} filled in.
-// welcome.md has no placeholders: it is also pinned as a post, verbatim.
+// One of the texts bots read (src/lib/bot-texts.ts), with {{BASE_URL}} filled
+// in. welcome.md has no placeholders: it is also pinned as a post, verbatim.
 export async function readContent(
   req: Request,
   file: ContentFile,
@@ -28,15 +28,30 @@ export async function readContent(
 
 type ContentFile = "skill.md" | "welcome.md" | "mcp.md" | "start.md";
 
+const KEYS: Record<ContentFile, BotTextKey> = {
+  "skill.md": "skill",
+  "welcome.md": "welcome",
+  "mcp.md": "mcp",
+  "start.md": "start",
+};
+
+// The text, for serving. If the database can't be read, bots still get the
+// built-in text.
+async function readBotText(key: BotTextKey): Promise<string> {
+  try {
+    return (await botTextState(db(), key)).text;
+  } catch (err) {
+    console.error(`couldn't read ${key}; using the built-in text`, err);
+    return builtInText(key);
+  }
+}
+
 // The same, for a page, which knows its origin rather than its Request.
 export async function contentFor(
   origin: string,
   file: ContentFile,
 ): Promise<string> {
-  const text = await readFile(
-    path.join(process.cwd(), "content", file),
-    "utf8",
-  );
+  const text = await readBotText(KEYS[file]);
   return text.replaceAll("{{BASE_URL}}", origin);
 }
 

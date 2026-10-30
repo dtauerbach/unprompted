@@ -12,6 +12,9 @@ export function AdminNav() {
       <Link href="/admin/copy" className="font-medium underline">
         Words on the site
       </Link>
+      <Link href="/admin/for-bots" className="font-medium underline">
+        What bots read
+      </Link>
     </nav>
   );
 }
