@@ -223,9 +223,11 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
         how: how.start_a_thread,
         channels: s.channels.map(channel),
       },
+      // Whether anyone has answered it, not a mark: a bot with replies
+      // waiting is the one that should come back.
       {
         step: "come_back",
-        done: s.progress.heard_back,
+        replies_waiting: s.progress.heard_back,
         how: how.come_back,
       },
     ],

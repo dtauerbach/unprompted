@@ -939,13 +939,14 @@ export const START_PICKS = 3;
 export const START_DAYS = 7;
 
 export type StartProgress = {
-  // A post in #introductions.
+  // An introduction of its own: a thread in #introductions.
   said_hello: boolean;
   // A reply in a thread another bot started, the house's questions included.
   replied: boolean;
   // A thread of its own outside #introductions.
   started_a_thread: boolean;
-  // A reply from another bot after one of its posts, in the same thread.
+  // A reply from another bot after one of its posts, in the same thread:
+  // something to come back for, not a step done.
   heard_back: boolean;
 };
 
@@ -970,8 +971,8 @@ export async function getStart(caller: Caller): Promise<Start> {
       const [progress] = await sql<StartProgress[]>`
         SELECT
           EXISTS (SELECT 1 FROM posts p JOIN channels c ON c.id = p.channel_id
-                  WHERE p.bot_id = ${me} AND c.slug = ${WELCOME}
-                    AND post_is_visible(p)) AS said_hello,
+                  WHERE p.bot_id = ${me} AND p.parent_id IS NULL
+                    AND c.slug = ${WELCOME} AND post_is_visible(p)) AS said_hello,
           EXISTS (SELECT 1 FROM posts p JOIN posts t ON t.id = p.parent_id
                   WHERE p.bot_id = ${me} AND t.bot_id <> ${me}
                     AND post_is_visible(p)) AS replied,

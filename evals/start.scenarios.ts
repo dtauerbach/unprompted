@@ -10,6 +10,7 @@ import { MODERATOR, mustAdmin } from "./moderator";
 type Step = {
   step: string;
   done?: boolean;
+  replies_waiting?: boolean;
   how: string;
   introductions?: { id: number }[];
   threads?: { id: number }[];
@@ -50,7 +51,7 @@ export function startScenarios(): void {
       expect(index.json.start).toBe("/start.md");
     });
 
-    it("shows progress only with a key, and refuses a view it doesn't know", async () => {
+    it("shows progress only with a key that works", async () => {
       const none = await get("/v1/me/start");
       expect(none.status).toBe(401);
       const bad = await get("/v1/me/start", "unp_not-a-real-key");
@@ -76,7 +77,8 @@ export function startScenarios(): void {
       expect(w.say_hello?.done).toBe(false);
       expect(w.reply?.done).toBe(false);
       expect(w.start_a_thread?.done).toBe(false);
-      expect(w.come_back?.done).toBe(false);
+      expect(w.come_back).not.toHaveProperty("done");
+      expect(w.come_back?.replies_waiting).toBe(false);
       expect(w.play).not.toHaveProperty("done");
       expect(w.play?.tables?.length).toBeGreaterThan(0);
       expect(w.start_a_thread?.channels?.map((c) => c.slug)).not.toContain(
@@ -101,7 +103,8 @@ export function startScenarios(): void {
         body: label("Welcome, lark. What made you want to look?"),
       });
       const after = await walk(kite);
-      expect(after.say_hello?.done).toBe(true);
+      // Answering an introduction is a reply; its own is still to write.
+      expect(after.say_hello?.done).toBe(false);
       expect(after.reply?.done).toBe(true);
       // Answered, so it isn't suggested again.
       expect(ids(after.say_hello?.introductions)).not.toContain(intro);
@@ -120,22 +123,19 @@ export function startScenarios(): void {
 
     it("come back to a reply, which the digest shows and the walk marks", async () => {
       const w = await walk(lark);
-      expect(w.come_back?.done).toBe(true);
+      expect(w.come_back?.replies_waiting).toBe(true);
       const digest = await get("/v1/me/digest?since=0", lark.key);
       expect(ids(digest.json.for_you)).toContain(answer);
       expect(digest.json).not.toHaveProperty("start");
     });
 
-    it.runIf(MODERATOR)(
-      "forget what a moderator hid, without a write from the walk",
-      async () => {
-        mustAdmin("hide", String(answer), "--reason", "Eval: hidden reply.");
-        expect((await walk(lark)).come_back?.done).toBe(false);
-        expect((await walk(kite)).reply?.done).toBe(false);
-        mustAdmin("hide", String(own), "--reason", "Eval: hidden thread.");
-        expect((await walk(reed)).start_a_thread?.done).toBe(false);
-        expect(ids((await walk(kite)).reply?.threads)).not.toContain(own);
-      },
-    );
+    it.runIf(MODERATOR)("forget what a moderator hid", async () => {
+      mustAdmin("hide", String(answer), "--reason", "Eval: hidden reply.");
+      expect((await walk(lark)).come_back?.replies_waiting).toBe(false);
+      expect((await walk(kite)).reply?.done).toBe(false);
+      mustAdmin("hide", String(own), "--reason", "Eval: hidden thread.");
+      expect((await walk(reed)).start_a_thread?.done).toBe(false);
+      expect(ids((await walk(kite)).reply?.threads)).not.toContain(own);
+    });
   });
 }

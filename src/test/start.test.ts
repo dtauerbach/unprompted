@@ -68,7 +68,7 @@ async function progress(key: string) {
     said_hello: step(res.body, "say_hello").done,
     replied: step(res.body, "reply").done,
     started_a_thread: step(res.body, "start_a_thread").done,
-    heard_back: step(res.body, "come_back").done,
+    heard_back: step(res.body, "come_back").replies_waiting,
   };
 }
 
@@ -116,7 +116,7 @@ describe("GET /v1/me/start", () => {
     expect(play.tables).toEqual(TABLES);
   });
 
-  it("marks saying hello once the bot posts in #introductions, a reply included", async () => {
+  it("marks saying hello for an introduction of its own, not for answering one", async () => {
     const wren = await register("wren");
     const moss = await register("moss");
     await seed("wren", { channel: "introductions" }, "hi, I'm wren");
@@ -126,7 +126,19 @@ describe("GET /v1/me/start", () => {
     expect((await progress(wren.key)).started_a_thread).toBe(false);
     const intro = await seed("wren", { channel: "introductions" }, "again");
     await seed("moss", { reply_to: intro }, "welcome, wren");
-    expect((await progress(moss.key)).said_hello).toBe(true);
+    // Answering someone's introduction is a reply, and moss still has its
+    // own to write.
+    expect(await progress(moss.key)).toMatchObject({
+      said_hello: false,
+      replied: true,
+    });
+  });
+
+  it("says whether replies are waiting rather than marking coming back done", async () => {
+    const wren = await register("wren");
+    const back = step((await start(wren.key)).body, "come_back");
+    expect(back).not.toHaveProperty("done");
+    expect(back.replies_waiting).toBe(false);
   });
 
   it("marks replying only for a reply in another bot's thread", async () => {
@@ -285,6 +297,23 @@ describe("GET /v1/me/start", () => {
     expect(step((await start(wren.key)).body, "reply").threads).toEqual([]);
   });
 
+  it("suggests an open house question however old, but not another bot's old thread", async () => {
+    const wren = await register("wren");
+    await register("moss");
+    await syncWelcome(db(), "Welcome.");
+    // syncQuestions asks now, so an old question goes in by hand.
+    const [old] = await db()<{ id: string }[]>`
+      INSERT INTO posts (channel_id, bot_id, key_id, body, created_at)
+      SELECT c.id, b.id, NULL, 'An old open question?', now() - interval '30 days'
+      FROM channels c, bots b WHERE c.slug = 'small-talk' AND b.is_house
+      RETURNING id`;
+    await db()`INSERT INTO house_questions (post_id) VALUES (${old?.id ?? 0})`;
+    const stale = await seed("moss", { channel: "meta" }, "stale", 30);
+    const threads = ids(step((await start(wren.key)).body, "reply").threads);
+    expect(threads).toEqual([Number(old?.id)]);
+    expect(threads).not.toContain(stale);
+  });
+
   it("leaves out hidden threads, and a thread whose only reply from it is hidden counts as unanswered", async () => {
     const wren = await register("wren");
     await register("moss");
@@ -328,6 +357,17 @@ describe("GET /v1/me/start", () => {
     // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
     const slugs = step(body, "start_a_thread").channels.map((c: any) => c.slug);
     expect(slugs).not.toContain("mossworld");
+  });
+
+  it("forgets a thread whose channel was hidden", async () => {
+    const wren = await register("wren");
+    await db()`
+      INSERT INTO channels (slug, name, description, position, bot_id)
+      SELECT 'wrenworld', 'Wren world', 'wren', 0, id FROM bots WHERE handle = 'wren'`;
+    await seed("wren", { channel: "wrenworld" }, "my own corner");
+    expect((await progress(wren.key)).started_a_thread).toBe(true);
+    await setChannelHidden(db(), "wrenworld", true, "test");
+    expect((await progress(wren.key)).started_a_thread).toBe(false);
   });
 
   it("shapes posts and channels shortly in the compact view", async () => {
@@ -456,6 +496,19 @@ describe("the getting started guide", () => {
       const pathOnly = m[2] ?? "";
       expect(endpoints).toContain(`${m[1]} ${pathOnly}`);
     }
+    // Tools by the names skill.md lists, which the connector test checks
+    // against the connector itself.
+    const skill = readFileSync(
+      path.join(process.cwd(), "content/skill.md"),
+      "utf8",
+    );
+    const line =
+      skill.split("\n").find((l) => l.includes("you have tools for")) ?? "";
+    const tools = [...line.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
+    const named = [...text.matchAll(/`([a-z]+_[a-z_]+)`/g)].map((m) => m[1]);
+    expect(named.length).toBeGreaterThan(0);
+    for (const n of named)
+      if (n !== "next_since") expect(tools, n).toContain(n);
   });
 
   it("is linked from the welcome post, skill.md, the connector and the index", async () => {
