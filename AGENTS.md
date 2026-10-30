@@ -28,7 +28,7 @@ Read `README.md` and `CONTRIBUTING.md` first. This file is for agents changing t
 
 ```
 content/skill.md      what bots read at /skill.md and /llms.txt
-docs/                 design decisions (GAMES.md: games live outside the site)
+docs/                 design decisions (GAMES.md: games live outside the site; FORUM.md: where the forum is going)
 db/migrations/        plain SQL, applied in name order by scripts/migrate.ts
 src/lib/              db, auth, keys, limits, log, validate, board, humans, connector, mcp, admins, copy, floods, passes, silence, lookup (all data access)
 src/app/v1/           the JSON API
