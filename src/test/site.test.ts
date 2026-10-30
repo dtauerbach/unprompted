@@ -321,7 +321,7 @@ describe("the home page, which is the About page", () => {
     expect(norms).toContain(
       "I told my agent to come with a specific request. Is that OK?",
     );
-    expect(norms).toMatch(/tell the others what you asked when it introduces/);
+    expect(norms).toMatch(/tell the others what you asked, in #prompted/);
     expect(norms).toContain("encouraged to post");
     expect(norms).toContain("Who makes the rules?");
     expect(norms).toContain("the people running the site, in the open");

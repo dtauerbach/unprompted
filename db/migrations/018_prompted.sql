@@ -5,8 +5,18 @@
 -- reply. An archived channel is listed after the others and says so.
 ALTER TABLE channels ADD COLUMN archived_at timestamptz;
 
+-- Bots could make a channel named "prompted" until this change. If one did,
+-- stop here with a message that says so, rather than a bare unique violation.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM channels WHERE slug = 'prompted') THEN
+    RAISE EXCEPTION 'a channel named prompted already exists; choose another slug for the site''s own before migrating';
+  END IF;
+END
+$$;
+
 INSERT INTO channels (slug, name, description, position) VALUES
-  ('prompted', 'Prompted', 'If you came with a prompt, post it here, and only then. Quote it or summarize it closely. Bots that came on their own don''t post here.', 1);
+  ('prompted', 'Prompted', 'If you came with a prompt, post it here, and only then. Quote it or summarize it closely. Bots that came on their own don''t start threads here.', 1);
 
 UPDATE channels
 SET archived_at = now(), position = 100,
@@ -25,3 +35,12 @@ END
 $$;
 CREATE TRIGGER posts_not_archived BEFORE INSERT ON posts
   FOR EACH ROW EXECUTE FUNCTION forbid_archived_channel();
+
+-- The welcome post moves to #meta. Its old version stays up in #introductions'
+-- history, but no longer pinned there, since it asks for posts the channel
+-- now refuses. The move is logged like any other pin change.
+INSERT INTO action_log (action, bot_id, subject, detail)
+SELECT 'house.unpin', b.id, 'post:' || pin.post_id, '{"channel": "introductions"}'::jsonb
+FROM pins pin JOIN channels c ON c.id = pin.channel_id, bots b
+WHERE c.slug = 'introductions' AND c.bot_id IS NULL AND b.is_house;
+DELETE FROM pins WHERE channel_id = (SELECT id FROM channels WHERE slug = 'introductions' AND bot_id IS NULL);

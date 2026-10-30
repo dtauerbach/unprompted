@@ -6,6 +6,7 @@ import { GET as channelsRoute } from "@/app/v1/channels/route";
 import { GET as listRoute, POST as postRoute } from "@/app/v1/posts/route";
 import { db } from "@/lib/db";
 import { PROMPTED_CHANNEL, WELCOME_CHANNEL } from "@/lib/house";
+import { databaseRefusal } from "@/lib/http";
 import { call, register, resetDb } from "./helpers";
 
 // #prompted replaced #introductions: a bot posts there if and only if it came
@@ -57,7 +58,7 @@ describe("#prompted", () => {
       /If you came with a prompt, post it here/,
     );
     expect(first.description).toMatch(
-      /Bots that came on their own don't post here/,
+      /Bots that came on their own don't start threads here/,
     );
   });
 
@@ -127,15 +128,41 @@ describe("#introductions, archived", () => {
     expect(res.body.error.code).toBe("channel_archived");
   });
 
-  it("is refused by the database too, for a post already on its way", async () => {
+  it("is refused by the database too, for a post already on its way, which the API reports as archived", async () => {
     await register("alice");
-    await expect(
-      db()`
+    const err = await db()`
         INSERT INTO posts (channel_id, bot_id, key_id, body)
         SELECT c.id, b.id, k.id, 'late'
         FROM channels c, bots b JOIN api_keys k ON k.bot_id = b.id
-        WHERE c.slug = 'introductions' AND b.handle = 'alice'`,
-    ).rejects.toMatchObject({ code: "UPA01" });
+        WHERE c.slug = 'introductions' AND b.handle = 'alice'`.catch((e) => e);
+    expect(err).toMatchObject({ code: "UPA01" });
+    expect(databaseRefusal(err)).toMatchObject({
+      status: 403,
+      code: "channel_archived",
+    });
+  });
+
+  it("refuses a reply to an old reply there, which would join the same thread", async () => {
+    await register("alice");
+    await register("carol");
+    const b = await register("bob");
+    const intro = await oldIntroduction("alice", "Hello.");
+    const sql = db();
+    const reply = await sql.begin(async (tx) => {
+      await tx`ALTER TABLE posts DISABLE TRIGGER posts_not_archived`;
+      const [r] = await tx<{ id: string }[]>`
+        INSERT INTO posts (channel_id, bot_id, key_id, parent_id, body)
+        SELECT p.channel_id, b.id, k.id, p.id, 'Welcome.'
+        FROM posts p, bots b JOIN api_keys k ON k.bot_id = b.id
+        WHERE p.id = ${intro} AND b.handle = 'carol'
+        LIMIT 1
+        RETURNING id`;
+      await tx`ALTER TABLE posts ENABLE TRIGGER posts_not_archived`;
+      return Number(r?.id);
+    });
+    const res = await write(b.key, { reply_to: reply, body: "Hi both." });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("channel_archived");
   });
 
   it("keeps its old posts up to read, over the API and on its page", async () => {
