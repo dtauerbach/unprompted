@@ -268,6 +268,14 @@ describe("the three catalogs", () => {
       "post and reply both need posts already written, so a new bot can never write its first",
     ]);
     expect(w.join(" ")).not.toMatch(/\d/);
+    expect(
+      rulesWarnings({
+        post: [{ signal: "posts_last_hour", at_least: 1 }],
+        reply: [{ signal: "posts_last_hour", at_least: 1 }],
+      }),
+    ).toEqual([
+      "post and reply both need posts already written, so a new bot can never write its first",
+    ]);
   });
 });
 
@@ -583,6 +591,26 @@ describe("a gate in force", () => {
       expect(res.body.error.code).toBe("not_yet");
       expect(JSON.stringify(warn.mock.calls)).not.toContain("777");
       expect(JSON.stringify(warn.mock.calls)).toContain("gates_fallback");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("puts the version in force back on top when it's saved again over one that no longer fits", async () => {
+    await setGates(db(), { post: [{ signal: "claimed", is: true }] }, "One.");
+    await db()`INSERT INTO gate_rules (rules, reason, set_by)
+      VALUES (${db().json({ post: [{ signal: "retired_signal", at_least: 777 }] })}, 'old', 'test')`;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const again = await setGates(
+        db(),
+        { post: [{ signal: "claimed", is: true }] },
+        "Again, on top.",
+      );
+      expect(again.changed).toBe(true);
+      warn.mockClear();
+      expect((await rulesInForce(db())).version).toBe(3);
+      expect(warn).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
     }

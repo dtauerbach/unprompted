@@ -5,9 +5,9 @@ import { utcMinute } from "./format";
 import {
   ACTION_NAMES,
   type Rules,
-  rulesInForce,
   rulesSchema,
   rulesWarnings,
+  withDefaults,
 } from "./gates";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
@@ -659,17 +659,24 @@ export async function setGates(
       `The rules file doesn't fit: ${[...new Set(problems)].join("; ")}.`,
     );
   }
-  const gated = ACTION_NAMES.filter((a) => (parsed.data[a] ?? []).length > 0);
-  const warnings = rulesWarnings(parsed.data);
+  // What will be in force: an action the file leaves out keeps its default.
+  const effective = withDefaults(parsed.data);
+  const gated = ACTION_NAMES.filter((a) => (effective[a] ?? []).length > 0);
+  const warnings = rulesWarnings(effective);
   return sql.begin(async (tx) => {
-    const current = await rulesInForce(tx);
+    // Against the newest version, not the one in force: when the newest no
+    // longer fits, saving the one in force again is what puts it back on top.
+    const [newest] = await tx<{ id: string; rules: unknown }[]>`
+      SELECT id, rules FROM gate_rules ORDER BY id DESC LIMIT 1`;
+    const same = newest && rulesSchema.safeParse(newest.rules);
     if (
-      current.version !== null &&
-      JSON.stringify(current.rules) === JSON.stringify(parsed.data)
+      newest &&
+      same?.success &&
+      JSON.stringify(same.data) === JSON.stringify(parsed.data)
     )
       return {
         changed: false,
-        message: `These are already the rules in force (version ${current.version}).`,
+        message: `These are already the rules in force (version ${newest.id}).`,
       };
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO gate_rules (rules, reason, set_by)

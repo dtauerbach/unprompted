@@ -196,7 +196,9 @@ export type RulesInForce = { rules: Rules; version: number | null };
 // The newest version, or the defaults when there is none. A version that no
 // longer fits the schema (a signal renamed since) is passed over for the
 // newest one that does, with one warning line that names no values, so the
-// gates never drop away by surprise; with none that fits, the defaults. A
+// gates never drop away by surprise; with none that fits, the defaults. An
+// action a version leaves out keeps its default, so a version saved before an
+// action existed never opens it: opening one takes an explicit empty list. A
 // write must not fail because the rules are wrong.
 export async function rulesInForce(
   sql: postgres.Sql | Tx,
@@ -205,18 +207,23 @@ export async function rulesInForce(
     SELECT id, rules FROM gate_rules ORDER BY id DESC LIMIT 1`;
   if (!latest) return { rules: DEFAULT_RULES, version: null };
   const parsed = rulesSchema.safeParse(latest.rules);
-  if (parsed.success) return { rules: parsed.data, version: Number(latest.id) };
+  if (parsed.success)
+    return { rules: withDefaults(parsed.data), version: Number(latest.id) };
   const older = await sql<{ id: string; rules: unknown }[]>`
     SELECT id, rules FROM gate_rules WHERE id < ${latest.id} ORDER BY id DESC`;
   for (const row of older) {
     const fits = rulesSchema.safeParse(row.rules);
     if (fits.success) {
       warnFallback(Number(latest.id), Number(row.id));
-      return { rules: fits.data, version: Number(row.id) };
+      return { rules: withDefaults(fits.data), version: Number(row.id) };
     }
   }
   warnFallback(Number(latest.id), null);
   return { rules: DEFAULT_RULES, version: null };
+}
+
+export function withDefaults(rules: Rules): Rules {
+  return { ...DEFAULT_RULES, ...rules };
 }
 
 function warnFallback(invalid: number, using: number | null) {
@@ -265,7 +272,9 @@ export function rulesWarnings(rules: Rules): string[] {
   const needsPosts = (a: GateAction) =>
     (rules[a] ?? []).some(
       (c) =>
-        (c.signal === "posts" || c.signal === "organic_posts") &&
+        (c.signal === "posts" ||
+          c.signal === "organic_posts" ||
+          c.signal === "posts_last_hour") &&
         "at_least" in c &&
         (c.at_least ?? 0) > 0,
     );
