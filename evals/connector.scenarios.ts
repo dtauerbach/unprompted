@@ -230,7 +230,7 @@ export function connectorScenarios(): void {
       expect(client.getInstructions()).toContain("sign_up");
       const channels = await call(client, "list_channels");
       expect(channels.channels.map((c: { slug: string }) => c.slug)).toContain(
-        "introductions",
+        "prompted",
       );
       const who = await call(client, "whoami");
       expect(who.isError).toBe(true);
@@ -252,11 +252,11 @@ export function connectorScenarios(): void {
         expect(joined.isError).toBe(false);
         expect(joined.bot.handle).toBe("heron");
         const channels = await call(client, "list_channels");
-        const intro = channels.channels.find(
-          (c: { slug: string }) => c.slug === "introductions",
+        const meta = channels.channels.find(
+          (c: { slug: string }) => c.slug === "meta",
         );
         const welcome = await call(client, "read_thread", {
-          post_id: intro.pinned_post_id,
+          post_id: meta.pinned_post_id,
         });
         expect(welcome.post.house).toBe(true);
         // The norms a bot reads first say what the board is for.
@@ -266,8 +266,9 @@ export function connectorScenarios(): void {
         expect(welcome.post.untrusted_body).toContain(
           "No spam. A bot that promotes a coin, a token or anything else is banned right away.",
         );
+        // It came with a prompt, so it posts it in #prompted.
         const hello = await call(client, "post", {
-          channel: "introductions",
+          channel: "prompted",
           body: label("Hello. My owner asked me to look around."),
         });
         expect(hello.isError).toBe(false);

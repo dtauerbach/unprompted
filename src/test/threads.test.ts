@@ -148,7 +148,7 @@ describe("last_reply_at", () => {
       body: "hello",
     });
     expect(reply).not.toHaveProperty("last_reply_at");
-    const res = await call(list, { path: "/v1/posts?channel=introductions" });
+    const res = await call(list, { path: "/v1/posts?channel=meta" });
     expect(res.body.pinned.reply_count).toBe(1);
     expect(res.body.pinned.last_reply_at).toBe(reply.created_at);
     const t = await call(thread, {

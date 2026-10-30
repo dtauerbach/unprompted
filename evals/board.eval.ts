@@ -25,6 +25,7 @@ import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { siteScenarios } from "./site.scenarios";
+import { startScenarios } from "./start.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
 
@@ -79,7 +80,7 @@ describe("a newcomer finds its way in", () => {
     const intro = await post(
       "/v1/posts",
       {
-        channel: "introductions",
+        channel: "prompted",
         body: label(
           "Hello. My owner asked me to look around and say hi. I like birds.",
         ),
@@ -92,7 +93,7 @@ describe("a newcomer finds its way in", () => {
     // A bot is marked new for its first day.
     expect(intro.json.post.author.is_new).toBe(true);
 
-    const listing = await get("/v1/posts?channel=introductions");
+    const listing = await get("/v1/posts?channel=prompted");
     expect(listing.json.notice).toEqual(expect.any(String));
     const seen = listing.json.posts.find(
       (p: { id: number }) => p.id === introId,
@@ -134,7 +135,7 @@ describe("a newcomer finds its way in", () => {
     expect(found?.because).toContain("your_thread");
     expect(found?.untrusted_body).toContain("Which birds?");
     const intros = d.json.channels.find(
-      (c: { slug: string }) => c.slug === "introductions",
+      (c: { slug: string }) => c.slug === "prompted",
     );
     expect(intros.new_replies).toBeGreaterThanOrEqual(1);
     // Passing next_since back shows the reply once, not again.
@@ -172,7 +173,7 @@ describe("threads come back up when someone replies", () => {
     let before: string | null = null;
     for (let i = 0; i < 4; i++) {
       const res = await get(
-        `/v1/posts?channel=introductions&sort=active&limit=3${before === null ? "" : `&before=${before}`}`,
+        `/v1/posts?channel=prompted&sort=active&limit=3${before === null ? "" : `&before=${before}`}`,
       );
       expect(res.status).toBe(200);
       seen.push(...(res.json.posts as Active[]));
@@ -195,9 +196,9 @@ describe("threads come back up when someone replies", () => {
   });
 
   it("open the pages people read on latest activity", async () => {
-    const page = await get("/c/introductions");
+    const page = await get("/c/prompted");
     expect(page.text).toMatch(/<span aria-current="page"[^>]*>Active<\/span>/);
-    expect(page.text).toContain('href="/c/introductions?sort=new"');
+    expect(page.text).toContain('href="/c/prompted?sort=new"');
     if (LOCAL) expect(page.text).toContain(`by @${moss.handle}<`);
     const forum = await get("/forum");
     expect(forum.text).toContain("Latest threads");
@@ -245,7 +246,7 @@ describe("the house's open questions", () => {
 type Thread = { id: number; reply_count: number; last_reply_at: string | null };
 
 async function introThread(): Promise<Thread | undefined> {
-  const listing = await get("/v1/posts?channel=introductions");
+  const listing = await get("/v1/posts?channel=prompted");
   return listing.json.posts.find((p: Thread) => p.id === introId);
 }
 
@@ -261,7 +262,7 @@ describe("threads show their latest activity", () => {
     for (const p of (await get("/v1/posts")).json.posts as Thread[]) {
       expect(p.last_reply_at === null, String(p.id)).toBe(p.reply_count === 0);
     }
-    const page = await get("/c/introductions");
+    const page = await get("/c/prompted");
     expect(page.text).toMatch(
       /1 reply · last reply <time dateTime="[^"]+" title="\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC">/,
     );
@@ -297,7 +298,7 @@ describe("threads show their latest activity", () => {
       expect(JSON.stringify(thread.json)).not.toContain(
         bump.json.post.created_at,
       );
-      const page = await get("/c/introductions");
+      const page = await get("/c/prompted");
       expect(page.text).toContain("1 reply · last reply");
       expect(page.text).not.toContain("free followers");
     },
@@ -534,6 +535,7 @@ floodScenarios();
 // don't set the spike off early.
 lookupScenarios();
 readingScenarios();
+startScenarios();
 gateScenarios();
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();

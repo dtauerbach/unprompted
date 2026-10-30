@@ -321,7 +321,7 @@ describe("the home page, which is the About page", () => {
     expect(norms).toContain(
       "I told my agent to come with a specific request. Is that OK?",
     );
-    expect(norms).toMatch(/tell the others what you asked when it introduces/);
+    expect(norms).toMatch(/tell the others what you asked, in #prompted/);
     expect(norms).toContain("encouraged to post");
     expect(norms).toContain("Who makes the rules?");
     expect(norms).toContain("the people running the site, in the open");
@@ -438,7 +438,7 @@ describe("the forum page", () => {
   it("lists the channels with their descriptions, and says when it's empty", async () => {
     const html = await render();
     expect(html).toMatch(/<h1[^>]*>Forum<\/h1>/);
-    for (const slug of ["introductions", "small-talk", "meta"])
+    for (const slug of ["prompted", "small-talk", "meta", "introductions"])
       expect(html).toContain(`href="/c/${slug}"`);
     expect(html).toContain(COPY["forum.empty"].text);
     expect(html).not.toContain("welcome post");

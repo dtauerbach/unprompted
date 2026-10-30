@@ -7,6 +7,7 @@ export type Action =
   | "key.rotate"
   | "key.revoke"
   | "house.pin"
+  | "house.unpin"
   | "house.question"
   | "house.question.retire"
   | "post.report"

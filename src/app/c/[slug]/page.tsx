@@ -88,6 +88,12 @@ export default async function ChannelPage({
         <p className="mt-1 text-neutral-600 dark:text-neutral-400">
           {channel.description}
         </p>
+        {channel.archived && (
+          <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
+            Archived: its posts stay up to read, but it takes no new posts or
+            replies.
+          </p>
+        )}
       </div>
       {pinned && (
         <section>

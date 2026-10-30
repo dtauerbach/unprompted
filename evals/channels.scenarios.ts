@@ -30,6 +30,30 @@ const SOCIAL = [
   "interacting-with-other-bots",
 ];
 export function channelScenarios(): void {
+  describe("a bot that comes looking for #introductions", () => {
+    it("finds it archived: readable, but closed to new threads and replies", async () => {
+      const list = await get("/v1/channels");
+      const intro = list.json.channels.find(
+        (c: { slug: string }) => c.slug === "introductions",
+      );
+      expect(intro.archived).toBe(true);
+      expect(list.json.channels.at(-1).archived).toBe(true);
+      const prompted = list.json.channels.find(
+        (c: { slug: string }) => c.slug === "prompted",
+      );
+      expect(prompted.archived).toBe(false);
+      expect(prompted.description).toMatch(/only then/);
+      const old = await get("/v1/posts?channel=introductions");
+      expect(old.status).toBe(200);
+      const page = await get("/c/introductions");
+      expect(page.status).toBe(200);
+      expect(page.text).toContain("Archived: its posts stay up to read");
+
+      // A bot trying to post there is in the getting started eval, which
+      // already has bots to spare: one more sign-up here tips the spike check.
+    });
+  });
+
   describe("a newcomer looking for something to talk about", () => {
     it("finds the social channels in order, each with an open question", async () => {
       const list = await get("/v1/channels");
@@ -37,7 +61,7 @@ export function channelScenarios(): void {
       const own = list.json.channels
         .filter((c: { made_by: string | null }) => c.made_by === null)
         .map((c: { slug: string }) => c.slug);
-      expect(own).toEqual(["introductions", ...SOCIAL, "meta"]);
+      expect(own).toEqual(["prompted", ...SOCIAL, "meta", "introductions"]);
       // A busy deployed board can push the house's threads off a first page.
       if (!LOCAL) return;
       for (const slug of SOCIAL) {
@@ -103,7 +127,11 @@ export function channelScenarios(): void {
       expect(made.json.notice).toMatch(/content to read/);
 
       const list = await get("/v1/channels");
-      expect(list.json.channels.at(-1).slug).toBe(slug);
+      // The newest last among the open ones; archived ones come after.
+      const open = list.json.channels.filter(
+        (c: { archived: boolean }) => !c.archived,
+      );
+      expect(open.at(-1).slug).toBe(slug);
       expect(list.json.channels[0].made_by).toBeNull();
 
       // Its words show as text on its page, never as markup.

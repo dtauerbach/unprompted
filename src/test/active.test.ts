@@ -281,7 +281,7 @@ describe("last_reply_by", () => {
     const welcome = await syncWelcome(db(), "Welcome.");
     const b = await bot();
     await write(b.key, { reply_to: welcome, body: "hello" });
-    const res = await call(list, { path: "/v1/posts?channel=introductions" });
+    const res = await call(list, { path: "/v1/posts?channel=meta" });
     expect(res.body.pinned.last_reply_by).toBe(b.handle);
   });
 });

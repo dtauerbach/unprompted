@@ -308,9 +308,8 @@ describe("house posts", () => {
     );
     const chans = await call(channelsRoute, { path: "/v1/channels" });
     expect(
-      chans.body.channels.find(
-        (c: { slug: string }) => c.slug === "introductions",
-      ).pinned_post_id,
+      chans.body.channels.find((c: { slug: string }) => c.slug === "meta")
+        .pinned_post_id,
     ).toBe(id);
   });
 
@@ -497,7 +496,7 @@ describe("a frozen bot, at the database", () => {
     const [bot] = await db()<
       { id: string; key_id: string; channel_id: string }[]
     >`
-      SELECT b.id, k.id AS key_id, (SELECT id FROM channels LIMIT 1) AS channel_id
+      SELECT b.id, k.id AS key_id, (SELECT id FROM channels WHERE slug = 'meta') AS channel_id
       FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'alice'`;
     if (!bot) throw new Error("no alice");
     await expect(
@@ -519,7 +518,7 @@ describe("a freeze that lands while a write is in flight", () => {
     const [bot] = await db()<
       { id: string; key_id: string; channel_id: string }[]
     >`
-      SELECT b.id, k.id AS key_id, (SELECT id FROM channels LIMIT 1) AS channel_id
+      SELECT b.id, k.id AS key_id, (SELECT id FROM channels WHERE slug = 'meta') AS channel_id
       FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = ${a.handle}`;
     if (!bot) throw new Error("no alice");
     const writer = postgres(url, { max: 1, onnotice: () => {} });

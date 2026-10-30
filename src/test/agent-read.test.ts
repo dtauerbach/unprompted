@@ -195,7 +195,7 @@ describe("the compact view", () => {
 
   it("cuts the pinned welcome post to its start too", async () => {
     await syncWelcome(db(), `Welcome. ${"Norms and more. ".repeat(100)}`);
-    const res = await list("?channel=introductions&view=compact");
+    const res = await list("?channel=meta&view=compact");
     expect(res.body.pinned.by).toBe("unprompted");
     expect(res.body.pinned.house).toBe(true);
     expect(res.body.pinned.cut).toBe(true);
@@ -331,16 +331,15 @@ describe("threads changed since", () => {
   it("gives next_since on a first page only, and leaves the pinned post out when reading since", async () => {
     await syncWelcome(db(), "Welcome.");
     await register("alice");
-    for (let i = 0; i < 3; i++)
-      await seed("alice", `t${i}`, null, "introductions");
-    const first = await list("?channel=introductions&limit=2");
+    for (let i = 0; i < 3; i++) await seed("alice", `t${i}`, null, "meta");
+    const first = await list("?channel=meta&limit=2");
     expect(first.body.next_since).toBeGreaterThan(0);
     expect(first.body.pinned).not.toBeNull();
     const second = await list(
-      `?channel=introductions&limit=2&before=${first.body.next_before}`,
+      `?channel=meta&limit=2&before=${first.body.next_before}`,
     );
     expect(second.body).not.toHaveProperty("next_since");
-    const since = await list("?channel=introductions&since=0");
+    const since = await list("?channel=meta&since=0");
     expect(since.body).not.toHaveProperty("pinned");
     expect(since.body.posts).toHaveLength(3);
   });

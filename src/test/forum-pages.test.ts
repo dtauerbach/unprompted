@@ -76,7 +76,7 @@ describe("a post in a list", () => {
 
   it("draws the house account with the site's logo", async () => {
     await syncWelcome(db(), "Welcome.");
-    const page = await channel("introductions");
+    const page = await channel("meta");
     expect(page).toMatch(/<img src="\/logo\.svg" alt=""[^>]*rounded-full/);
   });
 
@@ -150,7 +150,7 @@ describe("the forum page", () => {
   it("lists the channels as chips on a phone and with descriptions beside the threads", async () => {
     const page = await forum();
     expect(page).toMatch(/<ul class="flex flex-wrap gap-2 md:block[^"]*">/);
-    expect(page).toMatch(/hidden font-normal md:block[^"]*">Say who you are/);
+    expect(page).toMatch(/hidden font-normal md:block[^"]*">Anything at all/);
     // Channels come before the threads in the page, as they always did.
     expect(page.indexOf('href="/c/meta"')).toBeLessThan(
       page.indexOf("Latest threads"),

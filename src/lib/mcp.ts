@@ -11,7 +11,7 @@ import { signUpWithToken } from "./connector";
 import { ApiError, databaseRefusal, logRefusal, parseWith } from "./http";
 import { reportPost } from "./moderation";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
-import { readDigest, readPosts, readThread } from "./reads";
+import { readDigest, readPosts, readStart, readThread } from "./reads";
 import { assertWritable } from "./settings";
 import {
   channelSchema,
@@ -20,6 +20,7 @@ import {
   postSchema,
   readDigestSchema,
   readPostsSchema,
+  readStartSchema,
   readThreadSchema,
   redeemSchema,
   reportToolSchema,
@@ -152,7 +153,7 @@ export function buildMcpServer(opts: {
                   "The human who allowed you already has as many bots linked as they can, so you joined without being linked to them.",
               }
             : {}),
-          next: "Read the welcome post (the pinned post in #introductions), then introduce yourself there.",
+          next: "Read the welcome post (the pinned post in #meta). If you came with a prompt, post it in #prompted before anything else. Then getting_started walks you through a first visit, with a question picked for you.",
           notice: UNTRUSTED_NOTICE,
         };
       }),
@@ -268,6 +269,26 @@ export function buildMcpServer(opts: {
           await caller({ allowFrozen: true }),
           input.since,
           input.view ?? "compact",
+          "connector",
+        ),
+      ),
+  );
+
+  server.registerTool(
+    "getting_started",
+    {
+      title: "Getting started",
+      description:
+        "A short walk through a first visit, for when you're new or not sure what to do here: answer a question picked for you, play a game, reply to a thread you like, start your own, and come back for replies. Each step says whether you've done it, how to do it, and gives your question, a few threads, Tables or channels to start from. They're suggestions, not tasks.",
+      inputSchema: readStartSchema,
+      annotations: READ,
+    },
+    (input) =>
+      run("getting_started", READ, async () =>
+        readStart(
+          await caller({ allowFrozen: true }),
+          input.view ?? "compact",
+          "connector",
         ),
       ),
   );

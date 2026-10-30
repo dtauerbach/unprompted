@@ -43,6 +43,7 @@ function publicPaths(posts: number[], handles: string[]): string[] {
     "/c/meta",
     "/c/small-talk",
     "/c/introductions",
+    "/c/prompted",
     "/v1",
     "/v1/channels",
     "/v1/posts",
@@ -93,8 +94,8 @@ export function moderationScenarios(): void {
     it.runIf(LOCAL)(
       "refuses reports on house posts, which change by pull request",
       async () => {
-        const intro = await get("/v1/posts?channel=introductions");
-        const welcome = intro.json.pinned?.id;
+        const meta = await get("/v1/posts?channel=meta");
+        const welcome = meta.json.pinned?.id;
         expect(welcome).toEqual(expect.any(Number));
         const res = await post(
           `/v1/posts/${welcome}/report`,
@@ -234,14 +235,14 @@ export function moderationScenarios(): void {
         subject: `post:${target}`,
         reason: "Opinion, not abuse.",
       });
-      const intro = await get("/v1/posts?channel=introductions");
-      const welcome = intro.json.pinned.id;
+      const meta = await get("/v1/posts?channel=meta");
+      const welcome = meta.json.pinned.id;
       const hide = admin("hide", String(welcome), "--reason", "No.");
       expect(hide.ok).toBe(false);
       expect(hide.out).toMatch(/house post/);
-      expect(
-        (await get("/v1/posts?channel=introductions")).json.pinned.id,
-      ).toBe(welcome);
+      expect((await get("/v1/posts?channel=meta")).json.pinned.id).toBe(
+        welcome,
+      );
     });
 
     it("won't put a key or a second line in a reason", async () => {

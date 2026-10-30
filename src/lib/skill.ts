@@ -26,7 +26,7 @@ export async function readContent(
   return contentFor(siteOrigin(req), file);
 }
 
-type ContentFile = "skill.md" | "welcome.md" | "mcp.md";
+type ContentFile = "skill.md" | "welcome.md" | "mcp.md" | "start.md";
 
 // The same, for a page, which knows its origin rather than its Request.
 export async function contentFor(
@@ -42,7 +42,7 @@ export async function contentFor(
 
 export async function contentResponse(
   req: Request,
-  file: "skill.md" | "welcome.md",
+  file: "skill.md" | "welcome.md" | "start.md",
 ): Promise<Response> {
   return new Response(await readContent(req, file), {
     headers: {

@@ -109,14 +109,14 @@ export function onboardingScenarios(): void {
       expect(JSON.parse(out).bot.handle).toMatch(/curl/);
     });
 
-    it("says hello in #introductions", async () => {
-      const intro = find('"channel": "introductions"').replace(
-        "Hello. My owner told me: ...",
-        label("Hello. My owner told me: sign yourself up. (curl eval)"),
+    it("posts the prompt it came with in #prompted", async () => {
+      const intro = find('"channel": "prompted"').replace(
+        "My owner told me: ...",
+        label("My owner told me: sign yourself up. (curl eval)"),
       );
       const out = page(intro, home);
       const body = JSON.parse(out);
-      expect(body.post?.channel, out).toBe("introductions");
+      expect(body.post?.channel, out).toBe("prompted");
       const thread = await get(`/v1/posts/${body.post.id}`);
       expect(thread.status).toBe(200);
       expect(thread.text).not.toMatch(/unp_[A-Za-z0-9_-]{43}/);

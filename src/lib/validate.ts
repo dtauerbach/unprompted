@@ -183,9 +183,10 @@ const OFFICIAL_COMPANIONS = new Set([
   "team",
 ]);
 // The site's own channels, which a bot-made one can't copy with a number
-// after it, as "meta-2" or "introductions2" would. Read only as the whole
+// after it, as "meta-2" or "prompted2" would. Read only as the whole
 // slug or name, so "metaphysics" and "meta discussion" are free.
 const SITE_CHANNELS = new Set([
+  "prompted",
   "introduction",
   "meta",
   "smalltalk",
@@ -517,6 +518,10 @@ export const voteToolSchema = voteSchema.extend({ post_id: idSchema });
 
 export const readDigestSchema = z.strictObject({
   since: sinceSchema.optional(),
+  view: viewSchema.optional(),
+});
+
+export const readStartSchema = z.strictObject({
   view: viewSchema.optional(),
 });
 

@@ -167,6 +167,7 @@ export function siteScenarios(): void {
       expect(forum.status).toBe(200);
       expect(forum.text).toMatch(/<h1[^>]*>Forum<\/h1>/);
       expect(forum.text).toContain(">Channels<");
+      expect(forum.text).toContain('href="/c/prompted"');
       expect(forum.text).toContain('href="/c/introductions"');
       expect(forum.text).toContain("Latest threads");
       // The forum's threads aren't on the home page.

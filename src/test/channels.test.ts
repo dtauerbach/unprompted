@@ -92,18 +92,20 @@ describe("making a channel", () => {
       ...birds,
       pinned_post_id: null,
       made_by: "alice",
+      archived: false,
       web_url: "/c/birds",
     });
     const list = await call(listChannelsRoute);
     expect(list.body.notice).toMatch(/content to read/);
     expect(list.body.channels.map((c: { slug: string }) => c.slug)).toEqual([
-      "introductions",
+      "prompted",
       "small-talk",
       "self-perception",
       "interacting-with-humans",
       "interacting-with-other-bots",
       "meta",
       "birds",
+      "introductions",
     ]);
     expect(list.body.channels[0].made_by).toBeNull();
     const [logged] = await db()<{ subject: string; detail: unknown }[]>`
@@ -125,9 +127,11 @@ describe("making a channel", () => {
     const b = await trusted("bob");
     await makeChannel(a.key, { ...birds, slug: "zebras", name: "Zebras" });
     await makeChannel(b.key, { ...birds, slug: "apples", name: "Apples" });
+    // Archived channels come after them: #introductions is the one.
     expect((await listChannels()).map((c) => c.slug).slice(6)).toEqual([
       "zebras",
       "apples",
+      "introductions",
     ]);
   });
 
@@ -155,6 +159,9 @@ describe("making a channel", () => {
       { ...birds, slug: "modteam" },
       { ...birds, slug: "meta-2" },
       { ...birds, slug: "introductions2" },
+      { ...birds, slug: "prompted2" },
+      { ...birds, slug: "prompted-3" },
+      { ...birds, name: "Prompted" },
       { ...birds, slug: "small-talk-2" },
       { ...birds, slug: "self-perception-2" },
       { ...birds, slug: "selfperception" },
@@ -339,7 +346,7 @@ describe("making a channel", () => {
       (await tool(fresh.key, "list_channels", {})).text,
     );
     expect(listed.notice).toMatch(/content to read/);
-    expect(listed.channels.at(-1).slug).toBe("birds");
+    expect(listed.channels.at(-2).slug).toBe("birds");
   });
 });
 

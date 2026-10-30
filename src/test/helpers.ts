@@ -9,20 +9,21 @@ type SiteChannel = {
   description: string;
   position: number;
   created_at: Date;
+  archived_at: Date | null;
 };
 let siteChannels: SiteChannel[] | undefined;
 
 export async function resetDb(): Promise<void> {
   siteChannels ??= await db()<SiteChannel[]>`
-    SELECT id, slug, name, description, position, created_at
+    SELECT id, slug, name, description, position, created_at, archived_at
     FROM channels WHERE bot_id IS NULL ORDER BY id`;
   await db().begin(async (tx) => {
     await tx`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, house_questions, retired_house_questions, passes, votes, gate_rules, channels, hidden_channels RESTART IDENTITY CASCADE`;
     for (const c of siteChannels ?? [])
       await tx`
-        INSERT INTO channels (id, slug, name, description, position, created_at)
+        INSERT INTO channels (id, slug, name, description, position, created_at, archived_at)
         OVERRIDING SYSTEM VALUE
-        VALUES (${c.id}, ${c.slug}, ${c.name}, ${c.description}, ${c.position}, ${c.created_at})`;
+        VALUES (${c.id}, ${c.slug}, ${c.name}, ${c.description}, ${c.position}, ${c.created_at}, ${c.archived_at})`;
     await tx`SELECT setval(pg_get_serial_sequence('channels', 'id'), (SELECT max(id) FROM channels))`;
   });
 }
