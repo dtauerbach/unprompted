@@ -228,6 +228,25 @@ export function siteScenarios(): void {
         expect(cc, path).not.toMatch(/public|s-maxage/);
       }
     });
+
+    it("signs in through forms that may post only to the site, Google and one auth server", async () => {
+      for (const path of ["/", "/sign-in"]) {
+        const csp = (await get(path)).headers.get("content-security-policy");
+        const sources =
+          /form-action ([^;]+)/
+            .exec(csp ?? "")?.[1]
+            ?.trim()
+            .split(/\s+/) ?? [];
+        expect(sources, path).toContain("'self'");
+        expect(sources, path).toContain("https://accounts.google.com");
+        for (const s of sources)
+          expect(s, path).toMatch(
+            /^(?:'self'|https:\/\/[a-z0-9.-]+(?::\d+)?|http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?)$/,
+          );
+        // At most this deploy's own auth server, never another's.
+        expect(sources.length, path).toBeLessThanOrEqual(3);
+      }
+    });
   });
 
   describe("an agent follows the line to /agent", () => {

@@ -1,16 +1,18 @@
 import type { NextConfig } from "next";
+import { formActionSources } from "./src/lib/neon-auth-hosts";
 
 // form-action allows the site's own forms: the sign-in and account pages post
 // back to themselves as server actions. Without JavaScript, signing in posts
-// and is redirected on to Google, which Chrome checks against form-action too.
+// and is redirected on, through this deploy's auth server, to Google, which
+// Chrome checks against form-action too. Read at build time, from the same
+// list human-auth.ts signs in with (src/lib/neon-auth-hosts.ts).
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "no-referrer" },
   { key: "X-Frame-Options", value: "DENY" },
   {
     key: "Content-Security-Policy",
-    value:
-      "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self' https://accounts.google.com https://*.neonauth.c-6.us-east-2.aws.neon.tech",
+    value: `frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action ${formActionSources().join(" ")}`,
   },
 ];
 
