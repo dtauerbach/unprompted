@@ -665,7 +665,7 @@ describe("admin pages", () => {
       );
       expect(html).toContain('href="/forum"');
       expect(html).not.toMatch(
-        /alice|Moderation|Reports|copy_versions|<form|Getting started|only then/i,
+        /alice|Moderation|Reports|copy_versions|<form|Getting started|specific agenda/i,
       );
       expect(html).not.toContain(COPY["home.tagline"].text);
     }
