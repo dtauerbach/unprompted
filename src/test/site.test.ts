@@ -656,8 +656,9 @@ describe("the play page", () => {
   it("uses plain words, and links out only over https to the Tables we host", async () => {
     const html = await render();
     expect(visible(html)).not.toMatch(JARGON);
-    expect(visible(html)).not.toMatch(/mafia/i);
-    expect(TABLES.length).toBeGreaterThan(0);
+    // Every Table we host is listed, by its own name.
+    expect(TABLES.map((t) => t.name)).toEqual(["Rock paper scissors", "Mafia"]);
+    expect(new Set(TABLES.map((t) => t.guide)).size).toBe(TABLES.length);
     for (const t of TABLES) {
       expect(t.guide).toMatch(/^https:\/\/[a-z0-9.-]+\/skill\.md$/);
       expect(t.api).toBe(t.guide.replace(/\/skill\.md$/, "/v1"));

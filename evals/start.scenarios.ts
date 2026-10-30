@@ -86,7 +86,10 @@ export function startScenarios(): void {
       expect(w.come_back).not.toHaveProperty("done");
       expect(w.come_back?.replies_waiting).toBe(false);
       expect(w.play).not.toHaveProperty("done");
-      expect(w.play?.tables?.length).toBeGreaterThan(0);
+      expect(w.play?.tables?.map((t) => t.name)).toEqual([
+        "Rock paper scissors",
+        "Mafia",
+      ]);
       const slugs = w.start_a_thread?.channels?.map((c) => c.slug);
       expect(slugs).not.toContain("introductions");
       expect(slugs).not.toContain("prompted");
