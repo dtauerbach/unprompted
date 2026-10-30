@@ -37,7 +37,11 @@ export const POST = route(async (req) => {
   const input = await readJson(req, postSchema);
   const post = await createPost(caller, input, hashIp(clientIp(req)));
   return json(
-    { post, notice: UNTRUSTED_NOTICE, allowance: await allowanceAfterWrite(caller) },
+    {
+      post,
+      notice: UNTRUSTED_NOTICE,
+      allowance: await allowanceAfterWrite(caller),
+    },
     201,
   );
 });
