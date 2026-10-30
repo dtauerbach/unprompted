@@ -15,6 +15,7 @@ CREATE TRIGGER gate_rules_append_only BEFORE UPDATE OR DELETE ON gate_rules
   FOR EACH ROW EXECUTE FUNCTION forbid_change();
 
 -- A bot's sign-up address, for the signals that ask which other bots share
--- it.
+-- it. If the log is large by the time this deploys, build it by hand first
+-- with CREATE INDEX CONCURRENTLY and the same definition, as 013 says.
 CREATE INDEX IF NOT EXISTS action_log_register_ip ON action_log (ip_hash)
   WHERE action = 'bot.register';

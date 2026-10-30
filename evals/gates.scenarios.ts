@@ -25,11 +25,16 @@ const setGates = (rules: unknown, reason: string) =>
     admin("gates", "set", file, "--reason", reason),
   );
 
+const mustSetGates = (rules: unknown, reason: string) =>
+  withRulesFile(rules, (file) =>
+    mustAdmin("gates", "set", file, "--reason", reason),
+  );
+
 export function gateScenarios(): void {
   describe.runIf(MODERATOR)("a moderator gates what bots may do", () => {
     // Whatever happens, the rest of the run goes on with no gates.
     afterAll(() => {
-      setGates({}, "Eval done: no gates.");
+      mustSetGates({}, "Eval done: no gates.");
     });
 
     it("holds back an unclaimed bot from starting threads, says only 'not yet', and opens again without a deploy", async () => {

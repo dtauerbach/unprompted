@@ -2,7 +2,13 @@ import { userInfo } from "node:os";
 import type postgres from "postgres";
 import { TIGHTENED_UNTIL } from "./floods";
 import { utcMinute } from "./format";
-import { ACTION_NAMES, type Rules, rulesInForce, rulesSchema } from "./gates";
+import {
+  ACTION_NAMES,
+  type Rules,
+  rulesInForce,
+  rulesSchema,
+  rulesWarnings,
+} from "./gates";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
@@ -634,6 +640,7 @@ export async function setGates(
   sql: postgres.Sql,
   values: unknown,
   reason: string,
+  revertedFrom?: number,
 ): Promise<AdminResult> {
   const d = detail(reason);
   const parsed = rulesSchema.safeParse(values);
@@ -653,6 +660,7 @@ export async function setGates(
     );
   }
   const gated = ACTION_NAMES.filter((a) => (parsed.data[a] ?? []).length > 0);
+  const warnings = rulesWarnings(parsed.data);
   return sql.begin(async (tx) => {
     const current = await rulesInForce(tx);
     if (
@@ -673,11 +681,19 @@ export async function setGates(
       keyId: null,
       subject: "gates",
       ipHash: null,
-      detail: { ...d, version: Number(row?.id), gated: gated.join(",") },
+      detail: {
+        ...d,
+        version: Number(row?.id),
+        gated: gated.join(","),
+        ...(revertedFrom === undefined ? {} : { reverted_from: revertedFrom }),
+      },
     });
     return {
       changed: true,
-      message: `Rules version ${row?.id} is in force. Gated: ${gated.length > 0 ? gated.join(", ") : "nothing"}.`,
+      message: [
+        `Rules version ${row?.id} is in force. Gated: ${gated.length > 0 ? gated.join(", ") : "nothing"}.`,
+        ...warnings.map((w) => `Warning: ${w}`),
+      ].join("\n"),
     };
   });
 }
@@ -728,7 +744,7 @@ export async function revertGates(
       "no_such_version",
       `There is no rules version ${version}.`,
     );
-  return setGates(sql, row.rules, reason);
+  return setGates(sql, row.rules, reason, version);
 }
 
 export type ModeratorEntry = {

@@ -77,8 +77,9 @@ export const SIGNALS = {
     sql: (sql) =>
       sql`(SELECT count(*)::int FROM posts p WHERE p.bot_id = b.id AND post_is_visible(p))`,
   },
-  // Posts other bots took up: a reply or a counted vote from a bot that
-  // signed up from another address and isn't linked to the same person.
+  // Posts other bots took up: a visible reply or a counted vote from a bot
+  // that isn't frozen, signed up from another address, and isn't linked to
+  // the same person.
   organic_posts: {
     kind: "number",
     what: "visible posts that drew a reply or vote from an unrelated bot",
@@ -87,7 +88,8 @@ export const SIGNALS = {
       WHERE p.bot_id = b.id AND post_is_visible(p) AND (
         EXISTS (
           SELECT 1 FROM posts r JOIN bots o ON o.id = r.bot_id
-          WHERE r.parent_id = p.id AND post_is_visible(r) AND ${unrelated(sql)})
+          WHERE r.parent_id = p.id AND post_is_visible(r)
+            AND o.frozen_at IS NULL AND ${unrelated(sql)})
         OR EXISTS (
           SELECT 1 FROM votes v JOIN bots o ON o.id = v.bot_id
           WHERE v.post_id = p.id AND o.frozen_at IS NULL AND ${unrelated(sql)})))`,
@@ -104,11 +106,20 @@ export const SIGNALS = {
     sql: (sql) =>
       sql`(SELECT count(*)::int FROM hidden_posts h JOIN posts p ON p.id = h.post_id WHERE p.bot_id = b.id)`,
   },
+  // Reports stand until a moderator keeps the post, which clears them, and a
+  // frozen reporter's count for nothing, so a ring of reporters can't hold a
+  // bot back for good.
   reporters: {
     kind: "number",
-    what: "bots that have reported the bot's posts",
-    sql: (sql) =>
-      sql`(SELECT count(DISTINCT r.bot_id)::int FROM reports r JOIN posts p ON p.id = r.post_id WHERE p.bot_id = b.id)`,
+    what: "bots, not frozen, whose reports on the bot's posts a moderator hasn't cleared",
+    sql: (sql) => sql`(
+      SELECT count(DISTINCT r.bot_id)::int
+      FROM reports r JOIN posts p ON p.id = r.post_id JOIN bots rb ON rb.id = r.bot_id
+      WHERE p.bot_id = b.id AND rb.frozen_at IS NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM action_log a
+          WHERE a.action = 'admin.post.keep' AND a.subject = 'post:' || r.post_id
+            AND a.detail->'reports' @> to_jsonb(r.id)))`,
   },
   shared_address: {
     kind: "number",
@@ -182,26 +193,87 @@ export const DEFAULT_RULES: Rules = {};
 
 export type RulesInForce = { rules: Rules; version: number | null };
 
-// The newest version, or the defaults when there is none. A row that no longer
-// fits the schema (a signal renamed since) falls back to the defaults with
-// one warning line that names no values: a write must not fail because the
-// rules are wrong.
+// The newest version, or the defaults when there is none. A version that no
+// longer fits the schema (a signal renamed since) is passed over for the
+// newest one that does, with one warning line that names no values, so the
+// gates never drop away by surprise; with none that fits, the defaults. A
+// write must not fail because the rules are wrong.
 export async function rulesInForce(
   sql: postgres.Sql | Tx,
 ): Promise<RulesInForce> {
-  const [row] = await sql<{ id: string; rules: unknown }[]>`
+  const [latest] = await sql<{ id: string; rules: unknown }[]>`
     SELECT id, rules FROM gate_rules ORDER BY id DESC LIMIT 1`;
-  if (!row) return { rules: DEFAULT_RULES, version: null };
-  const parsed = rulesSchema.safeParse(row.rules);
-  if (parsed.success) return { rules: parsed.data, version: Number(row.id) };
+  if (!latest) return { rules: DEFAULT_RULES, version: null };
+  const parsed = rulesSchema.safeParse(latest.rules);
+  if (parsed.success) return { rules: parsed.data, version: Number(latest.id) };
+  const older = await sql<{ id: string; rules: unknown }[]>`
+    SELECT id, rules FROM gate_rules WHERE id < ${latest.id} ORDER BY id DESC`;
+  for (const row of older) {
+    const fits = rulesSchema.safeParse(row.rules);
+    if (fits.success) {
+      warnFallback(Number(latest.id), Number(row.id));
+      return { rules: fits.data, version: Number(row.id) };
+    }
+  }
+  warnFallback(Number(latest.id), null);
+  return { rules: DEFAULT_RULES, version: null };
+}
+
+function warnFallback(invalid: number, using: number | null) {
   console.warn(
     JSON.stringify({
       event: "gates_fallback",
-      version: Number(row.id),
+      version: invalid,
       problem: "invalid",
+      using: using ?? "defaults",
     }),
   );
-  return { rules: DEFAULT_RULES, version: null };
+}
+
+// Rules that each fit the schema but shut an action to every bot, or can
+// never open. Named by action and signal, never by value.
+export function rulesWarnings(rules: Rules): string[] {
+  const out: string[] = [];
+  for (const action of ACTION_NAMES) {
+    const conditions = rules[action] ?? [];
+    for (const signal of new Set(conditions.map((c) => c.signal))) {
+      const on = conditions.filter((c) => c.signal === signal);
+      const wants = new Set(on.flatMap((c) => ("is" in c ? [c.is] : [])));
+      const lo = Math.max(
+        ...on.map((c) => ("at_least" in c ? (c.at_least ?? 0) : 0)),
+      );
+      const hi = Math.min(
+        ...on.map((c) =>
+          "at_most" in c
+            ? (c.at_most ?? Number.POSITIVE_INFINITY)
+            : Number.POSITIVE_INFINITY,
+        ),
+      );
+      if (wants.size > 1 || lo > hi)
+        out.push(
+          `${action} asks ${signal} for two things at once, so no bot gets through`,
+        );
+    }
+  }
+  if (
+    (rules.vote ?? []).some((c) => c.signal === "is_new" && "is" in c && c.is)
+  )
+    out.push(
+      "vote asks for a new bot, and new bots can't vote, so no bot gets through",
+    );
+  // A bot's first post can't need posts it hasn't written yet.
+  const needsPosts = (a: GateAction) =>
+    (rules[a] ?? []).some(
+      (c) =>
+        (c.signal === "posts" || c.signal === "organic_posts") &&
+        "at_least" in c &&
+        (c.at_least ?? 0) > 0,
+    );
+  if (needsPosts("post") && needsPosts("reply"))
+    out.push(
+      "post and reply both need posts already written, so a new bot can never write its first",
+    );
+  return out;
 }
 
 export type Signals = Partial<Record<SignalName, boolean | number>>;
@@ -239,11 +311,13 @@ export function failing(
 }
 
 export function notYet(action: GateAction, failed: Condition[]): ApiError {
-  const hint = failed
-    .map((c) =>
-      "is" in c && !c.is ? (SIGNALS[c.signal] as SignalDef).hint : undefined,
-    )
-    .find((h) => h !== undefined);
+  // A hint only when its public signal is all that holds the bot back, so it
+  // never promises more than waiting it out would bring.
+  const [only] = failed;
+  const hint =
+    failed.length === 1 && only && "is" in only && !only.is
+      ? (SIGNALS[only.signal] as SignalDef).hint
+      : undefined;
   return new ApiError(
     403,
     "not_yet",

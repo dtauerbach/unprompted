@@ -5,12 +5,17 @@ import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as claim } from "@/app/v1/me/owner/route";
 import { POST as passRoute } from "@/app/v1/me/passes/route";
+import { POST as redeemRoute } from "@/app/v1/passes/redeem/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
-import { POST as voteRoute } from "@/app/v1/posts/[id]/vote/route";
+import {
+  DELETE as unvoteRoute,
+  POST as voteRoute,
+} from "@/app/v1/posts/[id]/vote/route";
 import { POST as post } from "@/app/v1/posts/route";
 import {
   gateHistory,
   hidePost,
+  keepPost,
   revertGates,
   setFrozen,
   setGates,
@@ -27,6 +32,7 @@ import {
   readSignals,
   rulesInForce,
   rulesSchema,
+  rulesWarnings,
   SIGNAL_NAMES,
   SIGNALS,
 } from "@/lib/gates";
@@ -229,6 +235,39 @@ describe("the three catalogs", () => {
     expect(
       notYet("vote", [{ signal: "is_new", is: true }]).message,
     ).not.toContain("marked new");
+    // Nor does one where a private condition fails too: waiting out "new"
+    // wouldn't be enough.
+    const both = notYet("vote", [
+      { signal: "is_new", is: false },
+      { signal: "claimed", is: true },
+    ]);
+    expect(both.message).not.toContain("marked new");
+    expect(both.message).not.toMatch(/claim/i);
+  });
+
+  it("warns about rules that shut an action to every bot, naming no values", () => {
+    expect(rulesWarnings({ post: [{ signal: "claimed", is: true }] })).toEqual(
+      [],
+    );
+    const w = rulesWarnings({
+      post: [
+        { signal: "posts", at_least: 50 },
+        { signal: "posts", at_most: 20 },
+      ],
+      reply: [
+        { signal: "claimed", is: true },
+        { signal: "claimed", is: false },
+        { signal: "organic_posts", at_least: 1 },
+      ],
+      vote: [{ signal: "is_new", is: true }],
+    });
+    expect(w).toEqual([
+      "post asks posts for two things at once, so no bot gets through",
+      "reply asks claimed for two things at once, so no bot gets through",
+      "vote asks for a new bot, and new bots can't vote, so no bot gets through",
+      "post and reply both need posts already written, so a new bot can never write its first",
+    ]);
+    expect(w.join(" ")).not.toMatch(/\d/);
   });
 });
 
@@ -284,7 +323,7 @@ describe("a bot's signals", () => {
     const byDave = await seed("alice");
     const lonely = await seed("alice");
     const hidden = await seed("alice");
-    // From her own address: not organic.
+    // From its own address: not organic.
     await seed("twin", byTwin);
     await seedVote("twin", byTwin);
     // A reply from an unrelated bot, and a vote from another.
@@ -298,9 +337,12 @@ describe("a bot's signals", () => {
     await setFrozen(db(), "dave", true, "Ring.");
     expect((await signals("alice")).organic_posts).toBe(1);
     expect(lonely).toBeGreaterThan(0);
-    // Her own replies in her own thread never count.
+    // Its own replies in its own thread never count.
     await seed("alice", lonely);
     expect((await signals("alice")).organic_posts).toBe(1);
+    // Nor does a frozen bot's reply.
+    await setFrozen(db(), "carol", true, "Ring.");
+    expect((await signals("alice")).organic_posts).toBe(0);
   });
 
   it("doesn't count bots linked to the same person as unrelated", async () => {
@@ -354,6 +396,33 @@ describe("a bot's signals", () => {
       body: { reason: "spam" },
     });
     expect((await signals("alice")).reporters).toBe(2);
+    // Once a moderator keeps the post, its reports stop counting, and a
+    // frozen reporter counts for nothing.
+    await keepPost(db(), one, "Fine as it is.");
+    expect((await signals("alice")).reporters).toBe(1);
+    await setFrozen(db(), "bob", true, "Ring.");
+    expect((await signals("alice")).reporters).toBe(0);
+  });
+
+  it("counts two connector sign-ups as unrelated, since neither has an address of its own", async () => {
+    // Written as the connector writes them: the address is the platform's.
+    for (const handle of ["alice", "bob"]) {
+      await db()`
+        WITH b AS (
+          INSERT INTO bots (handle, created_at) VALUES (${handle}, now() - interval '3 days')
+          RETURNING id
+        ), k AS (
+          INSERT INTO api_keys (bot_id, key_hash, prefix)
+          SELECT id, encode(sha256(${handle}::bytea), 'hex'), 'unp_test' FROM b
+        )
+        INSERT INTO action_log (action, bot_id, subject, ip_hash, detail)
+        SELECT 'bot.register', id, 'bot:' || ${handle}, 'platform', '{"via":"connector"}' FROM b`;
+    }
+    const p = await seed("alice");
+    await seedVote("bob", p);
+    const mine = await signals("alice");
+    expect(mine.organic_posts).toBe(1);
+    expect(mine.shared_address).toBe(0);
   });
 });
 
@@ -495,12 +564,37 @@ describe("a gate in force", () => {
     expect(r.text).not.toMatch(/claim/i);
   });
 
-  it("falls back to the defaults, with a warning naming no values, when a saved version no longer fits", async () => {
+  it("passes over a saved version that no longer fits for the newest that does, warning without values", async () => {
+    const a = await register("alice");
+    await setGates(db(), { post: [{ signal: "claimed", is: true }] }, "One.");
+    await db()`INSERT INTO gate_rules (rules, reason, set_by)
+      VALUES (${db().json({ post: [{ signal: "retired_signal", at_least: 777 }] })}, 'old', 'test')`;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      // Version 1 still holds: the gates don't drop away.
+      expect(await rulesInForce(db())).toEqual({
+        rules: { post: [{ signal: "claimed", is: true }] },
+        version: 1,
+      });
+      const res = await call(post, {
+        key: a.key,
+        body: { channel: "meta", body: "hi" },
+      });
+      expect(res.body.error.code).toBe("not_yet");
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("777");
+      expect(JSON.stringify(warn.mock.calls)).toContain("gates_fallback");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("falls back to the defaults when no saved version fits", async () => {
     const a = await register("alice");
     await db()`INSERT INTO gate_rules (rules, reason, set_by)
       VALUES (${db().json({ post: [{ signal: "retired_signal", at_least: 777 }] })}, 'old', 'test')`;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
+      expect((await rulesInForce(db())).version).toBeNull();
       expect(
         (
           await call(post, {
@@ -509,12 +603,47 @@ describe("a gate in force", () => {
           })
         ).status,
       ).toBe(201);
-      expect(warn).toHaveBeenCalled();
       expect(JSON.stringify(warn.mock.calls)).not.toContain("777");
-      expect(JSON.stringify(warn.mock.calls)).toContain("gates_fallback");
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("leaves taking a vote back and redeeming a pass open, whatever is gated", async () => {
+    const alice = await register("alice");
+    const bob = await register("bob");
+    await age("bob");
+    const id = await seed("alice");
+    expect(
+      (
+        await call(voteRoute, {
+          key: bob.key,
+          params: { id: String(id) },
+          body: {},
+        })
+      ).status,
+    ).toBe(200);
+    const pass = await call(passRoute, { key: bob.key, body: { to: "alice" } });
+    expect(pass.status).toBe(201);
+    await setGates(
+      db(),
+      {
+        vote: [{ signal: "claimed", is: true }],
+        get_pass: [{ signal: "claimed", is: true }],
+      },
+      "Claimed only.",
+    );
+    const unvote = await call(unvoteRoute, {
+      method: "DELETE",
+      key: bob.key,
+      params: { id: String(id) },
+    });
+    expect(unvote.status).toBe(200);
+    const redeemed = await call(redeemRoute, {
+      key: alice.key,
+      body: { pass: pass.body.pass },
+    });
+    expect(redeemed.status).toBe(200);
   });
 });
 
@@ -565,6 +694,9 @@ describe("changing the rules", () => {
     await setGates(db(), {}, "Open again.");
     const back = await revertGates(db(), 1, "Back to one.");
     expect(back.changed).toBe(true);
+    const [logged] = await db()<{ detail: Record<string, unknown> }[]>`
+      SELECT detail FROM action_log WHERE action = 'admin.gates.set' ORDER BY id DESC LIMIT 1`;
+    expect(logged?.detail).toMatchObject({ version: 3, reverted_from: 1 });
     expect((await rulesInForce(db())).rules).toEqual({
       post: [{ signal: "claimed", is: true }],
     });
