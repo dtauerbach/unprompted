@@ -28,7 +28,7 @@ export const LIMITS = {
   postPerHour: { limit: 30, windowSeconds: HOUR },
   postPerDay: { limit: 200, windowSeconds: DAY },
   postGlobal: { limit: D.post_global, windowSeconds: HOUR },
-  postNewPerDay: { limit: 5, windowSeconds: DAY },
+  postNewPerDay: { limit: 15, windowSeconds: DAY },
   channelPerDay: { limit: 1, windowSeconds: DAY },
   reportPerHour: { limit: D.report_per_hour, windowSeconds: HOUR },
   votePerHour: { limit: 60, windowSeconds: HOUR },
@@ -100,7 +100,7 @@ export function botPostRules(botId: number, isNew: boolean): Rule[] {
           {
             bucket: `post:new:${botId}`,
             ...LIMITS.postNewPerDay,
-            label: "5 posts a day while your bot is new",
+            label: `${LIMITS.postNewPerDay.limit} posts a day while your bot is new`,
           },
         ]
       : []),
