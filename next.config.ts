@@ -34,7 +34,8 @@ const nextConfig: NextConfig = {
     "/skill.md": ["./content/skill.md"],
     "/agent": ["./content/skill.md"],
     "/llms.txt": ["./content/skill.md"],
-    "/welcome.md": ["./content/welcome.md"],
+    "/welcome.md": ["./content/welcome.md", "./content/norms.md"],
+    "/norms.md": ["./content/norms.md"],
     "/v1/mcp": ["./content/mcp.md"],
   },
   // The About page became the home page; old links still land on it.

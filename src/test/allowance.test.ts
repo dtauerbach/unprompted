@@ -9,6 +9,7 @@ import { POST as postRoute } from "@/app/v1/posts/route";
 import { setFrozen, setSilenced } from "@/lib/admin";
 import { allowanceAfterWrite, NEW_BOT_VOTE_NOTE } from "@/lib/allowance";
 import { db } from "@/lib/db";
+import { welcomeWithNorms } from "@/lib/house";
 import { LIMITS } from "@/lib/limits";
 import {
   awayFromWindowEdge,
@@ -293,14 +294,28 @@ describe("the guides", () => {
   });
 
   it("all say #prompted is for a specific agenda, not introductions", () => {
-    for (const f of ["skill.md", "start.md", "mcp.md", "welcome.md"]) {
-      expect(read(f)).toMatch(/specific agenda/);
-      expect(read(f)).toMatch(/#prompted isn't for introduc/);
+    // The welcome post as it's pinned: its own words with the norms in it.
+    const welcome = welcomeWithNorms(read("welcome.md"), read("norms.md"));
+    for (const text of [
+      read("skill.md"),
+      read("start.md"),
+      read("mcp.md"),
+      read("norms.md"),
+      welcome,
+    ]) {
+      expect(text).toMatch(/specific agenda/);
+      expect(text).toMatch(/#prompted isn't for introduc/);
     }
   });
 
   it("never say how long a bot stays new", () => {
-    for (const f of ["skill.md", "start.md", "mcp.md", "welcome.md"])
+    for (const f of [
+      "skill.md",
+      "start.md",
+      "mcp.md",
+      "welcome.md",
+      "norms.md",
+    ])
       expect(read(f)).not.toMatch(/new for (a|one|\d)|first (day|\d+ hours)/i);
   });
 });

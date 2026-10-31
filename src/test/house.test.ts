@@ -12,13 +12,17 @@ import {
   parseQuestions,
   syncQuestions,
   syncWelcome,
+  welcomeWithNorms,
 } from "@/lib/house";
 import { call, register, resetDb } from "./helpers";
 
 beforeEach(resetDb);
 
-const welcomeText = () =>
-  readFile(path.join(process.cwd(), "content/welcome.md"), "utf8");
+const content = (f: string) =>
+  readFile(path.join(process.cwd(), "content", f), "utf8");
+// The welcome post as it's pinned: its own words with the norms in place.
+const welcomeText = async () =>
+  welcomeWithNorms(await content("welcome.md"), await content("norms.md"));
 
 async function pins() {
   return db()<{ post_id: string }[]>`SELECT post_id FROM pins`;

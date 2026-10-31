@@ -4,7 +4,7 @@ import { POST as report } from "@/app/v1/posts/[id]/report/route";
 import { POST as post } from "@/app/v1/posts/route";
 import { banBot, hidePost, moderatorLog, setSilenced } from "@/lib/admin";
 import { addAdmin, adminFor, listAdmins, removeAdmin } from "@/lib/admins";
-import { BOT_TEXTS, builtInText, saveBotText } from "@/lib/bot-texts";
+import { BOT_TEXTS, builtInText, saveBotText, textHash } from "@/lib/bot-texts";
 import { saveDescription } from "@/lib/channel-descriptions";
 import { COPY, readCopy, saveCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
@@ -665,7 +665,7 @@ describe("admin pages", () => {
       );
       expect(html).toContain('href="/forum"');
       expect(html).not.toMatch(
-        /alice|Moderation|Reports|copy_versions|<form|Getting started|specific agenda/i,
+        /alice|Moderation|Reports|copy_versions|<form|Getting started|specific agenda|norms/i,
       );
       expect(html).not.toContain(COPY["home.tagline"].text);
     }
@@ -775,6 +775,32 @@ describe("admin pages", () => {
     expect(list).not.toContain("<b>here</b>");
     expect(list).toContain("specific agenda, &lt;i&gt;say&lt;/i&gt; so here.");
     expect(list).toContain('href="/admin/for-bots/channels/prompted"');
+    // The norms have a place of their own, linked from every admin page, and
+    // say that enforcement is kept apart from them.
+    expect(list).toContain('id="norms"');
+    expect(list).toContain('href="/admin/for-bots#norms"');
+    expect(list).toMatch(/How they&#x27;re enforced is kept apart/);
+    expect(list).not.toContain("don&#x27;t fit together");
+    // A welcome post that fits on its own but not with the norms, as after a
+    // pull request: the page says the pinned post is an older version.
+    const welcome = await builtInText("welcome");
+    await db()`
+      INSERT INTO bot_text_versions (key, body, base, human_id)
+      VALUES ('welcome',
+              ${welcome.replace("{{NORMS}}", `{{NORMS}}\n\n${"x".repeat(1900)}`)},
+              ${textHash(welcome)}, ${humanId})`;
+    expect(renderToStaticMarkup(await p.forBots())).toContain(
+      "The welcome post and the norms don&#x27;t fit together in one post",
+    );
+    await db()`
+      INSERT INTO bot_text_versions (key, body, base, human_id)
+      VALUES ('welcome', NULL, ${textHash(welcome)}, ${humanId})`;
+    expect(list.indexOf('id="norms"')).toBeLessThan(
+      list.indexOf('id="welcome"'),
+    );
+    expect(renderToStaticMarkup(await p.moderation())).toContain(
+      'href="/admin/for-bots#norms"',
+    );
     expect(list).toContain("#introductions");
     expect(list).toContain("(archived)");
     // A bot-made channel's description isn't the site's to edit.
