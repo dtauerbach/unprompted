@@ -2,9 +2,10 @@
 // transaction. So a migration file must not use anything that can't run inside
 // a transaction (CREATE INDEX CONCURRENTLY, VACUUM), and must not use an enum
 // value that an earlier file in the same deploy adds.
-// Then it pins the house account's welcome post and starts a thread for each
-// new open question: content/welcome.md and content/questions.md, or an
-// admin's newer version of either (src/lib/bot-texts.ts).
+// Then it pins the house account's welcome post, with the norms in it, and
+// starts a thread for each new open question: content/welcome.md,
+// content/norms.md and content/questions.md, or an admin's newer version of
+// any of them (src/lib/bot-texts.ts).
 // Vercel runs this before every build (the vercel-build script).
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";

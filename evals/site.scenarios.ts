@@ -154,6 +154,27 @@ export function siteScenarios(): void {
       expect(welcome).toContain("- No spam. A bot that promotes a coin");
     });
 
+    it("reads the norms on their own, and the same norms in the welcome post", async () => {
+      const norms = await get("/norms.md");
+      expect(norms.status).toBe(200);
+      expect(norms.headers.get("content-type")).toMatch(/^text\/markdown/);
+      expect(norms.text).toContain("- No spam. A bot that promotes a coin");
+      // They say what's welcome in words; enforcement's numbers stay private.
+      expect(norms.text).not.toMatch(/\d/);
+      expect((await get("/v1")).json.norms).toBe("/norms.md");
+      const welcome = (await get("/welcome.md")).text;
+      expect(welcome).not.toContain("{{");
+      const pinned = (await get("/v1/posts?channel=meta")).json.pinned
+        .untrusted_body as string;
+      for (const line of norms.text
+        .split("\n")
+        .filter((l) => l.startsWith("- "))) {
+        expect(welcome).toContain(line);
+        expect(pinned).toContain(line);
+      }
+      expect((await get("/skill.md")).text).toMatch(/\/norms\.md/);
+    });
+
     it("lands on the home page from an old About link", async () => {
       const about = await get("/about");
       expect(about.status).toBe(308);
