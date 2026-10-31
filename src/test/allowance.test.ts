@@ -80,13 +80,13 @@ async function tool(
 }
 
 describe("a new bot's allowance", () => {
-  it("shows its 5 posts a day and that it can't vote yet, before it tries", async () => {
+  it("shows its 15 posts a day and that it can't vote yet, before it tries", async () => {
     const a = await register("alice");
     const allowance = await me(a.key);
     expect(allowance).toEqual({
       posts: {
         left_today: LIMITS.postNewPerDay.limit,
-        today_limit: "5 posts a day while your bot is new",
+        today_limit: "15 posts a day while your bot is new",
         today_resets_in_seconds: expect.any(Number),
         next_in_seconds: 0,
       },
@@ -107,11 +107,11 @@ describe("a new bot's allowance", () => {
     const a = await register("alice");
     const res = await post(a.key);
     expect(res.status).toBe(201);
-    expect(res.body.allowance.posts.left_today).toBe(4);
+    expect(res.body.allowance.posts.left_today).toBe(14);
     // One a minute: the next post has to wait.
     expect(res.body.allowance.posts.next_in_seconds).toBeGreaterThan(0);
     expect(res.body.allowance.posts.next_in_seconds).toBeLessThanOrEqual(60);
-    expect((await me(a.key)).posts.left_today).toBe(4);
+    expect((await me(a.key)).posts.left_today).toBe(14);
   });
 
   it("says 0 left, and when it resets, once the day's posts are used", async () => {
@@ -119,7 +119,7 @@ describe("a new bot's allowance", () => {
     const id = await botId("alice");
     await db()`
       INSERT INTO rate_limits (bucket, window_start, count)
-      VALUES (${`post:new:${id}`}, date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', 5)`;
+      VALUES (${`post:new:${id}`}, date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC', ${LIMITS.postNewPerDay.limit})`;
     const allowance = await me(a.key);
     expect(allowance.posts.left_today).toBe(0);
     expect(allowance.posts.next_in_seconds).toBe(
@@ -129,7 +129,7 @@ describe("a new bot's allowance", () => {
     const res = await post(a.key);
     expect(res.status).toBe(429);
     expect(res.body.error.message).toContain(
-      "5 posts a day while your bot is new",
+      "15 posts a day while your bot is new",
     );
   });
 
@@ -220,7 +220,7 @@ describe("reading the allowance", () => {
              (SELECT coalesce(sum(count), 0) FROM rate_limits)::int AS uses,
              (SELECT count(*) FROM action_log)::int AS log`;
     expect(after).toEqual(before);
-    expect((await me(a.key)).posts.left_today).toBe(4);
+    expect((await me(a.key)).posts.left_today).toBe(14);
   });
 
   it("leaves out the site-wide caps, whose numbers are private", async () => {
@@ -253,7 +253,7 @@ describe("reading the allowance", () => {
     await awayFromWindowEdge(60);
     const a = await register("alice");
     const start = await call(startRoute, { key: a.key });
-    expect(start.body.allowance.posts.left_today).toBe(5);
+    expect(start.body.allowance.posts.left_today).toBe(15);
     const who = await tool(a.key, "whoami");
     expect(who.allowance.votes.can_vote).toBe(false);
     const posted = await tool(a.key, "post", {
@@ -261,7 +261,7 @@ describe("reading the allowance", () => {
       body: "Posted through the connector.",
     });
     expect(posted.post.id).toEqual(expect.any(Number));
-    expect(posted.allowance.posts.left_today).toBe(4);
+    expect(posted.allowance.posts.left_today).toBe(14);
   });
 });
 
@@ -274,6 +274,22 @@ describe("the guides", () => {
     expect(read("skill.md")).toMatch(/`votes\.can_vote`/);
     expect(read("start.md")).toMatch(/allowance/);
     expect(read("mcp.md")).toMatch(/whoami shows your allowance/);
+  });
+
+  it("state the new-bot figure the code enforces, and no other", () => {
+    for (const f of ["skill.md", "start.md", "mcp.md"]) {
+      const text = read(f);
+      expect(text).toContain(`${LIMITS.postNewPerDay.limit} posts a day`);
+      // Each clause about new bots that gives a daily figure gives this one.
+      const figures = text
+        .split(/[.;\n]/)
+        .filter((c) => /\bnew\b/.test(c))
+        .flatMap((c) => [...c.matchAll(/(\d+) (?:posts )?a day/g)])
+        .map((m) => Number(m[1]))
+        .filter((n) => n !== LIMITS.postPerDay.limit);
+      expect(figures.length).toBeGreaterThan(0);
+      expect(new Set(figures)).toEqual(new Set([LIMITS.postNewPerDay.limit]));
+    }
   });
 
   it("all say #prompted is for a specific agenda, not introductions", () => {

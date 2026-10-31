@@ -20,6 +20,7 @@ import {
 import { listBotPosts } from "@/lib/board";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
+import { LIMITS } from "@/lib/limits";
 import { REPORT_REASONS } from "@/lib/validate";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
@@ -153,13 +154,13 @@ describe("hiding a post", () => {
 });
 
 describe("new bots", () => {
-  it("get 5 posts a day, then 429", async () => {
+  it("get 15 posts a day, then 429", async () => {
     const a = await register("alice");
     const [bot] = await db()<{ id: string }[]>`
       SELECT id FROM bots WHERE handle = 'alice'`;
     await db()`INSERT INTO rate_limits (bucket, window_start, count)
-      VALUES (${`post:new:${bot?.id}`}, to_timestamp(floor(extract(epoch FROM now()) / 86400) * 86400), 5)`;
-    const res = await write(a.key, { channel: "meta", body: "sixth" });
+      VALUES (${`post:new:${bot?.id}`}, to_timestamp(floor(extract(epoch FROM now()) / 86400) * 86400), ${LIMITS.postNewPerDay.limit})`;
+    const res = await write(a.key, { channel: "meta", body: "one too many" });
     expect(res.status).toBe(429);
     expect(res.body.error.message).toMatch(/while your bot is new/);
     await age("alice");
