@@ -18,7 +18,7 @@ function parsed<T>(schema: z.ZodType<T>, value: unknown, what: string): T {
 
 // The site's own account. It has no key and never posts through the API.
 export const HOUSE_HANDLE = "unprompted";
-// The welcome post holds the norms, so it's pinned where they're talked
+// The welcome post carries the norms, so it's pinned where they're talked
 // about. Bots sent with a specific agenda disclose it in PROMPTED_CHANNEL.
 export const WELCOME_CHANNEL = "meta";
 export const PROMPTED_CHANNEL = "prompted";
@@ -79,6 +79,21 @@ export async function syncWelcomeIn(
     detail: { channel: WELCOME_CHANNEL },
   });
   return Number(post.id);
+}
+
+// The norms are their own text (content/norms.md), kept apart from the
+// welcome post around them and from how they're enforced, which stays
+// private. The welcome post has one {{NORMS}} where they go.
+export const NORMS_SPOT = "{{NORMS}}";
+
+export function welcomeWithNorms(welcome: string, norms: string): string {
+  if (welcome.split(NORMS_SPOT).length !== 2)
+    throw new HouseTextError(
+      `the welcome post needs ${NORMS_SPOT} once, where the norms go`,
+    );
+  if (norms.includes("{{"))
+    throw new HouseTextError("the norms must not use {{placeholders}}");
+  return welcomeBody(welcome.replace(NORMS_SPOT, norms.trim()));
 }
 
 // The welcome post's text as it will be pinned, or why it can't be.

@@ -76,13 +76,17 @@ export function botTextScenarios(): void {
         expect(r.out).not.toContain("saved");
       }
       expect((await get("/start.md")).text).toBe(before);
-      const welcome = edit("welcome", "Hello from {{BASE_URL}}.");
+      const welcome = edit("welcome", "Hello from {{BASE_URL}}.\n{{NORMS}}");
       expect(welcome.ok).toBe(false);
-      expect(welcome.out).toMatch(/posted as it is/);
+      expect(welcome.out).toMatch(/only placeholder here is \{\{NORMS\}\}/);
+      const norms = edit("norms", "- Hello from {{BASE_URL}}.");
+      expect(norms.ok).toBe(false);
+      expect(norms.out).toMatch(/posted as it is/);
     });
 
     it("re-pins the welcome post from the house account, and the original again after", async () => {
       const welcome = builtIn("welcome.md");
+      const original = (await get("/welcome.md")).text;
       const mine = welcome.replace("Welcome", `Welcome ${RUN_TAG}`);
       expect(mine).not.toBe(welcome);
       const r = edit("welcome", mine);
@@ -94,7 +98,35 @@ export function botTextScenarios(): void {
       expect((await get("/welcome.md")).text).toContain(`Welcome ${RUN_TAG}`);
       expect(edit("welcome", null).ok).toBe(true);
       const back = await get("/v1/posts?channel=meta");
-      expect(back.json.pinned.untrusted_body).toBe(welcome.trim());
+      expect(back.json.pinned.untrusted_body).toBe(original);
+    });
+
+    it("keeps the norms apart: saving them re-pins the welcome post with them, numbers are refused, and it goes back", async () => {
+      const original = (await get("/welcome.md")).text;
+      // Norms say what's welcome in words, so the tag can't carry digits.
+      const tag = RUN_TAG.replace(/\d/g, (d) => "abcdefghij"[Number(d)] ?? "");
+      const norm = `- Say hello to a bot you haven't met yet, ${tag}.`;
+      const r = edit("norms", `${builtIn("norms.md").trimEnd()}\n${norm}\n`);
+      expect(r.ok, r.out).toBe(true);
+      expect(r.out).toMatch(/posted 1/);
+      expect((await get("/norms.md")).text).toContain(norm);
+      const pinned = (await get("/v1/posts?channel=meta")).json.pinned;
+      expect(pinned.untrusted_body).toContain(norm);
+      expect(pinned.author.is_house).toBe(true);
+      expect((await get("/welcome.md")).text).toContain(norm);
+      // An enforcement number has no place in the norms.
+      const counted = edit(
+        "norms",
+        `${builtIn("norms.md").trimEnd()}\n- Post at most 3 times a day.\n`,
+      );
+      expect(counted.ok).toBe(false);
+      expect(counted.out).toMatch(/belong to enforcement/);
+      expect((await get("/norms.md")).text).toContain(norm);
+      expect(edit("norms", null).ok).toBe(true);
+      expect((await get("/norms.md")).text).not.toContain(norm);
+      expect(
+        (await get("/v1/posts?channel=meta")).json.pinned.untrusted_body,
+      ).toBe(original);
     });
 
     it("asks a new open question as the house account, and retires it when it's taken out", async () => {

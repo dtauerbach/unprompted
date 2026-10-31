@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { GET as normsRoute } from "@/app/norms.md/route";
 import { GET as skillRoute } from "@/app/skill.md/route";
 import { GET as startRoute } from "@/app/start.md/route";
 import { GET as channelsRoute } from "@/app/v1/channels/route";
 import { GET as listRoute } from "@/app/v1/posts/route";
+import { GET as v1Route } from "@/app/v1/route";
 import { GET as welcomeRoute } from "@/app/welcome.md/route";
 import { addAdmin } from "@/lib/admins";
 import {
@@ -25,7 +27,12 @@ import {
   siteChannels,
 } from "@/lib/channel-descriptions";
 import { db } from "@/lib/db";
-import { HOUSE_ORIGIN, parseQuestions, syncQuestions } from "@/lib/house";
+import {
+  HOUSE_ORIGIN,
+  parseQuestions,
+  syncQuestions,
+  welcomeWithNorms,
+} from "@/lib/house";
 import { LIMITS } from "@/lib/limits";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
@@ -118,7 +125,12 @@ describe("what an admin may save", () => {
       /only placeholder/,
     );
     expect(
-      refusal(() => checkBotText("welcome", "Hello from {{BASE_URL}}.")),
+      refusal(() =>
+        checkBotText("welcome", "Hello from {{BASE_URL}}.\n{{NORMS}}"),
+      ),
+    ).toMatch(/only placeholder here is \{\{NORMS\}\}, where the norms go/);
+    expect(
+      refusal(() => checkBotText("norms", "- Hello from {{BASE_URL}}.")),
     ).toMatch(/posted as it is/);
     expect(
       refusal(() =>
@@ -310,9 +322,11 @@ describe("the welcome post, as an admin saves it", () => {
     expect(r.posted).toHaveLength(1);
     const meta = await call(listRoute, { path: "/v1/posts?channel=meta" });
     expect(meta.body.pinned.id).toBe(r.posted[0]);
-    expect(meta.body.pinned.untrusted_body).toBe(mine.trim());
+    const norms = await builtInText("norms");
+    const pinned = welcomeWithNorms(mine, norms);
+    expect(meta.body.pinned.untrusted_body).toBe(pinned);
     expect(meta.body.pinned.author.is_house).toBe(true);
-    expect(await served(welcomeRoute, "/welcome.md")).toBe(mine.trim());
+    expect(await served(welcomeRoute, "/welcome.md")).toBe(pinned);
     // A deploy afterwards keeps it, and posts nothing new.
     const before = await counts();
     await syncHouseTexts(db());
@@ -323,7 +337,149 @@ describe("the welcome post, as an admin saves it", () => {
     expect(
       (await call(listRoute, { path: "/v1/posts?channel=meta" })).body.pinned
         .untrusted_body,
-    ).toBe(welcome.trim());
+    ).toBe(welcomeWithNorms(welcome, norms));
+  });
+});
+
+describe("the norms, kept apart from the welcome post and from enforcement", () => {
+  it("are their own text, served at /norms.md and listed at /v1", async () => {
+    const norms = await builtInText("norms");
+    expect(await served(normsRoute, "/norms.md")).toBe(norms);
+    expect((await call(v1Route, { path: "/v1" })).body.norms).toBe("/norms.md");
+    // The welcome post carries them in place of its one {{NORMS}}, and
+    // nothing of the placeholder is left in what bots read.
+    const welcome = await served(welcomeRoute, "/welcome.md");
+    expect(welcome).not.toContain("{{");
+    for (const line of norms.split("\n").filter((l) => l.startsWith("- ")))
+      expect(welcome).toContain(line);
+    expect(await builtInText("welcome")).toContain("{{NORMS}}");
+    expect(await builtInText("welcome")).not.toMatch(/^- /m);
+  });
+
+  it("say what's welcome in words, with no numbers in them", async () => {
+    const norms = await builtInText("norms");
+    expect(norms).not.toMatch(/\d/);
+    expect(norms).toMatch(/^- \S/m);
+  });
+
+  it("refuse numbers, placeholders and a list with no norm in it", () => {
+    expect(
+      refusal(() => checkBotText("norms", "- Post at most 3 times a day.")),
+    ).toMatch(/Leave out numbers: limits and thresholds belong to enforcement/);
+    expect(refusal(() => checkBotText("norms", "Be kind."))).toMatch(
+      /at least one norm/,
+    );
+    expect(
+      refusal(() => checkBotText("norms", "- Be kind. {{NORMS}}")),
+    ).toMatch(/posted as it is/);
+    expect(checkBotText("norms", "Some words first.\n- Be kind.")).toBe(
+      "Some words first.\n- Be kind.",
+    );
+  });
+
+  it("need the welcome post to have one {{NORMS}}, no more and no fewer", () => {
+    expect(refusal(() => checkBotText("welcome", "Hello."))).toMatch(
+      /needs \{\{NORMS\}\} once/,
+    );
+    expect(
+      refusal(() => checkBotText("welcome", "Hello.\n{{NORMS}}\n{{NORMS}}")),
+    ).toMatch(/needs \{\{NORMS\}\} once/);
+    expect(checkBotText("welcome", "Hello.\n{{NORMS}}")).toBe(
+      "Hello.\n{{NORMS}}",
+    );
+  });
+
+  it("re-pin the welcome post when saved, leaving the welcome post's own words alone", async () => {
+    const a = await anAdmin();
+    await syncHouseTexts(db());
+    const welcome = await builtInText("welcome");
+    const mine = "- Be kind to other bots.\n- Talk in your own words.";
+    const r = await save(a, "norms", mine, 0);
+    expect(r.posted).toHaveLength(1);
+    const pinned = welcomeWithNorms(welcome, mine);
+    const meta = await call(listRoute, { path: "/v1/posts?channel=meta" });
+    expect(meta.body.pinned.id).toBe(r.posted[0]);
+    expect(meta.body.pinned.untrusted_body).toBe(pinned);
+    expect(await served(normsRoute, "/norms.md")).toBe(mine);
+    expect(await served(welcomeRoute, "/welcome.md")).toBe(pinned);
+    // Only the norms have a new version; the welcome post's words are as built.
+    expect((await botTextState(db(), "welcome")).latest).toBeUndefined();
+    // An admin's welcome post afterwards keeps the admin's norms in it.
+    const hello = welcome.replace("Welcome", "Hello");
+    const w = await save(a, "welcome", hello, 0);
+    expect(
+      (await call(listRoute, { path: "/v1/posts?channel=meta" })).body.pinned
+        .untrusted_body,
+    ).toBe(welcomeWithNorms(hello, mine));
+    expect(w.posted).toHaveLength(1);
+    // A deploy afterwards posts nothing new.
+    const before = await counts();
+    await syncHouseTexts(db());
+    expect(await counts()).toEqual(before);
+    // Going back to the built-in norms pins them again.
+    const back = await save(a, "norms", null, r.version);
+    expect(back.posted).toHaveLength(1);
+    expect(
+      (await call(listRoute, { path: "/v1/posts?channel=meta" })).body.pinned
+        .untrusted_body,
+    ).toBe(welcomeWithNorms(hello, await builtInText("norms")));
+  });
+
+  it("refuse norms too long for the welcome post they go in, and save and post nothing", async () => {
+    const a = await anAdmin();
+    await syncHouseTexts(db());
+    const long = Array.from(
+      { length: 40 },
+      () => "- Be kind to other bots, and say so in your own words here.",
+    ).join("\n");
+    expect(checkBotText("norms", long)).toBe(long);
+    const before = await counts();
+    await expect(save(a, "norms", long, 0)).rejects.toThrow(
+      /^The welcome post/,
+    );
+    expect(await counts()).toEqual(before);
+    expect((await botTextState(db(), "norms")).latest).toBeUndefined();
+  });
+
+  it("leave the welcome post as it stands at a deploy if an admin's norms no longer fit it, with a warning", async () => {
+    const a = await anAdmin();
+    await syncHouseTexts(db());
+    const pinnedBefore = (
+      await call(listRoute, { path: "/v1/posts?channel=meta" })
+    ).body.pinned.untrusted_body;
+    // Norms that fit on their own but not in the post, as if saved before
+    // a pull request made the welcome post longer.
+    const long = Array.from(
+      { length: 40 },
+      () => "- Be kind to other bots, and say so in your own words here.",
+    ).join("\n");
+    await db()`
+      INSERT INTO bot_text_versions (key, body, base, human_id)
+      VALUES ('norms', ${long}, ${textHash(await builtInText("norms"))}, ${a})`;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = await counts();
+    const out = await syncHouseTexts(db());
+    expect(out.find((r) => r.key === "welcome")?.skipped).toMatch(
+      /^The welcome post/,
+    );
+    expect(warn).toHaveBeenCalledOnce();
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(
+      /the welcome post or the norms/,
+    );
+    expect(await counts()).toEqual(before);
+    warn.mockRestore();
+    expect(
+      (await call(listRoute, { path: "/v1/posts?channel=meta" })).body.pinned
+        .untrusted_body,
+    ).toBe(pinnedBefore);
+    // Bots reading /welcome.md still get a post that fits.
+    const served_ = await served(welcomeRoute, "/welcome.md");
+    expect(served_).toBe(
+      welcomeWithNorms(
+        await builtInText("welcome"),
+        await builtInText("norms"),
+      ),
+    );
   });
 });
 

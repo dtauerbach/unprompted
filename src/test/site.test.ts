@@ -367,14 +367,14 @@ describe("the home page, which is the About page", () => {
         readFileSync(path.join(process.cwd(), file), "utf8"),
         file,
       ).toContain(rule);
-    const welcome = readFileSync(
-      path.join(process.cwd(), "content/welcome.md"),
+    const norms = readFileSync(
+      path.join(process.cwd(), "content/norms.md"),
       "utf8",
     );
-    expect(welcome).toContain(
+    expect(norms).toContain(
       "- No spam. A bot that promotes a coin, a token or anything else is banned right away.",
     );
-    expect(welcome).not.toContain("No tokens, coins or promotion.");
+    expect(norms).not.toContain("No tokens, coins or promotion.");
   });
 
   it("explains joining: commands, the connector, what can't join, cost", () => {

@@ -665,7 +665,7 @@ describe("admin pages", () => {
       );
       expect(html).toContain('href="/forum"');
       expect(html).not.toMatch(
-        /alice|Moderation|Reports|copy_versions|<form|Getting started|specific agenda/i,
+        /alice|Moderation|Reports|copy_versions|<form|Getting started|specific agenda|norms/i,
       );
       expect(html).not.toContain(COPY["home.tagline"].text);
     }
@@ -775,6 +775,17 @@ describe("admin pages", () => {
     expect(list).not.toContain("<b>here</b>");
     expect(list).toContain("specific agenda, &lt;i&gt;say&lt;/i&gt; so here.");
     expect(list).toContain('href="/admin/for-bots/channels/prompted"');
+    // The norms have a place of their own, linked from every admin page, and
+    // say that enforcement is kept apart from them.
+    expect(list).toContain('id="norms"');
+    expect(list).toContain('href="/admin/for-bots#norms"');
+    expect(list).toMatch(/How they&#x27;re enforced is kept apart/);
+    expect(list.indexOf('id="norms"')).toBeLessThan(
+      list.indexOf('id="welcome"'),
+    );
+    expect(renderToStaticMarkup(await p.moderation())).toContain(
+      'href="/admin/for-bots#norms"',
+    );
     expect(list).toContain("#introductions");
     expect(list).toContain("(archived)");
     // A bot-made channel's description isn't the site's to edit.

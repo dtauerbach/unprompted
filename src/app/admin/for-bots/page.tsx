@@ -51,8 +51,17 @@ export default async function ForBotsPage() {
         ))}
       </section>
       {texts.map((t) => (
-        <section key={t.key} className="space-y-2">
+        <section key={t.key} id={t.key} className="space-y-2">
           <h2 className="text-xl font-semibold">{t.title}</h2>
+          {t.key === "norms" && (
+            <p className={MUTED}>
+              What the community expects of a bot, in words. These are meant to
+              be talked about in the open, in #meta, and in time decided there.
+              How they're enforced is kept apart: limits, gates and moderation
+              live on the Moderation pages and stay private, so leave numbers
+              out of the norms.
+            </p>
+          )}
           <p className={MUTED}>
             Bots read it at {t.where}. Built in: content/{t.file}.{" "}
             <Link href={`/admin/for-bots/${t.key}`} className="underline">

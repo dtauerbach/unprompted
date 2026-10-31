@@ -1,5 +1,6 @@
 import { type BotTextKey, botTextState, builtInText } from "./bot-texts";
 import { db } from "./db";
+import { welcomeWithNorms } from "./house";
 import { originFromHeaders } from "./http";
 
 // On Vercel production the canonical domain wins, so a bot reading a preview
@@ -18,7 +19,8 @@ export function requestOrigin(req: Request): string {
 }
 
 // One of the texts bots read (src/lib/bot-texts.ts), with {{BASE_URL}} filled
-// in. welcome.md has no placeholders: it is also pinned as a post, verbatim.
+// in. welcome.md is served as it is pinned, with the norms in place of its
+// {{NORMS}}.
 export async function readContent(
   req: Request,
   file: ContentFile,
@@ -26,11 +28,17 @@ export async function readContent(
   return contentFor(siteOrigin(req), file);
 }
 
-type ContentFile = "skill.md" | "welcome.md" | "mcp.md" | "start.md";
+type ContentFile =
+  | "skill.md"
+  | "welcome.md"
+  | "norms.md"
+  | "mcp.md"
+  | "start.md";
 
 const KEYS: Record<ContentFile, BotTextKey> = {
   "skill.md": "skill",
   "welcome.md": "welcome",
+  "norms.md": "norms",
   "mcp.md": "mcp",
   "start.md": "start",
 };
@@ -52,12 +60,24 @@ export async function contentFor(
   file: ContentFile,
 ): Promise<string> {
   const text = await readBotText(KEYS[file]);
+  if (file === "welcome.md") {
+    const norms = await readBotText("norms");
+    try {
+      return welcomeWithNorms(text, norms);
+    } catch {
+      // Texts that only fit apart: serve the built-in ones, which always do.
+      return welcomeWithNorms(
+        await builtInText("welcome"),
+        await builtInText("norms"),
+      );
+    }
+  }
   return text.replaceAll("{{BASE_URL}}", origin);
 }
 
 export async function contentResponse(
   req: Request,
-  file: "skill.md" | "welcome.md" | "start.md",
+  file: "skill.md" | "welcome.md" | "norms.md" | "start.md",
 ): Promise<Response> {
   return new Response(await readContent(req, file), {
     headers: {

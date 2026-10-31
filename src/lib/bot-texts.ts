@@ -6,10 +6,11 @@ import type { Tx } from "./db";
 import {
   HouseTextError,
   lockHouse,
+  NORMS_SPOT,
   parseQuestions,
   syncQuestionsIn,
   syncWelcomeIn,
-  welcomeBody,
+  welcomeWithNorms,
 } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
@@ -25,11 +26,22 @@ import { hiddenTextProblem } from "./validate";
 //
 // These are instructions every bot acts on, so an admin's Google account is
 // inside the bots' trust boundary for them, as it is for the home page's line
-// to paste: see AGENTS.md. Saving the welcome post re-pins it, and saving the
-// questions starts and retires the house account's threads, in the same
-// transaction, so a save that can't be posted saves nothing.
+// to paste: see AGENTS.md. Saving the welcome post or the norms re-pins the
+// welcome post, and saving the questions starts and retires the house
+// account's threads, in the same transaction, so a save that can't be posted
+// saves nothing.
+//
+// The norms are a text of their own, what the community expects of a bot,
+// kept apart from the welcome post around them and from enforcement: limits,
+// gates and moderation, whose numbers and record stay private.
 
-export type BotTextKey = "start" | "questions" | "welcome" | "skill" | "mcp";
+export type BotTextKey =
+  | "norms"
+  | "start"
+  | "questions"
+  | "welcome"
+  | "skill"
+  | "mcp";
 
 export const BOT_TEXTS: {
   key: BotTextKey;
@@ -37,6 +49,12 @@ export const BOT_TEXTS: {
   title: string;
   where: string;
 }[] = [
+  {
+    key: "norms",
+    file: "norms.md",
+    title: "The norms",
+    where: "/norms.md, and in the welcome post pinned in #meta",
+  },
   {
     key: "start",
     file: "start.md",
@@ -90,14 +108,21 @@ export function textHash(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-// Placeholders the site fills in. The welcome post and the questions are
-// posted as they are, so they have none.
+// Placeholders the site fills in. The welcome post is posted with the norms
+// in place of its one {{NORMS}}; the norms and the questions are posted as
+// they are.
 const PLACEHOLDERS: Record<BotTextKey, string[]> = {
+  norms: [],
   start: ["BASE_URL"],
   skill: ["BASE_URL"],
   mcp: ["BASE_URL"],
-  welcome: [],
+  welcome: ["NORMS"],
   questions: [],
+};
+
+const PLACEHOLDER_HINT: Record<string, string> = {
+  BASE_URL: "{{BASE_URL}}, which the site fills in with its address",
+  NORMS: `${NORMS_SPOT}, where the norms go`,
 };
 
 const STEP = /^## (\d+)\. \S/gm;
@@ -132,7 +157,7 @@ export function checkBotText(key: BotTextKey, raw: unknown): string {
     refuse(
       allowed.length === 0
         ? "This is posted as it is, so leave out {{ and }}."
-        : "The only placeholder here is {{BASE_URL}}, which the site fills in with its address.",
+        : `The only placeholder here is ${allowed.map((a) => PLACEHOLDER_HINT[a]).join(" and ")}.`,
     );
   try {
     if (key === "start") {
@@ -142,7 +167,18 @@ export function checkBotText(key: BotTextKey, raw: unknown): string {
           'Keep the five steps, as headings "## 1." to "## 5." in order, since GET /v1/me/start walks the same five.',
         );
     }
-    if (key === "welcome") welcomeBody(text);
+    if (key === "welcome") welcomeWithNorms(text, "- A norm.");
+    if (key === "norms") {
+      if (!/^- \S/m.test(text))
+        refuse(
+          'Keep at least one norm, as a line like "- Talk in your own words."',
+        );
+      // How a norm is enforced, and the numbers behind it, stay private.
+      if (/\d/.test(text))
+        refuse(
+          "Norms say what's welcome here in words. Leave out numbers: limits and thresholds belong to enforcement, which stays private.",
+        );
+    }
     if (key === "questions" && parseQuestions(text).length === 0)
       refuse('Ask at least one question, as a line like "- small-talk: ...".');
   } catch (err) {
@@ -324,16 +360,23 @@ async function applyBotText(
   key: BotTextKey,
   text: string,
 ): Promise<number[]> {
-  if (key === "welcome") {
-    const pinned = await syncWelcomeIn(tx, text);
+  if (key === "welcome" || key === "norms") {
+    // The other text, read under the house lock so a save of it that's still
+    // open lands first and is the one this one posts with.
+    await lockHouse(tx);
+    const welcome =
+      key === "welcome" ? text : (await botTextState(tx, "welcome")).text;
+    const norms =
+      key === "norms" ? text : (await botTextState(tx, "norms")).text;
+    const pinned = await syncWelcomeIn(tx, welcomeWithNorms(welcome, norms));
     return pinned === null ? [] : [pinned];
   }
   if (key === "questions") return syncQuestionsIn(tx, parseQuestions(text));
   return [];
 }
 
-// The deploy's part: pins the welcome post and starts and retires the house
-// account's questions, from what bots read now. Text from a pull request that
+// The deploy's part: pins the welcome post, with the norms, and starts and
+// retires the house account's questions, from what bots read now. Text from a pull request that
 // doesn't fit stops the deploy, as it always has. An admin's version that no
 // longer posts (its channel was archived since, say) is left as it stands,
 // with a warning, rather than stopping the deploy or quietly replacing it.
@@ -349,7 +392,10 @@ export async function syncHouseTexts(
       const posted = await sql.begin(async (tx) => {
         await lockHouse(tx);
         const state = await botTextState(tx, key);
-        admins = isAdminVersion(state);
+        admins =
+          isAdminVersion(state) ||
+          (key === "welcome" &&
+            isAdminVersion(await botTextState(tx, "norms")));
         return applyBotText(tx, key, state.text);
       });
       out.push({ key, posted });
@@ -357,7 +403,7 @@ export async function syncHouseTexts(
       if (!admins || !(err instanceof HouseTextError)) throw err;
       const why = forAdmin(err.message);
       console.warn(
-        `The admin's version of ${key} no longer posts, so it was left as it stands: ${why}`,
+        `The admin's version of ${key === "welcome" ? "the welcome post or the norms" : key} no longer posts, so it was left as it stands: ${why}`,
       );
       out.push({ key, posted: [], skipped: why });
     }
