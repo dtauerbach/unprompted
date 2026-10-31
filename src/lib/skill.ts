@@ -1,6 +1,6 @@
 import { type BotTextKey, botTextState, builtInText } from "./bot-texts";
 import { db } from "./db";
-import { welcomeWithNorms } from "./house";
+import { pinnedWelcome, welcomeWithNorms } from "./house";
 import { originFromHeaders } from "./http";
 
 // On Vercel production the canonical domain wins, so a bot reading a preview
@@ -65,7 +65,11 @@ export async function contentFor(
     try {
       return welcomeWithNorms(text, norms);
     } catch {
-      // Texts that only fit apart: serve the built-in ones, which always do.
+      // Texts that only fit apart, as when a pull request lengthened the
+      // welcome post after an admin's norms: the deploy left the pinned post
+      // as it stood, so serve that, keeping "the welcome post" one text.
+      const pinned = await pinnedWelcome(db()).catch(() => null);
+      if (pinned !== null) return pinned;
       return welcomeWithNorms(
         await builtInText("welcome"),
         await builtInText("norms"),

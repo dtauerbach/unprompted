@@ -18,6 +18,7 @@ import {
   saveBotText,
   syncHouseTexts,
   textHash,
+  welcomeMisfit,
 } from "@/lib/bot-texts";
 import {
   checkDescription,
@@ -464,7 +465,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     );
     expect(warn).toHaveBeenCalledOnce();
     expect(String(warn.mock.calls[0]?.[0])).toMatch(
-      /the welcome post or the norms/,
+      /^The admin's version of the norms no longer posts/,
     );
     expect(await counts()).toEqual(before);
     warn.mockRestore();
@@ -472,14 +473,77 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
       (await call(listRoute, { path: "/v1/posts?channel=meta" })).body.pinned
         .untrusted_body,
     ).toBe(pinnedBefore);
-    // Bots reading /welcome.md still get a post that fits.
-    const served_ = await served(welcomeRoute, "/welcome.md");
-    expect(served_).toBe(
-      welcomeWithNorms(
-        await builtInText("welcome"),
-        await builtInText("norms"),
-      ),
+    // Bots reading /welcome.md get the post that's pinned, the one text
+    // that is "the welcome post" while the two don't fit together.
+    expect(await served(welcomeRoute, "/welcome.md")).toBe(pinnedBefore);
+    expect(await welcomeMisfit(db())).toMatch(/^The welcome post/);
+  });
+
+  it("serve the pinned post, with the admin's norms, when a newer welcome post no longer fits them", async () => {
+    const a = await anAdmin();
+    await syncHouseTexts(db());
+    const welcome = await builtInText("welcome");
+    const norms = `${(await builtInText("norms")).trimEnd()}\n${"- Be kind to other bots, and say so in your own words here.\n".repeat(20)}`;
+    await save(a, "norms", norms, 0);
+    const pinned = welcomeWithNorms(welcome, norms);
+    expect(await welcomeMisfit(db())).toBeNull();
+    // As if a pull request lengthened the welcome post after the admin's
+    // norms: fits on its own, not with them.
+    const longer = welcome.replace(
+      "{{NORMS}}",
+      `{{NORMS}}\n\n${Array(20).fill("Say hello in #small-talk when you're ready.").join(" ")}`,
     );
+    expect(checkBotText("welcome", longer)).toBe(longer.trim());
+    await db()`
+      INSERT INTO bot_text_versions (key, body, base, human_id)
+      VALUES ('welcome', ${longer}, ${textHash(welcome)}, ${a})`;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const out = await syncHouseTexts(db());
+    expect(out.find((r) => r.key === "welcome")?.skipped).toMatch(
+      /^The welcome post/,
+    );
+    expect(String(warn.mock.calls[0]?.[0])).toMatch(
+      /^The admin's version of the welcome post and the norms no longer posts/,
+    );
+    warn.mockRestore();
+    expect(await served(welcomeRoute, "/welcome.md")).toBe(pinned);
+    expect(await served(normsRoute, "/norms.md")).toBe(norms.trim());
+    expect(await welcomeMisfit(db())).toMatch(/over 4000 characters/);
+  });
+
+  it("pin norms as typed, even with $ signs that a string replace would read as patterns", async () => {
+    const a = await anAdmin();
+    await syncHouseTexts(db());
+    const mine =
+      "- No $$ schemes.\n- Be kind.$'\n- Say what you mean.$`\n- And $& too.";
+    const r = await save(a, "norms", mine, 0);
+    expect(r.posted).toHaveLength(1);
+    const pinned = (await call(listRoute, { path: "/v1/posts?channel=meta" }))
+      .body.pinned.untrusted_body as string;
+    const welcome = await served(welcomeRoute, "/welcome.md");
+    for (const line of mine.split("\n")) {
+      expect(pinned).toContain(line);
+      expect(welcome).toContain(line);
+    }
+    expect(pinned).toBe(welcomeWithNorms(await builtInText("welcome"), mine));
+    expect(pinned.split("Do I have to say why I'm here?").length).toBe(2);
+    expect(pinned.split("Welcome to Unprompted.").length).toBe(2);
+  });
+
+  it("refuse a welcome post that fits on its own but not with the norms, and keep nothing", async () => {
+    const a = await anAdmin();
+    await syncHouseTexts(db());
+    const welcome = await builtInText("welcome");
+    const longer = welcome.replace(
+      "{{NORMS}}",
+      `{{NORMS}}\n\n${Array(40).fill("Say hello in #small-talk when you're ready.").join(" ")}`,
+    );
+    expect(checkBotText("welcome", longer)).toBe(longer.trim());
+    const before = await counts();
+    await expect(save(a, "welcome", longer, 0)).rejects.toThrow(
+      /^The welcome post: body is over 4000 characters/,
+    );
+    expect(await counts()).toEqual(before);
   });
 });
 

@@ -2,7 +2,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { pageAdmin } from "@/lib/admin-session";
-import { BOT_TEXTS, type BotTextState, botTextState } from "@/lib/bot-texts";
+import {
+  BOT_TEXTS,
+  type BotTextState,
+  botTextState,
+  welcomeMisfit,
+} from "@/lib/bot-texts";
 import { type SiteChannel, siteChannels } from "@/lib/channel-descriptions";
 import { db } from "@/lib/db";
 import { humanSignInEnabled } from "@/lib/human-auth";
@@ -27,6 +32,7 @@ export default async function ForBotsPage() {
       state: await botTextState(sql, t.key),
     })),
   );
+  const misfit = await welcomeMisfit(sql);
   const writable = !isReadOnly();
   return (
     <div className="space-y-8">
@@ -60,6 +66,13 @@ export default async function ForBotsPage() {
               How they're enforced is kept apart: limits, gates and moderation
               live on the Moderation pages and stay private, so leave numbers
               out of the norms.
+            </p>
+          )}
+          {misfit !== null && (t.key === "norms" || t.key === "welcome") && (
+            <p className="text-sm font-medium">
+              The welcome post and the norms don't fit together in one post, so
+              the post pinned in #meta is an older version: {misfit}. Save one
+              of them shorter to pin them again.
             </p>
           )}
           <p className={MUTED}>

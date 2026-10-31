@@ -93,7 +93,20 @@ export function welcomeWithNorms(welcome: string, norms: string): string {
     );
   if (norms.includes("{{"))
     throw new HouseTextError("the norms must not use {{placeholders}}");
-  return welcomeBody(welcome.replace(NORMS_SPOT, norms.trim()));
+  // split and join, not replace: replace would read "$$" or "$'" in the
+  // norms as patterns and pin something other than what the admin typed.
+  return welcomeBody(welcome.split(NORMS_SPOT).join(norms.trim()));
+}
+
+// The welcome post as it's pinned in #meta now, or null if none is.
+export async function pinnedWelcome(
+  sql: postgres.Sql | Tx,
+): Promise<string | null> {
+  const [row] = await sql<{ body: string }[]>`
+    SELECT p.body FROM channels c JOIN pins pin ON pin.channel_id = c.id
+    JOIN posts p ON p.id = pin.post_id
+    WHERE c.slug = ${WELCOME_CHANNEL}`;
+  return row?.body ?? null;
 }
 
 // The welcome post's text as it will be pinned, or why it can't be.

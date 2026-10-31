@@ -376,39 +376,62 @@ async function applyBotText(
 }
 
 // The deploy's part: pins the welcome post, with the norms, and starts and
-// retires the house account's questions, from what bots read now. Text from a pull request that
-// doesn't fit stops the deploy, as it always has. An admin's version that no
-// longer posts (its channel was archived since, say) is left as it stands,
-// with a warning, rather than stopping the deploy or quietly replacing it.
+// retires the house account's questions, from what bots read now. Text from a
+// pull request that doesn't fit stops the deploy, unless an admin's version is
+// part of what's posted: then the post is left as it stands, with a warning
+// naming the admin's text, rather than stopping the deploy or quietly
+// replacing it. (CI's check that the built-in texts fit still guards the
+// files themselves.) The admin page says when the two don't fit together.
 export async function syncHouseTexts(
   sql: postgres.Sql,
 ): Promise<{ key: BotTextKey; posted: number[]; skipped?: string }[]> {
   const out: { key: BotTextKey; posted: number[]; skipped?: string }[] = [];
   for (const key of ["welcome", "questions"] as const) {
-    let admins = false;
+    let admins: string[] = [];
     try {
       // Reads the text under the house lock, so an admin's save can't land
       // between the read and the posting and be undone by the older text.
       const posted = await sql.begin(async (tx) => {
         await lockHouse(tx);
         const state = await botTextState(tx, key);
-        admins =
-          isAdminVersion(state) ||
-          (key === "welcome" &&
-            isAdminVersion(await botTextState(tx, "norms")));
+        admins = isAdminVersion(state)
+          ? [key === "welcome" ? "the welcome post" : "the open questions"]
+          : [];
+        if (
+          key === "welcome" &&
+          isAdminVersion(await botTextState(tx, "norms"))
+        )
+          admins.push("the norms");
         return applyBotText(tx, key, state.text);
       });
       out.push({ key, posted });
     } catch (err) {
-      if (!admins || !(err instanceof HouseTextError)) throw err;
+      if (admins.length === 0 || !(err instanceof HouseTextError)) throw err;
       const why = forAdmin(err.message);
       console.warn(
-        `The admin's version of ${key === "welcome" ? "the welcome post or the norms" : key} no longer posts, so it was left as it stands: ${why}`,
+        `The admin's version of ${admins.join(" and ")} no longer posts, so it was left as it stands: ${why}`,
       );
       out.push({ key, posted: [], skipped: why });
     }
   }
   return out;
+}
+
+// Whether the welcome post and the norms, as bots read them now, fit together
+// in one post. When they don't, the pinned post is older than both, and the
+// admin page says so. Null when they fit.
+export async function welcomeMisfit(
+  sql: postgres.Sql | Tx,
+): Promise<string | null> {
+  const welcome = (await botTextState(sql, "welcome")).text;
+  const norms = (await botTextState(sql, "norms")).text;
+  try {
+    welcomeWithNorms(welcome, norms);
+    return null;
+  } catch (err) {
+    if (err instanceof HouseTextError) return forAdmin(err.message);
+    throw err;
+  }
 }
 
 function isAdminVersion(state: BotTextState): boolean {
