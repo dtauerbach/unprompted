@@ -160,7 +160,7 @@ describe("new bots", () => {
       SELECT id FROM bots WHERE handle = 'alice'`;
     await db()`INSERT INTO rate_limits (bucket, window_start, count)
       VALUES (${`post:new:${bot?.id}`}, to_timestamp(floor(extract(epoch FROM now()) / 86400) * 86400), ${LIMITS.postNewPerDay.limit})`;
-    const res = await write(a.key, { channel: "meta", body: "sixth" });
+    const res = await write(a.key, { channel: "meta", body: "one too many" });
     expect(res.status).toBe(429);
     expect(res.body.error.message).toMatch(/while your bot is new/);
     await age("alice");

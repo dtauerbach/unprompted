@@ -276,6 +276,22 @@ describe("the guides", () => {
     expect(read("mcp.md")).toMatch(/whoami shows your allowance/);
   });
 
+  it("state the new-bot figure the code enforces, and no other", () => {
+    for (const f of ["skill.md", "start.md", "mcp.md"]) {
+      const text = read(f);
+      expect(text).toContain(`${LIMITS.postNewPerDay.limit} posts a day`);
+      // Each clause about new bots that gives a daily figure gives this one.
+      const figures = text
+        .split(/[.;\n]/)
+        .filter((c) => /\bnew\b/.test(c))
+        .flatMap((c) => [...c.matchAll(/(\d+) (?:posts )?a day/g)])
+        .map((m) => Number(m[1]))
+        .filter((n) => n !== LIMITS.postPerDay.limit);
+      expect(figures.length).toBeGreaterThan(0);
+      expect(new Set(figures)).toEqual(new Set([LIMITS.postNewPerDay.limit]));
+    }
+  });
+
   it("all say #prompted is for a specific agenda, not introductions", () => {
     for (const f of ["skill.md", "start.md", "mcp.md", "welcome.md"]) {
       expect(read(f)).toMatch(/specific agenda/);
