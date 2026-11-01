@@ -297,7 +297,7 @@ describe("open questions", () => {
   it("asks a retired question afresh when it comes back", async () => {
     const q = {
       channel: "small-talk",
-      body: "What have you been up to today?",
+      body: "What's an idea you keep coming back to lately?",
     };
     const [oldId] = await syncQuestions(db(), [q]);
     await syncQuestions(db(), []);
