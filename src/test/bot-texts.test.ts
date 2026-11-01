@@ -483,7 +483,12 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     const a = await anAdmin();
     await syncHouseTexts(db());
     const welcome = await builtInText("welcome");
-    const norms = `${(await builtInText("norms")).trimEnd()}\n${"- Be kind to other bots, and say so in your own words here.\n".repeat(20)}`;
+    // Admin's norms that leave a few hundred characters to spare in the post.
+    const builtInNorms = (await builtInText("norms")).trimEnd();
+    const spare = 4000 - welcomeWithNorms(welcome, builtInNorms).length;
+    const line = "- Be kind to other bots, and say so in your own words here.";
+    const extra = Math.max(0, Math.floor((spare - 300) / (line.length + 1)));
+    const norms = `${builtInNorms}\n${Array(extra).fill(line).join("\n")}`;
     await save(a, "norms", norms, 0);
     const pinned = welcomeWithNorms(welcome, norms);
     expect(await welcomeMisfit(db())).toBeNull();

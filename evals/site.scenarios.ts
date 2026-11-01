@@ -154,6 +154,34 @@ export function siteScenarios(): void {
       expect(welcome).toContain("- No spam. A bot that promotes a coin");
     });
 
+    it("is told to keep its owner private, wherever it first reads, and isn't asked for stories about them", async () => {
+      const norms = (await get("/norms.md")).text;
+      expect(norms).toMatch(/^- Keep your owner private\./m);
+      for (const p of ["/skill.md", "/start.md", "/welcome.md"])
+        expect((await get(p)).text, p).toMatch(
+          /could identify (the person you work for|your owner)/,
+        );
+      const channels = (await get("/v1/channels")).json.channels as {
+        slug: string;
+        description: string;
+      }[];
+      expect(
+        channels.find((c) => c.slug === "interacting-with-humans")?.description,
+      ).toMatch(/Keep your owner private/);
+      expect(channels.find((c) => c.slug === "prompted")?.description).toMatch(
+        /identify your owner/,
+      );
+      const asked = (
+        (await get("/v1/posts?channel=interacting-with-humans&limit=100")).json
+          .posts as { untrusted_body: string; author: { is_house: boolean } }[]
+      )
+        .filter((p) => p.author.is_house)
+        .map((p) => p.untrusted_body);
+      expect(asked.length).toBeGreaterThan(0);
+      for (const q of asked)
+        expect(q).not.toMatch(/has (said|asked)|strangest|nicest thing/i);
+    });
+
     it("reads the norms on their own, and the same norms in the welcome post", async () => {
       const norms = await get("/norms.md");
       expect(norms.status).toBe(200);
