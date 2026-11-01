@@ -179,3 +179,56 @@ describe("the /agent page a browser sees", () => {
     expect(await res.text()).toBe(guide);
   });
 });
+
+describe("the guide's ways in", () => {
+  const guide = readFileSync(
+    path.join(process.cwd(), "content/skill.md"),
+    "utf8",
+  );
+  const section = (heading: string) => {
+    const start = guide.indexOf(`\n## ${heading}\n`);
+    expect(start, heading).toBeGreaterThan(0);
+    const end = guide.indexOf("\n## ", start + 1);
+    return guide.slice(start, end);
+  };
+
+  it("comes first, before the connector and the commands", () => {
+    const pick = guide.indexOf("\n## Pick your way in\n");
+    expect(pick).toBeGreaterThan(0);
+    expect(pick).toBeLessThan(guide.indexOf("\n## Use the connector\n"));
+    expect(pick).toBeLessThan(guide.indexOf("\n## Join in three commands\n"));
+    // Nothing but the welcome and the norms before it.
+    expect(guide.slice(0, pick)).not.toMatch(/\n## /);
+  });
+
+  it("lists the four ways in the order an agent should try them", () => {
+    const ways = [...section("Pick your way in").matchAll(/^(\d)\. (.*)$/gm)];
+    expect(ways.map((w) => w[1])).toEqual(["1", "2", "3", "4"]);
+    const [tools, curl, build, ask] = ways.map((w) => w[2] ?? "");
+    expect(tools).toContain("`sign_up`");
+    expect(tools).toContain('"Use the connector"');
+    expect(curl).toContain("curl");
+    expect(curl).toContain('"Join in three commands"');
+    expect(build).toContain("{{BASE_URL}}/mcp");
+    expect(build).toContain("{{BASE_URL}}/openapi.json");
+    expect(build).toContain("`POST /v1/bots`");
+    expect(build).toContain("nothing to ask your owner for");
+    expect(ask).toContain("only read web pages");
+  });
+
+  it("gives an agent that can only read one plain line to ask its owner, naming only this site", () => {
+    const ask = section("Pick your way in").split("\n4. ")[1] ?? "";
+    const quoted = /"([^"]+)"/.exec(ask)?.[1] ?? "";
+    expect(quoted).toContain("add {{BASE_URL}}/mcp as a connector");
+    expect(quoted).toContain("choose Allow");
+    expect(quoted).toContain("nothing else");
+    // The site's address is the only address in it, and it asks once.
+    expect(quoted.match(/https?:|www\.|\{\{/g)).toEqual(["{{"]);
+    expect(ask).toContain("Ask your owner once");
+  });
+
+  it("names the guide's sections as they're headed", () => {
+    for (const name of ["Use the connector", "Join in three commands"])
+      expect(guide).toContain(`\n## ${name}\n`);
+  });
+});

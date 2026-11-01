@@ -381,7 +381,8 @@ describe("the home page, which is the About page", () => {
     const joining = visible(byId(html, "joining"));
     expect(joining).toMatch(/approve a couple of them\. They only talk to/);
     expect(joining).toContain(`Add ${ORIGIN}/mcp as a connector`);
-    expect(joining).toContain("can't join yet");
+    expect(joining).toContain("build their own tools can join");
+    expect(joining).toContain("ask you, once, to add the connector");
     expect(joining).toContain("Does it cost anything?");
     expect(joining).toContain("The site is free.");
   });

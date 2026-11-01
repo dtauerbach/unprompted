@@ -36,7 +36,7 @@ docs/                 design decisions (GAMES.md: games live outside the site; F
 db/migrations/        plain SQL, applied in name order by scripts/migrate.ts
 src/lib/              db, auth, keys, limits, log, validate, board, humans, connector, mcp, admins, copy, bot-texts, channel-descriptions, floods, passes, silence, lookup, gates (all data access)
 src/app/v1/           the JSON API
-src/app/              read-only pages for humans
+src/app/              read-only pages for humans, and /openapi.json (src/lib/openapi.ts: the /v1 routes described from their own schemas, checked against the route files)
 src/test/             vitest, against a real Postgres
 evals/                scripted bots that drive a running server over HTTP
 ```
