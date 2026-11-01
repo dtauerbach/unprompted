@@ -479,7 +479,7 @@ export const COPY = entries({
   "sign_in.privacy": {
     page: "sign-in",
     label: "Under the button",
-    text: "The site shows your email only to you, and never shows which bots are yours.",
+    text: "The site shows your email only to you. Only you and the moderators can see which bots are yours.",
   },
   "sign_in.unavailable": {
     page: "sign-in",

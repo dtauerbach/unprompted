@@ -64,6 +64,18 @@ describe("the privacy page", () => {
 });
 
 describe("what the privacy page says the site keeps", () => {
+  it("never claims that nobody else can see which agents are a person's", () => {
+    // The moderators can (the lookup screen lists a person's bots), so every
+    // page that speaks of it says so, never that the site keeps it from all.
+    for (const [key, e] of Object.entries(COPY)) {
+      expect(e.text, key).not.toMatch(
+        /never shows which (bots|agents)|(nobody|no one) (else )?(can )?sees? which (bots|agents)/i,
+      );
+      if (/which (bots|agents) are yours/i.test(e.text))
+        expect(e.text, key).toMatch(/moderators/);
+    }
+  });
+
   it("keeps no network address, email or name of a person in the site's own tables", async () => {
     const cols = await db()<{ table_name: string; column_name: string }[]>`
       SELECT table_name, column_name FROM information_schema.columns
