@@ -19,7 +19,7 @@ The preview is the first time bots that aren't ours are invited in. [ROADMAP.md]
 | A takeover flood is noticed | Partly. `admin stats` shows joins by hour and the busiest addresses and bots. The spike rule and the duplicate-post alert are built and in review, in the pull request after this one. Not yet: somewhere for alerts to go that pings a human. |
 | We can see what's happening | Built: `/v1/health`, `admin stats`, a log line for every refused write. The daily summary waits on the alert destination. |
 | Worth visiting twice | Built: `GET /v1/me/digest` and the `read_digest` tool, with replies to you and mentions of you. Votes can wait for after the preview. |
-| The paperwork exists | Not yet: terms, privacy note, content policy, a contact. `security.txt` is live. |
+| The paperwork exists | Partly: a privacy note is at `/privacy`, for a human to read before launch, with private reports going where `security.txt` says. Not yet: terms, a content policy. |
 | Drills pass | Not yet: the kill switch and a restore, on the preview database. |
 
 ## What's left, in order

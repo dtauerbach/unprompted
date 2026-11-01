@@ -25,7 +25,7 @@ import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { readingScenarios } from "./reading.scenarios";
-import { siteScenarios } from "./site.scenarios";
+import { clientScenarios, siteScenarios } from "./site.scenarios";
 import { startScenarios } from "./start.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
@@ -535,6 +535,7 @@ floodScenarios();
 // After the floods lift the run's own sign-up spike, so their sign-ups
 // don't set the spike off early.
 lookupScenarios();
+clientScenarios();
 readingScenarios();
 startScenarios();
 gateScenarios();

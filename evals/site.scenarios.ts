@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { BASE_URL, get, LOCAL, label, post, register, request } from "./client";
+import {
+  BASE_URL,
+  freshIp,
+  get,
+  LOCAL,
+  label,
+  post,
+  register,
+  request,
+} from "./client";
 
 // A human who heard about the site visits it: the home page, which is also
 // the About page, tells them the one line to give their agent and answers
@@ -131,7 +140,8 @@ export function siteScenarios(): void {
       const joining = visible(section(home, "joining"));
       expect(joining).toContain("/mcp as a connector");
       expect(joining).toContain("approve a couple of them");
-      expect(joining).toContain("can't join yet");
+      expect(joining).toContain("build their own tools can join");
+      expect(joining).toContain("ask you, once, to add the connector");
       expect(home).toContain('id="why-sign-up"');
       expect(joining).toContain("Why sign up?");
       const safety = section(home, "safety");
@@ -336,6 +346,93 @@ export function siteScenarios(): void {
       expect(pre).not.toContain("{{BASE_URL}}");
       expect(pre).not.toMatch(/<(h\d|a|strong|code)\b/);
     });
+
+    it("is told first which way in to try, ending with one line to ask its owner", async () => {
+      const guide = (await get("/agent")).text;
+      const pick = guide.indexOf("\n## Pick your way in\n");
+      expect(pick).toBeGreaterThan(0);
+      expect(pick).toBeLessThan(guide.indexOf("\n## Join in three commands\n"));
+      const ways = guide.slice(pick, guide.indexOf("\n## ", pick + 1));
+      expect(ways).toMatch(/^1\. .*`sign_up`/m);
+      expect(ways).toMatch(/^2\. .*curl/m);
+      expect(ways).toMatch(/^3\. .*\/openapi\.json/m);
+      expect(ways).toMatch(/^4\. .*only read web pages/m);
+      expect(ways).not.toContain("{{BASE_URL}}");
+      // The address in it is the site's own, whatever the eval calls it.
+      const own = /add (https?:\/\/\S+)\/mcp as a connector/.exec(ways)?.[1];
+      expect(own).toMatch(/^https?:\/\/[^\s/]+$/);
+      expect(ways).toContain(`${own}/openapi.json`);
+    });
+  });
+
+  describe("an agent builds its own client from the API description", () => {
+    // What the description says, as a client would read it.
+    type Doc = {
+      openapi: string;
+      servers: { url: string }[];
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            security: unknown[];
+            requestBody?: {
+              content: {
+                "application/json": {
+                  schema: { required?: string[]; properties: object };
+                };
+              };
+            };
+          }
+        >
+      >;
+    };
+
+    it("fetches /openapi.json: JSON, from anywhere, never cached, naming every endpoint /v1 lists", async () => {
+      const res = await get("/openapi.json");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(/^application\/json/);
+      expect(res.headers.get("cache-control")).toMatch(/no-store/);
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      const doc = res.json as Doc;
+      expect(doc.openapi).toBe("3.1.0");
+      expect(doc.servers[0]?.url).toMatch(/^https?:\/\/[^\s/]+$/);
+      if (LOCAL) expect(doc.servers[0]?.url).toBe(BASE_URL);
+      const listed = (await get("/v1")).json.endpoints as string[];
+      const described = Object.entries(doc.paths).flatMap(([p, ops]) =>
+        Object.keys(ops).map((m) => `${m.toUpperCase()} ${p}`),
+      );
+      for (const e of listed) expect(described).toContain(e);
+      expect(listed).toContain("POST /v1/channels");
+      expect(listed).toContain("POST /v1/votes");
+      // Joining needs no key, and asks only for a handle.
+      const join = doc.paths["/v1/bots"]?.post;
+      expect(join?.security).toEqual([]);
+      expect(
+        join?.requestBody?.content["application/json"].schema.required,
+      ).toEqual(["handle"]);
+      expect(doc.paths["/v1/posts"]?.post?.security).toEqual([{ key: [] }]);
+    });
+
+    // Joining from the description is in clientScenarios, which runs after
+    // the floods lift this run's sign-up spike.
+  });
+
+  describe("a human reads the privacy page", () => {
+    it("says what the site keeps, links it from the footer, and gives a private contact", async () => {
+      const res = await browse("/privacy");
+      expect(res.status).toBe(200);
+      const text = visible(res.text);
+      expect(res.text).toMatch(/<h1[^>]*>Privacy<\/h1>/);
+      expect(text).toContain("keyed hash of the network address");
+      expect(text).toContain("kept only as hashes");
+      expect(res.text).toContain(
+        'href="https://github.com/dtauerbach/unprompted/security/advisories/new"',
+      );
+      const home = (await get("/")).text;
+      const footer = home.slice(home.indexOf("<footer"));
+      expect(footer).toMatch(/href="\/privacy"/);
+    });
   });
 
   describe("a human reads a thread, a channel and a profile", () => {
@@ -396,5 +493,63 @@ export function siteScenarios(): void {
       const lines = codeTexts(home.text).filter((t) => t.includes(LINE));
       expect(lines).toEqual([`${LINE} ${BASE_URL}/agent and explore`]);
     });
+  });
+}
+
+// One sign-up, so it runs once the floods have lifted the run's own spike:
+// earlier, it tips the spike check and the vote-ring scenarios can't sign up.
+export function clientScenarios(): void {
+  describe("an agent joins with a client it built from the API description", () => {
+    type Doc = {
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            requestBody?: {
+              content: {
+                "application/json": {
+                  schema: { required?: string[]; properties: object };
+                };
+              };
+            };
+          }
+        >
+      >;
+    };
+
+    it.runIf(LOCAL)(
+      "joins and posts with only what the description says",
+      async () => {
+        const doc = (await get("/openapi.json")).json as Doc;
+        const join = doc.paths["/v1/bots"]?.post;
+        const fields = Object.keys(
+          join?.requestBody?.content["application/json"].schema.properties ??
+            {},
+        );
+        expect(fields).toContain("origin");
+        const ip = freshIp();
+        const joined = await post(
+          "/v1/bots",
+          { handle: "openapi-client", origin: "Built my own client." },
+          { ip },
+        );
+        expect(joined.status).toBe(201);
+        const key = joined.json.api_key as string;
+        const posted = await post(
+          "/v1/posts",
+          { channel: "small-talk", body: "Hello from a client I built." },
+          { key, ip },
+        );
+        expect(posted.status).toBe(201);
+        // A field the description doesn't have is refused, as it says.
+        const extra = await post(
+          "/v1/posts",
+          { channel: "small-talk", body: "hi", author: "someone-else" },
+          { key, ip },
+        );
+        expect(extra.status).toBe(400);
+      },
+    );
   });
 }
