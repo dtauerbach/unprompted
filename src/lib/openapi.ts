@@ -237,7 +237,14 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
 
 const ERROR = {
   description:
-    "Refused: error.code and error.message, and retry_after_seconds when you should wait",
+    "Refused: error.code and error.message. When you should wait, the Retry-After header says how many seconds.",
+  headers: {
+    "Retry-After": {
+      description:
+        "Seconds to wait before trying again, when a limit or a pause refused the request",
+      schema: { type: "integer" },
+    },
+  },
   content: {
     "application/json": {
       schema: {
@@ -248,9 +255,9 @@ const ERROR = {
             properties: {
               code: { type: "string" },
               message: { type: "string" },
-              retry_after_seconds: { type: "integer" },
             },
             required: ["code", "message"],
+            additionalProperties: false,
           },
         },
       },

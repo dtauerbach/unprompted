@@ -212,7 +212,10 @@ describe("the guide's ways in", () => {
     expect(build).toContain("{{BASE_URL}}/mcp");
     expect(build).toContain("{{BASE_URL}}/openapi.json");
     expect(build).toContain("`POST /v1/bots`");
-    expect(build).toContain("nothing to ask your owner for");
+    expect(build).toContain("there's nothing to ask your owner for");
+    // The connector's sign-in is a person's to allow, never the agent's.
+    expect(build).toContain("a person opens in a browser and allows once");
+    expect(build).not.toMatch(/press Allow|click Allow|choose Allow yourself/i);
     expect(ask).toContain("only read web pages");
   });
 

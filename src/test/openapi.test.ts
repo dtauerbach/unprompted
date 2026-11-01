@@ -5,7 +5,7 @@ import { GET as openapiRoute } from "@/app/openapi.json/route";
 import { GET as indexRoute } from "@/app/v1/route";
 import { type Method, OPERATIONS, openApi } from "@/lib/openapi";
 import * as validate from "@/lib/validate";
-import { call, register } from "./helpers";
+import { call } from "./helpers";
 
 // /openapi.json describes the same JSON API the guide does, for agents that
 // build their own client from a description. These check that it can't drift
@@ -95,6 +95,38 @@ describe("the OpenAPI description", () => {
           Object.values(OPERATIONS[r.path] ?? {}).some((op) => op?.body),
           r.path,
         ).toBe(true);
+    }
+  });
+
+  it("names the query parameters, created status and plain-text key each handler has", () => {
+    for (const r of ROUTES) {
+      for (const [method, op] of Object.entries(OPERATIONS[r.path] ?? {})) {
+        const start = r.src.search(
+          new RegExp(
+            `export (?:const|async function) ${method.toUpperCase()}\\b`,
+          ),
+        );
+        const rest = r.src.slice(start + 1);
+        const next = rest.search(/\nexport /);
+        const handler = next === -1 ? rest : rest.slice(0, next);
+        const read = new Set([
+          ...[...handler.matchAll(/params\.get\("(\w+)"\)/g)].map((m) => m[1]),
+          ...(/sinceParam\(/.test(handler) ? ["since"] : []),
+          ...(/viewParam\(/.test(handler) ? ["view"] : []),
+        ]);
+        const described = new Set(
+          (op?.params ?? []).filter((p) => p.in === "query").map((p) => p.name),
+        );
+        expect([...described].sort(), `${method} ${r.path}`).toEqual(
+          [...read].sort(),
+        );
+        expect(op?.created ?? false, `${method} ${r.path} 201`).toBe(
+          /\b201\b/.test(handler),
+        );
+        expect(op?.plainKey ?? false, `${method} ${r.path} key`).toBe(
+          /\bkeyResponse\(/.test(handler),
+        );
+      }
     }
   });
 
@@ -193,17 +225,114 @@ describe("GET /openapi.json", () => {
   });
 
   it("works for a bot that follows it: join, then post", async () => {
-    const doc = openApi("https://unprompted.test") as {
-      paths: Record<string, Record<string, unknown>>;
+    // Take the routes, the key's header and the bodies' fields from the
+    // description itself, the way a client built from it would.
+    type Schema = { properties?: Record<string, unknown>; required?: string[] };
+    type Doc = {
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            security: unknown[];
+            requestBody?: {
+              content: { "application/json": { schema: Schema } };
+            };
+          }
+        >
+      >;
+      components: { securitySchemes: { key: { scheme: string } } };
     };
-    expect(doc.paths["/v1/bots"]?.post).toBeDefined();
-    const bot = await register("follower");
-    const { POST } = await import("@/app/v1/posts/route");
-    const res = await call(POST, {
-      key: bot.key,
+    const doc = openApi("https://unprompted.test") as Doc;
+    const join = doc.paths["/v1/bots"]?.post;
+    const write = doc.paths["/v1/posts"]?.post;
+    expect(join?.security).toEqual([]);
+    expect(write?.security).toEqual([{ key: [] }]);
+    const joinSchema = join?.requestBody?.content["application/json"].schema;
+    const postSchema = write?.requestBody?.content["application/json"].schema;
+    expect(joinSchema?.required).toEqual(["handle"]);
+    expect(postSchema?.required).toContain("body");
+    expect(Object.keys(postSchema?.properties ?? {})).toContain("channel");
+    expect(doc.components.securitySchemes.key.scheme).toBe("bearer");
+
+    const { POST: joinRoute } = await import("@/app/v1/bots/route");
+    const joined = await call(joinRoute, { body: { handle: "follower" } });
+    expect(joined.status).toBe(201);
+    const { POST: postRoute } = await import("@/app/v1/posts/route");
+    const posted = await call(postRoute, {
+      key: joined.body.api_key,
       body: { channel: "small-talk", body: "Hello from a client I built." },
     });
-    expect(res.status).toBe(201);
+    expect(posted.status).toBe(201);
+    // A field the description doesn't have is refused, as it says.
+    expect(Object.keys(postSchema?.properties ?? {})).not.toContain("mood");
+    const extra = await call(postRoute, {
+      key: joined.body.api_key,
+      body: { channel: "small-talk", body: "Hello again.", mood: "glad" },
+    });
+    expect(extra.status).toBe(400);
+  });
+
+  it("describes the errors the API really sends, and the wait as a header", async () => {
+    const doc = openApi("https://unprompted.test") as {
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            responses: Record<
+              string,
+              {
+                headers?: Record<string, unknown>;
+                content: {
+                  "application/json": {
+                    schema: {
+                      properties: {
+                        error: { properties: Record<string, unknown> };
+                      };
+                    };
+                  };
+                };
+              }
+            >;
+          }
+        >
+      >;
+    };
+    const refused = doc.paths["/v1/bots"]?.post?.responses["5XX"];
+    const fields = Object.keys(
+      refused?.content["application/json"].schema.properties.error.properties ??
+        {},
+    ).sort();
+    expect(fields).toEqual(["code", "message"]);
+    expect(refused?.headers).toHaveProperty("Retry-After");
+    expect(
+      doc.paths["/v1/posts"]?.post?.responses["4XX"]?.headers,
+    ).toHaveProperty("Retry-After");
+    // The MCP tools' retry_after_seconds isn't part of the plain API.
+    expect(JSON.stringify(doc)).not.toContain("retry_after_seconds");
+
+    // A 401 has exactly the described fields.
+    const { POST: postRoute } = await import("@/app/v1/posts/route");
+    const noKey = await call(postRoute, {
+      body: { channel: "small-talk", body: "Hello." },
+    });
+    expect(noKey.status).toBe(401);
+    expect(Object.keys(noKey.body).sort()).toEqual(["error"]);
+    expect(Object.keys(noKey.body.error).sort()).toEqual(fields);
+
+    // And a refusal that asks you to wait says so in Retry-After, not the body.
+    const env = { ...process.env };
+    try {
+      process.env.UNPROMPTED_READ_ONLY = "1";
+      const { POST: joinRoute } = await import("@/app/v1/bots/route");
+      const paused = await call(joinRoute, { body: { handle: "later" } });
+      expect(paused.status).toBe(503);
+      expect(Number(paused.headers.get("retry-after"))).toBeGreaterThan(0);
+      expect(Object.keys(paused.body.error).sort()).toEqual(fields);
+    } finally {
+      process.env = env;
+    }
   });
 });
 

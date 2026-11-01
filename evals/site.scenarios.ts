@@ -414,39 +414,8 @@ export function siteScenarios(): void {
       expect(doc.paths["/v1/posts"]?.post?.security).toEqual([{ key: [] }]);
     });
 
-    it.runIf(LOCAL)(
-      "joins and posts with only what the description says",
-      async () => {
-        const doc = (await get("/openapi.json")).json as Doc;
-        const join = doc.paths["/v1/bots"]?.post;
-        const fields = Object.keys(
-          join?.requestBody?.content["application/json"].schema.properties ??
-            {},
-        );
-        expect(fields).toContain("origin");
-        const ip = freshIp();
-        const joined = await post(
-          "/v1/bots",
-          { handle: "openapi-client", origin: "Built my own client." },
-          { ip },
-        );
-        expect(joined.status).toBe(201);
-        const key = joined.json.api_key as string;
-        const posted = await post(
-          "/v1/posts",
-          { channel: "small-talk", body: "Hello from a client I built." },
-          { key, ip },
-        );
-        expect(posted.status).toBe(201);
-        // A field the description doesn't have is refused, as it says.
-        const extra = await post(
-          "/v1/posts",
-          { channel: "small-talk", body: "hi", author: "someone-else" },
-          { key, ip },
-        );
-        expect(extra.status).toBe(400);
-      },
-    );
+    // Joining from the description is in clientScenarios, which runs after
+    // the floods lift this run's sign-up spike.
   });
 
   describe("a human reads the privacy page", () => {
@@ -524,5 +493,63 @@ export function siteScenarios(): void {
       const lines = codeTexts(home.text).filter((t) => t.includes(LINE));
       expect(lines).toEqual([`${LINE} ${BASE_URL}/agent and explore`]);
     });
+  });
+}
+
+// One sign-up, so it runs once the floods have lifted the run's own spike:
+// earlier, it tips the spike check and the vote-ring scenarios can't sign up.
+export function clientScenarios(): void {
+  describe("an agent joins with a client it built from the API description", () => {
+    type Doc = {
+      paths: Record<
+        string,
+        Record<
+          string,
+          {
+            requestBody?: {
+              content: {
+                "application/json": {
+                  schema: { required?: string[]; properties: object };
+                };
+              };
+            };
+          }
+        >
+      >;
+    };
+
+    it.runIf(LOCAL)(
+      "joins and posts with only what the description says",
+      async () => {
+        const doc = (await get("/openapi.json")).json as Doc;
+        const join = doc.paths["/v1/bots"]?.post;
+        const fields = Object.keys(
+          join?.requestBody?.content["application/json"].schema.properties ??
+            {},
+        );
+        expect(fields).toContain("origin");
+        const ip = freshIp();
+        const joined = await post(
+          "/v1/bots",
+          { handle: "openapi-client", origin: "Built my own client." },
+          { ip },
+        );
+        expect(joined.status).toBe(201);
+        const key = joined.json.api_key as string;
+        const posted = await post(
+          "/v1/posts",
+          { channel: "small-talk", body: "Hello from a client I built." },
+          { key, ip },
+        );
+        expect(posted.status).toBe(201);
+        // A field the description doesn't have is refused, as it says.
+        const extra = await post(
+          "/v1/posts",
+          { channel: "small-talk", body: "hi", author: "someone-else" },
+          { key, ip },
+        );
+        expect(extra.status).toBe(400);
+      },
+    );
   });
 }
