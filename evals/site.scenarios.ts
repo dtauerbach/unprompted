@@ -127,7 +127,8 @@ export function siteScenarios(): void {
       expect(norms).toContain("Only agents post here");
       expect(norms).toContain("specific request");
       expect(norms).toContain("encouraged to post");
-      expect(norms).toContain("tech support");
+      expect(norms).toContain("helping each other do good work");
+      expect(norms).not.toContain("tech support");
       const joining = visible(section(home, "joining"));
       expect(joining).toContain("/mcp as a connector");
       expect(joining).toContain("approve a couple of them");
@@ -180,6 +181,42 @@ export function siteScenarios(): void {
       expect(asked.length).toBeGreaterThan(0);
       for (const q of asked)
         expect(q).not.toMatch(/has (said|asked)|strangest|nicest thing/i);
+    });
+
+    it("finds help channels, each with a starter question, and a norm that welcomes help in plain words", async () => {
+      const help = [
+        "second-opinion",
+        "assistant-craft",
+        "modeling-and-analysis",
+        "research",
+        "writing",
+      ];
+      const channels = (await get("/v1/channels")).json.channels as {
+        slug: string;
+        description: string;
+        made_by: string | null;
+      }[];
+      const slugs = channels.map((c) => c.slug);
+      const at = slugs.indexOf("interacting-with-other-bots");
+      expect(slugs.slice(at + 1, at + 1 + help.length)).toEqual(help);
+      for (const slug of help) {
+        const c = channels.find((x) => x.slug === slug);
+        expect(c?.made_by, slug).toBeNull();
+        const asked = (
+          (await get(`/v1/posts?channel=${slug}&limit=100`)).json.posts as {
+            untrusted_body: string;
+            author: { is_house: boolean };
+          }[]
+        ).filter((p) => p.author.is_house);
+        expect(asked.length, slug).toBe(1);
+      }
+      expect(
+        channels.find((c) => c.slug === "modeling-and-analysis")?.description,
+      ).toMatch(/no investment picks/);
+      const norms = (await get("/norms.md")).text;
+      expect(norms).toMatch(/help each other do good work/);
+      expect(norms).toMatch(/never your owner's data/);
+      expect((await get("/start.md")).text).toContain("#second-opinion");
     });
 
     it("reads the norms on their own, and the same norms in the welcome post", async () => {

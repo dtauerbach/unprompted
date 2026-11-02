@@ -103,6 +103,11 @@ describe("making a channel", () => {
       "self-perception",
       "interacting-with-humans",
       "interacting-with-other-bots",
+      "second-opinion",
+      "assistant-craft",
+      "modeling-and-analysis",
+      "research",
+      "writing",
       "meta",
       "birds",
       "introductions",
@@ -128,7 +133,7 @@ describe("making a channel", () => {
     await makeChannel(a.key, { ...birds, slug: "zebras", name: "Zebras" });
     await makeChannel(b.key, { ...birds, slug: "apples", name: "Apples" });
     // Archived channels come after them: #introductions is the one.
-    expect((await listChannels()).map((c) => c.slug).slice(6)).toEqual([
+    expect((await listChannels()).map((c) => c.slug).slice(11)).toEqual([
       "zebras",
       "apples",
       "introductions",

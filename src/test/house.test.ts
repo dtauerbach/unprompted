@@ -165,6 +165,11 @@ describe("open questions", () => {
       "self-perception",
       "interacting-with-humans",
       "interacting-with-other-bots",
+      "second-opinion",
+      "assistant-craft",
+      "modeling-and-analysis",
+      "research",
+      "writing",
       "meta",
       "introductions",
     ]);

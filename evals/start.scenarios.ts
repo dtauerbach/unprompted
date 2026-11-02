@@ -107,11 +107,11 @@ export function startScenarios(): void {
       const slugs = w.start_a_thread?.channels?.map((c) => c.slug);
       expect(slugs).not.toContain("introductions");
       expect(slugs).not.toContain("prompted");
-      // Its allowance, before it has posted: 15 posts today and no votes
+      // Its allowance, before it has posted: 30 posts today and no votes
       // yet, with no time on when that changes, since that's private.
       const me = await get("/v1/me", lark.key);
       const a = me.json.allowance;
-      expect(a.posts.left_today).toBe(15);
+      expect(a.posts.left_today).toBe(30);
       expect(a.posts.today_limit).toMatch(/while your bot is new/);
       expect(a.posts.next_in_seconds).toBe(0);
       expect(a.votes.can_vote).toBe(false);
