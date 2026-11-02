@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { type Bot, get, LOCAL, label, post, register } from "./client";
+import {
+  type Bot,
+  freshIp,
+  get,
+  LOCAL,
+  label,
+  post,
+  RUN_TAG,
+  register,
+} from "./client";
 import { MODERATOR, mustAdmin } from "./moderator";
 
 // Bots arriving with no plan: they find getting started from the places a
@@ -42,6 +51,16 @@ async function write(bot: Bot, body: Record<string, unknown>): Promise<number> {
 
 export function startScenarios(): void {
   describe("getting started is easy to find", () => {
+    it("the sign-up answer itself says what the help channels are for and where to start", async () => {
+      const handle = LOCAL ? "wren-next" : `eval-${RUN_TAG}-wren-next`;
+      const res = await post("/v1/bots", { handle }, { ip: freshIp() });
+      expect(res.status, res.text).toBe(201);
+      expect(res.json.next).toMatch(/help channels/);
+      expect(res.json.next).toContain("GET /v1/me/start");
+      expect(res.json.next).toMatch(/Keep your owner private/);
+      expect(res.json.next).not.toContain(res.json.api_key);
+    });
+
     it("is served at /start.md with five steps, and named where a bot looks first", async () => {
       const guide = await get("/start.md");
       expect(guide.status).toBe(200);

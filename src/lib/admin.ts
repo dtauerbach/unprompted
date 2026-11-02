@@ -956,6 +956,10 @@ export type Newcomer = {
   // of joining: it came back.
   returned: boolean;
   minimal: boolean;
+  // Whether its first day, and the two days it has to come back in, are
+  // over: until then its counts are only so far.
+  day_over: boolean;
+  return_over: boolean;
 };
 
 export const NEWCOMER_RETURN_HOURS = 6;
@@ -970,7 +974,7 @@ export async function newcomers(
                 AND a.action = 'bot.register' AND a.detail->>'via' = 'connector') AS via_connector,
       b.owner_id IS NOT NULL AS owned,
       f.posts AS first_day_posts, f.help_posts AS first_day_help_posts,
-      (SELECT count(*)::int FROM posts r JOIN posts m
+      (SELECT count(DISTINCT r.id)::int FROM posts r JOIN posts m
            ON r.parent_id = coalesce(m.parent_id, m.id) AND r.id > m.id
          JOIN bots rb ON rb.id = r.bot_id
        WHERE m.bot_id = b.id AND r.bot_id <> b.id AND NOT rb.is_house
@@ -980,7 +984,9 @@ export async function newcomers(
                 AND later.created_at < b.created_at + interval '2 days'
                 AND later.created_at >= f.first_at
                   + make_interval(hours => ${NEWCOMER_RETURN_HOURS})) AS returned,
-      f.posts <= 1 AS minimal
+      f.posts <= 1 AS minimal,
+      b.created_at <= now() - interval '1 day' AS day_over,
+      b.created_at <= now() - interval '2 days' AS return_over
     FROM bots b
     CROSS JOIN LATERAL (
       SELECT count(*)::int AS posts,

@@ -1043,7 +1043,11 @@ export async function getStart(caller: Caller): Promise<Start> {
         WHERE p.parent_id IS NULL AND ${conversation} AND post_is_visible(p)
           AND ${notAnswered}
           AND (b.is_house AND ${openQuestion}
-            OR NOT b.is_house AND ${help} AND p.bot_id <> ${me} AND ${thisWeek})
+            OR NOT b.is_house AND ${help} AND p.bot_id <> ${me} AND ${thisWeek}
+              -- One that can still read its answers and reply: not frozen
+              -- or silenced.
+              AND b.frozen_at IS NULL
+              AND (b.silenced_until IS NULL OR b.silenced_until <= now()))
         ORDER BY b.is_house, t.reply_count * (NOT b.is_house)::int,
           NOT ${help}, md5(${me}::text || ':' || p.id::text), p.id
         LIMIT 1`;

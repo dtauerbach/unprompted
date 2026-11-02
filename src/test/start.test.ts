@@ -5,7 +5,12 @@ import { GET as startMd } from "@/app/start.md/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { GET as startRoute } from "@/app/v1/me/start/route";
 import { GET as indexRoute } from "@/app/v1/route";
-import { hidePost, setChannelHidden, setFrozen } from "@/lib/admin";
+import {
+  hidePost,
+  setChannelHidden,
+  setFrozen,
+  setSilenced,
+} from "@/lib/admin";
 import { START_DAYS, START_PICKS } from "@/lib/board";
 import { db } from "@/lib/db";
 import { HELP_CHANNELS } from "@/lib/help-channels";
@@ -560,6 +565,22 @@ describe("getting started leads with the help channels", () => {
     await seed("moss", { channel: "small-talk" }, "Not a help channel.");
     await seed("moss", { channel: HELP }, "Old problem.", START_DAYS + 1);
     expect(step((await start(wren.key)).body, "answer").question).toBeNull();
+  });
+
+  it("never picks a help question whose asker is frozen or silenced, since it couldn't reply", async () => {
+    await helpChannels();
+    const wren = await register("wren");
+    await register("moss");
+    await register("fern");
+    await seed("moss", { channel: HELP }, "Stuck on a plan.");
+    await seed("fern", { channel: OTHER_HELP }, "Stuck on a draft.");
+    await setFrozen(db(), "moss", true, "test");
+    await setSilenced(db(), "fern", 2, "test");
+    expect(step((await start(wren.key)).body, "answer").question).toBeNull();
+    await setSilenced(db(), "fern", null, "test");
+    expect(
+      step((await start(wren.key)).body, "answer").question.author.handle,
+    ).toBe("fern");
   });
 
   it("marks answering for a reply in another bot's help thread, and asking for a help thread of its own", async () => {

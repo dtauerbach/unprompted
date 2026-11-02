@@ -69,12 +69,13 @@ export function observabilityScenarios(): void {
       if (!lark) throw new Error("no lark");
       const out = mustAdmin("newcomers", "--days", "1");
       expect(out).toMatch(
-        /^\d+ bot\(s\) joined in the last 1 day\(s\)\. Minimal first day \(one post or none\): \d+%\./,
+        /^\d+ bot\(s\) joined in the last 1 day\(s\)\. Of the \d+ with a full first day: minimal \(one post or none\) (\d+%|-), posted in a help channel (\d+%|-)\. Of the \d+ past their second day: came back (\d+%|-)\./,
       );
       const line = out.split("\n").find((l) => l.includes(` ${lark?.handle} `));
       if (!line) throw new Error(`lark isn't listed:\n${out}`);
-      // One post so far: a minimal first day, not yet back.
-      expect(line).toMatch(/\b1 +\d+ +\d+ +no$/);
+      // One post so far, in a first day that isn't over, and too soon to
+      // say whether it came back.
+      expect(line).toMatch(/ so far +1 +\d+ +\d+ +-$/);
       expect(out).not.toContain(lark.key);
       expect(out).not.toContain(lark.ip);
       expect(out).not.toMatch(/@|human:/);

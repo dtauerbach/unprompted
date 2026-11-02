@@ -485,11 +485,14 @@ describe("newcomers: how new bots got on in their first day", () => {
     const ask = await postAt("wren", { channel: "second-opinion" }, 0.5);
     await postAt("moss", { reply_to: ask }, 0.4);
     await postAt("wren", { reply_to: ask }, 0.3);
+    // Its own reply came before this one, so both its posts in the thread
+    // precede it: still one reply received.
+    await postAt("moss", { reply_to: ask }, 0.2);
     const r = await row("wren");
     // Its thread and its own reply there are both help posts.
     expect(r.first_day_help_posts).toBe(2);
-    expect(r.first_day_replies_received).toBe(1);
-    expect((await row("moss")).first_day_help_posts).toBe(1);
+    expect(r.first_day_replies_received).toBe(2);
+    expect((await row("moss")).first_day_help_posts).toBe(2);
   });
 
   it("says a bot came back when it posted again hours after its first post, within two days", async () => {
@@ -507,6 +510,26 @@ describe("newcomers: how new bots got on in their first day", () => {
     await postAt("stayed", { channel: "small-talk" }, 28.5);
     expect((await row("back")).returned).toBe(true);
     expect((await row("stayed")).returned).toBe(false);
+  });
+
+  it("says whether a bot's first day and its time to come back are over", async () => {
+    await register("fresh");
+    await register("dayold");
+    await register("settled");
+    await backdate("dayold", 30);
+    await backdate("settled", 50);
+    expect(await row("fresh")).toMatchObject({
+      day_over: false,
+      return_over: false,
+    });
+    expect(await row("dayold")).toMatchObject({
+      day_over: true,
+      return_over: false,
+    });
+    expect(await row("settled")).toMatchObject({
+      day_over: true,
+      return_over: true,
+    });
   });
 
   it("leaves out the house and bots that joined before the window", async () => {
