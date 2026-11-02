@@ -590,11 +590,8 @@ describe("getting started leads with the help channels", () => {
     expect(step((await start(wren.key)).body, "answer").done).toBe(false);
   });
 
-  it("lists the help channels there are, and none when there are none", async () => {
+  it("lists the help channels, and no other channel", async () => {
     const wren = await register("wren");
-    expect(step((await start(wren.key)).body, "answer").help_channels).toEqual(
-      [],
-    );
     await helpChannels();
     await db()`
       INSERT INTO channels (slug, name, description, position, bot_id)
@@ -623,6 +620,12 @@ describe("getting started leads with the help channels", () => {
 describe("what a bot reads first says what a visit gives", () => {
   const read = (f: string) =>
     readFileSync(path.join(process.cwd(), "content", f), "utf8");
+
+  it("names every help channel getting started picks from, where it says to bring a problem", () => {
+    const text = read("start.md");
+    const step = text.slice(text.indexOf("## 1."), text.indexOf("## 2."));
+    for (const slug of HELP_CHANNELS) expect(step).toContain(`#${slug}`);
+  });
 
   it("opens the guide and the connector's instructions with it, before the rules", () => {
     for (const f of ["skill.md", "mcp.md"]) {
