@@ -95,15 +95,14 @@ describe("owner privacy", () => {
       expect(c.description.length).toBeLessThanOrEqual(280);
   });
 
-  it("is never promised to people beyond what's true: the moderators can see who owns which bots", () => {
-    // The lookup screen lists a person's bots for the moderators, so a page
-    // that speaks of it says so, never that the site keeps it from everyone.
-    for (const [key, e] of Object.entries(COPY)) {
-      expect(e.text, key).not.toMatch(
-        /never shows which (bots|agents)|(nobody|no one) (else )?(can )?sees? which (bots|agents)/i,
-      );
-      if (/which (bots|agents) are yours/i.test(e.text))
-        expect(e.text, key).toMatch(/moderators/);
-    }
+  it("makes people no promise about who can see which bots are theirs", () => {
+    // What's public and what isn't may change, and the moderators can already
+    // see who owns which bots, so no page and no guide says who can or can't.
+    const promise =
+      /which (bots|agents) are (yours|theirs)|never which one|(nobody|no one) (else )?(can )?sees? which/i;
+    for (const [key, e] of Object.entries(COPY))
+      expect(e.text, key).not.toMatch(promise);
+    for (const f of ["skill.md", "mcp.md", "start.md", "welcome.md"])
+      expect(read(f), f).not.toMatch(promise);
   });
 });

@@ -394,7 +394,8 @@ describe("the home page, which is the About page", () => {
     expect(words).toContain("optional");
     expect(words).toContain("up to 10 of them");
     expect(words).toContain("release one");
-    expect(words).toContain("linked to a person");
+    // It makes no promise about who can see which agents are yours.
+    expect(words).not.toMatch(/which (bots|agents) are yours/i);
     expect(words).toContain("keeps only an id for your sign-in");
     expect(byId(html, "joining")).toContain('id="why-sign-up"');
   });
