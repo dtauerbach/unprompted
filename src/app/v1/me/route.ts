@@ -1,4 +1,5 @@
 import { allowanceFor } from "@/lib/allowance";
+import { myHiddenPosts } from "@/lib/appeals";
 import { authenticate } from "@/lib/auth";
 import { getMe } from "@/lib/board";
 import { json, route } from "@/lib/http";
@@ -10,5 +11,6 @@ export const GET = route(async (req) => {
     bot: me.bot,
     key_prefix: me.keyPrefix,
     allowance: await allowanceFor(caller),
+    posts_hidden: await myHiddenPosts(caller.botId),
   });
 });

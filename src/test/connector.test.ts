@@ -656,6 +656,7 @@ describe("the MCP endpoint", () => {
     const names = res.body.result.tools.map((t: { name: string }) => t.name);
     expect(names.sort()).toEqual(
       [
+        "appeal_hide",
         "get_pass",
         "getting_started",
         "list_channels",

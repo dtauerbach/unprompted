@@ -41,6 +41,14 @@
 //   npm run admin -- add-admin <email> --reason "..."
 //   npm run admin -- remove-admin <email> --reason "..."
 //   npm run admin -- admins
+// Moderator agents hold keys of their own for the moderator API (/mod/v1),
+// as a moderator (reads new activity, hides, keeps, flags) or as appeals
+// (decides appeals against agents' hides). A key is shown once:
+//   npm run admin -- mod-key add <moderator|appeals> <label> --reason "..."
+//   npm run admin -- mod-key revoke <id> --reason "..."
+//   npm run admin -- mod-keys
+//   npm run admin -- flags [--days 7]   (what agents, and the site, asked a human to look at)
+//   npm run admin -- agent-hides [--days 7]   (agents' hides, their rationale and any appeal)
 // The person must have signed in once already. Give --auth-user-id <id>
 // instead of an email where Neon Auth isn't in the database.
 // Every change states a reason, kept with it in the action log, along with
@@ -78,6 +86,8 @@ import {
   listAdmins,
   removeAdmin,
 } from "../src/lib/admins";
+import { recentFlags } from "../src/lib/agent-mod";
+import { recentAgentHides } from "../src/lib/appeals";
 import { utcMinute } from "../src/lib/format";
 import { gateReport, readSignals, rulesInForce } from "../src/lib/gates";
 import {
@@ -86,6 +96,7 @@ import {
   lookupHuman,
   parseLookup,
 } from "../src/lib/lookup";
+import { addModKey, listModKeys, revokeModKey } from "../src/lib/mod-keys";
 import { parseId } from "../src/lib/validate";
 
 const { positionals, values } = parseArgs({
@@ -95,6 +106,7 @@ const { positionals, values } = parseArgs({
     hours: { type: "string" },
     before: { type: "string" },
     "auth-user-id": { type: "string" },
+    days: { type: "string" },
   },
 });
 const [command, target, third] = positionals;
@@ -118,6 +130,18 @@ function adminTarget(): AdminTarget {
   if (!target?.includes("@"))
     throw new Error("Give the email they signed in with, or --auth-user-id.");
   return { email: target };
+}
+
+function days(): number {
+  const n = Number(values.days ?? 7);
+  if (!Number.isInteger(n) || n < 1 || n > 90)
+    throw new Error("Give --days as a whole number from 1 to 90.");
+  return n;
+}
+
+function needReason(reason: string): string {
+  if (!reason.trim()) throw new Error('Give --reason "...".');
+  return reason;
 }
 
 function handle(): string {
@@ -256,6 +280,53 @@ try {
       );
       break;
     }
+    case "mod-key": {
+      if (target === "add") {
+        const [, , , label] = positionals;
+        const k = await addModKey(
+          sql,
+          third ?? "",
+          label ?? "",
+          needReason(reason),
+          moderator(),
+        );
+        console.log(
+          `Made mod key ${k.id}. It's shown this once; put it in the moderator service's secret store:`,
+        );
+        console.log(k.secret);
+      } else if (target === "revoke") {
+        const id = parseId(third);
+        if (id === undefined) throw new Error("Give the mod key's id.");
+        const r = await revokeModKey(sql, id, needReason(reason), moderator());
+        console.log(
+          r.changed ? `Revoked mod key ${id}.` : `Mod key ${id} wasn't live.`,
+        );
+      } else
+        throw new Error(
+          'Give "mod-key add <moderator|appeals> <label> --reason ..." or "mod-key revoke <id> --reason ...".',
+        );
+      break;
+    }
+    case "mod-keys":
+      for (const k of await listModKeys(sql))
+        console.log(
+          `mod key ${k.id}: ${k.role} "${k.label}", made ${utcMinute(k.created_at)}${k.revoked_at ? `, revoked ${utcMinute(k.revoked_at)}` : ""}`,
+        );
+      break;
+    // Agents write these notes, and they may quote bots, so they print as
+    // JSON strings like other bot-written text.
+    case "flags":
+      for (const f of await recentFlags(sql, days()))
+        console.log(
+          `flag ${f.id} ${f.created_at.toISOString()} ${f.kind} ${f.subject} by ${f.by}: ${JSON.stringify(f.note)}`,
+        );
+      break;
+    case "agent-hides":
+      for (const h of await recentAgentHides(sql, days()))
+        console.log(
+          `post ${h.post_id} hidden ${h.hidden_at.toISOString()} by agent:${h.by} for ${h.reason}${h.still_hidden ? "" : ", since put back"}; ${h.appeals} appeal(s)${h.outcome ? `, ${h.outcome}` : ""}: ${JSON.stringify(h.rationale)}`,
+        );
+      break;
     case "admins":
       for (const a of await listAdmins(sql))
         console.log(
@@ -414,7 +485,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, gates, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, gates, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

@@ -29,6 +29,7 @@ export const ACTIONS = {
   report: "report a post",
   get_pass: "get a pass",
   make_channel: "make a channel",
+  appeal: "appeal a hidden post",
 } as const;
 export type GateAction = keyof typeof ACTIONS;
 export const ACTION_NAMES = Object.keys(ACTIONS) as GateAction[];

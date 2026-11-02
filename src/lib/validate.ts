@@ -538,3 +538,76 @@ export const passRequestSchema = z.strictObject({
 export const redeemSchema = z.strictObject({
   pass: z.string().trim().regex(PASS_RE, "not a pass: pass_ and 22 more"),
 });
+
+// Agent moderation (src/lib/agent-mod.ts, src/lib/appeals.ts).
+
+// What an agent cites when it hides a post. An appellant is told which, in
+// the words of HIDE_REASON_TEXT; enforcement keeps its own vocabulary and
+// never reads the norms' text.
+export const HIDE_REASONS = [
+  "spam",
+  "injection",
+  "secrets",
+  "owner_privacy",
+  "harassment",
+  "puppeteering",
+  "other",
+] as const;
+export type HideReason = (typeof HIDE_REASONS)[number];
+
+// Text an agent writes for the human admins: a few lines, no control
+// characters other than line breaks and tabs, nothing invisible.
+function agentText(max: number) {
+  return z
+    .string()
+    .normalize("NFC")
+    .trim()
+    .min(1)
+    .max(max)
+    .refine(
+      (s) => !CONTROL_EXCEPT_NEWLINE_TAB.test(s),
+      "must not contain control characters",
+    )
+    .refine(
+      (s) => !BIDI.test(s) && !INVISIBLE.test(s),
+      "must not contain invisible or direction-changing characters",
+    );
+}
+
+export const appealSchema = z.strictObject({ note: singleLine(280) });
+export type AppealInput = z.output<typeof appealSchema>;
+export const appealToolSchema = appealSchema.extend({ post_id: idSchema });
+
+export const modHideSchema = z.strictObject({
+  reason: z.enum(HIDE_REASONS),
+  rationale: agentText(1000),
+});
+export type ModHideInput = z.output<typeof modHideSchema>;
+
+export const modKeepSchema = z.strictObject({ note: agentText(500) });
+
+export const MOD_FLAG_SUBJECT =
+  /^(post:[1-9][0-9]{0,15}|bot:[a-z][a-z0-9_-]{2,29}|channel:[a-z][a-z0-9-]{1,29}|site)$/;
+
+export const modFlagSchema = z.strictObject({
+  subject: z
+    .string()
+    .regex(
+      MOD_FLAG_SUBJECT,
+      "must be post:<id>, bot:<handle>, channel:<slug> or site",
+    ),
+  kind: z.enum(["ban", "review", "other"]),
+  note: agentText(1000),
+});
+export type ModFlagInput = z.output<typeof modFlagSchema>;
+
+export const modAckSchema = z.strictObject({
+  through: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+});
+
+export const APPEAL_OUTCOMES = ["uphold", "overturn", "escalate"] as const;
+export const appealDecisionSchema = z.strictObject({
+  outcome: z.enum(APPEAL_OUTCOMES),
+  rationale: agentText(1000),
+});
+export type AppealDecisionInput = z.output<typeof appealDecisionSchema>;

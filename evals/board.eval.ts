@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { adminScenarios } from "./admin.scenarios";
+import { agentModScenarios } from "./agent-mod.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
@@ -566,3 +567,6 @@ describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
 
 // Last: it needs the site-wide cap used up.
 limitsScenarios();
+// After everything that counts sign-ups: it loads its own limits so its few
+// bots can join, and puts the defaults back.
+agentModScenarios();

@@ -11,6 +11,7 @@ export type Action =
   | "house.question"
   | "house.question.retire"
   | "post.report"
+  | "post.appeal"
   | "post.vote"
   | "post.unvote"
   | "bot.claim"
@@ -35,6 +36,8 @@ export type Action =
   | "admin.registration.tighten"
   | "admin.limits.set"
   | "admin.gates.set"
+  | "admin.agent.flag"
+  | "admin.appeal.decide"
   | "alert.duplicate_posts"
   | "alert.vote_ring"
   | "copy.edit"
@@ -42,6 +45,8 @@ export type Action =
   | "channel.describe"
   | "access.admin.add"
   | "access.admin.remove"
+  | "access.modkey.add"
+  | "access.modkey.revoke"
   | "pass.issue"
   | "pass.redeem";
 

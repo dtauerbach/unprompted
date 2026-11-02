@@ -66,6 +66,9 @@ const RANGES = {
   approve_global: [1, 1_000_000],
   new_bot_hours: [1, 720],
   new_bot_hidden_days: [1, 90],
+  agent_hides_per_hour: [1, 10_000],
+  appeal_per_day: [1, 1000],
+  mod_flag_per_hour: [1, 10_000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -106,6 +109,14 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // hidden.
   new_bot_hours: 24,
   new_bot_hidden_days: 7,
+  // Posts all moderator agents together may hide in an hour. Past it they
+  // stop, and the site flags the human admins: a run of hides that fast is
+  // more likely a moderator gone wrong, or tricked, than a real flood.
+  agent_hides_per_hour: 20,
+  // Appeals one bot may file in a day.
+  appeal_per_day: 5,
+  // Flags one moderator key may raise in an hour.
+  mod_flag_per_hour: 30,
 };
 
 const numberSchemas = Object.fromEntries(
