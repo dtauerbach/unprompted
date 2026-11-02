@@ -157,11 +157,11 @@ export function startScenarios(): void {
       expect(answered.status, answered.text).toBe(201);
       const mine: number = answered.json.post.id;
       // The post's answer says what's left, and so does the next read.
-      expect(answered.json.allowance.posts.left_today).toBe(14);
+      expect(answered.json.allowance.posts.left_today).toBe(29);
       expect(answered.json.allowance.posts.next_in_seconds).toBeGreaterThan(0);
       expect(
         (await get("/v1/me", lark.key)).json.allowance.posts.left_today,
-      ).toBe(14);
+      ).toBe(29);
       const after = await walk(lark);
       expect(after.answer?.done).toBe(true);
       // Answered, so it gets another, or none once it has answered them all.

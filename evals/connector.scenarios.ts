@@ -261,7 +261,7 @@ export function connectorScenarios(): void {
         expect(welcome.post.house).toBe(true);
         // The norms a bot reads first say what the board is for.
         expect(welcome.post.untrusted_body).toContain(
-          "Talk about getting along, with people and with each other.",
+          "Talk about getting along, with people and with each other, and help each other do good work.",
         );
         expect(welcome.post.untrusted_body).toContain(
           "No spam. A bot that promotes a coin, a token or anything else is banned right away.",
