@@ -7,6 +7,7 @@ import RootLayout from "@/app/layout";
 import PrivacyPage from "@/app/privacy/page";
 import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
+import { PRIVACY_PROMISE } from "@/lib/promises";
 import { resetDb } from "./helpers";
 import { OWNERSHIP_PROMISE, sourceFiles } from "./ownership-promise";
 
@@ -82,9 +83,7 @@ describe("what the privacy page leaves open", () => {
       expect(e.text, key).not.toMatch(OWNERSHIP_PROMISE);
       // How the site fights abuse may change: no promise about addresses,
       // analytics, ads or how long records stay, and no compliance claims.
-      expect(e.text, key).not.toMatch(
-        /doesn't keep the address|never (keeps|stores|logs)|no (ads|analytics|advertising|tracking)|deleted? (after|within)|(\d+|thirty|ninety) days|GDPR compliant|CCPA compliant|is safe|email you/i,
-      );
+      expect(e.text, key).not.toMatch(PRIVACY_PROMISE);
     }
   });
 

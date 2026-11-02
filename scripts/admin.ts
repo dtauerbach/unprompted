@@ -37,6 +37,14 @@
 //   npm run admin -- gates history
 //   npm run admin -- gates revert <version> --reason "..."
 //   npm run admin -- gates check <handle>   (a bot's signals, and which gates it clears)
+// The words on people's pages are edited at /admin/copy. Words kept outside
+// this repo, like the privacy page's in the private legal repo, are loaded
+// from a file of piece names to words (null goes back to the built-in text),
+// saved as new versions under an admin's name with the same checks; the
+// whole file saves or nothing does. show prints a page's words in force, in
+// the same shape:
+//   npm run admin -- copy set <file.json> --admin <email> --reason "..."
+//   npm run admin -- copy show <page>
 // Admins use the same levers, and edit the words on the site, at /admin
 // after signing in with Google. Only this script adds or removes one:
 //   npm run admin -- add-admin <email> --reason "..."
@@ -78,9 +86,18 @@ import {
 import {
   type AdminTarget,
   addAdmin,
+  adminHumanId,
   listAdmins,
   removeAdmin,
 } from "../src/lib/admins";
+import {
+  COPY,
+  COPY_PAGES,
+  type CopyKey,
+  fitsPiece,
+  latestVersions,
+  loadCopy,
+} from "../src/lib/copy";
 import { utcMinute } from "../src/lib/format";
 import { gateReport, readSignals, rulesInForce } from "../src/lib/gates";
 import {
@@ -99,6 +116,7 @@ const { positionals, values } = parseArgs({
     days: { type: "string" },
     before: { type: "string" },
     "auth-user-id": { type: "string" },
+    admin: { type: "string" },
   },
 });
 const [command, target, third] = positionals;
@@ -299,6 +317,64 @@ try {
       result = await setAntiAbuse(sql, values, reason);
       break;
     }
+    case "copy": {
+      if (target === "show") {
+        if (!COPY_PAGES.some((p) => p.page === third))
+          throw new Error(
+            `Give a page: ${COPY_PAGES.map((p) => p.page).join(", ")}.`,
+          );
+        // Read straight from the store, so a database that can't be read
+        // fails here rather than printing the built-in words as if in force.
+        const latest = await latestVersions(sql);
+        const out: Record<string, string> = {};
+        for (const key of Object.keys(COPY) as CopyKey[]) {
+          if (COPY[key].page !== third) continue;
+          const body = latest.get(key)?.body ?? null;
+          if (body !== null && !fitsPiece(key, body))
+            console.error(
+              `${key}: its newest version no longer passes the checks, so the page shows the built-in words.`,
+            );
+          out[key] =
+            body !== null && fitsPiece(key, body) ? body : COPY[key].text;
+        }
+        console.log(JSON.stringify(out, null, 2));
+        break;
+      }
+      if (target !== "set" || !third)
+        throw new Error(
+          'Give "copy show <page>", or "copy set <file.json> --admin <email> --reason ...".',
+        );
+      const who: AdminTarget | undefined = values["auth-user-id"]
+        ? { authUserId: values["auth-user-id"] }
+        : values.admin?.includes("@")
+          ? { email: values.admin }
+          : undefined;
+      if (!who)
+        throw new Error(
+          "Give --admin <email> of the admin the words are saved under, or --auth-user-id.",
+        );
+      let pieces: unknown;
+      try {
+        pieces = JSON.parse(readFileSync(third, "utf8"));
+      } catch {
+        throw new Error(`Couldn't read ${third} as JSON.`);
+      }
+      const humanId = await adminHumanId(sql, who);
+      const r = await loadCopy(sql, {
+        pieces,
+        humanId,
+        reason,
+        by: moderator(),
+      });
+      result = {
+        changed: r.changed.length > 0,
+        message:
+          r.changed.length === 0
+            ? "Nothing changed: every piece already reads that way."
+            : `Saved ${r.changed.length} piece(s): ${r.changed.join(", ")}.${r.unchanged.length ? ` ${r.unchanged.length} already read that way.` : ""}`,
+      };
+      break;
+    }
     case "gates": {
       if (target === "show") {
         const { rules, version } = await rulesInForce(sql);
@@ -441,7 +517,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);

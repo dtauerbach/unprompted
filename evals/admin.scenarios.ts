@@ -1,4 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { get, RUN_TAG, request } from "./client";
 import { admin, MODERATOR, mustAdmin } from "./moderator";
@@ -109,6 +112,77 @@ export function adminScenarios(): void {
       expect(mustAdmin("admins")).not.toContain(id);
       expect(mustAdmin("log")).not.toMatch(/Eval done\.|admin\.add|access\./);
       expect((await get("/moderation")).status).toBe(404);
+    });
+
+    it("loads the privacy page's words from a file, all or nothing, and holds them to the page's rules", async () => {
+      const id = `eval-legal-${RUN_TAG}`;
+      mustAdmin("add-admin", "--auth-user-id", id, "--reason", "Eval.");
+      const dir = mkdtempSync(path.join(tmpdir(), "copy-load-"));
+      const file = (name: string, pieces: unknown) => {
+        const f = path.join(dir, name);
+        writeFileSync(f, JSON.stringify(pieces));
+        return f;
+      };
+      const set = (f: string) =>
+        admin(
+          "copy",
+          "set",
+          f,
+          "--auth-user-id",
+          id,
+          "--reason",
+          "Eval legal sync.",
+        );
+      try {
+        const shown = JSON.parse(mustAdmin("copy", "show", "privacy"));
+        expect(Object.keys(shown)).toContain("privacy.kept.text");
+        const lead = `Loaded from the legal repo ${RUN_TAG.replace(/\d/g, "x")}.`;
+        // One bad piece and nothing saves, the good one included.
+        const refused = set(
+          file("bad.json", {
+            "privacy.lead": lead,
+            "privacy.stays.text": "Logs go after 30 days.",
+          }),
+        );
+        expect(refused.ok).toBe(false);
+        expect(refused.out).toMatch(/Nothing was saved\. privacy\.stays\.text/);
+        expect((await get("/privacy")).text).not.toContain(lead);
+        // A reader who isn't an admin can't have words saved under them.
+        expect(
+          admin(
+            "copy",
+            "set",
+            file("ok.json", { "privacy.lead": lead }),
+            "--auth-user-id",
+            `eval-nobody-${RUN_TAG}`,
+            "--reason",
+            "x",
+          ).ok,
+        ).toBe(false);
+        const saved = set(file("ok.json", { "privacy.lead": lead }));
+        expect(saved.out).toBe("Saved 1 piece(s): privacy.lead.");
+        expect((await get("/privacy")).text).toContain(lead);
+        expect(set(file("ok.json", { "privacy.lead": lead })).out).toMatch(
+          /^Nothing changed/,
+        );
+        expect(mustAdmin("copy", "show", "privacy")).toContain(lead);
+        expect(mustAdmin("log")).toMatch(
+          / copy\.load copy by .+: "Eval legal sync\."/,
+        );
+        expect(set(file("back.json", { "privacy.lead": null })).ok).toBe(true);
+        expect((await get("/privacy")).text).not.toContain(lead);
+      } finally {
+        // Put the built-in words back even if a step above failed.
+        set(file("back.json", { "privacy.lead": null }));
+        rmSync(dir, { recursive: true, force: true });
+        mustAdmin(
+          "remove-admin",
+          "--auth-user-id",
+          id,
+          "--reason",
+          "Eval done.",
+        );
+      }
     });
 
     it("changes the words on a page, as plain text, and can go back", async () => {
