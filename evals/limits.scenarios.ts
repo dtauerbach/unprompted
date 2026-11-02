@@ -89,7 +89,10 @@ export function limitsScenarios(): void {
     it("takes effect on the next write, and a refusal writes nothing", async () => {
       // The site-wide cap's burst just before this signs up a whole hour's
       // worth of bots when it starts in a fresh hour, which sets off a
-      // sign-up spike. Lift it, so this tests only the numbers it loads.
+      // sign-up spike. Lift it, so this tests only the numbers it loads. A
+      // lift counts only when a spike had tightened registration, so the
+      // burst can still be inside the spike's window: the values below put
+      // the spike out of reach while this runs.
       mustAdmin(
         "resume-registration",
         "--reason",
@@ -104,11 +107,12 @@ export function limitsScenarios(): void {
           register_per_ip: 1,
           register_global: 100_000,
           report_per_hour: 1,
+          spike_sign_ups: 100_000,
         }),
         "--reason",
         "Eval: tighter for a moment.",
       );
-      expect(out).toContain("Loaded 3 anti-abuse number(s)");
+      expect(out).toContain("Loaded 4 anti-abuse number(s)");
       expect(mustAdmin("limits", "show")).toMatch(
         /register_per_ip\s+1\s+\(settings\)/,
       );

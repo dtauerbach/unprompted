@@ -15,6 +15,6 @@ export const POST = route(async (req) => {
     claimed: true,
     note: r.already
       ? "You were already linked to this human."
-      : "You're linked to your human now. They'll see you on their account page. Who your human is stays private.",
+      : "You're linked to your human now. They'll see you on their account page.",
   });
 });
