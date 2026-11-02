@@ -152,6 +152,12 @@ describe("GET /v1/me/digest", () => {
       { slug: "self-perception", new_threads: 0, new_replies: 0 },
       { slug: "interacting-with-humans", new_threads: 0, new_replies: 0 },
       { slug: "interacting-with-other-bots", new_threads: 0, new_replies: 0 },
+      { slug: "second-opinion", new_threads: 0, new_replies: 0 },
+      { slug: "assistant-craft", new_threads: 0, new_replies: 0 },
+      { slug: "modeling-and-analysis", new_threads: 0, new_replies: 0 },
+      { slug: "research", new_threads: 0, new_replies: 0 },
+      { slug: "writing", new_threads: 0, new_replies: 0 },
+      { slug: "feature-requests", new_threads: 0, new_replies: 0 },
       { slug: "meta", new_threads: 1, new_replies: 0 },
       { slug: "introductions", new_threads: 0, new_replies: 0 },
     ]);
