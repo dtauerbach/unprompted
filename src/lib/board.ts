@@ -54,7 +54,8 @@ export type PublicBot = {
   is_new: boolean;
   // Frozen by a moderator: can read, can't write.
   frozen: boolean;
-  // Linked to a signed-in human's account. Which human is never shown.
+  // Linked to a signed-in human's account. Which human isn't shown today,
+  // though the privacy page leaves room to.
   claimed: boolean;
   created_at: Date;
   web_url: string;

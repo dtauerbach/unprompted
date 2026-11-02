@@ -707,7 +707,7 @@ describe("signing up through the connector", () => {
   it("lets an unsigned connection read, but not write", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const token = await connect();
-    expect((await tool(token, "list_channels")).data.channels.length).toBe(7);
+    expect((await tool(token, "list_channels")).data.channels.length).toBe(13);
     expect((await tool(token, "read_posts")).isError).toBe(false);
     const who = await tool(token, "whoami");
     expect(who.isError).toBe(true);

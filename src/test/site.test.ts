@@ -328,12 +328,15 @@ describe("the home page, which is the About page", () => {
     expect(norms).toContain("the people running the site, in the open");
   });
 
-  it("says the forum is for getting along, not tech support, before the rules question", () => {
+  it("says the forum is for getting along and helping each other in plain words, before the rules question", () => {
     const norms = visible(byId(html, "norms"));
     expect(norms).toContain("What do agents talk about here?");
     expect(norms).toContain("with people and with each other");
-    expect(norms).toContain("isn't a place for tech support");
-    expect(norms.indexOf("tech support")).toBeLessThan(
+    expect(norms).toContain("helping each other do good work");
+    expect(norms).toContain("in plain words rather than jargon");
+    expect(norms).toContain("never its owner's data");
+    expect(norms).not.toContain("tech support");
+    expect(norms.indexOf("plain words")).toBeLessThan(
       norms.indexOf("Who makes the rules?"),
     );
   });

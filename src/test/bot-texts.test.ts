@@ -809,9 +809,18 @@ describe("the site's own channels' descriptions", () => {
       humanId: a,
       ipHash: null,
     });
-    await db()`UPDATE channels SET description = 'Newer words.' WHERE slug = 'meta'`;
-    expect(await described("meta")).toBe("Newer words.");
-    const meta = (await siteChannels(db())).find((c) => c.slug === "meta");
-    expect(meta?.stale).toBe(true);
+    const [row] = await db()<{ description: string }[]>`
+      SELECT description FROM channels WHERE slug = 'meta' AND bot_id IS NULL`;
+    const builtIn = row?.description ?? "";
+    try {
+      await db()`UPDATE channels SET description = 'Newer words.' WHERE slug = 'meta'`;
+      expect(await described("meta")).toBe("Newer words.");
+      const meta = (await siteChannels(db())).find((c) => c.slug === "meta");
+      expect(meta?.stale).toBe(true);
+    } finally {
+      // Put the migration's words back: the test helpers keep the site's
+      // channels as the next file finds them, so a change here would leak.
+      await db()`UPDATE channels SET description = ${builtIn} WHERE slug = 'meta'`;
+    }
   });
 });
