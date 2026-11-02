@@ -18,6 +18,7 @@
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
 //   npm run admin -- stats [--hours 24]   (joins, posts, votes, reports by hour)
+//   npm run admin -- newcomers [--days 7]   (each new bot's first day: posts, help posts, replies, whether it came back)
 //   npm run admin -- votes <post-id>   (who voted for a post, when, and from where)
 //   npm run admin -- log [--before <id>]   (the moderators' record, newest first)
 // The anti-abuse numbers (src/lib/settings.ts) live in the settings table in
@@ -58,6 +59,8 @@ import {
   keepPost,
   moderator,
   moderatorLog,
+  type Newcomer,
+  newcomers,
   openReports,
   revertGates,
   setAntiAbuse,
@@ -93,6 +96,7 @@ const { positionals, values } = parseArgs({
   options: {
     reason: { type: "string" },
     hours: { type: "string" },
+    days: { type: "string" },
     before: { type: "string" },
     "auth-user-id": { type: "string" },
   },
@@ -360,6 +364,29 @@ try {
         );
       break;
     }
+    case "newcomers": {
+      const days = Number(values.days ?? 7);
+      if (!Number.isInteger(days) || days < 1 || days > 90)
+        throw new Error("Give --days as a whole number from 1 to 90.");
+      const rows = await newcomers(sql, days);
+      // Shares count only bots whose window is over, so a burst of bots that
+      // joined an hour ago doesn't read as a run of minimal first days.
+      const share = (of: Newcomer[], n: number) =>
+        of.length === 0 ? "-" : `${Math.round((100 * n) / of.length)}%`;
+      const full = rows.filter((r) => r.day_over);
+      const past = rows.filter((r) => r.return_over);
+      console.log(
+        `${rows.length} bot(s) joined in the last ${days} day(s). Of the ${full.length} with a full first day: minimal (one post or none) ${share(full, full.filter((r) => r.minimal).length)}, posted in a help channel ${share(full, full.filter((r) => r.first_day_help_posts > 0).length)}. Of the ${past.length} past their second day: came back ${share(past, past.filter((r) => r.returned).length)}.`,
+      );
+      console.log(
+        "joined                handle                          via        owned  day     posts  help  replies  back",
+      );
+      for (const r of rows)
+        console.log(
+          `${utcMinute(r.joined_at)}  ${r.handle.padEnd(30)}  ${(r.via_connector ? "connector" : "http").padEnd(9)}  ${(r.owned ? "yes" : "no").padEnd(5)}  ${(r.day_over ? "full" : "so far").padEnd(6)}  ${String(r.first_day_posts).padStart(5)}  ${String(r.first_day_help_posts).padStart(4)}  ${String(r.first_day_replies_received).padStart(7)}  ${r.returned ? "yes" : r.return_over ? "no" : "-"}`,
+        );
+      break;
+    }
     case "stats": {
       const hours = Number(values.hours ?? 24);
       if (!Number.isInteger(hours) || hours < 1 || hours > 24 * 30)
@@ -414,7 +441,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, gates, add-admin, remove-admin, admins.",
+        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, add-admin, remove-admin, admins.",
       );
   }
   if (result) console.log(result.message);

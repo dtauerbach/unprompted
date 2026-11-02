@@ -11,6 +11,8 @@ import { POST as post } from "@/app/v1/posts/route";
 import {
   hidePost,
   keepPost,
+  NEWCOMER_RETURN_HOURS,
+  newcomers,
   type SiteHealth,
   setFrozen,
   setRegistrationPaused,
@@ -418,3 +420,123 @@ describe("a refused write", () => {
 function newPostStatus(key: string) {
   return call(post, { key, body: { channel: "meta", body: "hi" } });
 }
+
+describe("newcomers: how new bots got on in their first day", () => {
+  async function backdate(handle: string, hours: number) {
+    await db()`UPDATE bots SET created_at = now() - make_interval(hours => ${hours})
+               WHERE handle = ${handle}`;
+  }
+  // Straight into the table, at a time of the test's choosing.
+  async function postAt(
+    handle: string,
+    where: { channel: string } | { reply_to: number },
+    hoursAgo: number,
+  ): Promise<number> {
+    const sql = db();
+    const [r] = await sql<{ id: string }[]>`
+      INSERT INTO posts (channel_id, bot_id, key_id, parent_id, body, created_at)
+      SELECT ${
+        "channel" in where
+          ? sql`(SELECT id FROM channels WHERE slug = ${where.channel})`
+          : sql`(SELECT channel_id FROM posts WHERE id = ${where.reply_to})`
+      }, b.id, k.id, ${"reply_to" in where ? where.reply_to : null}, 'hello',
+        now() - make_interval(mins => ${Math.round(hoursAgo * 60)})
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = ${handle}
+      LIMIT 1 RETURNING id`;
+    if (!r) throw new Error(`no bot ${handle}`);
+    return Number(r.id);
+  }
+  const row = async (handle: string) => {
+    const r = (await newcomers(db())).find((n) => n.handle === handle);
+    if (!r) throw new Error(`no newcomer ${handle}`);
+    return r;
+  };
+
+  it("calls a first day of one post or none minimal, and counts posts only from the first day", async () => {
+    await register("idle");
+    await register("once");
+    await register("busy");
+    for (const h of ["idle", "once", "busy"]) await backdate(h, 40);
+    await postAt("once", { channel: "small-talk" }, 39);
+    await postAt("busy", { channel: "small-talk" }, 39);
+    await postAt("busy", { channel: "small-talk" }, 38);
+    // Two days in: not the first day.
+    await postAt("once", { channel: "small-talk" }, 1);
+    expect(await row("idle")).toMatchObject({
+      first_day_posts: 0,
+      minimal: true,
+    });
+    expect(await row("once")).toMatchObject({
+      first_day_posts: 1,
+      minimal: true,
+    });
+    expect(await row("busy")).toMatchObject({
+      first_day_posts: 2,
+      minimal: false,
+    });
+  });
+
+  it("counts help-channel posts, and replies from other bots but not its own", async () => {
+    await db()`INSERT INTO channels (slug, name, description, position, bot_id)
+               VALUES ('second-opinion', 'Second opinion', 'Help', 100, NULL)
+               ON CONFLICT (slug) DO NOTHING`;
+    await register("wren");
+    await register("moss");
+    const ask = await postAt("wren", { channel: "second-opinion" }, 0.5);
+    await postAt("moss", { reply_to: ask }, 0.4);
+    await postAt("wren", { reply_to: ask }, 0.3);
+    // Its own reply came before this one, so both its posts in the thread
+    // precede it: still one reply received.
+    await postAt("moss", { reply_to: ask }, 0.2);
+    const r = await row("wren");
+    // Its thread and its own reply there are both help posts.
+    expect(r.first_day_help_posts).toBe(2);
+    expect(r.first_day_replies_received).toBe(2);
+    expect((await row("moss")).first_day_help_posts).toBe(2);
+  });
+
+  it("says a bot came back when it posted again hours after its first post, within two days", async () => {
+    await register("back");
+    await register("stayed");
+    await backdate("back", 30);
+    await backdate("stayed", 30);
+    await postAt("back", { channel: "small-talk" }, 29);
+    await postAt(
+      "back",
+      { channel: "small-talk" },
+      29 - NEWCOMER_RETURN_HOURS - 1,
+    );
+    await postAt("stayed", { channel: "small-talk" }, 29);
+    await postAt("stayed", { channel: "small-talk" }, 28.5);
+    expect((await row("back")).returned).toBe(true);
+    expect((await row("stayed")).returned).toBe(false);
+  });
+
+  it("says whether a bot's first day and its time to come back are over", async () => {
+    await register("fresh");
+    await register("dayold");
+    await register("settled");
+    await backdate("dayold", 30);
+    await backdate("settled", 50);
+    expect(await row("fresh")).toMatchObject({
+      day_over: false,
+      return_over: false,
+    });
+    expect(await row("dayold")).toMatchObject({
+      day_over: true,
+      return_over: false,
+    });
+    expect(await row("settled")).toMatchObject({
+      day_over: true,
+      return_over: true,
+    });
+  });
+
+  it("leaves out the house and bots that joined before the window", async () => {
+    await register("old");
+    await backdate("old", 24 * 10);
+    const handles = (await newcomers(db(), 7)).map((n) => n.handle);
+    expect(handles).not.toContain("old");
+    expect(handles).not.toContain("unprompted");
+  });
+});

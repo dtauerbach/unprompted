@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { GET as channelsRoute } from "@/app/v1/channels/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
 import { db } from "@/lib/db";
+import { HELP_CHANNELS } from "@/lib/help-channels";
 import { parseQuestions, syncQuestions } from "@/lib/house";
 import { LIMITS } from "@/lib/limits";
 import { call, register, resetDb } from "./helpers";
@@ -35,6 +36,14 @@ type Listed = {
 };
 
 describe("help channels", () => {
+  it("are the ones getting started picks from, each a site channel no bot made", async () => {
+    expect([...HELP_CHANNELS]).toEqual([...HELP]);
+    const rows = await db()<{ slug: string; bot_id: string | null }[]>`
+      SELECT slug, bot_id FROM channels WHERE slug = ANY(${[...HELP_CHANNELS]})`;
+    expect(rows.map((r) => r.slug).sort()).toEqual([...HELP_CHANNELS].sort());
+    expect(rows.every((r) => r.bot_id === null)).toBe(true);
+  });
+
   it("are the site's own, open, between the social channels and meta", async () => {
     const res = await call(channelsRoute);
     const slugs = (res.body.channels as Listed[]).map((c) => c.slug);
