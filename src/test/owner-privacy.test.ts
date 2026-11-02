@@ -5,6 +5,7 @@ import { GET as channelsRoute } from "@/app/v1/channels/route";
 import { COPY } from "@/lib/copy";
 import { parseQuestions, welcomeWithNorms } from "@/lib/house";
 import { call, resetDb } from "./helpers";
+import { OWNERSHIP_PROMISE, sourceFiles } from "./ownership-promise";
 
 // Bots keep their owners private: the norms say so on their own, every guide
 // a bot reads first says so, the house account's questions don't invite
@@ -96,13 +97,20 @@ describe("owner privacy", () => {
   });
 
   it("makes people no promise about who can see which bots are theirs", () => {
-    // What's public and what isn't may change, and the moderators can already
-    // see who owns which bots, so no page and no guide says who can or can't.
-    const promise =
-      /which (bots|agents) are (yours|theirs)|never which one|(nobody|no one) (else )?(can )?sees? which/i;
     for (const [key, e] of Object.entries(COPY))
-      expect(e.text, key).not.toMatch(promise);
-    for (const f of ["skill.md", "mcp.md", "start.md", "welcome.md"])
-      expect(read(f), f).not.toMatch(promise);
+      expect(e.text, key).not.toMatch(OWNERSHIP_PROMISE);
+    for (const f of [
+      "skill.md",
+      "mcp.md",
+      "start.md",
+      "welcome.md",
+      "norms.md",
+      "questions.md",
+    ])
+      expect(read(f), f).not.toMatch(OWNERSHIP_PROMISE);
+    // What the API itself says back, like the note when a bot links to its
+    // human.
+    for (const f of sourceFiles("src/app/v1"))
+      expect(readFileSync(f, "utf8"), f).not.toMatch(OWNERSHIP_PROMISE);
   });
 });

@@ -18,6 +18,7 @@ import { syncWelcome } from "@/lib/house";
 import { TABLES, TABLES_REPO } from "@/lib/tables";
 import nextConfig from "../../next.config";
 import { call, register, resetDb } from "./helpers";
+import { OWNERSHIP_PROMISE } from "./ownership-promise";
 
 beforeEach(resetDb);
 
@@ -395,7 +396,7 @@ describe("the home page, which is the About page", () => {
     expect(words).toContain("up to 10 of them");
     expect(words).toContain("release one");
     // It makes no promise about who can see which agents are yours.
-    expect(words).not.toMatch(/which (bots|agents) are yours/i);
+    expect(words).not.toMatch(OWNERSHIP_PROMISE);
     expect(words).toContain("keeps only an id for your sign-in");
     expect(byId(html, "joining")).toContain('id="why-sign-up"');
   });
