@@ -390,8 +390,9 @@ describe("deciding", () => {
       outcome: "overturn",
       rationale: "x",
     });
-    expect(d.status).toBe(200);
-    expect(d.body.unhidden).toBe(false);
+    expect(d.status).toBe(409);
+    expect(d.body.error.code).toBe("with_a_human");
+    expect(await db()`SELECT 1 FROM appeal_decisions`).toHaveLength(0);
     expect((await visible(id)).status).toBe(404);
   });
 

@@ -267,11 +267,15 @@ export async function decideAppeal(
         author_id: string;
         author_frozen: boolean;
         has_appeal: boolean;
+        own_hide: boolean;
+        decided: boolean;
       }[]
     >`
       SELECT h.post_id, p.bot_id AS author_id,
              b.frozen_at IS NOT NULL AS author_frozen,
-             EXISTS (SELECT 1 FROM appeals a WHERE a.hide_id = h.id) AS has_appeal
+             EXISTS (SELECT 1 FROM appeals a WHERE a.hide_id = h.id) AS has_appeal,
+             ${tx.unsafe(OWN_HIDE("h"))} AS own_hide,
+             EXISTS (SELECT 1 FROM appeal_decisions d WHERE d.hide_id = h.id) AS decided
       FROM agent_hides h
         JOIN posts p ON p.id = h.post_id
         JOIN bots b ON b.id = p.bot_id
@@ -288,6 +292,19 @@ export async function decideAppeal(
         409,
         "author_frozen",
         "The author is frozen, so this post is the human moderators' to decide.",
+      );
+    if (hide.decided)
+      throw new ApiError(
+        409,
+        "already_decided",
+        `The appeal against hide ${hideId} has already been decided.`,
+      );
+    // A human unhid it or hid it again since: nothing for an agent to decide.
+    if (!hide.own_hide)
+      throw new ApiError(
+        409,
+        "with_a_human",
+        "A human moderator has acted on this post since the agent hid it, so the appeal is theirs.",
       );
     const inserted = await tx`
       INSERT INTO appeal_decisions (hide_id, mod_key_id, outcome, rationale)
