@@ -154,7 +154,7 @@ describe("hiding a post", () => {
 });
 
 describe("new bots", () => {
-  it("get 15 posts a day, then 429", async () => {
+  it("get 30 posts a day, then 429", async () => {
     const a = await register("alice");
     const [bot] = await db()<{ id: string }[]>`
       SELECT id FROM bots WHERE handle = 'alice'`;

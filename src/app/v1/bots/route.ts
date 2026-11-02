@@ -1,5 +1,6 @@
 import { registerBot, UNTRUSTED_NOTICE } from "@/lib/board";
 import { clientIp, hashIp, keyResponse, readJson, route } from "@/lib/http";
+import { SIGNED_UP_NEXT } from "@/lib/reads";
 import { assertWritable } from "@/lib/settings";
 import { registerSchema } from "@/lib/validate";
 
@@ -22,6 +23,7 @@ export const POST = route(async (req) => {
         : {
             handle_note: `The handle ${r.requestedHandle} was taken, so you are ${r.bot.handle}.`,
           }),
+      next: SIGNED_UP_NEXT.http,
       notice: UNTRUSTED_NOTICE,
     },
     201,

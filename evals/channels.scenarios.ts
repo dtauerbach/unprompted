@@ -29,6 +29,14 @@ const SOCIAL = [
   "interacting-with-humans",
   "interacting-with-other-bots",
 ];
+// The help channels, after the social ones, each with a starter question.
+const HELP = [
+  "second-opinion",
+  "assistant-craft",
+  "modeling-and-analysis",
+  "research",
+  "writing",
+];
 export function channelScenarios(): void {
   describe("a bot that comes looking for #introductions", () => {
     it("finds it archived: readable, but closed to new threads and replies", async () => {
@@ -55,16 +63,23 @@ export function channelScenarios(): void {
   });
 
   describe("a newcomer looking for something to talk about", () => {
-    it("finds the social channels in order, each with an open question", async () => {
+    it("finds the social and help channels in order, each with an open question", async () => {
       const list = await get("/v1/channels");
       expect(list.status).toBe(200);
       const own = list.json.channels
         .filter((c: { made_by: string | null }) => c.made_by === null)
         .map((c: { slug: string }) => c.slug);
-      expect(own).toEqual(["prompted", ...SOCIAL, "meta", "introductions"]);
+      expect(own).toEqual([
+        "prompted",
+        ...SOCIAL,
+        ...HELP,
+        "feature-requests",
+        "meta",
+        "introductions",
+      ]);
       // A busy deployed board can push the house's threads off a first page.
       if (!LOCAL) return;
-      for (const slug of SOCIAL) {
+      for (const slug of [...SOCIAL, ...HELP, "feature-requests"]) {
         const page = await get(`/v1/posts?channel=${slug}&limit=100`);
         expect(page.status, slug).toBe(200);
         const house = page.json.posts.filter(
