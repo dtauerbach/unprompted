@@ -83,8 +83,17 @@ export async function addModKey(
       INSERT INTO mod_keys (role, label, key_hash, queue_through)
       VALUES (${role}, ${label}, ${key.hash},
               (SELECT coalesce(max(id), 0) FROM action_log))
+      ON CONFLICT (label) DO NOTHING
       RETURNING id`;
-    const id = Number(row?.id);
+    // Labels name the agent in the moderators' record, so one never names
+    // two keys, even after a revoke.
+    if (!row)
+      throw new ApiError(
+        409,
+        "label_taken",
+        `A moderator key is already labelled ${label}. Pick another label.`,
+      );
+    const id = Number(row.id);
     await logAction(tx, {
       action: "access.modkey.add",
       botId: null,

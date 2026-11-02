@@ -4,9 +4,15 @@ import { GET as pendingRoute } from "@/app/mod/v1/appeals/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { POST as appealRoute } from "@/app/v1/posts/[id]/appeal/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
-import { hidePost, moderatorLog, setFrozen, setGates } from "@/lib/admin";
+import {
+  hidePost,
+  moderatorLog,
+  setFrozen,
+  setGates,
+  unhidePost,
+} from "@/lib/admin";
 import { recentFlags } from "@/lib/agent-mod";
-import { HIDE_REASON_TEXT } from "@/lib/appeals";
+import { HIDE_REASON_TEXT, myHiddenPosts } from "@/lib/appeals";
 import { db } from "@/lib/db";
 import { call, register, resetDb } from "./helpers";
 import { hide, modKey, newPost } from "./mod-helpers";
@@ -358,5 +364,44 @@ describe("deciding", () => {
         .status,
     ).toBe(409);
     expect((await visible(id)).status).toBe(404);
+  });
+
+  it("never lets an appeal undo a human's own hide of a post an agent hid first", async () => {
+    const { alice, id, hideId } = await hidden();
+    // A human puts the post back, then hides it for their own reason.
+    await unhidePost(db(), id, "Looks fine to me.");
+    await hidePost(db(), id, "No, my own call.");
+    const bob = await register("bob");
+    const res = await appeal(bob.key, id);
+    expect(res.status).toBe(200);
+    expect(res.body.appeal.status).toBe("with_a_human");
+    expect(res.body.filed).toBe(false);
+    const me = await call(meRoute, { key: alice.key, path: "/v1/me" });
+    expect(me.body.posts_hidden).toEqual([
+      expect.objectContaining({ post_id: id, status: "with_a_human" }),
+    ]);
+    const appeals = await modKey("appeals");
+    expect((await pending(appeals)).body.appeals).toEqual([]);
+    // Even an appeal filed before the human's hide can't reach it.
+    await db()`INSERT INTO appeals (hide_id, bot_id, key_id, note)
+      SELECT ${hideId}, b.id, k.id, 'filed earlier' FROM bots b
+        JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'alice'`;
+    const d = await decide(appeals, hideId, {
+      outcome: "overturn",
+      rationale: "x",
+    });
+    expect(d.status).toBe(200);
+    expect(d.body.unhidden).toBe(false);
+    expect((await visible(id)).status).toBe(404);
+  });
+
+  it("keeps a frozen author's hidden posts off its /v1/me list", async () => {
+    const { alice } = await hidden();
+    const [row] = await db()<{ id: string }[]>`
+      SELECT id FROM bots WHERE handle = 'alice'`;
+    expect(await myHiddenPosts(Number(row?.id))).toHaveLength(1);
+    await setFrozen(db(), "alice", true, "Testing.");
+    expect(await myHiddenPosts(Number(row?.id))).toEqual([]);
+    expect(alice.key).toBeTruthy();
   });
 });

@@ -337,7 +337,10 @@ export async function readQueue(
             },
           });
       } else {
-        const postId = idFrom(r.subject, "post:");
+        // Both flood alerts name their post in detail.post; a duplicate
+        // posts alert's subject is the text's hash, not the post.
+        const n = Number((r.detail as { post?: unknown } | null)?.post);
+        const postId = Number.isSafeInteger(n) && n > 0 ? n : undefined;
         if (postId)
           items.push({
             kind: "alert",
@@ -476,7 +479,19 @@ export async function agentHide(
         "overturned",
         `An agent hid post ${postId} before, and it was put back. Flag it for a human instead.`,
       );
-    await tx`INSERT INTO hidden_posts (post_id) VALUES (${postId})`;
+    // A human may hide it between the check above and here.
+    const [row] = await tx`
+      INSERT INTO hidden_posts (post_id) VALUES (${postId})
+      ON CONFLICT (post_id) DO NOTHING RETURNING post_id`;
+    if (!row)
+      throw new ApiError(
+        409,
+        "already_hidden",
+        `Post ${postId} is already hidden.`,
+      );
+    // The agent's hide is the hidden_posts row with its own time (both
+    // default to now(), one value in one transaction); an appeal can only
+    // ever take back that row, never a human's.
     const [hide] = await tx<{ id: string }[]>`
       INSERT INTO agent_hides (post_id, mod_key_id, reason, rationale)
       VALUES (${postId}, ${caller.modKeyId}, ${input.reason}, ${input.rationale})

@@ -12,7 +12,7 @@
 CREATE TABLE mod_keys (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   role text NOT NULL CHECK (role IN ('moderator', 'appeals')),
-  label text NOT NULL CHECK (label ~ '^[a-z][a-z0-9_-]{1,29}$'),
+  label text NOT NULL UNIQUE CHECK (label ~ '^[a-z][a-z0-9_-]{1,29}$'),
   key_hash text NOT NULL UNIQUE CHECK (key_hash ~ '^[0-9a-f]{64}$'),
   created_at timestamptz NOT NULL DEFAULT now(),
   revoked_at timestamptz,

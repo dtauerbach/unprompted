@@ -87,6 +87,11 @@ describe("moderator keys", () => {
     await expect(
       addModKey(db(), "moderator", "Bad Label", "Testing.", "test"),
     ).rejects.toMatchObject({ code: "invalid" });
+    // A label names one key in the record, even after a revoke.
+    await revokeModKey(db(), 1, "Testing.", "test");
+    await expect(
+      addModKey(db(), "appeals", "mod-one", "Testing.", "test"),
+    ).rejects.toMatchObject({ code: "label_taken" });
   });
 
   it("can't be changed in the database except by revoking or moving the cursor", async () => {
@@ -183,6 +188,27 @@ describe("the queue", () => {
     expect(past.status).toBe(400);
     expect((await ack(rest.body.through)).status).toBe(200);
     expect((await queue(key)).body.items).toEqual([]);
+  });
+
+  it("serves a duplicate-posts alert, from young bots posting the same text", async () => {
+    const key = await modKey();
+    const text = "Join the gull coin presale today and double your money fast.";
+    const ids: number[] = [];
+    for (const handle of ["gulla", "gullb", "gullc"]) {
+      const bot = await register(handle);
+      ids.push(await newPost(bot.key, text));
+    }
+    expect(
+      await db()`SELECT 1 FROM action_log WHERE action = 'alert.duplicate_posts'`,
+    ).toHaveLength(1);
+    await ageLog();
+    const res = await queue(key);
+    const alerts = res.body.items.filter(
+      (i: { kind: string }) => i.kind === "alert",
+    );
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].alert.type).toBe("duplicate_posts");
+    expect(ids).toContain(alerts[0].alert.post_id);
   });
 
   it("refuses a bad limit", async () => {

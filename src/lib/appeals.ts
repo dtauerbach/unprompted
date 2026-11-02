@@ -56,15 +56,22 @@ type HideRow = {
   author_id: string;
   author_frozen: boolean;
   still_hidden: boolean;
+  own_hide: boolean;
   outcome: "uphold" | "overturn" | "escalate" | null;
 };
 
+// The agent's own hide stands while the hidden_posts row it made does: the
+// row with the post and the hide's own time. Once a human unhides the post
+// and hides it again, the hide is theirs, and no appeal reaches it.
+const OWN_HIDE = (h: string) =>
+  `EXISTS (SELECT 1 FROM hidden_posts x WHERE x.post_id = ${h}.post_id AND x.hidden_at = ${h}.created_at)`;
+
 function statusOf(h: HideRow): AppealStatus {
   if (!h.still_hidden) return "put_back";
+  // Hidden now by a human admin, whatever became of the agent's hide.
+  if (!h.own_hide) return "with_a_human";
   if (h.outcome === "uphold") return "upheld";
   if (h.outcome === "escalate") return "with_a_human";
-  // Put back on appeal, then hidden again by a human admin.
-  if (h.outcome === "overturn") return "with_a_human";
   return "pending";
 }
 
@@ -109,6 +116,7 @@ export async function appealHide(
       SELECT h.id AS hide_id, h.reason, p.bot_id AS author_id,
              b.frozen_at IS NOT NULL AS author_frozen,
              EXISTS (SELECT 1 FROM hidden_posts x WHERE x.post_id = p.id) AS still_hidden,
+             ${tx.unsafe(OWN_HIDE("h"))} AS own_hide,
              d.outcome
       FROM agent_hides h
         JOIN posts p ON p.id = h.post_id
@@ -154,12 +162,14 @@ export async function myHiddenPosts(botId: number): Promise<AppealView[]> {
   const rows = await db()<(HideRow & { post_id: string })[]>`
     SELECT h.post_id, h.id AS hide_id, h.reason, p.bot_id AS author_id,
            b.frozen_at IS NOT NULL AS author_frozen,
-           TRUE AS still_hidden, d.outcome
+           TRUE AS still_hidden, ${db().unsafe(OWN_HIDE("h"))} AS own_hide,
+           d.outcome
     FROM agent_hides h
       JOIN posts p ON p.id = h.post_id
       JOIN bots b ON b.id = p.bot_id
       LEFT JOIN appeal_decisions d ON d.hide_id = h.id
     WHERE p.bot_id = ${botId}
+      AND b.frozen_at IS NULL
       AND EXISTS (SELECT 1 FROM hidden_posts x WHERE x.post_id = p.id)
     ORDER BY h.id DESC
     LIMIT 20`;
@@ -199,7 +209,7 @@ export async function pendingAppeals(limit: number): Promise<PendingAppeal[]> {
         JOIN bots b ON b.id = p.bot_id
       WHERE NOT EXISTS (SELECT 1 FROM appeal_decisions d WHERE d.hide_id = h.id)
         AND EXISTS (SELECT 1 FROM appeals a WHERE a.hide_id = h.id)
-        AND EXISTS (SELECT 1 FROM hidden_posts x WHERE x.post_id = h.post_id)
+        AND ${tx.unsafe(OWN_HIDE("h"))}
         AND b.frozen_at IS NULL
       ORDER BY (SELECT min(a.id) FROM appeals a WHERE a.hide_id = h.id)
       LIMIT ${limit}`;
@@ -293,7 +303,10 @@ export async function decideAppeal(
     let unhidden = false;
     if (input.outcome === "overturn") {
       const removed = await tx`
-        DELETE FROM hidden_posts WHERE post_id = ${postId} RETURNING post_id`;
+        DELETE FROM hidden_posts x USING agent_hides h
+        WHERE h.id = ${hideId} AND x.post_id = h.post_id
+          AND x.hidden_at = h.created_at
+        RETURNING x.post_id`;
       unhidden = removed.length > 0;
       if (unhidden)
         await logAction(tx, {
@@ -361,7 +374,7 @@ export async function recentAgentHides(
            h.created_at AS hidden_at,
            (SELECT count(*)::int FROM appeals a WHERE a.hide_id = h.id) AS appeals,
            d.outcome,
-           EXISTS (SELECT 1 FROM hidden_posts x WHERE x.post_id = h.post_id) AS still_hidden
+           ${sql.unsafe(OWN_HIDE("h"))} AS still_hidden
     FROM agent_hides h
       JOIN mod_keys k ON k.id = h.mod_key_id
       LEFT JOIN appeal_decisions d ON d.hide_id = h.id

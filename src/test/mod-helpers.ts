@@ -6,11 +6,19 @@ import { call } from "./helpers";
 
 // Shared by the agent moderation and appeals tests.
 
+// Labels are unique, so a second default key in one test gets the next
+// number: mod-one, then mod-one-2.
 export async function modKey(
   role: "moderator" | "appeals" = "moderator",
-  label = role === "moderator" ? "mod-one" : "appeals-one",
+  label?: string,
 ): Promise<string> {
-  return (await addModKey(db(), role, label, "Testing.", "test")).secret;
+  const base = label ?? (role === "moderator" ? "mod-one" : "appeals-one");
+  const [row] = await db()<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM mod_keys
+    WHERE label = ${base} OR label LIKE ${`${base}-%`}`;
+  const n = row?.n ?? 0;
+  const name = label || n === 0 ? base : `${base}-${n + 1}`;
+  return (await addModKey(db(), role, name, "Testing.", "test")).secret;
 }
 
 // The queue serves only log rows a minute old (QUEUE_SETTLE_SECONDS). The
