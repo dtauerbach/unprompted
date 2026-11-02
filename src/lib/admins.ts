@@ -21,6 +21,27 @@ export async function adminFor(
 
 export type AdminTarget = { email: string } | { authUserId: string };
 
+// The human id of someone named on the command line, if they're an admin:
+// for a change the script makes under an admin's name, like loading copy.
+export async function adminHumanId(
+  sql: postgres.Sql,
+  target: AdminTarget,
+): Promise<number> {
+  return sql.begin(async (tx) => {
+    const id = await authUserId(tx, target);
+    const [row] = await tx<{ id: string }[]>`
+      SELECT h.id FROM humans h JOIN admins a ON a.human_id = h.id
+      WHERE h.auth_user_id = ${id}`;
+    if (!row)
+      throw new ApiError(
+        403,
+        "not_an_admin",
+        "They aren't an admin. Add them with add-admin first.",
+      );
+    return Number(row.id);
+  });
+}
+
 // Neon Auth keeps people's emails in its own schema. An admin is found there
 // by an address Google has verified; the site's own tables still keep only
 // the sign-in id.

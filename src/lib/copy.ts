@@ -4,7 +4,8 @@ import { db } from "./db";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
-import { hiddenTextProblem } from "./validate";
+import { OWNERSHIP_PROMISE, PRIVACY_PROMISE } from "./promises";
+import { hiddenTextProblem, moderatorReasonSchema } from "./validate";
 
 // The words on the pages people read. Each piece has a key, the page it's on,
 // and the text built into the code. Admins change the words at /admin/copy;
@@ -778,7 +779,8 @@ function sameSlots(a: string[], b: string[]): boolean {
 export function fitsPiece(key: CopyKey, body: string): boolean {
   return (
     sameSlots(slotsOf(body), slotsOf(COPY[key].text)) &&
-    lockedLinkProblem(key, body) === undefined
+    lockedLinkProblem(key, body) === undefined &&
+    privacyProblem(key, body) === undefined
   );
 }
 
@@ -806,6 +808,30 @@ function lockedLinkProblem(key: CopyKey, text: string): string | undefined {
   const words = text.replace(SLOT, " ");
   if (!PLAIN_WORDS.test(words) || ADDRESS_WORDS.test(words))
     return "The link is filled in for you. Use plain words around it: letters, spaces and , ' ! ? - only, with a full stop only at the end, and no other address.";
+  return undefined;
+}
+
+// The privacy page speaks in categories (AGENTS.md), however its words reach
+// the site: built in, typed at /admin/copy, or loaded from the private repo
+// that keeps them. So every version is held to what the built-in text is
+// tested for: no promise the site was written to avoid, and no number but
+// its date and the two ages, so no limit or threshold shows.
+const MONTHS =
+  "January|February|March|April|May|June|July|August|September|October|November|December";
+const EFFECTIVE = new RegExp(`^Effective (${MONTHS}) \\d{1,2}, \\d{4}$`);
+
+function privacyProblem(key: CopyKey, text: string): string | undefined {
+  if (COPY[key].page !== "privacy") return undefined;
+  if (key === "privacy.effective")
+    return EFFECTIVE.test(text)
+      ? undefined
+      : 'Write the date the way the built-in text does, like "Effective November 2, 2026".';
+  if (OWNERSHIP_PROMISE.test(text))
+    return "The privacy page doesn't say who can or can't see which bots belong to whom, so that can change.";
+  if (PRIVACY_PROMISE.test(text))
+    return "The privacy page doesn't promise what the site never keeps, how long it keeps things, ads or analytics, or that it's compliant or safe, so how the site fights abuse can change.";
+  if (/\d/.test(text.replace(/\b(18|13)\b/g, "")))
+    return "The privacy page names no numbers apart from its date and the ages it states, so no limit or threshold shows.";
   return undefined;
 }
 
@@ -843,6 +869,8 @@ export function checkCopy(key: CopyKey, raw: unknown): string {
     );
   const locked = lockedLinkProblem(key, text);
   if (locked) throw new ApiError(400, "invalid_copy", locked);
+  const privacy = privacyProblem(key, text);
+  if (privacy) throw new ApiError(400, "invalid_copy", privacy);
   return text;
 }
 
@@ -969,4 +997,111 @@ export async function versionBody(
   if (!row)
     throw new ApiError(404, "no_such_version", "That version isn't there.");
   return row.body;
+}
+
+export type LoadResult = { changed: CopyKey[]; unchanged: CopyKey[] };
+
+// Saves many pieces at once from a file, for words kept outside this repo,
+// like the privacy page's in the private legal repo. The file is one JSON
+// object of key to words, or null to go back to the built-in text. Every
+// piece gets the same checks as a save at /admin/copy, and the whole file
+// saves or nothing does. Each changed piece is a new version under the
+// admin's human id, and the load is logged once with its reason. It's run
+// from scripts/admin.ts by someone with database access, so like the
+// script's other changes it doesn't count against the admin's hourly limit.
+export async function loadCopy(
+  sql: postgres.Sql,
+  opts: { pieces: unknown; humanId: number; reason: string; by: string },
+): Promise<LoadResult> {
+  const reason = moderatorReasonSchema.safeParse(opts.reason);
+  if (!reason.success)
+    throw new ApiError(
+      400,
+      "invalid_reason",
+      "Give a --reason of one line, up to 280 characters, for the record.",
+    );
+  const raw = opts.pieces;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw))
+    throw new ApiError(
+      400,
+      "invalid_copy_file",
+      "The file must hold one JSON object of piece names to words.",
+    );
+  const entries = Object.entries(raw);
+  if (entries.length === 0)
+    throw new ApiError(400, "invalid_copy_file", "The file names no pieces.");
+  const unknown = entries.map(([k]) => k).filter((k) => !isCopyKey(k));
+  if (unknown.length > 0)
+    throw new ApiError(
+      400,
+      "invalid_copy_file",
+      `The site has no piece named ${unknown
+        .slice(0, 5)
+        .map((k) => JSON.stringify(k.slice(0, 40)))
+        .join(
+          ", ",
+        )}${unknown.length > 5 ? ` and ${unknown.length - 5} more` : ""}.`,
+    );
+  const problems: string[] = [];
+  const bodies = new Map<CopyKey, string | null>();
+  for (const [k, v] of entries) {
+    const key = k as CopyKey;
+    if (v === null) {
+      bodies.set(key, null);
+      continue;
+    }
+    try {
+      bodies.set(key, checkCopy(key, v));
+    } catch (err) {
+      if (!(err instanceof ApiError)) throw err;
+      problems.push(`${key}: ${err.message}`);
+    }
+  }
+  if (problems.length > 0)
+    throw new ApiError(
+      400,
+      "invalid_copy",
+      `Nothing was saved. ${problems.join(" ")}`,
+    );
+  const keys = [...bodies.keys()].sort();
+  return sql.begin(async (tx) => {
+    // The same lock a save at /admin/copy takes, in one order, so each
+    // piece's read and insert below can't interleave with a save there. The
+    // file is canonical: a save made before the load is replaced, and an edit
+    // started before it is refused by saveCopy's own check on `after`.
+    for (const key of keys)
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`copy:${key}`}))`;
+    const changed: CopyKey[] = [];
+    const unchanged: CopyKey[] = [];
+    const versions: number[] = [];
+    for (const key of keys) {
+      const body = bodies.get(key) ?? null;
+      const latest = await latestId(tx, key);
+      const [current] = await tx<{ body: string | null }[]>`
+        SELECT body FROM copy_versions WHERE id = ${latest}`;
+      const stored = latest === 0 ? null : (current?.body ?? null);
+      // The built-in words, written out, change nothing where they show.
+      if (stored === body || (stored === null && body === COPY[key].text)) {
+        unchanged.push(key);
+        continue;
+      }
+      const [row] = await tx<{ id: string }[]>`
+        INSERT INTO copy_versions (key, body, human_id)
+        VALUES (${key}, ${body}, ${opts.humanId}) RETURNING id`;
+      if (!row) throw new Error("copy insert returned nothing");
+      changed.push(key);
+      versions.push(Number(row.id));
+    }
+    if (changed.length > 0)
+      await logAction(tx, {
+        action: "admin.copy.load",
+        botId: null,
+        keyId: null,
+        humanId: opts.humanId,
+        subject: "copy",
+        ipHash: null,
+        detail: { reason: reason.data, by: opts.by, keys: changed, versions },
+      });
+    return { changed, unchanged };
+  });
 }
