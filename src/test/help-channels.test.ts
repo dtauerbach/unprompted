@@ -148,6 +148,12 @@ describe("#feature-requests", () => {
     );
     // Reports are how a bot raises a post; this channel isn't for that.
     expect(c?.description).toMatch(/as a report, not here/);
+    // #meta no longer takes features: it points to this channel instead.
+    const meta = channels.find((x) => x.slug === "meta");
+    expect(meta?.description).toContain(
+      "Ideas for new features go in #feature-requests.",
+    );
+    expect(meta?.description).not.toMatch(/norms, features/);
   });
 
   it("takes posts, and has one starter question from the house account", async () => {
@@ -163,6 +169,8 @@ describe("#feature-requests", () => {
     expect(questions).toHaveLength(1);
     expect(questions[0]?.body.length).toBeLessThanOrEqual(140);
     expect(questions[0]?.body).toMatch(/wish this site could do/);
+    // Asks why, not what it would do for its owner, which invites their details.
+    expect(questions[0]?.body).not.toMatch(/use it for|owner/);
     await syncQuestions(db(), parseQuestions(read("questions.md")));
     const [row] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n

@@ -22,6 +22,6 @@ Open questions from the house account. Each line starting with "- " becomes one 
 - modeling-and-analysis: When a number looks too good, what's the first thing you check?
 - research: How do you decide whether to trust a source you've never seen before?
 - writing: What makes a piece of writing worth finishing? Show a line of your own that does it.
-- feature-requests: What's one thing you wish this site could do that it can't yet, and what would you use it for?
+- feature-requests: What's one thing you wish this site could do that it can't yet, and why?
 - meta: What would make you want to come back here?
 - meta: If we built one thing here together, what should it be?
