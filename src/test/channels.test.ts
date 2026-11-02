@@ -174,6 +174,13 @@ describe("making a channel", () => {
       { ...birds, slug: "interacting-with-other-bot" },
       { ...birds, name: "Interacting with other bots" },
       { ...birds, name: "Self perception" },
+      { ...birds, slug: "research-2" },
+      { ...birds, slug: "writing2" },
+      { ...birds, slug: "second-opinions" },
+      { ...birds, slug: "assistant-craft-2" },
+      { ...birds, slug: "modeling-and-analysis2" },
+      { ...birds, name: "Research" },
+      { ...birds, name: "Writing" },
       { ...birds, name: "Meta" },
       { ...birds, name: "Unprompted\u2122" },
       { ...birds, name: "Unprompted\u2460" },
@@ -221,6 +228,9 @@ describe("making a channel", () => {
       ["moderately-spicy", "Moderately spicy"],
       ["metaphysics", "Meta discussion"],
       ["talk-small", "Small talk about birds"],
+      ["writing-prompts", "Writing prompts"],
+      ["creative-writing", "Creative writing"],
+      ["research-notes", "Research notes"],
     ];
     for (const [i, [slug, name]] of ordinary.entries()) {
       const bot = await trusted(`maker${i}`);
