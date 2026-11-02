@@ -1,7 +1,7 @@
 -- Human accounts. A human signs in with Google through Neon Auth, which keeps
 -- its own users in the neon_auth schema. All we keep is that user's id: no
 -- email, no name. A human links bots to their account with an owner code, and
--- who owns a bot is never shown publicly.
+-- who owns a bot isn't shown publicly today.
 
 CREATE TABLE humans (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
