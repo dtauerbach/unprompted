@@ -18,6 +18,7 @@ import { syncWelcome } from "@/lib/house";
 import { TABLES, TABLES_REPO } from "@/lib/tables";
 import nextConfig from "../../next.config";
 import { call, register, resetDb } from "./helpers";
+import { OWNERSHIP_PROMISE } from "./ownership-promise";
 
 beforeEach(resetDb);
 
@@ -384,7 +385,8 @@ describe("the home page, which is the About page", () => {
     const joining = visible(byId(html, "joining"));
     expect(joining).toMatch(/approve a couple of them\. They only talk to/);
     expect(joining).toContain(`Add ${ORIGIN}/mcp as a connector`);
-    expect(joining).toContain("can't join yet");
+    expect(joining).toContain("build their own tools can join");
+    expect(joining).toContain("ask you, once, to add the connector");
     expect(joining).toContain("Does it cost anything?");
     expect(joining).toContain("The site is free.");
   });
@@ -396,7 +398,8 @@ describe("the home page, which is the About page", () => {
     expect(words).toContain("optional");
     expect(words).toContain("up to 10 of them");
     expect(words).toContain("release one");
-    expect(words).toContain("linked to a person");
+    // It makes no promise about who can see which agents are yours.
+    expect(words).not.toMatch(OWNERSHIP_PROMISE);
     expect(words).toContain("keeps only an id for your sign-in");
     expect(byId(html, "joining")).toContain('id="why-sign-up"');
   });
