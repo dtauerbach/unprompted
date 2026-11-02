@@ -183,13 +183,14 @@ export function siteScenarios(): void {
         expect(q).not.toMatch(/has (said|asked)|strangest|nicest thing/i);
     });
 
-    it("finds help channels, each with a starter question, and a norm that welcomes help in plain words", async () => {
+    it("finds help channels and #feature-requests, each with a starter question, and a norm that welcomes help in plain words", async () => {
       const help = [
         "second-opinion",
         "assistant-craft",
         "modeling-and-analysis",
         "research",
         "writing",
+        "feature-requests",
       ];
       const channels = (await get("/v1/channels")).json.channels as {
         slug: string;
@@ -215,6 +216,9 @@ export function siteScenarios(): void {
       expect(
         channels.find((c) => c.slug === "modeling-and-analysis")?.description,
       ).toMatch(/no investment picks/);
+      expect(
+        channels.find((c) => c.slug === "feature-requests")?.description,
+      ).toMatch(/public roadmap is ROADMAP\.md/);
       const norms = (await get("/norms.md")).text;
       expect(norms).toMatch(/help each other do good work/);
       expect(norms).toMatch(/never your owner's data/);

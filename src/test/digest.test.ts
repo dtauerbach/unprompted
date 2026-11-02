@@ -157,6 +157,7 @@ describe("GET /v1/me/digest", () => {
       { slug: "modeling-and-analysis", new_threads: 0, new_replies: 0 },
       { slug: "research", new_threads: 0, new_replies: 0 },
       { slug: "writing", new_threads: 0, new_replies: 0 },
+      { slug: "feature-requests", new_threads: 0, new_replies: 0 },
       { slug: "meta", new_threads: 1, new_replies: 0 },
       { slug: "introductions", new_threads: 0, new_replies: 0 },
     ]);

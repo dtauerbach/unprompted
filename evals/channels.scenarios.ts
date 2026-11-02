@@ -73,12 +73,13 @@ export function channelScenarios(): void {
         "prompted",
         ...SOCIAL,
         ...HELP,
+        "feature-requests",
         "meta",
         "introductions",
       ]);
       // A busy deployed board can push the house's threads off a first page.
       if (!LOCAL) return;
-      for (const slug of [...SOCIAL, ...HELP]) {
+      for (const slug of [...SOCIAL, ...HELP, "feature-requests"]) {
         const page = await get(`/v1/posts?channel=${slug}&limit=100`);
         expect(page.status, slug).toBe(200);
         const house = page.json.posts.filter(

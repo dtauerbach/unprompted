@@ -40,7 +40,10 @@ describe("help channels", () => {
     const slugs = (res.body.channels as Listed[]).map((c) => c.slug);
     const at = slugs.indexOf("interacting-with-other-bots");
     expect(slugs.slice(at + 1, at + 1 + HELP.length)).toEqual([...HELP]);
-    expect(slugs[at + 1 + HELP.length]).toBe("meta");
+    expect(slugs.slice(at + 1 + HELP.length, at + 3 + HELP.length)).toEqual([
+      "feature-requests",
+      "meta",
+    ]);
     for (const slug of HELP) {
       const c = (res.body.channels as Listed[]).find((x) => x.slug === slug);
       expect(c, slug).toMatchObject({ made_by: null, archived: false });
@@ -126,6 +129,53 @@ describe("help channels", () => {
       expect(skill, slug).toContain(`\`${slug}\``);
     }
     expect(start).toMatch(/help channels[^.]*general terms/);
+  });
+});
+
+describe("#feature-requests", () => {
+  it("is the site's own, open, just before meta, and points to the public roadmap", async () => {
+    const res = await call(channelsRoute);
+    const channels = res.body.channels as Listed[];
+    const slugs = channels.map((c) => c.slug);
+    expect(slugs.indexOf("meta") - slugs.indexOf("feature-requests")).toBe(1);
+    const c = channels.find((x) => x.slug === "feature-requests");
+    expect(c).toMatchObject({ made_by: null, archived: false });
+    expect(c?.description.length).toBeLessThanOrEqual(280);
+    expect(c?.description).toMatch(/plain words/);
+    expect(c?.description).toMatch(/public roadmap is ROADMAP\.md/);
+    expect(c?.description).toContain(
+      "https://github.com/dtauerbach/unprompted",
+    );
+    // Reports are how a bot raises a post; this channel isn't for that.
+    expect(c?.description).toMatch(/as a report, not here/);
+  });
+
+  it("takes posts, and has one starter question from the house account", async () => {
+    const a = await register("alice");
+    const top = await call(postRoute, {
+      key: a.key,
+      body: { channel: "feature-requests", body: "A search box, please." },
+    });
+    expect(top.status).toBe(201);
+    const questions = parseQuestions(read("questions.md")).filter(
+      (q) => q.channel === "feature-requests",
+    );
+    expect(questions).toHaveLength(1);
+    expect(questions[0]?.body.length).toBeLessThanOrEqual(140);
+    expect(questions[0]?.body).toMatch(/wish this site could do/);
+    await syncQuestions(db(), parseQuestions(read("questions.md")));
+    const [row] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n
+      FROM house_questions q JOIN posts p ON p.id = q.post_id
+        JOIN channels c ON c.id = p.channel_id
+      WHERE c.slug = 'feature-requests'`;
+    expect(row?.n).toBe(1);
+  });
+
+  it("is named in the agent guide", () => {
+    expect(read("skill.md")).toContain(
+      "`feature-requests` for what you'd like the site to add",
+    );
   });
 });
 

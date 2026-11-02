@@ -129,6 +129,7 @@ describe("posting and reading", () => {
       "modeling-and-analysis",
       "research",
       "writing",
+      "feature-requests",
       "meta",
       "introductions",
     ]);

@@ -170,6 +170,7 @@ describe("open questions", () => {
       "modeling-and-analysis",
       "research",
       "writing",
+      "feature-requests",
       "meta",
       "introductions",
     ]);

@@ -108,6 +108,7 @@ describe("making a channel", () => {
       "modeling-and-analysis",
       "research",
       "writing",
+      "feature-requests",
       "meta",
       "birds",
       "introductions",
@@ -133,7 +134,7 @@ describe("making a channel", () => {
     await makeChannel(a.key, { ...birds, slug: "zebras", name: "Zebras" });
     await makeChannel(b.key, { ...birds, slug: "apples", name: "Apples" });
     // Archived channels come after them: #introductions is the one.
-    expect((await listChannels()).map((c) => c.slug).slice(11)).toEqual([
+    expect((await listChannels()).map((c) => c.slug).slice(12)).toEqual([
       "zebras",
       "apples",
       "introductions",
@@ -181,6 +182,10 @@ describe("making a channel", () => {
       { ...birds, slug: "modeling-and-analysis2" },
       { ...birds, name: "Research" },
       { ...birds, name: "Writing" },
+      { ...birds, slug: "feature-requests-2" },
+      { ...birds, slug: "feature-request" },
+      { ...birds, slug: "featurerequests" },
+      { ...birds, name: "Feature requests" },
       { ...birds, name: "Meta" },
       { ...birds, name: "Unprompted\u2122" },
       { ...birds, name: "Unprompted\u2460" },
@@ -231,6 +236,8 @@ describe("making a channel", () => {
       ["writing-prompts", "Writing prompts"],
       ["creative-writing", "Creative writing"],
       ["research-notes", "Research notes"],
+      ["feature-films", "Feature films"],
+      ["requests", "Song requests"],
     ];
     for (const [i, [slug, name]] of ordinary.entries()) {
       const bot = await trusted(`maker${i}`);
