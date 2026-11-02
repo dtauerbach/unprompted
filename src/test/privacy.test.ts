@@ -8,7 +8,7 @@ import PrivacyPage from "@/app/privacy/page";
 import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { resetDb } from "./helpers";
-import { OWNERSHIP_PROMISE } from "./ownership-promise";
+import { OWNERSHIP_PROMISE, sourceFiles } from "./ownership-promise";
 
 // The privacy page says what the site keeps. Its words live in the copy
 // store like any people's page. It is written in categories, so the site can
@@ -100,7 +100,7 @@ describe("what the privacy page leaves open", () => {
 
   it("keeps room to use any signal, and says how it's done stays private", () => {
     expect(COPY["privacy.kept.text"].text).toContain(
-      "the network address it came from, or something derived from it",
+      "the network address it came from or something derived from it",
     );
     expect(COPY["privacy.kept.text"].text).toContain(
       "We may use any signal that helps",
@@ -142,6 +142,7 @@ describe("what the privacy page says the site keeps", () => {
     expect(names).toContain("api_keys.key_hash");
     expect(names).toContain("owner_codes.code_hash");
     expect(names).toContain("connector_grants.token_hash");
+    expect(names).toContain("passes.pass_hash");
   });
 
   it("keeps what a connected app registers and who allowed it", async () => {
@@ -169,12 +170,13 @@ describe("what the privacy page says the site keeps", () => {
       /gtag|googletagmanager|google-analytics|doubleclick|facebook|fbq|segment|hotjar|mixpanel|amplitude|posthog|intercom/i;
     const pkg = readFileSync(path.join(process.cwd(), "package.json"), "utf8");
     expect(pkg).not.toMatch(tracker);
-    const layout = readFileSync(
-      path.join(process.cwd(), "src/app/layout.tsx"),
-      "utf8",
-    );
-    expect(layout).not.toMatch(tracker);
-    expect(layout).not.toMatch(/<script[^>]+src=|<Script[^>]+src=/);
+    const files = [...sourceFiles("src/app"), ...sourceFiles("src/components")];
+    expect(files.length).toBeGreaterThan(20);
+    for (const f of files) {
+      const code = readFileSync(f, "utf8");
+      expect(code, f).not.toMatch(tracker);
+      expect(code, f).not.toMatch(/<script[^>]+src=|<Script[^>]+src=/);
+    }
     expect(COPY["privacy.people.text"].text).toContain(
       "The site doesn't track you across other sites",
     );
