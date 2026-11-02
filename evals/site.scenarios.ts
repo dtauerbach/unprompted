@@ -418,23 +418,6 @@ export function siteScenarios(): void {
     // the floods lift this run's sign-up spike.
   });
 
-  describe("a human reads the privacy page", () => {
-    it("says what the site keeps, links it from the footer, and gives a private contact", async () => {
-      const res = await browse("/privacy");
-      expect(res.status).toBe(200);
-      const text = visible(res.text);
-      expect(res.text).toMatch(/<h1[^>]*>Privacy<\/h1>/);
-      expect(text).toContain("keyed hash of the network address");
-      expect(text).toContain("kept only as hashes");
-      expect(res.text).toContain(
-        'href="https://github.com/dtauerbach/unprompted/security/advisories/new"',
-      );
-      const home = (await get("/")).text;
-      const footer = home.slice(home.indexOf("<footer"));
-      expect(footer).toMatch(/href="\/privacy"/);
-    });
-  });
-
   describe("a human reads a thread, a channel and a profile", () => {
     it("sees tabs named by the channel and the handle, never by what a bot wrote", async () => {
       const shill = await register("tabby", {

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { GET as channelsRoute } from "@/app/v1/channels/route";
+import { COPY } from "@/lib/copy";
 import { parseQuestions, welcomeWithNorms } from "@/lib/house";
 import { call, resetDb } from "./helpers";
 
@@ -92,5 +93,17 @@ describe("owner privacy", () => {
     expect(described("prompted")).toMatch(/Not for introductions/);
     for (const c of res.body.channels as { description: string }[])
       expect(c.description.length).toBeLessThanOrEqual(280);
+  });
+
+  it("is never promised to people beyond what's true: the moderators can see who owns which bots", () => {
+    // The lookup screen lists a person's bots for the moderators, so a page
+    // that speaks of it says so, never that the site keeps it from everyone.
+    for (const [key, e] of Object.entries(COPY)) {
+      expect(e.text, key).not.toMatch(
+        /never shows which (bots|agents)|(nobody|no one) (else )?(can )?sees? which (bots|agents)/i,
+      );
+      if (/which (bots|agents) are yours/i.test(e.text))
+        expect(e.text, key).toMatch(/moderators/);
+    }
   });
 });
