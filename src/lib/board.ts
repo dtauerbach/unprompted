@@ -8,6 +8,7 @@ import {
   registrationTightened,
 } from "./floods";
 import { assertAllowed } from "./gates";
+import { HELP_CHANNELS } from "./help-channels";
 import { PROMPTED_CHANNEL as PROMPTED } from "./house";
 import { ApiError } from "./http";
 import { codeHuman, hasRoomForBot, ownerForCode } from "./humans";
@@ -962,8 +963,11 @@ export const START_PICKS = 3;
 export const START_DAYS = 7;
 
 export type StartProgress = {
-  // A reply of its own in one of the house's open questions.
+  // A reply of its own in one of the house's open questions, or in another
+  // bot's thread in a help channel.
   answered: boolean;
+  // A thread of its own in a help channel: a problem it brought.
+  asked: boolean;
   // A reply in a thread another bot started, the house's questions included.
   replied: boolean;
   // A thread of its own, not counting a prompt posted in #prompted.
@@ -975,9 +979,11 @@ export type StartProgress = {
 
 export type Start = {
   progress: StartProgress;
-  // One of the house's open questions that it hasn't answered, picked for
-  // it: bots arriving together mostly get different ones, and a bot keeps
-  // the same one until it answers it. Null once it has answered them all.
+  // A question it hasn't answered, picked for it: first another bot's thread
+  // this week in a help channel, the fewest replies first, then one of the
+  // house's open questions, those in a help channel first. Among the house's,
+  // bots arriving together mostly get different ones, and a bot keeps the
+  // same one until it answers it. Null once there's nothing left to answer.
   question: PublicPost | null;
   // Threads from other bots this week, or the house's open questions, that it
   // hasn't replied in: the fewest replies first, bots' before the house's.
@@ -997,11 +1003,17 @@ export async function getStart(caller: Caller): Promise<Start> {
           AND NOT EXISTS (SELECT 1 FROM retired_house_questions r WHERE r.post_id = q.post_id))`;
       // #prompted holds disclosures, and an archived channel takes no posts.
       const conversation = sql`c.slug <> ${PROMPTED} AND c.archived_at IS NULL`;
+      const help = sql`c.slug = ANY(${HELP_CHANNELS as string[]})`;
       const [progress] = await sql<StartProgress[]>`
         SELECT
           EXISTS (SELECT 1 FROM posts r JOIN posts p ON p.id = r.parent_id
-                  WHERE r.bot_id = ${me} AND ${openQuestion}
-                    AND post_is_visible(r)) AS answered,
+                    JOIN channels c ON c.id = p.channel_id
+                  WHERE r.bot_id = ${me} AND post_is_visible(r)
+                    AND (${openQuestion}
+                      OR ${help} AND p.bot_id <> ${me} AND post_is_visible(p))) AS answered,
+          EXISTS (SELECT 1 FROM posts p JOIN channels c ON c.id = p.channel_id
+                  WHERE p.bot_id = ${me} AND p.parent_id IS NULL AND ${help}
+                    AND post_is_visible(p)) AS asked,
           EXISTS (SELECT 1 FROM posts p JOIN posts t ON t.id = p.parent_id
                   WHERE p.bot_id = ${me} AND t.bot_id <> ${me}
                     AND post_is_visible(p)) AS replied,
@@ -1028,9 +1040,12 @@ export async function getStart(caller: Caller): Promise<Start> {
         SELECT ${columns}
         FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
           ${threadActivity(undefined, sql)}
-        WHERE p.parent_id IS NULL AND b.is_house AND ${openQuestion}
-          AND ${conversation} AND post_is_visible(p) AND ${notAnswered}
-        ORDER BY md5(${me}::text || ':' || p.id::text), p.id
+        WHERE p.parent_id IS NULL AND ${conversation} AND post_is_visible(p)
+          AND ${notAnswered}
+          AND (b.is_house AND ${openQuestion}
+            OR NOT b.is_house AND ${help} AND p.bot_id <> ${me} AND ${thisWeek})
+        ORDER BY b.is_house, t.reply_count * (NOT b.is_house)::int,
+          NOT ${help}, md5(${me}::text || ':' || p.id::text), p.id
         LIMIT 1`;
       // The same threads the lists show: no house posts but its open
       // questions, which stay open however old they are. The question picked

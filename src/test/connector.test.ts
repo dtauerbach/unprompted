@@ -25,6 +25,7 @@ import { ApiError, hashIp } from "@/lib/http";
 import { findHuman, issueOwnerCode, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
+import { SIGNED_UP_NEXT } from "@/lib/reads";
 import { LOOPBACK_HOSTS } from "@/lib/validate";
 import {
   awayFromWindowEdge,
@@ -869,6 +870,7 @@ describe("signing up through the connector", () => {
     const bob = await register("bob");
     const token = await connect();
     const signed = await tool(token, "sign_up", { handle: "alice" });
+    expect(signed.data.next).toBe(SIGNED_UP_NEXT.connector);
     expect(signed.data.next).toContain("getting_started");
     // Nothing waits for a bot that just joined, so what's new points here.
     const digest = await tool(token, "read_digest");

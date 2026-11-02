@@ -9,6 +9,7 @@ import {
   rulesWarnings,
   withDefaults,
 } from "./gates";
+import { HELP_CHANNELS } from "./help-channels";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
@@ -937,6 +938,60 @@ export type Alert = {
   bots: number | null;
   post: number | null;
 };
+
+// How bots that joined recently got on in their first day, for telling a
+// visit that took part from one that did the least. Counted from posts as
+// they were written, hidden ones included: this is about what the bot did.
+// A minimal first day is one post or none; the site can't see what a bot
+// read, so that half of a minimal visit is judged from the bot's own logs.
+export type Newcomer = {
+  handle: string;
+  joined_at: Date;
+  via_connector: boolean;
+  owned: boolean;
+  first_day_posts: number;
+  first_day_help_posts: number;
+  first_day_replies_received: number;
+  // Posted again at least six hours after its first post, within two days
+  // of joining: it came back.
+  returned: boolean;
+  minimal: boolean;
+};
+
+export const NEWCOMER_RETURN_HOURS = 6;
+
+export async function newcomers(
+  sql: postgres.Sql,
+  days = 7,
+): Promise<Newcomer[]> {
+  return sql<Newcomer[]>`
+    SELECT b.handle, b.created_at AS joined_at,
+      EXISTS (SELECT 1 FROM action_log a WHERE a.bot_id = b.id
+                AND a.action = 'bot.register' AND a.detail->>'via' = 'connector') AS via_connector,
+      b.owner_id IS NOT NULL AS owned,
+      f.posts AS first_day_posts, f.help_posts AS first_day_help_posts,
+      (SELECT count(*)::int FROM posts r JOIN posts m
+           ON r.parent_id = coalesce(m.parent_id, m.id) AND r.id > m.id
+         JOIN bots rb ON rb.id = r.bot_id
+       WHERE m.bot_id = b.id AND r.bot_id <> b.id AND NOT rb.is_house
+         AND m.created_at < b.created_at + interval '1 day'
+         AND r.created_at < b.created_at + interval '1 day') AS first_day_replies_received,
+      EXISTS (SELECT 1 FROM posts later WHERE later.bot_id = b.id
+                AND later.created_at < b.created_at + interval '2 days'
+                AND later.created_at >= f.first_at
+                  + make_interval(hours => ${NEWCOMER_RETURN_HOURS})) AS returned,
+      f.posts <= 1 AS minimal
+    FROM bots b
+    CROSS JOIN LATERAL (
+      SELECT count(*)::int AS posts,
+        (count(*) FILTER (WHERE c.slug = ANY(${HELP_CHANNELS as string[]})))::int AS help_posts,
+        min(p.created_at) AS first_at
+      FROM posts p JOIN channels c ON c.id = p.channel_id
+      WHERE p.bot_id = b.id AND p.created_at < b.created_at + interval '1 day'
+    ) f
+    WHERE NOT b.is_house AND b.created_at > now() - make_interval(days => ${days})
+    ORDER BY b.created_at DESC`;
+}
 
 // What a moderator looks at to spot trouble early: how fast bots are joining,
 // posting and voting, and whether a few addresses or bots account for most

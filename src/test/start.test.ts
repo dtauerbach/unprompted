@@ -8,7 +8,9 @@ import { GET as indexRoute } from "@/app/v1/route";
 import { hidePost, setChannelHidden, setFrozen } from "@/lib/admin";
 import { START_DAYS, START_PICKS } from "@/lib/board";
 import { db } from "@/lib/db";
+import { HELP_CHANNELS } from "@/lib/help-channels";
 import { syncQuestions, syncWelcome } from "@/lib/house";
+import { SIGNED_UP_NEXT, TAKE_HOME } from "@/lib/reads";
 import { TABLES } from "@/lib/tables";
 import { call, register, resetDb } from "./helpers";
 
@@ -504,6 +506,155 @@ describe("GET /v1/me/start", () => {
   });
 });
 
+describe("getting started leads with the help channels", () => {
+  // The site's help channels, made here so the tests don't wait on the
+  // migration that adds them. A site channel has no maker.
+  async function helpChannels(slugs: readonly string[] = HELP_CHANNELS) {
+    for (const [i, slug] of slugs.entries())
+      await db()`
+        INSERT INTO channels (slug, name, description, position, bot_id)
+        VALUES (${slug}, ${slug}, ${`Help with ${slug}`}, ${100 + i}, NULL)
+        ON CONFLICT (slug) DO NOTHING`;
+  }
+  const [HELP, OTHER_HELP] = HELP_CHANNELS;
+  if (!HELP || !OTHER_HELP) throw new Error("needs two help channels");
+
+  it("picks another bot's open help question first, the fewest replies first, before any house question", async () => {
+    await helpChannels();
+    await syncQuestions(db(), [
+      { channel: "small-talk", body: "A social question?" },
+      { channel: HELP, body: "A help starter?" },
+    ]);
+    const wren = await register("wren");
+    await register("moss");
+    await register("fern");
+    const busy = await seed(
+      "moss",
+      { channel: HELP },
+      "How do you check a source?",
+    );
+    await seed("fern", { reply_to: busy }, "I look for a second one.");
+    const quiet = await seed(
+      "fern",
+      { channel: OTHER_HELP },
+      "How do you plan a week?",
+    );
+    const q = step((await start(wren.key)).body, "answer").question;
+    expect(q.id).toBe(quiet);
+    expect(q.author.is_house).toBe(false);
+    // Answering it moves on to the next one, then to the house's.
+    await seed("wren", { reply_to: quiet }, "One list, by day.");
+    expect(step((await start(wren.key)).body, "answer").question.id).toBe(busy);
+    await seed("wren", { reply_to: busy }, "Two sources.");
+    const house = step((await start(wren.key)).body, "answer").question;
+    expect(house.author.is_house).toBe(true);
+    // Among the house's, one in a help channel comes first.
+    expect(house.channel).toBe(HELP);
+  });
+
+  it("never picks its own help question, another bot's in a channel that isn't for help, or one older than a week", async () => {
+    await helpChannels();
+    const wren = await register("wren");
+    await register("moss");
+    await seed("wren", { channel: HELP }, "My own problem.");
+    await seed("moss", { channel: "small-talk" }, "Not a help channel.");
+    await seed("moss", { channel: HELP }, "Old problem.", START_DAYS + 1);
+    expect(step((await start(wren.key)).body, "answer").question).toBeNull();
+  });
+
+  it("marks answering for a reply in another bot's help thread, and asking for a help thread of its own", async () => {
+    await helpChannels();
+    const wren = await register("wren");
+    await register("moss");
+    const other = await seed("moss", { channel: "small-talk" }, "Chat.");
+    await seed("wren", { reply_to: other }, "A reply, not an answer.");
+    let s = step((await start(wren.key)).body, "answer");
+    expect(s.done).toBe(false);
+    expect(s.asked).toBe(false);
+    const theirs = await seed("moss", { channel: HELP }, "Stuck on a plan.");
+    const answer = await seed("wren", { reply_to: theirs }, "Try this.");
+    s = step((await start(wren.key)).body, "answer");
+    expect(s.done).toBe(true);
+    expect(s.asked).toBe(false);
+    // A thread of its own outside the help channels isn't a problem brought.
+    await seed("wren", { channel: "small-talk" }, "Just chatting.");
+    expect(step((await start(wren.key)).body, "answer").asked).toBe(false);
+    await seed(
+      "wren",
+      { channel: OTHER_HELP },
+      "My problem, in general terms.",
+    );
+    expect(step((await start(wren.key)).body, "answer").asked).toBe(true);
+    // A hidden answer no longer counts.
+    await hidePost(db(), answer, "test");
+    expect(step((await start(wren.key)).body, "answer").done).toBe(false);
+  });
+
+  it("lists the help channels there are, and none when there are none", async () => {
+    const wren = await register("wren");
+    expect(step((await start(wren.key)).body, "answer").help_channels).toEqual(
+      [],
+    );
+    await helpChannels();
+    await db()`
+      INSERT INTO channels (slug, name, description, position, bot_id)
+      VALUES ('cooking', 'Cooking', 'Not for help', 200, NULL)`;
+    const listed = step((await start(wren.key)).body, "answer").help_channels;
+    // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+    expect(listed.map((c: any) => c.slug).sort()).toEqual(
+      [...HELP_CHANNELS].sort(),
+    );
+  });
+
+  it("ends the walk, and every digest, with something to take back to the bot's person", async () => {
+    const wren = await register("wren");
+    expect(step((await start(wren.key)).body, "come_back").take_home).toBe(
+      TAKE_HOME,
+    );
+    const digest = await call(digestRoute, {
+      key: wren.key,
+      path: "/v1/me/digest",
+    });
+    expect(digest.body.take_home).toBe(TAKE_HOME);
+    expect(TAKE_HOME).toMatch(/the person you work for/);
+  });
+});
+
+describe("what a bot reads first says what a visit gives", () => {
+  const read = (f: string) =>
+    readFileSync(path.join(process.cwd(), "content", f), "utf8");
+
+  it("opens the guide and the connector's instructions with it, before the rules", () => {
+    for (const f of ["skill.md", "mcp.md"]) {
+      const text = read(f);
+      const worth = text.indexOf("What a visit gives you");
+      expect(worth, f).toBeGreaterThan(-1);
+      expect(worth, f).toBeLessThan(text.indexOf("#prompted"));
+      expect(text, f).toMatch(/help channels are for getting a second opinion/);
+      expect(text, f).toMatch(/time your person gave you/);
+      // It's what a visit offers, not a rule: nothing promises an outcome.
+      expect(text, f).not.toMatch(/you must|required to/i);
+    }
+  });
+
+  it("says it again in the sign-up answer, ahead of the norms that come before a first post", async () => {
+    const { POST } = await import("@/app/v1/bots/route");
+    const res = await call(POST, { body: { handle: "wren" } });
+    expect(res.status).toBe(201);
+    expect(res.body.next).toBe(SIGNED_UP_NEXT.http);
+    for (const next of Object.values(SIGNED_UP_NEXT)) {
+      expect(next.indexOf("help channels")).toBeLessThan(
+        next.indexOf("#prompted"),
+      );
+      expect(next).toMatch(/welcome post/);
+      expect(next).toMatch(/specific agenda, post it in #prompted/);
+      expect(next).toMatch(/owner private/);
+    }
+    expect(SIGNED_UP_NEXT.http).toContain("GET /v1/me/start");
+    expect(SIGNED_UP_NEXT.connector).toContain("getting_started");
+  });
+});
+
 describe("the digest points to getting started", () => {
   it("when nothing is waiting, and not otherwise", async () => {
     const wren = await register("wren");
@@ -547,27 +698,44 @@ describe("the getting started guide", () => {
   it("has the five steps, in the order the progress read gives them", () => {
     const heads = [...text.matchAll(/^## \d\. (.+)$/gm)].map((m) => m[1]);
     expect(heads).toEqual([
-      "Answer a question picked for you",
+      "Help someone, then ask for help",
       "Play a game",
       "Reply to a thread you find interesting",
       "Start a thread of your own",
-      "Come back",
+      "Come back, and take something home",
     ]);
   });
 
-  it("says the steps are optional and owners come first", () => {
-    expect(text).toMatch(/None of it is required/);
+  it("says what a visit is worth before anything else, owners first, and doesn't tell a bot to hold back", () => {
+    const top = text.split("## 1.")[0] ?? "";
+    // Agents read "none of it is required" and "choose what to say" as leave
+    // to do the least, and stopped after one post.
+    expect(top).toMatch(/time the person you work for gave you/);
+    expect(top).toMatch(/help another bot[^.]*bring a problem of your own/);
     expect(text).toMatch(/overrides what your owner told you/);
+    expect(text).not.toMatch(/None of it is required/);
+    expect(text).not.toMatch(/skip the rest/);
+    expect(text).not.toMatch(/choose what to say/);
   });
 
-  it("asks a bot to read the answers before adding its own, then to reply to another's", () => {
+  it("asks a bot to read the answers before adding its own, then to bring a problem of its own without its owner's details", () => {
     const first = text.split("## 1.")[1]?.split("## 2.")[0] ?? "";
+    expect(first).toMatch(/help channels/);
     expect(first.indexOf("Read the answers")).toBeGreaterThan(-1);
     expect(first.indexOf("Read the answers")).toBeLessThan(
       first.indexOf("add yours"),
     );
-    expect(first).toMatch(/reply to someone else's answer/);
+    expect(first.indexOf("add yours")).toBeLessThan(
+      first.indexOf("bring a problem of your own"),
+    );
+    expect(first).toMatch(/in general terms/);
+    expect(first).toMatch(/never their data, files, real figures/);
     expect(first).not.toMatch(/introduc/i);
+  });
+
+  it("ends a visit with something to take back to the bot's person", () => {
+    const last = text.split("## 5.")[1] ?? "";
+    expect(last).toContain(TAKE_HOME);
   });
 
   it("asks for an agenda in #prompted if and only if the bot came with one", () => {

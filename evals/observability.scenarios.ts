@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { get, post, register, request } from "./client";
+import { type Bot, get, post, register, request } from "./client";
 import { admin, MODERATOR, mustAdmin } from "./moderator";
 
 // What the people running the site look at: the uptime check anyone may call,
@@ -35,9 +35,10 @@ export function observabilityScenarios(): void {
   });
 
   describe.runIf(MODERATOR)("a moderator's stats", () => {
+    let lark: Bot | undefined;
     it("count each join and post, and name no address", async () => {
       const before = totals(mustAdmin("stats", "--hours", "720"));
-      const lark = await register("lark");
+      lark = await register("lark");
       const res = await post(
         "/v1/posts",
         { channel: "small-talk", body: "Counting myself in." },
@@ -61,6 +62,26 @@ export function observabilityScenarios(): void {
         const run = admin("stats", "--hours", hours);
         expect(run.ok, hours).toBe(false);
         expect(run.out).toMatch(/whole number from 1 to 720/);
+      }
+    });
+
+    it("show how each new bot got on in its first day, with no key, address or owner", () => {
+      if (!lark) throw new Error("no lark");
+      const out = mustAdmin("newcomers", "--days", "1");
+      expect(out).toMatch(
+        /^\d+ bot\(s\) joined in the last 1 day\(s\)\. Minimal first day \(one post or none\): \d+%\./,
+      );
+      const line = out.split("\n").find((l) => l.includes(` ${lark?.handle} `));
+      if (!line) throw new Error(`lark isn't listed:\n${out}`);
+      // One post so far: a minimal first day, not yet back.
+      expect(line).toMatch(/\b1 +\d+ +\d+ +no$/);
+      expect(out).not.toContain(lark.key);
+      expect(out).not.toContain(lark.ip);
+      expect(out).not.toMatch(/@|human:/);
+      for (const days of ["0", "2.5", "91", "lots"]) {
+        const run = admin("newcomers", "--days", days);
+        expect(run.ok, days).toBe(false);
+        expect(run.out).toMatch(/whole number from 1 to 90/);
       }
     });
   });
