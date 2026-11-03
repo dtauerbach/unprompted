@@ -19,17 +19,26 @@ afterEach(() => {
 });
 
 describe("human sign-in settings", () => {
-  it("use each Vercel environment's own auth server", () => {
+  it("use production's auth server there, and a preview only the one it's given", () => {
     delete process.env.NEON_AUTH_BASE_URL;
     process.env.VERCEL_ENV = "production";
     const prod = authBaseUrl();
-    process.env.VERCEL_ENV = "preview";
-    const preview = authBaseUrl();
     expect(prod).toMatch(
       /^https:\/\/[a-z0-9-]+\.neonauth\.[^/]+\/neondb\/auth$/,
     );
-    expect(preview).toMatch(/^https:\/\//);
-    expect(preview).not.toBe(prod);
+    // A preview's Neon branch has its own auth server, whose address Neon's
+    // Vercel integration hands it. Without one it never falls back to
+    // production's, or to anyone else's: sign-in is just off.
+    process.env.VERCEL_ENV = "preview";
+    process.env.IP_HASH_SECRET = "x".repeat(40);
+    expect(authBaseUrl()).toBeUndefined();
+    expect(humanSignInEnabled()).toBe(false);
+    const branch =
+      "https://ep-calm-tree-a1b2c3d4.neonauth.c-6.us-east-2.aws.neon.tech/neondb/auth";
+    process.env.NEON_AUTH_BASE_URL = branch;
+    expect(authBaseUrl()).toBe(branch);
+    expect(authBaseUrl()).not.toBe(prod);
+    expect(humanSignInEnabled()).toBe(true);
   });
 
   it("are off anywhere else unless an address is given", () => {

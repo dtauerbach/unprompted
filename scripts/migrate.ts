@@ -11,33 +11,21 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import postgres from "postgres";
 import { syncHouseTexts } from "../src/lib/bot-texts";
-import { applyMigrations } from "../src/lib/migrations";
+import { driftHelp, planMigrations } from "../src/lib/deploy-db";
+import { applyMigrations, MigrationDriftError } from "../src/lib/migrations";
 
-const onVercel = Boolean(process.env.VERCEL);
-const env = process.env.VERCEL_ENV;
-
-if (onVercel && !process.env.IP_HASH_SECRET) {
-  console.error(
-    "IP_HASH_SECRET is not set. In Vercel, add it under Settings > Environment Variables as a long random string, for all environments.",
-  );
-  process.exit(1);
-}
-
-// A preview build runs an unmerged branch's SQL. Unless each preview has its
-// own Neon branch (then set MIGRATE_PREVIEWS=1), that SQL would hit the
-// production database before review, so previews skip migrations.
-if (onVercel && env !== "production" && process.env.MIGRATE_PREVIEWS !== "1") {
-  console.log(`Skipping migrations on a ${env ?? "non-production"} build.`);
+// Whether to migrate, and where, is decided in src/lib/deploy-db.ts: a
+// preview runs on its own Neon branch and never migrates production.
+const plan = planMigrations();
+if (plan.action === "skip") {
+  console.log(plan.message);
   process.exit(0);
 }
-
-const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
-if (!url) {
-  console.error(
-    "DATABASE_URL is not set. On Vercel, add a Neon database under Storage and connect it to this project.",
-  );
+if (plan.action === "fail") {
+  console.error(plan.message);
   process.exit(1);
 }
+const url = plan.url;
 
 const dir = path.join(process.cwd(), "db/migrations");
 const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
@@ -48,10 +36,31 @@ const migrations = await Promise.all(
   })),
 );
 
-const applied = await applyMigrations(url, migrations);
+let result: Awaited<ReturnType<typeof applyMigrations>>;
+try {
+  result = await applyMigrations(url, migrations, {
+    appliedIn: plan.appliedIn,
+    refuseDrift: plan.refuseDrift,
+  });
+} catch (e) {
+  if (!(e instanceof MigrationDriftError)) throw e;
+  console.error(`${e.message} ${driftHelp()}`);
+  process.exit(1);
+}
+const { applied, changed, unknown } = result;
 console.log(
   applied.length ? `Applied: ${applied.join(", ")}` : "Database is up to date.",
 );
+// A merged migration's file changed after it ran: the change never reaches
+// this database. Production says so loudly but doesn't stop the deploy.
+if (changed.length)
+  console.warn(
+    `Warning: ${changed.join(", ")} changed after this database ran it. Add a new migration instead of editing an applied one.`,
+  );
+if (unknown.length)
+  console.log(
+    `This database also ran ${unknown.join(", ")}, which this checkout doesn't have (merged after this branch was cut).`,
+  );
 
 const sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} });
 try {

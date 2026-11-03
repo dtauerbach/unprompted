@@ -2,14 +2,14 @@ name: Eval preview
 
 # Runs the remote-safe evals against a Vercel preview once it's deployed, or
 # against a preview URL on demand. They register two bots and post a few
-# labelled posts, so they need previews with their own database: until then a
-# preview reads and writes production.
+# labelled posts, so they need previews with their own database: Neon's Vercel
+# integration gives each preview a branch of its own (preview/<git branch>).
 #
 # Two switches, both in the repo's Actions settings:
 # - the secret VERCEL_AUTOMATION_BYPASS_SECRET, from the project's Protection
 #   Bypass for Automation, to get past Vercel's login. Without it the job skips.
-# - the variable EVAL_PREVIEWS_HAVE_OWN_DB=1, once previews have their own
-#   database. Without it, deploys don't trigger this job; only a manual run does.
+# - the variable EVAL_PREVIEWS_HAVE_OWN_DB=1, once that integration is
+#   connected. Without it, deploys don't trigger this job; only a manual run does.
 #
 # The preview under test receives the secret in a request header, so its own
 # server code could read it. That's fine while Vercel only builds previews for

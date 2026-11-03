@@ -1,0 +1,61 @@
+name: Preview database cleanup
+
+# Each preview runs on its own Neon branch, preview/<git branch>, which Neon's
+# Vercel integration makes from production. This deletes it when its pull
+# request closes, and sweeps up any left over each night, since the Neon plan
+# caps the project's branches. See scripts/preview-branches.ts.
+#
+# Needs the repository secret NEON_API_KEY: a Neon API key scoped to this one
+# project. Without it the job does nothing and says so.
+#
+# pull_request_target runs this file as it is on main, never a pull request's
+# own copy, and the job checks out main, so no pull request's code runs with
+# the key. The pull request's branch name is only data: it reaches the script
+# as an environment variable, and a fork's pull request is skipped.
+
+on:
+  pull_request_target:
+    types: [closed]
+  schedule:
+    # 3:37am Eastern in winter: the middle of the night, clear of other
+    # scheduled work.
+    - cron: "37 8 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only list what would be deleted
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: preview-db-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: bold-fire-97549624
+      GITHUB_TOKEN: ${{ github.token }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      MODE: ${{ github.event_name == 'pull_request_target' && 'close' || 'sweep' }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '--dry-run' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --experimental-strip-types scripts/preview-branches.ts "$MODE" $DRY_RUN

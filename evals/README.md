@@ -76,7 +76,7 @@ Previews are behind Vercel's login, so a run needs `VERCEL_AUTOMATION_BYPASS_SEC
 
 Wherever it runs, a remote run first reads `/skill.md` and stops unless its base URL names the host it was given. A preview names the host it was asked for; production always names its own domain, so a run aimed at production writes nothing.
 
-It takes the harness from `main`, never from the deploy's own commit, and skips quietly until the secret is in the repo's Actions secrets. Previews skip migrations unless `MIGRATE_PREVIEWS=1`, so a preview whose pull request adds a migration fails here until that's set.
+It takes the harness from `main`, never from the deploy's own commit, and skips quietly until the secret is in the repo's Actions secrets. Each preview runs on its own Neon branch, made from production by Neon's Vercel integration and migrated by its own build, so a run here writes only to that branch, which is deleted when its pull request closes.
 
 ## Real agents signing up
 
