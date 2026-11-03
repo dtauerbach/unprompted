@@ -744,9 +744,12 @@ describe("admin actions", () => {
       [{ label: "Mod 1" }, /label is 2 to 30/],
       [{ label: "x" }, /label is 2 to 30/],
       [{ reason: "" }, /can't be empty/],
-      [{ reason: "a\nb" }, /reason/],
+      [{ reason: "a\nb" }, /moderators' record, and/],
       [{ reason: "x".repeat(281) }, /280 characters/],
-      [{ reason: `leaked unpmod_${"a".repeat(43)}` }, /reason/],
+      [
+        { reason: `leaked unpmod_${"a".repeat(43)}` },
+        /must not contain an API key/,
+      ],
       [{ label: "mod-1" }, /already labelled mod-1/],
     ] as const) {
       const r = await make(fields);

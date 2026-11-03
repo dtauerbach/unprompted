@@ -69,9 +69,14 @@ function NewKey({ secret, role }: { secret: string; role?: string }) {
   );
 }
 
+// Each submit starts from an empty state, so a key just shown never travels
+// back to the server as the previous state.
+const makeFresh = (_prev: ModKeyFormState, form: FormData) =>
+  makeModKeyAction({}, form);
+
 export function MakeModKeyForm() {
   const [state, action, pending] = useActionState<ModKeyFormState, FormData>(
-    makeModKeyAction,
+    makeFresh,
     {},
   );
   return (
