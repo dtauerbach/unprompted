@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { driftHelp, planMigrations } from "@/lib/deploy-db";
+import { closeDb, db } from "@/lib/db";
+import {
+  driftHelp,
+  planMigrations,
+  previewDatabaseProblem,
+} from "@/lib/deploy-db";
 import { productionEndpoint } from "@/lib/neon-auth-hosts";
 
 // Which database a build migrates is decided from the environment alone.
@@ -85,9 +90,88 @@ describe("what a build does with migrations", () => {
         );
         expect(plan.action).toBe("fail");
         if (plan.action === "fail")
-          expect(plan.message).toMatch(/database is production's/);
+          expect(plan.message).toMatch(/is production's database/);
       }
     }
+  });
+
+  it("refuses production from a preview even when it skips migrations", () => {
+    for (const flag of [undefined, "0", "true"]) {
+      const plan = planMigrations(
+        vercel({
+          VERCEL_ENV: "preview",
+          MIGRATE_PREVIEWS: flag,
+          DATABASE_URL: url(prodPooled),
+        }),
+      );
+      expect(plan.action).toBe("fail");
+    }
+  });
+
+  it("knows production by any of its computes' hosts", () => {
+    for (const host of [
+      `${productionEndpoint()}-dlj.c-6.us-east-2.aws.neon.tech`,
+      `${productionEndpoint()}-dlj-pooler.c-6.us-east-2.aws.neon.tech`,
+    ])
+      expect(
+        previewDatabaseProblem(
+          vercel({ VERCEL_ENV: "preview", DATABASE_URL: url(host) }),
+        ),
+      ).toMatch(/production's database/);
+    // A different endpoint that merely starts the same way isn't production.
+    expect(
+      previewDatabaseProblem(
+        vercel({
+          VERCEL_ENV: "preview",
+          DATABASE_URL: url(
+            `${productionEndpoint()}x.c-6.us-east-2.aws.neon.tech`,
+          ),
+        }),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a preview database that isn't on its sign-in server's branch", () => {
+    const auth = (ep: string) =>
+      `https://${ep}.neonauth.c-6.us-east-2.aws.neon.tech/neondb/auth`;
+    const env = (dbHost: string, authEp: string) =>
+      vercel({
+        VERCEL_ENV: "preview",
+        MIGRATE_PREVIEWS: "1",
+        DATABASE_URL: url(dbHost),
+        NEON_AUTH_BASE_URL: auth(authEp),
+      });
+    expect(
+      planMigrations(env(branchHost, "ep-calm-tree-a1b2c3d4")).action,
+    ).toBe("run");
+    expect(
+      planMigrations(
+        env(
+          "ep-calm-tree-a1b2c3d4-pooler.c-6.us-east-2.aws.neon.tech",
+          "ep-calm-tree-a1b2c3d4",
+        ),
+      ).action,
+    ).toBe("run");
+    const leftover = planMigrations(
+      env(
+        "ep-proud-art-b4mjhuwr.c-6.us-east-2.aws.neon.tech",
+        "ep-calm-tree-a1b2c3d4",
+      ),
+    );
+    expect(leftover.action).toBe("fail");
+    if (leftover.action === "fail")
+      expect(leftover.message).toMatch(/different Neon branch/);
+  });
+
+  it("leaves production and local runs to their own databases", () => {
+    expect(
+      previewDatabaseProblem(
+        vercel({ VERCEL_ENV: "production", DATABASE_URL: url(prodHost) }),
+      ),
+    ).toBeUndefined();
+    expect(
+      previewDatabaseProblem({ DATABASE_URL: url(prodHost) }),
+    ).toBeUndefined();
   });
 
   it("treats any non-production Vercel build as a preview", () => {
@@ -147,6 +231,24 @@ describe("what a build does with migrations", () => {
       refuseDrift: false,
     });
     expect(planMigrations({}).action).toBe("fail");
+  });
+
+  it("keeps a preview's running code off production's database too", async () => {
+    const saved = { ...process.env };
+    await closeDb();
+    try {
+      process.env.VERCEL = "1";
+      process.env.VERCEL_ENV = "preview";
+      process.env.DATABASE_URL = url(prodPooled);
+      expect(() => db()).toThrow(/production's database/);
+    } finally {
+      for (const k of ["VERCEL", "VERCEL_ENV", "DATABASE_URL"])
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      await closeDb();
+    }
+    // And the test database works again afterwards.
+    expect((await db()`SELECT 1 AS one`)[0]?.one).toBe(1);
   });
 
   it("tells a drifted preview the one step that fixes it", () => {

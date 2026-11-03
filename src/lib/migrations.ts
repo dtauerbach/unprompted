@@ -8,16 +8,23 @@ export type MigrationOptions = {
   // each row so a preview can tell its own migrations from the ones it
   // inherited from production when its Neon branch was made.
   appliedIn?: string;
-  // A preview stops, before applying anything, when its database already
-  // ran a migration whose file has since changed, or ran one of its own that
-  // has since been renamed or removed. Production only warns.
+  // A preview stops, before applying anything, when an earlier build of it
+  // ran one of its migrations whose file has since changed, or that has since
+  // been renamed or removed. Anything else only warns.
   refuseDrift?: boolean;
 };
 
 export type MigrationResult = {
   applied: string[];
-  // Already applied, and the file's SQL is no longer what ran.
+  // Applied by an earlier build of this same preview, and the file's SQL has
+  // changed since. A preview refuses these: resetting its branch fixes it.
   changed: string[];
+  // Applied elsewhere (production), and the file's SQL has changed since: an
+  // edit to a merged migration, which never reaches a database that ran it.
+  // Only a warning, since resetting a preview wouldn't help; production then
+  // records the new hash, so branches made from it later don't inherit the
+  // warning. CI stops such an edit before it merges (scripts/check-migrations.ts).
+  edited: string[];
   // Applied by an earlier preview build of this same branch, and gone now.
   vanished: string[];
   // Applied elsewhere (production, usually a migration merged after this
@@ -76,23 +83,32 @@ export async function applyMigrations(
       const done = new Map(rows.map((r) => [r.name, r]));
       const files = new Map(migrations.map((m) => [m.name, sha256(m.sql)]));
 
+      const own = (row: { applied_in: string | null }) =>
+        options.appliedIn === "preview" && row.applied_in === "preview";
       const changed: string[] = [];
+      const edited: string[] = [];
       for (const [name, hash] of files) {
         const row = done.get(name);
         if (!row) continue;
         if (row.sha256 === null)
           await tx`UPDATE schema_migrations SET sha256 = ${hash} WHERE name = ${name}`;
-        else if (row.sha256 !== hash) changed.push(name);
+        else if (row.sha256 === hash) continue;
+        else if (own(row)) changed.push(name);
+        else {
+          edited.push(name);
+          if (options.appliedIn !== "preview")
+            await tx`UPDATE schema_migrations SET sha256 = ${hash} WHERE name = ${name}`;
+        }
       }
       const vanished: string[] = [];
       const unknown: string[] = [];
       for (const row of rows) {
         if (files.has(row.name)) continue;
-        if (options.appliedIn === "preview" && row.applied_in === "preview")
-          vanished.push(row.name);
+        if (own(row)) vanished.push(row.name);
         else unknown.push(row.name);
       }
       changed.sort();
+      edited.sort();
       vanished.sort();
       unknown.sort();
       if (options.refuseDrift && (changed.length || vanished.length))
@@ -106,7 +122,7 @@ export async function applyMigrations(
           VALUES (${m.name}, ${files.get(m.name) ?? null}, ${options.appliedIn ?? null})`;
         applied.push(m.name);
       }
-      return { applied, changed, vanished, unknown };
+      return { applied, changed, edited, vanished, unknown };
     });
   } finally {
     await sql.end();

@@ -53,6 +53,7 @@ describe("applying migrations", () => {
     expect(first).toEqual({
       applied: ["001_a.sql", "002_b.sql"],
       changed: [],
+      edited: [],
       vanished: [],
       unknown: [],
     });
@@ -125,31 +126,39 @@ describe("applying migrations", () => {
     expect(r).toEqual({
       applied: ["003_c.sql"],
       changed: [],
+      edited: [],
       vanished: [],
       unknown: ["002_b.sql"],
     });
   });
 
-  it("stops a preview when a migration it inherited from production was edited", async () => {
+  it("only warns a preview when a migration it inherited was edited", async () => {
+    // Resetting the preview wouldn't help: it would inherit the same row.
     await applyMigrations(url, [m1, m2], { appliedIn: "production" });
-    const err = await applyMigrations(url, [m1, m2edited], {
+    const r = await applyMigrations(url, [m1, m2edited], {
       appliedIn: "preview",
       refuseDrift: true,
-    }).catch((e) => e);
-    expect(err).toBeInstanceOf(MigrationDriftError);
-    expect(err.changed).toEqual(["002_b.sql"]);
+    });
+    expect(r.changed).toEqual([]);
+    expect(r.edited).toEqual(["002_b.sql"]);
   });
 
-  it("only reports drift to production, and still applies what's new", async () => {
+  it("warns production about an edited migration, then records the new hash", async () => {
     await applyMigrations(url, [m1, m2], { appliedIn: "production" });
     const m3 = { name: "003_c.sql", sql: "CREATE TABLE c (id int);" };
     const r = await applyMigrations(url, [m1, m2edited, m3], {
       appliedIn: "production",
     });
-    expect(r.changed).toEqual(["002_b.sql"]);
+    expect(r.edited).toEqual(["002_b.sql"]);
+    expect(r.changed).toEqual([]);
     expect(r.applied).toEqual(["003_c.sql"]);
-    // The recorded hash stays the one that ran.
-    expect((await rows())[1]?.sha256).toBe(sha256(m2.sql));
+    // So branches made from production later don't inherit the warning.
+    expect((await rows())[1]?.sha256).toBe(sha256(m2edited.sql));
+    const again = await applyMigrations(url, [m1, m2edited, m3], {
+      appliedIn: "preview",
+      refuseDrift: true,
+    });
+    expect(again.edited).toEqual([]);
   });
 
   it("rolls back every migration in a run when one fails", async () => {

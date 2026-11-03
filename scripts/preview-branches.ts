@@ -9,8 +9,9 @@
 //
 //   close: when a pull request closes, delete preview/<its branch>, unless
 //          another open pull request still uses that branch.
-//   sweep: nightly, delete every preview/ branch older than a day whose git
-//          branch has no open pull request.
+//   sweep: nightly, delete every preview/ branch older than a day with no
+//          open pull request whose git branch is gone, or which is over a
+//          week old (a branch pushed and abandoned without a pull request).
 //
 // It only ever deletes a branch whose name starts with preview/ and that Neon
 // doesn't mark as the project's primary, default or protected branch, and
@@ -60,6 +61,8 @@ export function forClosedPullRequest(
   );
 }
 
+// Candidates for the nightly sweep: day-old previews with no open pull
+// request. Whether each one's git branch still exists is checked after.
 export function forSweep(
   branches: NeonBranch[],
   openHeadRefs: Set<string>,
@@ -73,6 +76,16 @@ export function forSweep(
     const made = Date.parse(b.created_at);
     return Number.isFinite(made) && made < cutoff;
   });
+}
+
+// A sweep candidate whose git branch is still there keeps its database, so a
+// branch being pushed before its pull request opens keeps a working preview,
+// until it's a week old.
+export function abandoned(b: NeonBranch, now: Date, maxAgeDays = 7): boolean {
+  const made = Date.parse(b.created_at);
+  return (
+    Number.isFinite(made) && made < now.getTime() - maxAgeDays * 86_400_000
+  );
 }
 
 async function json(
@@ -142,6 +155,26 @@ export async function openHeadRefs(
   return refs;
 }
 
+// Whether a git branch exists. Anything but a clear 404 counts as yes, so a
+// GitHub hiccup never deletes a database.
+export async function gitBranchExists(
+  repo: string,
+  name: string,
+  token: string | undefined,
+  f: Fetch = fetch,
+): Promise<boolean> {
+  const path = name.split("/").map(encodeURIComponent).join("/");
+  const res = await f(`${GITHUB_API}/repos/${repo}/branches/${path}`, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  return res.status !== 404;
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export type RunResult = { deleted: string[]; skipped?: string };
 
 export async function run(
@@ -152,6 +185,7 @@ export async function run(
     now?: Date;
     dryRun?: boolean;
     log?: (s: string) => void;
+    retryDelayMs?: number;
   } = {},
 ): Promise<RunResult> {
   const f = options.f ?? fetch;
@@ -182,10 +216,20 @@ export async function run(
     listBranches(projectId, apiKey, f),
     openHeadRefs(repo, env.GITHUB_TOKEN, f),
   ]);
-  const doomed =
-    mode === "close"
-      ? forClosedPullRequest(branches, headRef, open)
-      : forSweep(branches, open, options.now ?? new Date());
+  const now = options.now ?? new Date();
+  let doomed: NeonBranch[];
+  if (mode === "close") doomed = forClosedPullRequest(branches, headRef, open);
+  else {
+    doomed = [];
+    for (const b of forSweep(branches, open, now)) {
+      const ref = b.name.slice(PREFIX.length);
+      if (
+        abandoned(b, now) ||
+        !(await gitBranchExists(repo, ref, env.GITHUB_TOKEN, f))
+      )
+        doomed.push(b);
+    }
+  }
   if (mode === "close" && doomed.length === 0)
     log(
       open.has(headRef)
@@ -194,34 +238,48 @@ export async function run(
     );
 
   const deleted: string[] = [];
+  const failed: string[] = [];
+  const del = () => ({
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+  });
   for (const b of doomed) {
     if (options.dryRun) {
       log(`Would delete ${b.name} (${b.id}).`);
       continue;
     }
-    const res = await f(
-      `${NEON_API}/projects/${encodeURIComponent(projectId)}/branches/${b.id}`,
-      {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: "application/json",
-        },
-      },
-    );
-    // Already gone (the integration's own cleanup got there first) is fine.
-    if (res.status === 404) {
-      log(`${b.name} was already gone.`);
-      continue;
+    const at = `${NEON_API}/projects/${encodeURIComponent(projectId)}/branches/${b.id}`;
+    try {
+      let res = await f(at, del());
+      // 423: the branch is busy with another operation. Once more, later.
+      if (res.status === 423) {
+        await sleep(options.retryDelayMs ?? 10_000);
+        res = await f(at, del());
+      }
+      // Already gone (the integration's own cleanup got there first) is fine.
+      if (res.status === 404) {
+        log(`${b.name} was already gone.`);
+        continue;
+      }
+      if (!res.ok) throw new Error(`answered ${res.status}`);
+      deleted.push(b.name);
+      log(`Deleted ${b.name} (${b.id}).`);
+    } catch (e) {
+      // One stuck branch doesn't keep the others: carry on, fail at the end.
+      failed.push(b.name);
+      log(
+        `::warning::Deleting ${b.name} failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
-    if (!res.ok) throw new Error(`Deleting ${b.name} answered ${res.status}`);
-    deleted.push(b.name);
-    log(`Deleted ${b.name} (${b.id}).`);
   }
   const left = branches.length - deleted.length;
   if (left >= CROWDED)
     log(
       `::warning::The Neon project has ${left} branches, near the plan's limit. Previews can't get a database once it's full.`,
+    );
+  if (failed.length)
+    throw new Error(
+      `Couldn't delete ${failed.join(", ")}; see the warnings above.`,
     );
   return { deleted };
 }

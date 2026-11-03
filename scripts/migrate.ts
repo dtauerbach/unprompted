@@ -47,15 +47,16 @@ try {
   console.error(`${e.message} ${driftHelp()}`);
   process.exit(1);
 }
-const { applied, changed, unknown } = result;
+const { applied, edited, unknown } = result;
 console.log(
   applied.length ? `Applied: ${applied.join(", ")}` : "Database is up to date.",
 );
 // A merged migration's file changed after it ran: the change never reaches
-// this database. Production says so loudly but doesn't stop the deploy.
-if (changed.length)
+// this database. Said loudly, but it doesn't stop the deploy (CI stops the
+// edit before it merges).
+if (edited.length)
   console.warn(
-    `Warning: ${changed.join(", ")} changed after this database ran it. Add a new migration instead of editing an applied one.`,
+    `Warning: ${edited.join(", ")} changed after this database ran it, so the change never reaches it. Add a new migration instead of editing an applied one.`,
   );
 if (unknown.length)
   console.log(

@@ -121,9 +121,14 @@ type Call = { url: string; method: string };
 function fakeApis(
   branches: NeonBranch[],
   pulls: { ref: string; repo: string | null }[],
-  opts: { deleteStatus?: number } = {},
+  opts: {
+    deleteStatus?: number | ((id: string, attempt: number) => number);
+    liveGitBranches?: string[];
+    pageSize?: number;
+  } = {},
 ) {
   const calls: Call[] = [];
+  const attempts = new Map<string, number>();
   const f = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
@@ -134,17 +139,37 @@ function fakeApis(
       expect(new Headers(init?.headers).get("authorization")).toBe(
         "Bearer neon-key",
       );
-      if (method === "DELETE") return ok({}, opts.deleteStatus ?? 200);
-      return ok({ branches, pagination: {} });
+      if (method === "DELETE") {
+        const id = url.slice(url.lastIndexOf("/") + 1);
+        const n = (attempts.get(id) ?? 0) + 1;
+        attempts.set(id, n);
+        const st = opts.deleteStatus;
+        return ok({}, typeof st === "function" ? st(id, n) : (st ?? 200));
+      }
+      const size = opts.pageSize ?? branches.length;
+      const cursor = Number(new URL(url).searchParams.get("cursor") ?? "0");
+      const page = branches.slice(cursor, cursor + size);
+      const next =
+        cursor + size < branches.length ? String(cursor + size) : undefined;
+      return ok({ branches: page, pagination: next ? { next } : {} });
     }
-    if (
-      url.startsWith("https://api.github.com/repos/dtauerbach/unprompted/pulls")
-    )
+    const gh = "https://api.github.com/repos/dtauerbach/unprompted/";
+    if (url.startsWith(`${gh}pulls`))
       return ok(
         pulls.map((p) => ({
           head: { ref: p.ref, repo: p.repo ? { full_name: p.repo } : null },
         })),
       );
+    if (url.startsWith(`${gh}branches/`)) {
+      const name = url
+        .slice(`${gh}branches/`.length)
+        .split("/")
+        .map(decodeURIComponent)
+        .join("/");
+      return (opts.liveGitBranches ?? []).includes(name)
+        ? ok({ name })
+        : ok({ message: "Branch not found" }, 404);
+    }
     throw new Error(`unexpected ${method} ${url}`);
   }) as typeof fetch;
   return { f, calls };
@@ -242,11 +267,51 @@ describe("running the cleanup", () => {
     expect(r.deleted).toEqual([]);
   });
 
-  it("fails loudly when Neon refuses a delete", async () => {
-    const { f } = fakeApis(all, [], { deleteStatus: 403 });
-    await expect(run("sweep", env, { f, now, log: () => {} })).rejects.toThrow(
-      /answered 403/,
-    );
+  it("fails loudly when Neon refuses a delete, after trying the rest", async () => {
+    const stale = { ...other, name: "preview/old-thing" };
+    const { f, calls } = fakeApis([production, mine, stale], [], {
+      deleteStatus: (id) => (id === mine.id ? 403 : 200),
+    });
+    const lines: string[] = [];
+    await expect(
+      run("sweep", env, { f, now, log: (l) => lines.push(l) }),
+    ).rejects.toThrow(/Couldn't delete preview\/claude\/thread-1/);
+    expect(deletes(calls)).toHaveLength(2);
+    expect(lines.join("\n")).toMatch(/::warning::.*answered 403/);
+    expect(lines.join("\n")).toContain("Deleted preview/old-thing");
+  });
+
+  it("tries a busy branch once more", async () => {
+    const { f, calls } = fakeApis([production, mine], [], {
+      deleteStatus: (_id, n) => (n === 1 ? 423 : 200),
+    });
+    const r = await run("sweep", env, {
+      f,
+      now,
+      log: () => {},
+      retryDelayMs: 0,
+    });
+    expect(r.deleted).toEqual([mine.name]);
+    expect(deletes(calls)).toHaveLength(2);
+  });
+
+  it("spares a live git branch's database for a week, then sweeps it", async () => {
+    const live = { liveGitBranches: ["claude/thread-1", "feature/x"] };
+    const week = { ...other, created_at: daysAgo(8) };
+    const { f } = fakeApis([production, mine, week], [], live);
+    const r = await run("sweep", env, { f, now, log: () => {} });
+    expect(r.deleted).toEqual([other.name]);
+  });
+
+  it("reads every page of Neon's branch list", async () => {
+    const { f, calls } = fakeApis(all, [], { pageSize: 2 });
+    const r = await run("sweep", env, { f, now, log: () => {} });
+    expect(r.deleted.sort()).toEqual([other.name, mine.name].sort());
+    expect(
+      calls.filter(
+        (c) => c.method === "GET" && c.url.includes("console.neon.tech"),
+      ),
+    ).toHaveLength(3);
   });
 
   it("refuses a project id that isn't one", async () => {

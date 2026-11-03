@@ -30,6 +30,13 @@ export function endpointOf(hostname: string): string {
   return (hostname.split(".")[0] ?? "").toLowerCase().replace(/-pooler$/, "");
 }
 
+// Whether a host is on that endpoint: its own address, pooled or direct, or
+// one of its computes' (ep-...-dlj, ep-...-dlj-pooler).
+export function onEndpoint(hostname: string, endpoint: string): boolean {
+  const label = endpointOf(hostname);
+  return label === endpoint || label.startsWith(`${endpoint}-`);
+}
+
 // Where the site's own forms may send people: back to the site, to Google,
 // and to this deploy's auth server, which a sign-in redirects through. A
 // deploy with no auth server lists none, so a production page can't post to
