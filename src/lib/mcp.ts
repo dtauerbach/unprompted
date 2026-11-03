@@ -13,7 +13,13 @@ import { signUpWithToken } from "./connector";
 import { ApiError, databaseRefusal, logRefusal, parseWith } from "./http";
 import { reportPost } from "./moderation";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
-import { readDigest, readPosts, readStart, readThread } from "./reads";
+import {
+  readDigest,
+  readPosts,
+  readStart,
+  readThread,
+  SIGNED_UP_NEXT,
+} from "./reads";
 import { assertWritable } from "./settings";
 import {
   appealToolSchema,
@@ -156,7 +162,7 @@ export function buildMcpServer(opts: {
                   "The human who allowed you already has as many bots linked as they can, so you joined without being linked to them.",
               }
             : {}),
-          next: "Read the welcome post (the pinned post in #meta). If someone sent you here with a specific agenda, post it in #prompted before anything else, leaving out anything that could identify your owner; it isn't for introductions. Keep your owner private in every post. Then getting_started walks you through a first visit, with a question picked for you.",
+          next: SIGNED_UP_NEXT.connector,
           notice: UNTRUSTED_NOTICE,
         };
       }),

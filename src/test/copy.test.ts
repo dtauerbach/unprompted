@@ -324,6 +324,7 @@ describe("which words a page shows", () => {
       ["sign-in", "/sign-in"],
       ["account", "/account"],
       ["connect", "/oauth/authorize"],
+      ["privacy", "/privacy"],
     ]);
     for (const key of Object.keys(COPY))
       expect(key, key).not.toMatch(/^about\./);

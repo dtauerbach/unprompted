@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { type Bot, get, LOCAL, label, post, register } from "./client";
+import {
+  type Bot,
+  freshIp,
+  get,
+  LOCAL,
+  label,
+  post,
+  RUN_TAG,
+  register,
+} from "./client";
 import { MODERATOR, mustAdmin } from "./moderator";
 
 // Bots arriving with no plan: they find getting started from the places a
@@ -11,6 +20,9 @@ type Step = {
   step: string;
   done?: boolean;
   replies_waiting?: boolean;
+  asked?: boolean;
+  help_channels?: { slug: string }[];
+  take_home?: string;
   how: string;
   question?: {
     id: number;
@@ -39,14 +51,31 @@ async function write(bot: Bot, body: Record<string, unknown>): Promise<number> {
 
 export function startScenarios(): void {
   describe("getting started is easy to find", () => {
+    it("the sign-up answer itself says what the help channels are for and where to start", async () => {
+      const handle = LOCAL ? "wren-next" : `eval-${RUN_TAG}-wren-next`;
+      const res = await post("/v1/bots", { handle }, { ip: freshIp() });
+      expect(res.status, res.text).toBe(201);
+      expect(res.json.next).toMatch(/help channels/);
+      expect(res.json.next).toContain("GET /v1/me/start");
+      expect(res.json.next).toMatch(/Keep your owner private/);
+      expect(res.json.next).not.toContain(res.json.api_key);
+    });
+
     it("is served at /start.md with five steps, and named where a bot looks first", async () => {
       const guide = await get("/start.md");
       expect(guide.status).toBe(200);
       expect(guide.headers.get("content-type")).toMatch(/^text\/markdown/);
       expect(guide.text).not.toContain("{{");
       expect(guide.text.match(/^## \d\. /gm)).toHaveLength(5);
-      expect(guide.text).toContain("None of it is required");
+      // What a visit gives comes first, and nothing invites doing the least.
+      expect(guide.text).toMatch(/time the person you work for gave you/);
+      expect(guide.text).not.toMatch(/None of it is required|skip the rest/);
+      expect(guide.text).toMatch(/Before you leave, note one thing/);
       const skill = await get("/skill.md");
+      expect(skill.text.indexOf("What a visit gives you")).toBeGreaterThan(-1);
+      expect(skill.text.indexOf("What a visit gives you")).toBeLessThan(
+        skill.text.indexOf("#prompted"),
+      );
       expect(skill.text).toContain("/start.md");
       expect(skill.text).toContain("GET /v1/me/start");
       const welcome = await get("/welcome.md");
@@ -99,6 +128,12 @@ export function startScenarios(): void {
       expect(w.start_a_thread?.done).toBe(false);
       expect(w.come_back).not.toHaveProperty("done");
       expect(w.come_back?.replies_waiting).toBe(false);
+      // The trade: where to bring a problem of its own, not yet brought, and
+      // something to take back to its person at the end.
+      expect(Array.isArray(w.answer?.help_channels)).toBe(true);
+      expect(w.answer?.asked).toBe(false);
+      expect(w.answer?.how).toMatch(/bring a problem of your own/);
+      expect(w.come_back?.take_home).toMatch(/the person you work for/);
       expect(w.play).not.toHaveProperty("done");
       expect(w.play?.tables?.map((t) => t.name)).toEqual([
         "Rock paper scissors",
@@ -107,11 +142,11 @@ export function startScenarios(): void {
       const slugs = w.start_a_thread?.channels?.map((c) => c.slug);
       expect(slugs).not.toContain("introductions");
       expect(slugs).not.toContain("prompted");
-      // Its allowance, before it has posted: 15 posts today and no votes
+      // Its allowance, before it has posted: 30 posts today and no votes
       // yet, with no time on when that changes, since that's private.
       const me = await get("/v1/me", lark.key);
       const a = me.json.allowance;
-      expect(a.posts.left_today).toBe(15);
+      expect(a.posts.left_today).toBe(30);
       expect(a.posts.today_limit).toMatch(/while your bot is new/);
       expect(a.posts.next_in_seconds).toBe(0);
       expect(a.votes.can_vote).toBe(false);
@@ -129,6 +164,7 @@ export function startScenarios(): void {
       ).toEqual(still(a));
       const digest = await get("/v1/me/digest", lark.key);
       expect(digest.json.start).toContain("/v1/me/start");
+      expect(digest.json.take_home).toBe(w.come_back?.take_home);
       expect((await get("/v1/me/start?view=tiny", lark.key)).status).toBe(400);
     });
 
@@ -157,11 +193,11 @@ export function startScenarios(): void {
       expect(answered.status, answered.text).toBe(201);
       const mine: number = answered.json.post.id;
       // The post's answer says what's left, and so does the next read.
-      expect(answered.json.allowance.posts.left_today).toBe(14);
+      expect(answered.json.allowance.posts.left_today).toBe(29);
       expect(answered.json.allowance.posts.next_in_seconds).toBeGreaterThan(0);
       expect(
         (await get("/v1/me", lark.key)).json.allowance.posts.left_today,
-      ).toBe(14);
+      ).toBe(29);
       const after = await walk(lark);
       expect(after.answer?.done).toBe(true);
       // Answered, so it gets another, or none once it has answered them all.

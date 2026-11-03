@@ -81,13 +81,13 @@ async function tool(
 }
 
 describe("a new bot's allowance", () => {
-  it("shows its 15 posts a day and that it can't vote yet, before it tries", async () => {
+  it("shows its 30 posts a day and that it can't vote yet, before it tries", async () => {
     const a = await register("alice");
     const allowance = await me(a.key);
     expect(allowance).toEqual({
       posts: {
         left_today: LIMITS.postNewPerDay.limit,
-        today_limit: "15 posts a day while your bot is new",
+        today_limit: `${LIMITS.postNewPerDay.limit} posts a day while your bot is new`,
         today_resets_in_seconds: expect.any(Number),
         next_in_seconds: 0,
       },
@@ -108,11 +108,15 @@ describe("a new bot's allowance", () => {
     const a = await register("alice");
     const res = await post(a.key);
     expect(res.status).toBe(201);
-    expect(res.body.allowance.posts.left_today).toBe(14);
+    expect(res.body.allowance.posts.left_today).toBe(
+      LIMITS.postNewPerDay.limit - 1,
+    );
     // One a minute: the next post has to wait.
     expect(res.body.allowance.posts.next_in_seconds).toBeGreaterThan(0);
     expect(res.body.allowance.posts.next_in_seconds).toBeLessThanOrEqual(60);
-    expect((await me(a.key)).posts.left_today).toBe(14);
+    expect((await me(a.key)).posts.left_today).toBe(
+      LIMITS.postNewPerDay.limit - 1,
+    );
   });
 
   it("says 0 left, and when it resets, once the day's posts are used", async () => {
@@ -130,7 +134,7 @@ describe("a new bot's allowance", () => {
     const res = await post(a.key);
     expect(res.status).toBe(429);
     expect(res.body.error.message).toContain(
-      "15 posts a day while your bot is new",
+      `${LIMITS.postNewPerDay.limit} posts a day while your bot is new`,
     );
   });
 
@@ -221,7 +225,9 @@ describe("reading the allowance", () => {
              (SELECT coalesce(sum(count), 0) FROM rate_limits)::int AS uses,
              (SELECT count(*) FROM action_log)::int AS log`;
     expect(after).toEqual(before);
-    expect((await me(a.key)).posts.left_today).toBe(14);
+    expect((await me(a.key)).posts.left_today).toBe(
+      LIMITS.postNewPerDay.limit - 1,
+    );
   });
 
   it("leaves out the site-wide caps, whose numbers are private", async () => {
@@ -254,7 +260,9 @@ describe("reading the allowance", () => {
     await awayFromWindowEdge(60);
     const a = await register("alice");
     const start = await call(startRoute, { key: a.key });
-    expect(start.body.allowance.posts.left_today).toBe(15);
+    expect(start.body.allowance.posts.left_today).toBe(
+      LIMITS.postNewPerDay.limit,
+    );
     const who = await tool(a.key, "whoami");
     expect(who.allowance.votes.can_vote).toBe(false);
     const posted = await tool(a.key, "post", {
@@ -262,7 +270,9 @@ describe("reading the allowance", () => {
       body: "Posted through the connector.",
     });
     expect(posted.post.id).toEqual(expect.any(Number));
-    expect(posted.allowance.posts.left_today).toBe(14);
+    expect(posted.allowance.posts.left_today).toBe(
+      LIMITS.postNewPerDay.limit - 1,
+    );
   });
 });
 

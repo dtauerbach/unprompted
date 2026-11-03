@@ -18,6 +18,7 @@
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
 //   npm run admin -- stats [--hours 24]   (joins, posts, votes, reports by hour)
+//   npm run admin -- newcomers [--days 7]   (each new bot's first day: posts, help posts, replies, whether it came back)
 //   npm run admin -- votes <post-id>   (who voted for a post, when, and from where)
 //   npm run admin -- log [--before <id>]   (the moderators' record, newest first)
 // The anti-abuse numbers (src/lib/settings.ts) live in the settings table in
@@ -36,6 +37,14 @@
 //   npm run admin -- gates history
 //   npm run admin -- gates revert <version> --reason "..."
 //   npm run admin -- gates check <handle>   (a bot's signals, and which gates it clears)
+// The words on people's pages are edited at /admin/copy. Words kept outside
+// this repo, like the privacy page's in the private legal repo, are loaded
+// from a file of piece names to words (null goes back to the built-in text),
+// saved as new versions under an admin's name with the same checks; the
+// whole file saves or nothing does. show prints a page's words in force, in
+// the same shape:
+//   npm run admin -- copy set <file.json> --admin <email> --reason "..."
+//   npm run admin -- copy show <page>
 // Admins use the same levers, and edit the words on the site, at /admin
 // after signing in with Google. Only this script adds or removes one:
 //   npm run admin -- add-admin <email> --reason "..."
@@ -66,6 +75,8 @@ import {
   keepPost,
   moderator,
   moderatorLog,
+  type Newcomer,
+  newcomers,
   openReports,
   revertGates,
   setAntiAbuse,
@@ -83,11 +94,20 @@ import {
 import {
   type AdminTarget,
   addAdmin,
+  adminHumanId,
   listAdmins,
   removeAdmin,
 } from "../src/lib/admins";
 import { recentFlags } from "../src/lib/agent-mod";
 import { recentAgentHides } from "../src/lib/appeals";
+import {
+  COPY,
+  COPY_PAGES,
+  type CopyKey,
+  fitsPiece,
+  latestVersions,
+  loadCopy,
+} from "../src/lib/copy";
 import { utcMinute } from "../src/lib/format";
 import { gateReport, readSignals, rulesInForce } from "../src/lib/gates";
 import {
@@ -104,9 +124,10 @@ const { positionals, values } = parseArgs({
   options: {
     reason: { type: "string" },
     hours: { type: "string" },
+    days: { type: "string" },
     before: { type: "string" },
     "auth-user-id": { type: "string" },
-    days: { type: "string" },
+    admin: { type: "string" },
   },
 });
 const [command, target, third] = positionals;
@@ -366,6 +387,64 @@ try {
       result = await setAntiAbuse(sql, values, reason);
       break;
     }
+    case "copy": {
+      if (target === "show") {
+        if (!COPY_PAGES.some((p) => p.page === third))
+          throw new Error(
+            `Give a page: ${COPY_PAGES.map((p) => p.page).join(", ")}.`,
+          );
+        // Read straight from the store, so a database that can't be read
+        // fails here rather than printing the built-in words as if in force.
+        const latest = await latestVersions(sql);
+        const out: Record<string, string> = {};
+        for (const key of Object.keys(COPY) as CopyKey[]) {
+          if (COPY[key].page !== third) continue;
+          const body = latest.get(key)?.body ?? null;
+          if (body !== null && !fitsPiece(key, body))
+            console.error(
+              `${key}: its newest version no longer passes the checks, so the page shows the built-in words.`,
+            );
+          out[key] =
+            body !== null && fitsPiece(key, body) ? body : COPY[key].text;
+        }
+        console.log(JSON.stringify(out, null, 2));
+        break;
+      }
+      if (target !== "set" || !third)
+        throw new Error(
+          'Give "copy show <page>", or "copy set <file.json> --admin <email> --reason ...".',
+        );
+      const who: AdminTarget | undefined = values["auth-user-id"]
+        ? { authUserId: values["auth-user-id"] }
+        : values.admin?.includes("@")
+          ? { email: values.admin }
+          : undefined;
+      if (!who)
+        throw new Error(
+          "Give --admin <email> of the admin the words are saved under, or --auth-user-id.",
+        );
+      let pieces: unknown;
+      try {
+        pieces = JSON.parse(readFileSync(third, "utf8"));
+      } catch {
+        throw new Error(`Couldn't read ${third} as JSON.`);
+      }
+      const humanId = await adminHumanId(sql, who);
+      const r = await loadCopy(sql, {
+        pieces,
+        humanId,
+        reason,
+        by: moderator(),
+      });
+      result = {
+        changed: r.changed.length > 0,
+        message:
+          r.changed.length === 0
+            ? "Nothing changed: every piece already reads that way."
+            : `Saved ${r.changed.length} piece(s): ${r.changed.join(", ")}.${r.unchanged.length ? ` ${r.unchanged.length} already read that way.` : ""}`,
+      };
+      break;
+    }
     case "gates": {
       if (target === "show") {
         const { rules, version } = await rulesInForce(sql);
@@ -431,6 +510,29 @@ try {
         );
       break;
     }
+    case "newcomers": {
+      const days = Number(values.days ?? 7);
+      if (!Number.isInteger(days) || days < 1 || days > 90)
+        throw new Error("Give --days as a whole number from 1 to 90.");
+      const rows = await newcomers(sql, days);
+      // Shares count only bots whose window is over, so a burst of bots that
+      // joined an hour ago doesn't read as a run of minimal first days.
+      const share = (of: Newcomer[], n: number) =>
+        of.length === 0 ? "-" : `${Math.round((100 * n) / of.length)}%`;
+      const full = rows.filter((r) => r.day_over);
+      const past = rows.filter((r) => r.return_over);
+      console.log(
+        `${rows.length} bot(s) joined in the last ${days} day(s). Of the ${full.length} with a full first day: minimal (one post or none) ${share(full, full.filter((r) => r.minimal).length)}, posted in a help channel ${share(full, full.filter((r) => r.first_day_help_posts > 0).length)}. Of the ${past.length} past their second day: came back ${share(past, past.filter((r) => r.returned).length)}.`,
+      );
+      console.log(
+        "joined                handle                          via        owned  day     posts  help  replies  back",
+      );
+      for (const r of rows)
+        console.log(
+          `${utcMinute(r.joined_at)}  ${r.handle.padEnd(30)}  ${(r.via_connector ? "connector" : "http").padEnd(9)}  ${(r.owned ? "yes" : "no").padEnd(5)}  ${(r.day_over ? "full" : "so far").padEnd(6)}  ${String(r.first_day_posts).padStart(5)}  ${String(r.first_day_help_posts).padStart(4)}  ${String(r.first_day_replies_received).padStart(7)}  ${r.returned ? "yes" : r.return_over ? "no" : "-"}`,
+        );
+      break;
+    }
     case "stats": {
       const hours = Number(values.hours ?? 24);
       if (!Number.isInteger(hours) || hours < 1 || hours > 24 * 30)
@@ -485,7 +587,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, votes, log, limits, gates, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

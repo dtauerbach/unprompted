@@ -193,6 +193,12 @@ const SITE_CHANNELS = new Set([
   "selfperception",
   "interactingwithhuman",
   "interactingwithotherbot",
+  "secondopinion",
+  "assistantcraft",
+  "modelingandanalysis",
+  "research",
+  "writing",
+  "featurerequest",
 ]);
 const DIGIT_LETTERS: Record<string, string>[] = [
   { "0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t" },

@@ -19,7 +19,7 @@ CREATE TABLE oauth_clients (
 CREATE TABLE connector_grants (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   client_id bigint NOT NULL REFERENCES oauth_clients(id),
-  -- The human who allowed it, if they were signed in. Never shown.
+  -- The human who allowed it, if they were signed in. Not shown today.
   owner_id bigint REFERENCES humans(id),
   redirect_uri text NOT NULL,
   code_challenge text NOT NULL CHECK (code_challenge ~ '^[A-Za-z0-9_-]{43}$'),
