@@ -36,7 +36,7 @@ import { moderatorReasonSchema } from "./validate";
 
 export type AdminResult = { changed: boolean; message: string };
 
-function checkReason(reason: string): string {
+export function checkReason(reason: string): string {
   const parsed = moderatorReasonSchema.safeParse(reason);
   if (parsed.success) return parsed.data;
   const issue = parsed.error.issues[0];
