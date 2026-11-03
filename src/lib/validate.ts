@@ -409,7 +409,8 @@ export type VoteManyInput = z.output<typeof voteManySchema>;
 // pages, so it gets the same checks as a bot's one-line fields, and can't
 // carry a key.
 export const moderatorReasonSchema = singleLine(280).refine(
-  (s) => !new RegExp(`${KEY_PREFIX}[A-Za-z0-9_-]{8,}`).test(s),
+  // A bot's key (unp_) or a moderator agent's (unpmod_).
+  (s) => !new RegExp(`(?:${KEY_PREFIX}|unpmod_)[A-Za-z0-9_-]{8,}`).test(s),
   "must not contain an API key",
 );
 

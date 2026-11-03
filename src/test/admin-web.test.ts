@@ -10,7 +10,9 @@ import { COPY, readCopy, saveCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { issueOwnerCode } from "@/lib/humans";
+import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
+import { addModKey, authenticateMod } from "@/lib/mod-keys";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
 // Who is an admin, and the admin pages' actions. The actions are POST
@@ -78,6 +80,8 @@ async function writes() {
       posts: number;
       hidden: number;
       admins: number;
+      mod_keys: number;
+      mod_keys_revoked: number;
     }[]
   >`
     SELECT (SELECT count(*) FROM action_log)::int AS log,
@@ -86,7 +90,9 @@ async function writes() {
            (SELECT count(*) FROM channel_description_versions)::int AS descriptions,
            (SELECT count(*) FROM posts)::int AS posts,
            (SELECT count(*) FROM hidden_posts)::int AS hidden,
-           (SELECT count(*) FROM admins)::int AS admins`;
+           (SELECT count(*) FROM admins)::int AS admins,
+           (SELECT count(*) FROM mod_keys)::int AS mod_keys,
+           (SELECT count(*) FROM mod_keys WHERE revoked_at IS NOT NULL)::int AS mod_keys_revoked`;
   return r;
 }
 
@@ -94,6 +100,12 @@ function form(fields: Record<string, string>): FormData {
   const f = new FormData();
   for (const [k, v] of Object.entries(fields)) f.set(k, v);
   return f;
+}
+
+// A live moderator key, made the command line's way.
+async function liveModKey(): Promise<number> {
+  const k = await addModKey(db(), "moderator", "live-one", "Setup.", "x");
+  return k.id;
 }
 
 async function aPost(): Promise<number> {
@@ -232,11 +244,19 @@ describe("admin actions", () => {
         ),
       pause: () =>
         a.moderateAction({}, form({ op: "pause", reason: "Flood." })),
+      makeModKey: () =>
+        a.makeModKeyAction(
+          {},
+          form({ role: "moderator", label: "taken-over", reason: "Mine." }),
+        ),
+      revokeModKey: (id: number) =>
+        a.revokeModKeyAction({}, form({ id: String(id), reason: "Gone." })),
     };
   };
 
   it("send anyone with no session to sign in, and write nothing", async () => {
     const id = await aPost();
+    const keyId = await liveModKey();
     const before = await writes();
     const c = await calls();
     const runs = [
@@ -248,6 +268,8 @@ describe("admin actions", () => {
       c.restoreDescription,
       () => c.hide(id),
       c.pause,
+      c.makeModKey,
+      () => c.revokeModKey(keyId),
     ];
     for (const run of runs)
       await expect(run()).rejects.toThrow("redirect /sign-in");
@@ -257,6 +279,7 @@ describe("admin actions", () => {
 
   it("refuse a signed-in human who isn't an admin, and log the refusal", async () => {
     const id = await aPost();
+    const keyId = await liveModKey();
     await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
     // A human the site knows, as a real non-admin is once they've asked for
     // an owner code.
@@ -274,6 +297,8 @@ describe("admin actions", () => {
       c.restoreDescription,
       () => c.hide(id),
       c.pause,
+      c.makeModKey,
+      () => c.revokeModKey(keyId),
     ];
     for (const run of runs)
       expect(await run()).toEqual({ error: "Only admins can do that." });
@@ -301,11 +326,17 @@ describe("admin actions", () => {
     await db()`
       INSERT INTO rate_limits (bucket, window_start, count)
       VALUES (${`admin:${humanId}`}, to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), ${LIMITS.adminPerHour.limit})`;
-    const before = await writes();
     const c = await calls();
-    for (const run of [() => c.hide(id), c.pause])
+    const keyId = await liveModKey();
+    const limited = await writes();
+    for (const run of [
+      () => c.hide(id),
+      c.pause,
+      c.makeModKey,
+      () => c.revokeModKey(keyId),
+    ])
       expect((await run()).error).toMatch(/Rate limit/);
-    expect(await writes()).toEqual(before);
+    expect(await writes()).toEqual(limited);
   });
 
   it("stop working the moment an admin is removed", async () => {
@@ -610,9 +641,144 @@ describe("admin actions", () => {
       c.restoreDescription,
       () => c.hide(id),
       c.pause,
+      c.makeModKey,
     ])
       expect((await run()).error).toMatch(/read-only/);
     expect(await writes()).toEqual(before);
+  });
+
+  it("make a moderator key for an admin, shown once and kept only as a hash, and revoke it", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    const made = await a.makeModKeyAction(
+      {},
+      form({ role: "appeals", label: " appeals-1 ", reason: "The service." }),
+    );
+    expect(made.error).toBeUndefined();
+    expect(made.role).toBe("appeals");
+    expect(made.message).toMatch(/^Made key \d+\. Copy it now/);
+    const secret = made.secret ?? "";
+    expect(secret).toMatch(/^unpmod_[A-Za-z0-9_-]{43}$/);
+    const [row] = await db()<{ id: string; label: string; key_hash: string }[]>`
+      SELECT id, label, key_hash FROM mod_keys`;
+    expect(row?.label).toBe("appeals-1");
+    expect(row?.key_hash).toBe(hashKey(secret));
+    // The key itself is nowhere in the database.
+    const part = secret.slice(7, 30);
+    const [where] = await db()<{ found: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1 FROM action_log WHERE strpos(detail::text, ${part}) > 0
+        UNION ALL
+        SELECT 1 FROM mod_keys WHERE strpos(key_hash || label, ${part}) > 0
+      ) AS found`;
+    expect(where?.found).toBe(false);
+    const asKey = (role: "moderator" | "appeals") =>
+      authenticateMod(
+        new Request("http://x/mod/v1/appeals", {
+          headers: { authorization: `Bearer ${secret}` },
+        }),
+        role,
+      );
+    await expect(asKey("appeals")).resolves.toMatchObject({
+      role: "appeals",
+      label: "appeals-1",
+    });
+    await expect(asKey("moderator")).rejects.toMatchObject({
+      code: "wrong_role",
+    });
+    const id = Number(row?.id);
+    expect(
+      await a.revokeModKeyAction({}, form({ id: String(id), reason: "Done." })),
+    ).toEqual({ message: `Revoked key ${id}.` });
+    expect(
+      await a.revokeModKeyAction({}, form({ id: String(id), reason: "Done." })),
+    ).toEqual({ message: `Key ${id} wasn't live.` });
+    await expect(asKey("appeals")).rejects.toMatchObject({
+      code: "invalid_key",
+    });
+    const log = await db()`
+      SELECT action, human_id, subject, detail FROM action_log
+      WHERE action LIKE 'access.modkey.%' ORDER BY id`;
+    expect(log).toEqual([
+      {
+        action: "access.modkey.add",
+        human_id: String(humanId),
+        subject: `modkey:${id}`,
+        detail: {
+          role: "appeals",
+          label: "appeals-1",
+          reason: "The service.",
+          by: `human:${humanId}`,
+        },
+      },
+      {
+        action: "access.modkey.revoke",
+        human_id: String(humanId),
+        subject: `modkey:${id}`,
+        detail: { reason: "Done.", by: `human:${humanId}` },
+      },
+    ]);
+  });
+
+  it("refuse a bad role, label or reason, or a label already used, writing nothing", async () => {
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const a = await import("@/app/admin/actions");
+    const make = (fields: Record<string, string>) =>
+      a.makeModKeyAction(
+        {},
+        form({ role: "moderator", label: "mod-1", reason: "Why.", ...fields }),
+      );
+    expect((await make({})).secret).toBeDefined();
+    const before = await writes();
+    for (const [fields, error] of [
+      [{ role: "admin" }, /role is moderator or appeals/],
+      [{ role: "" }, /role is moderator or appeals/],
+      [{ label: "Mod 1" }, /label is 2 to 30/],
+      [{ label: "x" }, /label is 2 to 30/],
+      [{ reason: "" }, /can't be empty/],
+      [{ reason: "a\nb" }, /moderators' record, and/],
+      [{ reason: "x".repeat(281) }, /280 characters/],
+      [
+        { reason: `leaked unpmod_${"a".repeat(43)}` },
+        /must not contain an API key/,
+      ],
+      [{ label: "mod-1" }, /already labelled mod-1/],
+    ] as const) {
+      const r = await make(fields);
+      expect(r.error, JSON.stringify(fields)).toMatch(error);
+      expect(r.secret).toBeUndefined();
+    }
+    expect(await writes()).toEqual(before);
+    for (const id of ["", "x", "0", "-1"])
+      expect(
+        (await a.revokeModKeyAction({}, form({ id, reason: "Why." }))).error,
+      ).toBe("Pick a key.");
+    expect(
+      (await a.revokeModKeyAction({}, form({ id: "1", reason: "" }))).error,
+    ).toMatch(/can't be empty/);
+    expect(await writes()).toEqual(before);
+  });
+
+  it("still revoke a moderator key in read-only mode", async () => {
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const keyId = await liveModKey();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const a = await import("@/app/admin/actions");
+    expect(
+      await a.revokeModKeyAction(
+        {},
+        form({ id: String(keyId), reason: "Leaked." }),
+      ),
+    ).toEqual({ message: `Revoked key ${keyId}.` });
   });
 });
 
@@ -625,6 +791,7 @@ describe("admin pages", () => {
     botText: (await import("@/app/admin/for-bots/[key]/page")).default,
     description: (await import("@/app/admin/for-bots/channels/[slug]/page"))
       .default,
+    modKeys: (await import("@/app/admin/mod-keys/page")).default,
   });
   const historyOf = (key: string) => ({ params: Promise.resolve({ key }) });
   const channelOf = (slug: string) => ({ params: Promise.resolve({ slug }) });
@@ -643,6 +810,8 @@ describe("admin pages", () => {
     await expect(p.description(channelOf("prompted"))).rejects.toThrow(
       "redirect /sign-in",
     );
+    await expect(p.modKeys()).rejects.toThrow("redirect /sign-in");
+    await liveModKey();
     const a = await register("alice");
     await call(post, {
       key: a.key,
@@ -658,6 +827,7 @@ describe("admin pages", () => {
       renderToStaticMarkup(await p.forBots()),
       renderToStaticMarkup(await p.botText(historyOf("start"))),
       renderToStaticMarkup(await p.description(channelOf("prompted"))),
+      renderToStaticMarkup(await p.modKeys()),
     ]) {
       expect(html).toMatch(/<h1[^>]*>Not an admin<\/h1>/);
       expect(html).toContain(
@@ -665,11 +835,43 @@ describe("admin pages", () => {
       );
       expect(html).toContain('href="/forum"');
       expect(html).not.toMatch(
-        /alice|Moderation|Reports|copy_versions|<form|Getting started|specific agenda|norms/i,
+        /alice|Moderation|Reports|copy_versions|<form|Getting started|specific agenda|norms|live-one|Moderator keys/i,
       );
       expect(html).not.toContain(COPY["home.tagline"].text);
     }
     expect(await writes()).toEqual(before);
+  });
+
+  it("show an admin the moderator keys by label, never a key or its hash, and only revoking in read-only mode", async () => {
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const live = await addModKey(db(), "moderator", "mod-live", "Setup.", "x");
+    const gone = await addModKey(db(), "appeals", "appeals-old", "Setup.", "x");
+    await db()`UPDATE mod_keys SET revoked_at = now() WHERE id = ${gone.id}`;
+    const p = await pages();
+    const html = renderToStaticMarkup(await p.modKeys());
+    expect(html).toMatch(/<h1[^>]*>Moderator keys<\/h1>/);
+    expect(html).toContain(
+      `Key ${live.id}: moderator, &quot;mod-live&quot;, made`,
+    );
+    expect(html).toMatch(
+      new RegExp(
+        `Key ${gone.id}: appeals, &quot;appeals-old&quot;, made [^<]*, revoked`,
+      ),
+    );
+    expect(html).toContain("Make key");
+    expect(html.match(/>Revoke</g)).toHaveLength(1);
+    expect(html).toContain('href="/admin/mod-keys"');
+    for (const k of [live, gone]) {
+      expect(html).not.toContain(k.secret.slice(7));
+      expect(html).not.toContain(hashKey(k.secret));
+    }
+    expect(html).not.toContain("unpmod_");
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const readOnly = renderToStaticMarkup(await p.modKeys());
+    expect(readOnly).not.toContain("Make key");
+    expect(readOnly).toContain("read-only mode");
+    expect(readOnly.match(/>Revoke</g)).toHaveLength(1);
   });
 
   it("show an admin the report queue, with bots' words as plain text", async () => {
