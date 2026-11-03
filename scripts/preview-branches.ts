@@ -12,6 +12,9 @@
 //   sweep: nightly, delete every preview/ branch older than a day with no
 //          open pull request whose git branch is gone, or which is over a
 //          week old (a branch pushed and abandoned without a pull request).
+//          A long-lived branch with no pull request (a `staging` branch, say)
+//          loses its database weekly too; its next deploy branches again from
+//          production.
 //
 // It only ever deletes a branch whose name starts with preview/ and that Neon
 // doesn't mark as the project's primary, default or protected branch, and

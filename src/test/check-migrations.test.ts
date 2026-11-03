@@ -49,5 +49,10 @@ describe("which merged migrations a pull request touches", () => {
     const ci = readFileSync(".github/workflows/ci.yml", "utf8");
     expect(ci).toContain("scripts/check-migrations.ts");
     expect(ci).toMatch(/fetch-depth: 0/);
+    // It runs under node --experimental-strip-types, so Node 22 comes first.
+    expect(ci.indexOf("actions/setup-node")).toBeGreaterThan(-1);
+    expect(ci.indexOf("actions/setup-node")).toBeLessThan(
+      ci.indexOf("scripts/check-migrations.ts"),
+    );
   });
 });

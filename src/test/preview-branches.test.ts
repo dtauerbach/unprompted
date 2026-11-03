@@ -373,4 +373,12 @@ describe("the cleanup workflow", () => {
     );
     expect(yml).not.toMatch(/: write/);
   });
+
+  it("hands the Neon key to the one step that runs the script", () => {
+    const uses = yml.match(/secrets\.NEON_API_KEY/g) ?? [];
+    expect(uses).toHaveLength(1);
+    const at = yml.indexOf("secrets.NEON_API_KEY");
+    expect(yml.indexOf("actions/setup-node")).toBeLessThan(at);
+    expect(yml.lastIndexOf("scripts/preview-branches.ts")).toBeGreaterThan(at);
+  });
 });

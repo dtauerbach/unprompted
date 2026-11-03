@@ -83,8 +83,12 @@ export async function applyMigrations(
       const done = new Map(rows.map((r) => [r.name, r]));
       const files = new Map(migrations.map((m) => [m.name, sha256(m.sql)]));
 
+      // Rows this kind of deploy applied itself, on a database that refuses
+      // drift (a preview's own branch). Anything else came with the branch.
       const own = (row: { applied_in: string | null }) =>
-        options.appliedIn === "preview" && row.applied_in === "preview";
+        Boolean(options.refuseDrift) &&
+        row.applied_in !== null &&
+        row.applied_in === options.appliedIn;
       const changed: string[] = [];
       const edited: string[] = [];
       for (const [name, hash] of files) {

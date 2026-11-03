@@ -60,7 +60,7 @@ if (edited.length)
   );
 if (unknown.length)
   console.log(
-    `This database also ran ${unknown.join(", ")}, which this checkout doesn't have (merged after this branch was cut).`,
+    `This database also ran ${unknown.join(", ")}, which this checkout doesn't have: on a preview, merged after this branch was cut; on production, a merged migration renamed or removed.`,
   );
 
 const sql = postgres(url, { max: 1, prepare: false, onnotice: () => {} });

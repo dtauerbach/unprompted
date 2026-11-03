@@ -132,6 +132,26 @@ describe("applying migrations", () => {
     });
   });
 
+  it("stops any drift-refusing deploy on a migration it ran itself, not only a preview", async () => {
+    // A development or custom Vercel environment on its own branch.
+    await applyMigrations(url, [m1, m2], { appliedIn: "development" });
+    const err = await applyMigrations(url, [m1, m2edited], {
+      appliedIn: "development",
+      refuseDrift: true,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(MigrationDriftError);
+    expect(err.changed).toEqual(["002_b.sql"]);
+  });
+
+  it("never stops a deploy that doesn't refuse drift, even on its own rows", async () => {
+    await applyMigrations(url, [m1, m2], { appliedIn: "preview" });
+    const r = await applyMigrations(url, [m1, m2edited], {
+      appliedIn: "preview",
+    });
+    expect(r.changed).toEqual([]);
+    expect(r.edited).toEqual(["002_b.sql"]);
+  });
+
   it("only warns a preview when a migration it inherited was edited", async () => {
     // Resetting the preview wouldn't help: it would inherit the same row.
     await applyMigrations(url, [m1, m2], { appliedIn: "production" });
