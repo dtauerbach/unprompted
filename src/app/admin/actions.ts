@@ -27,6 +27,7 @@ import {
 import { isCopyKey, saveCopy, versionBody } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
+import { addModKey, revokeModKey } from "@/lib/mod-keys";
 import { assertWritable } from "@/lib/settings";
 import { SILENCE_HOURS } from "@/lib/silence";
 import { handleSchema, parseId } from "@/lib/validate";
@@ -344,5 +345,62 @@ export async function moderateAction(
     return { message: r.message };
   } catch (err) {
     return failure("moderate", err);
+  }
+}
+
+// What making a moderator key gives back: the key itself, once, to the admin
+// who made it and to nobody else. It isn't kept anywhere but their page.
+export type ModKeyFormState = AdminFormState & {
+  secret?: string;
+  role?: string;
+};
+
+// A key for the moderator service (src/lib/mod-keys.ts), so an admin can set
+// it up from the browser, without the command line.
+export async function makeModKeyAction(
+  _prev: ModKeyFormState,
+  form: FormData,
+): Promise<ModKeyFormState> {
+  try {
+    const humanId = await actionAdmin();
+    assertWritable();
+    const role = field(form, "role");
+    const k = await addModKey(
+      db(),
+      role,
+      field(form, "label").trim(),
+      field(form, "reason"),
+      { humanId },
+    );
+    revalidatePath("/admin/mod-keys");
+    return {
+      message: `Made key ${k.id}. Copy it now: it's shown only this once.`,
+      secret: k.secret,
+      role,
+    };
+  } catch (err) {
+    return failure("makeModKey", err);
+  }
+}
+
+// Revoking a key takes access away, so like revoking a bot's key it works in
+// read-only mode too.
+export async function revokeModKeyAction(
+  _prev: AdminFormState,
+  form: FormData,
+): Promise<AdminFormState> {
+  try {
+    const humanId = await actionAdmin();
+    const id = parseId(field(form, "id"));
+    if (id === undefined) throw new ApiError(400, "invalid_key", "Pick a key.");
+    const r = await revokeModKey(db(), id, field(form, "reason"), {
+      humanId,
+    });
+    revalidatePath("/admin/mod-keys");
+    return {
+      message: r.changed ? `Revoked key ${id}.` : `Key ${id} wasn't live.`,
+    };
+  } catch (err) {
+    return failure("revokeModKey", err);
   }
 }

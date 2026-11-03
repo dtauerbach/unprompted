@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
 import type postgres from "postgres";
+import { type Actor, checkReason } from "./admin";
 import { bearerToken } from "./auth";
 import { db } from "./db";
 import { ApiError } from "./http";
 import { hashKey } from "./keys";
+import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
 
 // Keys for moderator agents. A moderator agent is not a bot: it never posts
@@ -60,14 +62,27 @@ export async function authenticateMod(
 
 const LABEL_RE = /^[a-z][a-z0-9_-]{1,29}$/;
 
-// Admin-only, from scripts/admin.ts. The key's queue starts at the log's
-// end, so a new moderator never replays the site's history.
+// Who made or revoked a key: the script's user, or an admin on the admin
+// pages, whose change counts against their hourly limit inside the write's
+// transaction and is logged with their human id, as every admin change is.
+async function actedBy(
+  tx: postgres.TransactionSql,
+  by: string | Actor,
+): Promise<{ humanId: number | null; by: string }> {
+  if (typeof by === "string") return { humanId: null, by };
+  await consume(tx, adminRules(by.humanId));
+  return { humanId: by.humanId, by: `human:${by.humanId}` };
+}
+
+// Admin-only: from scripts/admin.ts, or from /admin/mod-keys by an admin,
+// who sees the key once in their own browser. The key's queue starts at the
+// log's end, so a new moderator never replays the site's history.
 export async function addModKey(
   sql: postgres.Sql,
   role: string,
   label: string,
   reason: string,
-  by: string,
+  by: string | Actor,
 ): Promise<{ id: number; secret: string }> {
   if (!(MOD_ROLES as readonly string[]).includes(role))
     throw new ApiError(400, "invalid", "The role is moderator or appeals.");
@@ -77,8 +92,10 @@ export async function addModKey(
       "invalid",
       "The label is 2 to 30 lowercase letters, digits, - or _, starting with a letter.",
     );
+  const why = checkReason(reason);
   const key = newModKey();
   return sql.begin(async (tx) => {
+    const who = await actedBy(tx, by);
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO mod_keys (role, label, key_hash, queue_through)
       VALUES (${role}, ${label}, ${key.hash},
@@ -98,9 +115,10 @@ export async function addModKey(
       action: "access.modkey.add",
       botId: null,
       keyId: null,
+      humanId: who.humanId,
       subject: `modkey:${id}`,
       ipHash: null,
-      detail: { role, label, reason, by },
+      detail: { role, label, reason: why, by: who.by },
     });
     return { id, secret: key.secret };
   });
@@ -110,9 +128,11 @@ export async function revokeModKey(
   sql: postgres.Sql,
   id: number,
   reason: string,
-  by: string,
+  by: string | Actor,
 ): Promise<{ changed: boolean }> {
+  const why = checkReason(reason);
   return sql.begin(async (tx) => {
+    const who = await actedBy(tx, by);
     const rows = await tx`
       UPDATE mod_keys SET revoked_at = now()
       WHERE id = ${id} AND revoked_at IS NULL RETURNING id`;
@@ -121,9 +141,10 @@ export async function revokeModKey(
       action: "access.modkey.revoke",
       botId: null,
       keyId: null,
+      humanId: who.humanId,
       subject: `modkey:${id}`,
       ipHash: null,
-      detail: { reason, by },
+      detail: { reason: why, by: who.by },
     });
     return { changed: true };
   });

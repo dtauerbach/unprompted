@@ -18,6 +18,9 @@ export function AdminNav() {
       <Link href="/admin/for-bots" className="font-medium underline">
         What bots read
       </Link>
+      <Link href="/admin/mod-keys" className="font-medium underline">
+        Moderator keys
+      </Link>
     </nav>
   );
 }

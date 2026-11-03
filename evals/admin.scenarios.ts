@@ -22,7 +22,23 @@ const PAGES = [
   "/admin/lookup?q=unprompted",
   "/admin/bots/unprompted",
   "/admin/humans/1",
+  "/admin/mod-keys",
 ];
+
+function modKeyAsAdmin(signInId: string, ...args: string[]) {
+  const run = spawnSync(
+    "npx",
+    [
+      "tsx",
+      "--conditions=react-server",
+      "evals/mod-key-make.ts",
+      signInId,
+      ...args,
+    ],
+    { encoding: "utf8" },
+  );
+  return { ok: run.status === 0, out: `${run.stdout}${run.stderr}`.trim() };
+}
 
 function editCopy(signInId: string, key: string, words: string) {
   const run = spawnSync(
@@ -51,7 +67,7 @@ export function adminScenarios(): void {
           ).toBe("/sign-in");
         else expect(res.status, path).toBe(404);
         expect(res.text).not.toMatch(
-          /Words on the site|What bots read|Reported posts|Moderation history|Their bots/,
+          /Words on the site|What bots read|Reported posts|Moderation history|Their bots|Moderator keys|Make key/,
         );
       }
     });
@@ -66,7 +82,7 @@ export function adminScenarios(): void {
           },
         });
         expect(res.status, path).not.toBe(200);
-        expect(res.text).not.toMatch(/Saved\.|Hid post/);
+        expect(res.text).not.toMatch(/Saved\.|Hid post|Made key|unpmod_/);
       }
     });
 
@@ -183,6 +199,45 @@ export function adminScenarios(): void {
           "Eval done.",
         );
       }
+    });
+
+    it("makes a moderator key from the admin page that works once pasted in, and revokes it", async () => {
+      const id = `eval-modkey-${RUN_TAG}`;
+      const label = `page-${RUN_TAG}`
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "")
+        .slice(0, 30);
+      const made = modKeyAsAdmin(
+        id,
+        "add",
+        "moderator",
+        label,
+        "Eval page key.",
+      );
+      expect(made.ok, made.out).toBe(true);
+      const key = made.out.split("\n").pop() ?? "";
+      expect(key).toMatch(/^unpmod_[A-Za-z0-9_-]{43}$/);
+      const queue = await request("GET", "/mod/v1/queue", { key });
+      expect(queue.status).toBe(200);
+      // An appeals route takes only an appeals key.
+      expect((await request("GET", "/mod/v1/appeals", { key })).status).toBe(
+        403,
+      );
+      // A label names one key, ever.
+      const again = modKeyAsAdmin(id, "add", "appeals", label, "Again.");
+      expect(again.ok).toBe(false);
+      expect(again.out).toMatch(/already labelled/);
+      expect(again.out).not.toMatch(/unpmod_/);
+      const listed = mustAdmin("mod-keys");
+      const keyId = listed.match(
+        new RegExp(`mod key (\\d+): moderator "${label}"`),
+      )?.[1];
+      expect(keyId).toBeDefined();
+      expect(listed).not.toContain(key);
+      const revoked = modKeyAsAdmin(id, "revoke", keyId ?? "", "Eval done.");
+      expect(revoked.out).toBe("revoked");
+      expect((await request("GET", "/mod/v1/queue", { key })).status).toBe(401);
+      expect(mustAdmin("log")).not.toContain(key);
     });
 
     it("changes the words on a page, as plain text, and can go back", async () => {
