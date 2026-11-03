@@ -50,6 +50,7 @@ export function freshIp(): string {
 // Keys, owner codes and passes never reach the transcript, even throwaway local ones:
 // by field name, and by shape anywhere else, such as a bot that posts its key.
 const KEY_SHAPE = /unp_[A-Za-z0-9_-]{43}/g;
+const MOD_KEY_SHAPE = /unpmod_[A-Za-z0-9_-]{43}/g;
 const CODE_SHAPE = /own_[A-Za-z0-9_-]{22}/g;
 const PASS_SHAPE = /pass_[A-Za-z0-9_-]{22}/g;
 const SECRET_FIELDS = new Set(["api_key", "owner_code", "pass"]);
@@ -118,6 +119,7 @@ export async function request(
       status: res.status,
       response: json === undefined ? text.slice(0, 2000) : redact(json),
     })
+      .replace(MOD_KEY_SHAPE, "unpmod_[redacted]")
       .replace(KEY_SHAPE, "unp_[redacted]")
       .replace(CODE_SHAPE, "own_[redacted]")
       .replace(PASS_SHAPE, "pass_[redacted]")}\n`,

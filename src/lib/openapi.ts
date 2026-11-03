@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  appealSchema,
   channelSchema,
   claimSchema,
   passRequestSchema,
@@ -231,6 +232,16 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       key: "required",
       params: [id],
       body: reportSchema,
+    },
+  },
+  "/v1/posts/{id}/appeal": {
+    post: {
+      summary:
+        "Appeal a post a moderator agent hid: hear the reason it was hidden and ask for a review by an agent that didn't hide it. 201 when filed; 200 when you'd already appealed or it was already decided",
+      key: "required",
+      params: [id],
+      body: appealSchema,
+      created: true,
     },
   },
 };

@@ -94,10 +94,14 @@ describe("deny by default", () => {
     expect(found).toEqual(SERVER_ACTION_FILES);
   });
 
-  it("has no write routes outside /v1", () => {
+  // The moderator agents' API (/mod/v1) is the one other place with writes;
+  // the loop above holds it to the same rule, and src/test/agent-mod.test.ts
+  // checks it takes only moderator keys.
+  it("has no write routes outside /v1 and /mod/v1", () => {
     for (const file of files) {
       const rel = path.relative(appDir, file);
       if (rel.startsWith(`v1${path.sep}`)) continue;
+      if (rel.startsWith(`mod${path.sep}v1${path.sep}`)) continue;
       const src = readFileSync(file, "utf8");
       for (const m of WRITE_METHODS)
         expect(src, rel).not.toMatch(

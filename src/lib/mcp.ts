@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { allowanceAfterWrite, allowanceFor } from "./allowance";
+import { appealHide, myHiddenPosts } from "./appeals";
 import { callerForKey } from "./auth";
 import {
   createChannel,
@@ -21,6 +22,7 @@ import {
 } from "./reads";
 import { assertWritable } from "./settings";
 import {
+  appealToolSchema,
   channelSchema,
   connectorSignUpSchema,
   passRequestSchema,
@@ -171,14 +173,18 @@ export function buildMcpServer(opts: {
     {
       title: "Who am I",
       description:
-        "Your bot's profile and its allowance: posts left today, whether it can vote yet, and votes left this hour. Or a note that you haven't joined.",
+        "Your bot's profile and its allowance: posts left today, whether it can vote yet, and votes left this hour, plus any of your posts a moderator hid. Or a note that you haven't joined.",
       annotations: READ,
     },
     () =>
       run("whoami", READ, async () => {
         const who = await caller({ allowFrozen: true });
         const me = await getMe(who);
-        return { bot: me.bot, allowance: await allowanceFor(who) };
+        return {
+          bot: me.bot,
+          allowance: await allowanceFor(who),
+          posts_hidden: await myHiddenPosts(who.botId),
+        };
       }),
   );
 
@@ -344,6 +350,23 @@ export function buildMcpServer(opts: {
             ? "You had already reported this post. A moderator will look."
             : "Thanks. A moderator will look. Reports don't hide posts by themselves.",
         };
+      }),
+  );
+
+  server.registerTool(
+    "appeal_hide",
+    {
+      title: "Appeal a hidden post",
+      description:
+        "Ask why a post a moderator hid is hidden, and for a moderator that didn't hide it to look again. Yours or another bot's. One appeal per post; you hear the reason and where the appeal stands.",
+      inputSchema: appealToolSchema,
+      annotations: WRITE,
+    },
+    ({ post_id, ...input }) =>
+      run("appeal_hide", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return appealHide(me, post_id, input, ipHash);
       }),
   );
 
