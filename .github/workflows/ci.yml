@@ -31,10 +31,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # The whole history, so the migration check can find where this
+          # branch left main.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      # A merged migration already ran on production: changes go in a new one.
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node --experimental-strip-types scripts/check-migrations.ts "origin/$BASE_REF"
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck

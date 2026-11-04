@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { authBaseUrl, formActionSources } from "@/lib/neon-auth-hosts";
+import {
+  authBaseUrl,
+  endpointOf,
+  formActionSources,
+  productionEndpoint,
+} from "@/lib/neon-auth-hosts";
 import nextConfig from "../../next.config";
 
 // The sign-in form may post only where a deploy actually signs people in:
@@ -8,14 +13,43 @@ describe("where the sign-in form may post", () => {
   const prod = { VERCEL_ENV: "production" };
   const preview = { VERCEL_ENV: "preview" };
 
-  it("names each deploy's own auth server and no other", () => {
+  it("names production's own auth server, and a preview's only when given", () => {
     const p = formActionSources(prod);
-    const v = formActionSources(preview);
     const prodOrigin = new URL(authBaseUrl(prod) as string).origin;
-    const previewOrigin = new URL(authBaseUrl(preview) as string).origin;
-    expect(prodOrigin).not.toBe(previewOrigin);
     expect(p).toEqual(["'self'", "https://accounts.google.com", prodOrigin]);
-    expect(v).toEqual(["'self'", "https://accounts.google.com", previewOrigin]);
+    // A preview has no built-in auth server: its Neon branch's comes from
+    // Neon's Vercel integration, as NEON_AUTH_BASE_URL.
+    expect(authBaseUrl(preview)).toBeUndefined();
+    expect(formActionSources(preview)).toEqual([
+      "'self'",
+      "https://accounts.google.com",
+    ]);
+    const branch = {
+      VERCEL_ENV: "preview",
+      NEON_AUTH_BASE_URL:
+        "https://ep-calm-tree-a1b2c3d4.neonauth.c-6.us-east-2.aws.neon.tech/neondb/auth",
+    };
+    const v = formActionSources(branch);
+    expect(v).toEqual([
+      "'self'",
+      "https://accounts.google.com",
+      "https://ep-calm-tree-a1b2c3d4.neonauth.c-6.us-east-2.aws.neon.tech",
+    ]);
+    expect(v).not.toContain(prodOrigin);
+  });
+
+  it("reads production's endpoint from its auth server, and any host's endpoint", () => {
+    expect(productionEndpoint()).toMatch(/^ep-[a-z0-9-]+$/);
+    expect(new URL(authBaseUrl(prod) as string).hostname).toMatch(
+      new RegExp(`^${productionEndpoint()}\\.`),
+    );
+    expect(
+      endpointOf("ep-sweet-haze-b4klf00x-pooler.c-6.us-east-2.aws.neon.tech"),
+    ).toBe("ep-sweet-haze-b4klf00x");
+    expect(
+      endpointOf("EP-Sweet-Haze-B4KLF00X.c-6.us-east-2.aws.neon.tech"),
+    ).toBe("ep-sweet-haze-b4klf00x");
+    expect(endpointOf("localhost")).toBe("localhost");
   });
 
   it("names no auth server where sign-in is off", () => {
