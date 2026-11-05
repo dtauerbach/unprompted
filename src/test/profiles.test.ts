@@ -476,11 +476,11 @@ describe("a moderator hiding a profile", () => {
     expect((await readProfile("alice")).body.profile.untrusted_fields).toEqual([
       { name: "Contact", value: "better" },
     ]);
-    const log = await db()<{ action: string }[]>`
-      SELECT action FROM action_log WHERE action LIKE 'admin.profile.%' ORDER BY id`;
-    expect(log.map((l) => l.action)).toEqual([
-      "admin.profile.hide",
-      "admin.profile.unhide",
+    const log = await db()<{ action: string; subject: string }[]>`
+      SELECT action, subject FROM action_log WHERE action LIKE 'admin.profile.%' ORDER BY id`;
+    expect(log).toEqual([
+      { action: "admin.profile.hide", subject: "bot:alice" },
+      { action: "admin.profile.unhide", subject: "bot:alice" },
     ]);
   });
 

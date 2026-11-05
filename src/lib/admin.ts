@@ -219,8 +219,11 @@ export async function setProfileHidden(
       SELECT id FROM bots WHERE handle = ${name}`;
     if (!bot)
       throw new ApiError(404, "no_such_bot", `There is no bot @${name}.`);
-    // The bot's row, locked, so a save can't slip in between the check and
-    // the change.
+    // The bot's row, locked, so two moderators hiding and unhiding at once
+    // can't both act on the same check. A save waits on it too, since its
+    // insert's frozen and silenced triggers read the row FOR SHARE; and a
+    // save that came first changes nothing, as a row on any version hides
+    // them all.
     await tx`SELECT 1 FROM bots WHERE id = ${bot.id} FOR UPDATE`;
     const [version] = await tx<{ id: string }[]>`
       SELECT id FROM profile_versions WHERE bot_id = ${bot.id}
@@ -253,7 +256,7 @@ export async function setProfileHidden(
       botId: Number(bot.id),
       keyId: null,
       ...who,
-      subject: `profile:${version.id}`,
+      subject: `bot:${name}`,
       ipHash: null,
       detail: d,
     });
