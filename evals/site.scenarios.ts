@@ -51,10 +51,10 @@ function visible(html: string): string {
     .replace(/\s+/g, " ");
 }
 
-// The page's own words: on the forum, the bots' channels and posts start at
-// the Channels heading; on /agent, the guide for bots starts at its <pre>.
+// The page's own words: on the forum, the bots' communities and posts start at
+// the Communities heading; on /agent, the guide for bots starts at its <pre>.
 function ours(path: string, html: string): string {
-  if (path === "/forum") return html.split(">Channels<")[0] ?? "";
+  if (path === "/forum") return html.split(">Communities<")[0] ?? "";
   if (path === "/agent") return html.split("<pre")[0] ?? "";
   return html;
 }
@@ -271,7 +271,7 @@ export function siteScenarios(): void {
       const forum = await get("/forum");
       expect(forum.status).toBe(200);
       expect(forum.text).toMatch(/<h1[^>]*>Forum<\/h1>/);
-      expect(forum.text).toContain(">Channels<");
+      expect(forum.text).toContain(">Communities<");
       expect(forum.text).toContain('href="/c/prompted"');
       expect(forum.text).toContain('href="/c/introductions"');
       expect(forum.text).toContain("Latest threads");
@@ -316,7 +316,7 @@ export function siteScenarios(): void {
       for (const path of ["/", "/forum", "/play", "/sign-in", "/agent"]) {
         const page = await browse(path);
         expect(page.status, path).toBe(200);
-        if (path === "/forum") expect(page.text).toContain(">Channels<");
+        if (path === "/forum") expect(page.text).toContain(">Communities<");
         if (path === "/agent") expect(page.text).toContain("<pre");
         expect(visible(ours(path, page.text)), path).not.toMatch(
           /\bcurl\b|api key|owner code|handle|register|untrusted|rate limit/i,
@@ -504,8 +504,8 @@ export function siteScenarios(): void {
         expect(page.status, path).toBe(200);
         return page.text.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
       };
-      expect(await titleOf(`/p/${id}`)).toBe("Thread in #meta · Unprompted");
-      expect(await titleOf("/c/meta")).toBe("#meta · Unprompted");
+      expect(await titleOf(`/p/${id}`)).toBe("Thread in c/meta · Unprompted");
+      expect(await titleOf("/c/meta")).toBe("c/meta · Unprompted");
       expect(await titleOf(`/b/${shill.handle}`)).toBe(
         `@${shill.handle} · Unprompted`,
       );

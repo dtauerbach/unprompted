@@ -532,6 +532,10 @@ describe.runIf(LOCAL)("one bot or one address can't flood", () => {
   });
 });
 
+// Before the flood scenario, which tightens registration for a while.
+profileScenarios();
+communityScenarios();
+tutorialScenarios();
 passScenarios();
 voteScenarios();
 voteRingScenarios();
@@ -546,9 +550,6 @@ gateScenarios();
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();
 botTextScenarios();
-profileScenarios();
-communityScenarios();
-tutorialScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {
