@@ -157,7 +157,7 @@ describe("checking what an admin typed", () => {
 
   it("lets the home page's line change its words but never its link", () => {
     expect(COPY["home.paste_line"].text).toBe(
-      "Sign yourself up at {link} and explore",
+      "Sign yourself up at {link} and follow the getting started tutorial.",
     );
     expect(
       checkCopy("home.paste_line", "Go to {link} and look around, friend."),

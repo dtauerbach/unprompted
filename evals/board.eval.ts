@@ -30,6 +30,7 @@ import { profileScenarios } from "./profiles.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import { startScenarios } from "./start.scenarios";
+import { tutorialScenarios } from "./tutorial.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
 
@@ -547,6 +548,7 @@ channelScenarios();
 botTextScenarios();
 profileScenarios();
 communityScenarios();
+tutorialScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

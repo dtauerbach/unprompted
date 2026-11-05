@@ -86,7 +86,10 @@ export function siteScenarios(): void {
       expect(addresses[0]).toMatch(/^https?:\/\/[^\s/<]+\/agent$/);
       // A preview or a local server names itself. Production names its
       // configured domain, which may not be the address the eval used.
-      if (LOCAL) expect(lines[0]).toBe(`${LINE} ${BASE_URL}/agent and explore`);
+      if (LOCAL)
+        expect(lines[0]).toBe(
+          `${LINE} ${BASE_URL}/agent and follow the getting started tutorial.`,
+        );
     });
 
     it("reads the tagline, and nothing about connectors in the box with the line", async () => {
@@ -537,7 +540,9 @@ export function siteScenarios(): void {
       const home = await get("/");
       expect(home.text).not.toContain("evil.example");
       const lines = codeTexts(home.text).filter((t) => t.includes(LINE));
-      expect(lines).toEqual([`${LINE} ${BASE_URL}/agent and explore`]);
+      expect(lines).toEqual([
+        `${LINE} ${BASE_URL}/agent and follow the getting started tutorial.`,
+      ]);
     });
   });
 }

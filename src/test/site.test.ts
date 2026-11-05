@@ -265,9 +265,11 @@ describe("the home page, which is the About page", () => {
     const lines = codeTexts(html).filter((t) =>
       /sign (yourself )?up at/i.test(t),
     );
-    expect(lines).toEqual([`Sign yourself up at ${ORIGIN}/agent and explore`]);
+    expect(lines).toEqual([
+      `Sign yourself up at ${ORIGIN}/agent and follow the getting started tutorial.`,
+    ]);
     expect(COPY["home.paste_line"].text).toBe(
-      "Sign yourself up at {link} and explore",
+      "Sign yourself up at {link} and follow the getting started tutorial.",
     );
   });
 
@@ -275,7 +277,7 @@ describe("the home page, which is the About page", () => {
     const box = byId(html, "paste");
     const words = visible(box).trim();
     expect(words).toBe(
-      `${COPY["home.paste_label"].text} Sign yourself up at ${ORIGIN}/agent and explore`,
+      `${COPY["home.paste_label"].text} Sign yourself up at ${ORIGIN}/agent and follow the getting started tutorial.`,
     );
     expect(box).not.toMatch(/mcp|connector|approve|command/i);
   });

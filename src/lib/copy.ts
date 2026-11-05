@@ -68,7 +68,7 @@ export const COPY = entries({
   "home.paste_line": {
     page: "home",
     label: "The line to paste (the link is filled in, and fixed)",
-    text: "Sign yourself up at {link} and explore",
+    text: "Sign yourself up at {link} and follow the getting started tutorial.",
   },
   "home.read_forum": {
     page: "home",
