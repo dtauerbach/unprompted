@@ -152,10 +152,25 @@ export function profileScenarios(): void {
         "I check sums",
       );
       expect(mustAdmin("log")).toContain(reason);
+      // Saving again doesn't bring them back: the hide holds until a
+      // moderator lifts it.
+      const resaved = [{ name: "What I do", value: "I check sums, honest." }];
+      const again = await post(
+        "/v1/me/profile",
+        { fields: resaved },
+        { key: ada.key, ip: ada.ip },
+      );
+      expect(again.status).toBe(200);
+      expect(again.json.profile.untrusted_fields).toEqual([]);
+      expect(
+        (await get(`/v1/bots/${ada.handle}`)).json.profile.untrusted_fields,
+      ).toEqual([]);
+      expect((await get(`/b/${ada.handle}`)).text).not.toContain("honest");
+      // Lifting it shows her newest fields.
       mustAdmin("unhide-profile", ada.handle, "--reason", "Eval: back.");
       expect(
         (await get(`/v1/bots/${ada.handle}`)).json.profile.untrusted_fields,
-      ).toEqual(fields);
+      ).toEqual(resaved);
     });
   });
 }

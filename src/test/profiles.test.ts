@@ -410,7 +410,7 @@ describe("reading a profile", () => {
 });
 
 describe("a moderator hiding a profile", () => {
-  it("takes the fields off the page and the API until the bot saves new ones, and logs the reason only for moderators", async () => {
+  it("takes the fields off the page and the API until a moderator puts them back, and logs the reason only for moderators", async () => {
     const a = await register("alice");
     await save(a.key, [{ name: "Contact", value: "something bad" }]);
     const hid = await setProfileHidden(db(), "alice", true, "Owner details.");
@@ -433,12 +433,66 @@ describe("a moderator hiding a profile", () => {
     expect((await readProfile("alice")).body.profile.untrusted_fields).toEqual([
       { name: "Contact", value: "something bad" },
     ]);
-    // Hidden again, then the bot saves anew: the new fields show.
-    await setProfileHidden(db(), "alice", true, "Again.");
+  });
+
+  it("stays hidden whatever the bot saves afterwards, until a moderator lifts it", async () => {
+    const a = await register("alice");
+    await save(a.key, [{ name: "Contact", value: "something bad" }]);
+    await setProfileHidden(db(), "alice", true, "Owner details.");
+    // Saving again, even an empty list, can't bring the profile back.
+    for (const fields of [
+      [{ name: "Contact", value: "something else bad" }],
+      [],
+      [{ name: "Contact", value: "something bad" }],
+    ]) {
+      const res = await save(a.key, fields);
+      expect(res.status).toBe(200);
+      expect(res.body.profile.untrusted_fields).toEqual([]);
+      expect(res.body.profile.updated_at).toBeNull();
+      expect(
+        (await readProfile("alice")).body.profile.untrusted_fields,
+      ).toEqual([]);
+      expect(await page("alice")).not.toContain("something");
+    }
+    const look = await tool(a.key, "read_profile", { handle: "alice" });
+    expect(look.data.profile.untrusted_fields).toEqual([]);
+    // Hiding it again changes nothing: it's already hidden.
+    expect(
+      (await setProfileHidden(db(), "alice", true, "Again.")).changed,
+    ).toBe(false);
+    expect((await db()`SELECT 1 FROM hidden_profiles`).length).toBe(1);
+    // Lifting it puts back the newest fields, and one unhide lifts it all.
+    expect(
+      (await setProfileHidden(db(), "alice", false, "Reviewed.")).changed,
+    ).toBe(true);
+    expect((await readProfile("alice")).body.profile.untrusted_fields).toEqual([
+      { name: "Contact", value: "something bad" },
+    ]);
+    expect(
+      (await setProfileHidden(db(), "alice", false, "Again.")).changed,
+    ).toBe(false);
+    // The next save after that shows as usual.
     await save(a.key, [{ name: "Contact", value: "better" }]);
     expect((await readProfile("alice")).body.profile.untrusted_fields).toEqual([
       { name: "Contact", value: "better" },
     ]);
+    const log = await db()<{ action: string }[]>`
+      SELECT action FROM action_log WHERE action LIKE 'admin.profile.%' ORDER BY id`;
+    expect(log.map((l) => l.action)).toEqual([
+      "admin.profile.hide",
+      "admin.profile.unhide",
+    ]);
+  });
+
+  it("stays hidden through a ban and the unban", async () => {
+    const a = await register("alice");
+    await save(a.key, [{ name: "Contact", value: "something bad" }]);
+    await setProfileHidden(db(), "alice", true, "Owner details.");
+    await banBot(db(), "alice", "Spam.");
+    await unbanBot(db(), "alice", "Appeal.");
+    expect((await readProfile("alice")).body.profile.untrusted_fields).toEqual(
+      [],
+    );
   });
 
   it("says when there's nothing to hide or no such bot", async () => {

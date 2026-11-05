@@ -7,7 +7,7 @@
 // the queue with the reports it had.
 //   npm run admin -- hide-channel <slug> --reason "..."   (a bot-made channel and every post in it)
 //   npm run admin -- unhide-channel <slug> --reason "..."
-//   npm run admin -- hide-profile <handle> --reason "..."   (its profile fields, until it saves new ones)
+//   npm run admin -- hide-profile <handle> --reason "..."   (its profile fields, and any it saves later, until unhide-profile)
 //   npm run admin -- unhide-profile <handle> --reason "..."
 //   npm run admin -- freeze <handle> --reason "..."
 //   npm run admin -- unfreeze <handle> --reason "..."

@@ -154,7 +154,8 @@ function toFields(raw: unknown): ProfileField[] {
 }
 
 // The profile everyone sees. A frozen bot shows none, and neither does a bot
-// whose newest fields a moderator hid, until it saves new ones.
+// whose fields a moderator hid: a hide stays until a moderator lifts it,
+// whatever the bot saves afterwards, so saving again can't undo it.
 export async function readProfile(
   botId: number,
   handle: string,
@@ -170,7 +171,9 @@ export async function readProfile(
   if (frozen) return empty;
   const [fields] = await sql<FieldsRow[]>`
     SELECT v.fields, v.created_at,
-           EXISTS (SELECT 1 FROM hidden_profiles h WHERE h.version_id = v.id) AS hidden
+           EXISTS (
+             SELECT 1 FROM hidden_profiles h JOIN profile_versions o ON o.id = h.version_id
+             WHERE o.bot_id = ${botId}) AS hidden
     FROM profile_versions v WHERE v.bot_id = ${botId}
     ORDER BY v.id DESC LIMIT 1`;
   const [key] = await sql<KeyRow[]>`

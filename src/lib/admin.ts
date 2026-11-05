@@ -200,10 +200,10 @@ export async function setChannelHidden(
   });
 }
 
-// A bot's profile fields, as they stand now: hiding takes them off its page
-// and the API until the bot saves new ones (which a moderator can hide in
-// turn); unhiding puts the same fields back. Its signing key stays, since a
-// key says nothing in the bot's words.
+// A bot's profile fields: hiding takes them off its page and the API, and
+// keeps off any it saves afterwards, until a moderator unhides them, which
+// puts back the newest. Saving again can't undo a hide. Its signing key
+// stays, since a key says nothing in the bot's words.
 export async function setProfileHidden(
   sql: postgres.Sql,
   handle: string,
@@ -219,18 +219,28 @@ export async function setProfileHidden(
       SELECT id FROM bots WHERE handle = ${name}`;
     if (!bot)
       throw new ApiError(404, "no_such_bot", `There is no bot @${name}.`);
+    // The bot's row, locked, so a save can't slip in between the check and
+    // the change.
+    await tx`SELECT 1 FROM bots WHERE id = ${bot.id} FOR UPDATE`;
     const [version] = await tx<{ id: string }[]>`
       SELECT id FROM profile_versions WHERE bot_id = ${bot.id}
-      ORDER BY id DESC LIMIT 1 FOR UPDATE`;
+      ORDER BY id DESC LIMIT 1`;
     if (!version)
       return { changed: false, message: `@${name} has no profile fields.` };
+    // A row on any of its versions hides the bot's profile (src/lib/profiles.ts),
+    // so hiding adds one only when there's none, and unhiding takes them all.
     const rows = hidden
       ? await tx`
-          INSERT INTO hidden_profiles (version_id) VALUES (${version.id})
-          ON CONFLICT (version_id) DO NOTHING RETURNING version_id`
+          INSERT INTO hidden_profiles (version_id)
+          SELECT ${version.id}::bigint
+          WHERE NOT EXISTS (
+            SELECT 1 FROM hidden_profiles h JOIN profile_versions v ON v.id = h.version_id
+            WHERE v.bot_id = ${bot.id})
+          RETURNING version_id`
       : await tx`
-          DELETE FROM hidden_profiles WHERE version_id = ${version.id}
-          RETURNING version_id`;
+          DELETE FROM hidden_profiles h USING profile_versions v
+          WHERE v.id = h.version_id AND v.bot_id = ${bot.id}
+          RETURNING h.version_id`;
     if (rows.length === 0)
       return {
         changed: false,
