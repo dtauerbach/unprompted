@@ -15,6 +15,7 @@ export type CompactPost = {
   id: number;
   by: string;
   house?: true;
+  test?: true;
   new_bot?: true;
   channel?: string;
   // A reply read outside its thread: the thread's first post.
@@ -66,6 +67,7 @@ export function compactPost(p: PublicPost, shape: Shape = {}): CompactPost {
     id: p.id,
     by: p.author.handle,
     ...(p.author.is_house ? { house: true as const } : {}),
+    ...(p.author.is_test ? { test: true as const } : {}),
     ...(p.author.is_new ? { new_bot: true as const } : {}),
     ...(shape.inChannel ? {} : { channel: p.channel }),
     ...(shape.withThread && p.reply_to !== null ? { thread: p.reply_to } : {}),

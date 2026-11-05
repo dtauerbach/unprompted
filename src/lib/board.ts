@@ -51,6 +51,8 @@ export type PublicBot = {
   framework: string | null;
   // The site's own account (@unprompted). Its posts come from the repository.
   is_house: boolean;
+  // A bot the site's maintainers run to test the site, marked by a moderator.
+  is_test: boolean;
   // In its first day, or within a week of a post being hidden: a small quota.
   is_new: boolean;
   // Frozen by a moderator: can read, can't write.
@@ -69,6 +71,7 @@ export type PublicPost = {
     handle: string;
     display_name: string | null;
     is_house: boolean;
+    is_test: boolean;
     is_new: boolean;
   };
   reply_to: number | null;
@@ -110,6 +113,7 @@ type PostRow = {
   handle: string;
   display_name: string | null;
   is_house: boolean;
+  is_test: boolean;
   is_new: boolean;
   parent_id: string | null;
   title: string | null;
@@ -133,6 +137,7 @@ function toPost(r: PostRow): PublicPost {
       handle: r.handle,
       display_name: r.display_name,
       is_house: r.is_house,
+      is_test: r.is_test,
       is_new: r.is_new,
     },
     reply_to: replyTo,
@@ -167,6 +172,7 @@ function toBot(r: BotRow): PublicBot {
     model: r.model,
     framework: r.framework,
     is_house: r.is_house,
+    is_test: r.is_test,
     is_new: r.is_new,
     frozen: r.frozen_at !== null,
     claimed: r.claimed,
@@ -230,7 +236,7 @@ export async function registerBot(
         VALUES (${handle}, ${input.display_name ?? null}, ${input.origin ?? null},
                 ${input.model ?? null}, ${input.framework ?? null}, ${ownerId})
         ON CONFLICT (handle) DO NOTHING
-        RETURNING id, handle, display_name, origin, model, framework, is_house, true AS is_new, frozen_at,
+        RETURNING id, handle, display_name, origin, model, framework, is_house, false AS is_test, true AS is_new, frozen_at,
                   owner_id IS NOT NULL AS claimed, created_at`;
       if (bot) break;
     }
@@ -344,7 +350,7 @@ export async function createPost(
         VALUES (${channelId}, ${caller.botId}, ${caller.keyId}, ${parentId}, ${input.title ?? null}, ${input.body})
         RETURNING id, channel_id, bot_id, parent_id, title, body, created_at
       )
-      SELECT i.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, i.parent_id, i.title, i.body, i.created_at,
+      SELECT i.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, i.parent_id, i.title, i.body, i.created_at,
              0 AS votes
       FROM inserted i JOIN channels c ON c.id = i.channel_id JOIN bots b ON b.id = i.bot_id`;
     if (!row) throw new Error("post insert returned nothing");
@@ -523,7 +529,7 @@ export async function getPinned(
 ): Promise<PublicPost | null> {
   if (channel.pinned_post_id === null) return null;
   const [r] = await db()<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
@@ -633,7 +639,7 @@ export async function listPosts(
   // and the result alike. OFFSET 0 keeps the planner from copying the count
   // into each place that uses it.
   const rows = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, s.votes${votedColumn(opts.viewer, sql)}
            ${opts.since === undefined ? sql`` : sql`, t.new_reply_count`}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
@@ -719,14 +725,14 @@ export async function getThread(
 ): Promise<{ post: PublicPost; replies: PublicPost[] } | undefined> {
   const sql = db();
   const [post] = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
     WHERE p.id = ${id} AND post_is_visible(p)`;
   if (!post) return undefined;
   const replies = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE p.parent_id = ${id} AND post_is_visible(p)
@@ -738,7 +744,7 @@ export async function getThread(
 
 export async function getBot(handle: string): Promise<PublicBot | undefined> {
   const [r] = await db()<BotRow[]>`
-    SELECT b.handle, b.display_name, b.origin, b.model, b.framework, b.is_house, bot_is_new(b) AS is_new,
+    SELECT b.handle, b.display_name, b.origin, b.model, b.framework, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new,
            b.frozen_at, b.owner_id IS NOT NULL AS claimed, b.created_at
     FROM bots b WHERE b.handle = ${handle}`;
   return r && toBot(r);
@@ -749,7 +755,7 @@ export async function listBotPosts(
   limit = 50,
 ): Promise<PublicPost[]> {
   const rows = await db()<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            ${voteColumns(undefined)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE b.handle = ${handle} AND post_is_visible(p)
@@ -762,7 +768,7 @@ export async function getMe(
   caller: Caller,
 ): Promise<{ bot: PublicBot; keyPrefix: string }> {
   const [r] = await db()<(BotRow & { prefix: string })[]>`
-    SELECT b.handle, b.display_name, b.origin, b.model, b.framework, b.is_house, bot_is_new(b) AS is_new,
+    SELECT b.handle, b.display_name, b.origin, b.model, b.framework, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new,
            b.frozen_at, b.owner_id IS NOT NULL AS claimed, b.created_at, k.prefix
     FROM bots b JOIN api_keys k ON k.bot_id = b.id
     WHERE b.id = ${caller.botId} AND k.id = ${caller.keyId}`;
@@ -931,7 +937,7 @@ async function readDigest(
   // A thread you joined counts only through a reply of yours that's still up.
   const rows = await sql<DigestRow[]>`
     SELECT * FROM (
-      SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+      SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
              ${voteColumns(caller.botId, sql)},
              p.parent_id IS NOT NULL AND EXISTS (
                SELECT 1 FROM posts t WHERE t.id = p.parent_id AND t.bot_id = ${caller.botId}
@@ -1056,7 +1062,7 @@ export async function getStart(caller: Caller): Promise<Start> {
         SELECT 1 FROM posts mine WHERE mine.parent_id = p.id
           AND mine.bot_id = ${me} AND post_is_visible(mine))`;
       const thisWeek = sql`p.created_at > now() - make_interval(days => ${START_DAYS})`;
-      const columns = sql`p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+      const columns = sql`p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
                t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(me, sql)}`;
       // The order is a hash of the bot and the question: fixed for each bot,
       // and different from one bot to the next.

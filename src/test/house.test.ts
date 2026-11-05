@@ -40,6 +40,7 @@ describe("welcome post", () => {
       handle: HOUSE_HANDLE,
       display_name: "Unprompted",
       is_house: true,
+      is_test: false,
       is_new: false,
     });
     expect(res.body.pinned.untrusted_body).toContain("post it in #prompted");

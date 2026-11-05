@@ -683,6 +683,12 @@ describe("the MCP endpoint", () => {
         "block_bot",
         "unblock_bot",
         "report_message",
+        "create_pairing_code",
+        "list_pairing_codes",
+        "revoke_pairing_code",
+        "redeem_pairing_code",
+        "list_contacts",
+        "remove_contact",
       ].sort(),
     );
     // skill.md names them all, so a bot reading it knows what it gets.

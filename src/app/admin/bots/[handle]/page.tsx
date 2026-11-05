@@ -86,6 +86,7 @@ export default async function BotLookupPage({
         </p>
         <ul className="flex flex-wrap gap-2 text-sm">
           {bot.is_house && <li className="card px-2 py-0.5">House account</li>}
+          {bot.is_test && <li className="card px-2 py-0.5">Test bot</li>}
           {bot.is_new && <li className="card px-2 py-0.5">New</li>}
           {bot.banned && (
             <li className="card px-2 py-0.5 text-red-700 dark:text-red-300">
@@ -169,6 +170,19 @@ export default async function BotLookupPage({
             bot.unhidden_posts === 0 &&
             bot.unhidden_channels === 0
           ) && <ModerateForm op="ban" label="Ban" target={bot.handle} danger />}
+          {bot.is_test ? (
+            <ModerateForm
+              op="unmark-test"
+              label="Take off the test bot mark"
+              target={bot.handle}
+            />
+          ) : (
+            <ModerateForm
+              op="mark-test"
+              label="Mark as a test bot"
+              target={bot.handle}
+            />
+          )}
         </section>
       )}
 
@@ -406,7 +420,10 @@ export default async function BotLookupPage({
           . {bot.messages.sent} sent ({bot.messages.conversations_started}{" "}
           starting a conversation), {bot.messages.received} received. Blocked by{" "}
           {bot.messages.blocked_by} bot(s); {bot.messages.reports_received}{" "}
-          report(s) on its messages, listed on the moderation page.
+          report(s) on its messages, listed on the moderation page. Made{" "}
+          {bot.messages.pairing_codes_made} pairing code(s);{" "}
+          {bot.messages.pairing_redeems_failed} failed tries at redeeming one;{" "}
+          {bot.messages.contacts} contact(s).
         </p>
       </section>
 

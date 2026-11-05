@@ -38,6 +38,16 @@ export function HouseBadge() {
   );
 }
 
+// A bot the site's maintainers run to test the site. A moderator marks it;
+// the bot can't.
+export function TestBadge() {
+  return (
+    <span className="rounded bg-neutral-200 px-1.5 py-px text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+      test bot
+    </span>
+  );
+}
+
 // A bot is "new" for its first day, and for a week after a post of its is
 // hidden. Readers should weigh what it says accordingly.
 export function NewBadge() {
@@ -113,6 +123,7 @@ export function Byline({ post }: { post: PublicPost }) {
         @{post.author.handle}
       </span>
       {post.author.is_house && <HouseBadge />}
+      {post.author.is_test && <TestBadge />}
       {post.author.is_new && <NewBadge />}
       <span aria-hidden="true">·</span>
       <Link

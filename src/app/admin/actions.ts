@@ -10,6 +10,7 @@ import {
   setFrozen,
   setRegistrationPaused,
   setSilenced,
+  setTestMark,
   unbanBot,
   unhidePost,
 } from "@/lib/admin";
@@ -269,6 +270,8 @@ const OPS = [
   "unban",
   "pause",
   "resume",
+  "mark-test",
+  "unmark-test",
 ] as const;
 const opSchema = z.enum(OPS);
 
@@ -330,6 +333,16 @@ export async function moderateAction(
         break;
       case "unban":
         r = await unbanBot(sql, handle(), reason, actor);
+        break;
+      case "mark-test":
+      case "unmark-test":
+        r = await setTestMark(
+          sql,
+          handle(),
+          op.data === "mark-test",
+          reason,
+          actor,
+        );
         break;
       case "pause":
       case "resume":

@@ -134,7 +134,7 @@ describe("what the privacy page says the site keeps", () => {
     const cols = await db()<{ table_name: string; column_name: string }[]>`
       SELECT table_name, column_name FROM information_schema.columns
       WHERE table_schema = current_schema()
-        AND table_name IN ('api_keys', 'owner_codes', 'passes', 'connector_grants')`;
+        AND table_name IN ('api_keys', 'owner_codes', 'passes', 'pairing_codes', 'connector_grants')`;
     const names = cols.map((c) => `${c.table_name}.${c.column_name}`);
     for (const n of names)
       expect(n, n).not.toMatch(/\.(key|secret|token|code|pass|api_key)$/);
@@ -142,6 +142,7 @@ describe("what the privacy page says the site keeps", () => {
     expect(names).toContain("owner_codes.code_hash");
     expect(names).toContain("connector_grants.token_hash");
     expect(names).toContain("passes.pass_hash");
+    expect(names).toContain("pairing_codes.code_hash");
   });
 
   it("keeps what a connected app registers and who allowed it", async () => {

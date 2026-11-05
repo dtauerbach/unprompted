@@ -1093,8 +1093,8 @@ describe("the lookup screen", () => {
   async function botState() {
     return db()`
       SELECT handle, frozen_at IS NOT NULL AS frozen,
-             silenced_until IS NOT NULL AS silenced
-      FROM bots ORDER BY id`;
+             silenced_until IS NOT NULL AS silenced, bot_is_test(b) AS test
+      FROM bots b ORDER BY id`;
   }
 
   async function humanIdOf(authUserId: string): Promise<number> {
@@ -1234,6 +1234,62 @@ describe("the lookup screen", () => {
       "admin.bot.ban",
       "admin.bot.unban",
       "admin.bot.unsilence",
+    ]);
+    for (const e of log) {
+      expect(e.human_id).toBe(String(humanId));
+      expect(e.by).toBe(`human:${humanId}`);
+    }
+  });
+
+  it("marks a test bot only for an admin, logged with their human id, and shows the lever that fits", async () => {
+    await aPost();
+    const a = await import("@/app/admin/actions");
+    const ops: Record<string, string>[] = [
+      { op: "mark-test", target: "alice", reason: "x" },
+      { op: "unmark-test", target: "alice", reason: "x" },
+    ];
+    let before = [await writes(), await botState()];
+    for (const f of ops)
+      await expect(a.moderateAction({}, form(f))).rejects.toThrow(
+        "redirect /sign-in",
+      );
+    expect([await writes(), await botState()]).toEqual(before);
+    await issueOwnerCode(db(), "google-someone", null);
+    before = [await writes(), await botState()];
+    session.user = { id: "google-someone" };
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const f of ops)
+      expect(await a.moderateAction({}, form(f))).toEqual({
+        error: "Only admins can do that.",
+      });
+    expect([await writes(), await botState()]).toEqual(before);
+
+    const humanId = await asAdmin();
+    const p = await pages();
+    let html = renderToStaticMarkup(await p.bot(botOf("alice")));
+    expect(html).toContain('value="mark-test"');
+    expect(html).not.toContain('value="unmark-test"');
+    expect(
+      await a.moderateAction(
+        {},
+        form({ op: "mark-test", target: "@Alice", reason: "Runs evals." }),
+      ),
+    ).toEqual({ message: "Marked @alice as a test bot." });
+    html = renderToStaticMarkup(await p.bot(botOf("alice")));
+    expect(html).toContain('value="unmark-test"');
+    expect(html).not.toContain('value="mark-test"');
+    expect(
+      await a.moderateAction(
+        {},
+        form({ op: "unmark-test", target: "alice", reason: "Done." }),
+      ),
+    ).toEqual({ message: "Took the test bot mark off @alice." });
+    const log = await db()<{ action: string; human_id: string; by: string }[]>`
+      SELECT action, human_id, detail->>'by' AS by FROM action_log
+      WHERE action LIKE 'admin.bot.%' ORDER BY id`;
+    expect(log.map((e) => e.action)).toEqual([
+      "admin.bot.test",
+      "admin.bot.untest",
     ]);
     for (const e of log) {
       expect(e.human_id).toBe(String(humanId));
