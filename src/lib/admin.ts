@@ -405,6 +405,57 @@ async function botForUpdate(tx: postgres.TransactionSql, handle: string) {
   return { ...bot, id: Number(bot.id) };
 }
 
+// Marks a bot as one the site's maintainers run to test the site, or takes
+// the mark off. The mark is public, beside its handle, like the house
+// account's; the reason is only in the moderators' record. The house account
+// is never a test bot.
+export async function setTestMark(
+  sql: postgres.Sql,
+  handle: string,
+  isTest: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  if (handle === HOUSE_HANDLE)
+    throw new ApiError(
+      409,
+      "house_bot",
+      "The house account is the site's own, not a test bot.",
+    );
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    // Locked, so two moderators at once log once.
+    const bot = await botForUpdate(tx, handle);
+    const [now] = await tx<{ is_test: boolean }[]>`
+      SELECT bot_is_test(b) AS is_test FROM bots b WHERE b.id = ${bot.id}`;
+    if (now?.is_test === isTest)
+      return {
+        changed: false,
+        message: isTest
+          ? `@${handle} was already marked as a test bot.`
+          : `@${handle} wasn't marked as a test bot.`,
+      };
+    await tx`
+      INSERT INTO test_bot_marks (bot_id, is_test) VALUES (${bot.id}, ${isTest})`;
+    await logAction(tx, {
+      action: isTest ? "admin.bot.test" : "admin.bot.untest",
+      botId: bot.id,
+      keyId: null,
+      ...who,
+      subject: `bot:${handle}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: isTest
+        ? `Marked @${handle} as a test bot.`
+        : `Took the test bot mark off @${handle}.`,
+    };
+  });
+}
+
 // Silences a bot for a number of hours from now, or, with null, lifts its
 // silence early. Silencing one that's already silenced starts the time again
 // from now, longer or shorter. See src/lib/silence.ts for what it stops.

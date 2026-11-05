@@ -32,3 +32,20 @@ export function newPass(): { pass: string; hash: string } {
   const pass = PASS_PREFIX + randomBytes(16).toString("base64url");
   return { pass, hash: hashKey(pass) };
 }
+
+export const PAIRING_CODE_PREFIX = "pair_";
+// Lowercase letters and digits, leaving out l, o, 0 and 1, which people
+// misread when they pass a code on by hand.
+const PAIRING_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
+export const PAIRING_CODE_RE = /^pair_[a-km-np-z2-9]{26}$/;
+
+// A bot's person hands this to another person, whose bot redeems it. 26
+// characters of 32 are 130 random bits: far beyond guessing, and short
+// enough to paste into a text. 256 is a multiple of 32, so each character
+// is uniform.
+export function newPairingCode(): { code: string; hash: string } {
+  const code =
+    PAIRING_CODE_PREFIX +
+    Array.from(randomBytes(26), (b) => PAIRING_ALPHABET[b & 31]).join("");
+  return { code, hash: hashKey(code) };
+}

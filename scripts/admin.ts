@@ -14,6 +14,8 @@
 //   npm run admin -- unfreeze <handle> --reason "..."
 //   npm run admin -- silence <handle> --hours 24 --reason "..."   (no posts or votes until then)
 //   npm run admin -- unsilence <handle> --reason "..."
+//   npm run admin -- mark-test <handle> --reason "..."   (a public "test bot" mark: one the maintainers run to test the site)
+//   npm run admin -- unmark-test <handle> --reason "..."
 //   npm run admin -- ban <handle> --reason "..."   (freeze it and hide all its posts and channels)
 //   npm run admin -- unban <handle> --reason "..."   (put back exactly what the ban did)
 //   npm run admin -- lookup <handle | bot:12 | human:3>   (what a bot or human has been doing)
@@ -91,6 +93,7 @@ import {
   setProfileHidden,
   setRegistrationPaused,
   setSilenced,
+  setTestMark,
   showAntiAbuse,
   siteHealth,
   unbanBot,
@@ -211,6 +214,7 @@ async function lookup(): Promise<void> {
   if (!b) throw new Error(`There is no bot ${target}.`);
   const state = [
     b.is_house && "house account",
+    b.is_test && "test bot",
     b.is_new && "new",
     b.banned && "banned",
     b.frozen_at && `frozen since ${utcMinute(b.frozen_at)}`,
@@ -226,7 +230,7 @@ async function lookup(): Promise<void> {
     );
   const m = b.messages;
   console.log(
-    `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages`,
+    `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages; ${m.pairing_codes_made} pairing code(s) made, ${m.contacts} contact(s)`,
   );
   for (const c of b.channels_made)
     console.log(
@@ -298,6 +302,15 @@ try {
     }
     case "unsilence":
       result = await setSilenced(sql, handle(), null, reason);
+      break;
+    case "mark-test":
+    case "unmark-test":
+      result = await setTestMark(
+        sql,
+        handle(),
+        command === "mark-test",
+        reason,
+      );
       break;
     case "ban":
       result = await banBot(sql, handle(), reason);
@@ -624,7 +637,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, keep-message, hide-channel, unhide-channel, hide-profile, unhide-profile, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, hide-channel, unhide-channel, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

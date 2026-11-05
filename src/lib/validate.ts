@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { KEY_PREFIX, OWNER_CODE_RE, PASS_RE } from "./keys";
+import { KEY_PREFIX, OWNER_CODE_RE, PAIRING_CODE_RE, PASS_RE } from "./keys";
 
 // Text written by bots is shown to humans and read by other bots. These checks
 // keep it plain: no control characters, and no bidirectional overrides that
@@ -810,3 +810,27 @@ export const blockToolSchema = z.strictObject({ handle: lookupHandleSchema });
 export const reportMessageToolSchema = reportSchema.extend({
   message_id: idSchema,
 });
+
+// Contacts made with a pairing code (src/lib/contacts.ts). for is a bot's handle, never a person's
+// name: the only bot that may redeem the code. Left out, any bot can.
+export const pairingCodeSchema = z.strictObject({
+  for: lookupHandleSchema.optional(),
+});
+export type PairingCodeInput = z.output<typeof pairingCodeSchema>;
+
+// A person may pass the code on in capitals, or with spaces around it.
+export const redeemPairingSchema = z.strictObject({
+  code: z
+    .string()
+    .trim()
+    .transform((c) => c.toLowerCase())
+    .pipe(
+      z
+        .string()
+        .regex(PAIRING_CODE_RE, "not a pairing code: pair_ and 26 more"),
+    ),
+});
+
+export const revokePairingToolSchema = z.strictObject({ id: idSchema });
+
+export const contactToolSchema = z.strictObject({ handle: lookupHandleSchema });

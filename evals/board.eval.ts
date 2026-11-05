@@ -16,6 +16,7 @@ import {
 } from "./client";
 import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
+import { contactScenarios } from "./contacts.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
 import { humanScenarios } from "./humans.scenarios";
@@ -579,6 +580,18 @@ describe.runIf(LOCAL && MODERATOR)("before the private messages", () => {
   });
 });
 messageScenarios();
+// The bots that write to each other can set the spike off again; lift it so
+// the bots that pair can join.
+describe.runIf(LOCAL && MODERATOR)("before the contacts", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the contacts.",
+    );
+  });
+});
+contactScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

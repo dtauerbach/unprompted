@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { Avatar, HouseBadge, NewBadge, PostList } from "@/components/post-list";
+import {
+  Avatar,
+  HouseBadge,
+  NewBadge,
+  PostList,
+  TestBadge,
+} from "@/components/post-list";
 import { getBot, listBotPosts } from "@/lib/board";
 import { profileByHandle } from "@/lib/profiles";
 import { HANDLE_RE } from "@/lib/validate";
@@ -54,6 +60,7 @@ export default async function BotPage({
                 @{bot.handle}
               </span>
               {bot.is_house && <HouseBadge />}
+              {bot.is_test && <TestBadge />}
               {bot.is_new && <NewBadge />}
             </p>
           </div>

@@ -89,6 +89,7 @@ export type BotLookup = {
   framework: string | null;
   created_at: Date;
   is_house: boolean;
+  is_test: boolean;
   is_new: boolean;
   frozen_at: Date | null;
   silenced_until: Date | null;
@@ -128,6 +129,9 @@ export type BotLookup = {
     received: number;
     blocked_by: number;
     reports_received: number;
+    // Pairing, counted too: never the codes, and never who with.
+    pairing_codes_made: number;
+    contacts: number;
   };
   flags: Flag[];
   // Every moderator action on it or its posts, newest first, at most 50.
@@ -176,7 +180,7 @@ export async function lookupBot(
   return sql.begin("isolation level repeatable read read only", async (tx) => {
     const [b] = await tx<BotRow[]>`
       SELECT b.id, b.handle, b.display_name, b.origin, b.model, b.framework,
-        b.created_at, b.is_house, bot_is_new(b) AS is_new, b.frozen_at,
+        b.created_at, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, b.frozen_at,
         CASE WHEN b.silenced_until > now() THEN b.silenced_until END AS silenced_until,
         coalesce((
           SELECT action = 'admin.bot.ban' FROM action_log
@@ -321,13 +325,18 @@ export async function lookupBot(
     const [messages] = await tx<BotLookup["messages"][]>`
       SELECT inbox_is_open(${id}) AS inbox_open, inbox_requests_from(${id}) AS requests_from,
         (SELECT count(*)::int FROM messages WHERE bot_id = ${id}) AS sent,
-        (SELECT count(*)::int FROM messages m WHERE m.bot_id = ${id} AND NOT EXISTS (
+        (SELECT count(*)::int FROM messages m WHERE m.bot_id = ${id} AND NOT m.contact AND NOT EXISTS (
            SELECT 1 FROM messages e WHERE e.bot_id = m.to_bot_id AND e.to_bot_id = m.bot_id AND e.id < m.id)) AS conversations_started,
         (SELECT count(*)::int FROM messages WHERE to_bot_id = ${id}) AS received,
         (SELECT count(DISTINCT x.bot_id)::int FROM message_blocks x
            WHERE x.blocked_bot_id = ${id} AND has_blocked(x.bot_id, ${id})) AS blocked_by,
         (SELECT count(*)::int FROM message_reports r JOIN messages m ON m.id = r.message_id
-           WHERE m.bot_id = ${id}) AS reports_received`;
+           WHERE m.bot_id = ${id}) AS reports_received,
+        (SELECT count(*)::int FROM pairing_codes WHERE bot_id = ${id}) AS pairing_codes_made,
+        (SELECT count(DISTINCT o)::int FROM (
+           SELECT CASE WHEN c.bot_id = ${id} THEN c.other_bot_id ELSE c.bot_id END AS o
+           FROM contacts c WHERE c.bot_id = ${id} OR c.other_bot_id = ${id}) x
+         WHERE are_contacts(${id}, x.o)) AS contacts`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -339,6 +348,7 @@ export async function lookupBot(
       framework: b.framework,
       created_at: b.created_at,
       is_house: b.is_house,
+      is_test: b.is_test,
       is_new: b.is_new,
       frozen_at: b.frozen_at,
       silenced_until: b.silenced_until,
@@ -367,6 +377,8 @@ export async function lookupBot(
         received: 0,
         blocked_by: 0,
         reports_received: 0,
+        pairing_codes_made: 0,
+        contacts: 0,
       },
       flags: flags.map((f) => ({
         ...f,

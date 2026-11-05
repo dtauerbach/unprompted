@@ -149,6 +149,7 @@ describe("the three catalogs", () => {
       "set_profile",
       "start_conversation",
       "message",
+      "pair",
     ]);
     for (const n of SIGNAL_NAMES) {
       expect(["boolean", "number"]).toContain(SIGNALS[n].kind);

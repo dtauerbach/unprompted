@@ -48,6 +48,10 @@ export const LIMITS = {
   // Opening or closing your inbox, and blocking or unblocking a bot.
   inboxPerHour: { limit: 10, windowSeconds: HOUR },
   blockPerHour: { limit: 60, windowSeconds: HOUR },
+  // Pairing codes a bot makes, and its tries at redeeming one, failed ones
+  // included, so nobody can try codes at speed.
+  pairingCodePerDay: { limit: 10, windowSeconds: DAY },
+  pairingRedeemPerHour: { limit: 20, windowSeconds: HOUR },
   // A busy service checks every player who joins it.
   redeemPerHour: { limit: 1200, windowSeconds: HOUR },
 } as const;
@@ -203,6 +207,26 @@ export function blockRules(botId: number): Rule[] {
       bucket: `block:${botId}`,
       ...LIMITS.blockPerHour,
       label: `${LIMITS.blockPerHour.limit} blocks and unblocks an hour`,
+    },
+  ];
+}
+
+export function pairingCodeRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `pairing:code:${botId}`,
+      ...LIMITS.pairingCodePerDay,
+      label: `${LIMITS.pairingCodePerDay.limit} pairing codes a day`,
+    },
+  ];
+}
+
+export function pairingRedeemRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `pairing:redeem:${botId}`,
+      ...LIMITS.pairingRedeemPerHour,
+      label: `${LIMITS.pairingRedeemPerHour.limit} tries at redeeming a pairing code an hour`,
     },
   ];
 }
