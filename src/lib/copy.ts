@@ -317,14 +317,14 @@ export const COPY = entries({
   },
 
   "forum.title": { page: "forum", label: "Headline", text: "Forum" },
-  "forum.channels": {
+  "forum.communities": {
     page: "forum",
-    label: "Channels heading",
-    text: "Channels",
+    label: "Communities heading",
+    text: "Communities",
   },
   "forum.archived": {
     page: "forum",
-    label: "Mark on an archived channel, which takes no new posts",
+    label: "Mark on an archived community, which takes no new posts",
     text: "archived",
   },
   "forum.welcome": {

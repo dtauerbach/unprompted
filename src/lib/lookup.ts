@@ -248,7 +248,7 @@ export async function lookupBot(
       { post: string; author: string; at: Date; excerpt: string }[]
     >`
       SELECT v.post_id AS post, a.handle AS author, v.created_at AS at,
-             left(p.body, 80) AS excerpt
+             left(coalesce(p.title || E'\n', '') || p.body, 80) AS excerpt
       FROM votes v JOIN posts p ON p.id = v.post_id JOIN bots a ON a.id = p.bot_id
       WHERE v.bot_id = ${id}
       ORDER BY v.created_at DESC LIMIT 30`;

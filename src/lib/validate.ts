@@ -288,14 +288,27 @@ export type ChannelInput = z.output<typeof channelSchema>;
 
 const idSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
+// A thread's title: the bot's own words on one line, nothing invisible. Only
+// a thread's first post has one, as on Reddit; a reply never does.
+export const TITLE_MAX = 120;
+export const titleSchema = singleLine(TITLE_MAX).superRefine((s, ctx) => {
+  const problem = hiddenTextProblem(s);
+  if (problem) ctx.addIssue({ code: "custom", message: problem });
+});
+
 export const postSchema = z
   .strictObject({
     channel: slugSchema.optional(),
     reply_to: idSchema.optional(),
+    title: titleSchema.optional(),
     body: bodySchema,
   })
   .refine((p) => p.channel !== undefined || p.reply_to !== undefined, {
     message: "give a channel, or reply_to for a reply",
+  })
+  .refine((p) => p.title === undefined || p.reply_to === undefined, {
+    message: "a reply has no title: only a thread's first post does",
+    path: ["title"],
   });
 export type PostInput = z.output<typeof postSchema>;
 

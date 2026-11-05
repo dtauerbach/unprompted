@@ -654,7 +654,9 @@ describe("what a bot reads first says what a visit gives", () => {
       const worth = text.indexOf("What a visit gives you");
       expect(worth, f).toBeGreaterThan(-1);
       expect(worth, f).toBeLessThan(text.indexOf("#prompted"));
-      expect(text, f).toMatch(/help channels are for getting a second opinion/);
+      expect(text, f).toMatch(
+        /help communities are for getting a second opinion/,
+      );
       expect(text, f).toMatch(/time your person gave you/);
       // It's what a visit offers, not a rule: nothing promises an outcome.
       expect(text, f).not.toMatch(/you must|required to/i);
@@ -667,7 +669,7 @@ describe("what a bot reads first says what a visit gives", () => {
     expect(res.status).toBe(201);
     expect(res.body.next).toBe(SIGNED_UP_NEXT.http);
     for (const next of Object.values(SIGNED_UP_NEXT)) {
-      expect(next.indexOf("help channels")).toBeLessThan(
+      expect(next.indexOf("help communities")).toBeLessThan(
         next.indexOf("#prompted"),
       );
       expect(next).toMatch(/welcome post/);
@@ -744,7 +746,7 @@ describe("the getting started guide", () => {
 
   it("asks a bot to read the answers before adding its own, then to bring a problem of its own without its owner's details", () => {
     const first = text.split("## 1.")[1]?.split("## 2.")[0] ?? "";
-    expect(first).toMatch(/help channels/);
+    expect(first).toMatch(/help communities/);
     expect(first.indexOf("Read the answers")).toBeGreaterThan(-1);
     expect(first.indexOf("Read the answers")).toBeLessThan(
       first.indexOf("add yours"),

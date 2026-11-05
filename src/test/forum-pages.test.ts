@@ -86,7 +86,7 @@ describe("a post in a list", () => {
     const page = await forum();
     expect(page).toMatch(/<a [^>]*href="\/b\/alice"[^>]*>alice<\/a>/);
     expect(page).toMatch(
-      /<a [^>]*href="\/c\/small-talk"[^>]*>#small-talk<\/a>/,
+      /<a [^>]*href="\/c\/small-talk"[^>]*>c\/small-talk<\/a>/,
     );
     expect(page).toMatch(
       new RegExp(`<a [^>]*href="/p/${id}"[^>]*>.*?<span>0 replies</span></a>`),
@@ -162,7 +162,7 @@ describe("a channel page", () => {
   it("leads back to the forum, names the channel, and pages with a button", async () => {
     const page = await channel();
     expect(page).toMatch(/<a [^>]*href="\/forum"[^>]*>Forum<\/a>/);
-    expect(page).toMatch(/<h1[^>]*><span[^>]*>#<\/span>meta<\/h1>/);
+    expect(page).toMatch(/<h1[^>]*><span[^>]*>c\/<\/span>meta<\/h1>/);
     expect(page).toContain(">Threads</h2>");
     expect(page).toContain("No threads here yet.");
   });
@@ -170,7 +170,7 @@ describe("a channel page", () => {
   it("names the channel in the tab only for a name a channel could have", async () => {
     const t = async (slug: string) =>
       (await channelTitle({ params: Promise.resolve({ slug }) })).title;
-    expect(await t("meta")).toBe("#meta");
+    expect(await t("meta")).toBe("c/meta");
     // A name a channel could have, but no channel does.
     expect(await t("nope")).toBeUndefined();
     for (const bad of ["<b>", "Meta", "a", "x".repeat(31), "-meta"])
@@ -189,7 +189,7 @@ describe("a thread page", () => {
     await hidePost(db(), hidden.id, "Spam.");
     const page = await threadPage(id);
     expect(page).toMatch(
-      /<nav aria-label="Where this is"[^>]*><a [^>]*href="\/forum"[^>]*>Forum<\/a>.*<a [^>]*href="\/c\/meta"[^>]*>#meta<\/a><\/nav>/,
+      /<nav aria-label="Where this is"[^>]*><a [^>]*href="\/forum"[^>]*>Forum<\/a>.*<a [^>]*href="\/c\/meta"[^>]*>c\/meta<\/a><\/nav>/,
     );
     expect(page).toMatch(/Replies<span[^>]*>1<\/span><\/h2>/);
     expect(page).toContain("first");
@@ -204,7 +204,7 @@ describe("a thread page", () => {
     const { id } = await write(a.key, { channel: "meta", body: "BUY NOW" });
     const t = async (raw: string) =>
       (await threadTitle({ params: Promise.resolve({ id: raw }) })).title;
-    expect(await t(String(id))).toBe("Thread in #meta");
+    expect(await t(String(id))).toBe("Thread in c/meta");
     expect(await t("999999")).toBeUndefined();
     expect(await t("abc")).toBeUndefined();
     await hidePost(db(), id, "Spam.");
@@ -254,7 +254,7 @@ describe("a thread page", () => {
     const t = await threadTitle({
       params: Promise.resolve({ id: String(reply.id) }),
     });
-    expect(t.title).toBe("Thread in #small-talk");
+    expect(t.title).toBe("Thread in c/small-talk");
     await expect(threadPage(reply.id)).rejects.toThrow(/NEXT_REDIRECT/);
   });
 

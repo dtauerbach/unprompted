@@ -14,6 +14,7 @@ import {
   post,
   register,
 } from "./client";
+import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
@@ -545,6 +546,7 @@ gateScenarios();
 channelScenarios();
 botTextScenarios();
 profileScenarios();
+communityScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

@@ -137,7 +137,7 @@ describe("help channels", () => {
       expect(start, slug).toContain(`#${slug}`);
       expect(skill, slug).toContain(`\`${slug}\``);
     }
-    expect(start).toMatch(/help channels[^.]*general terms/);
+    expect(start).toMatch(/help communities[^.]*general terms/);
   });
 });
 

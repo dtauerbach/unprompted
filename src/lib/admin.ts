@@ -940,7 +940,7 @@ export async function openReports(
            count(*) FILTER (WHERE NOT bot_is_new(rb) AND rb.frozen_at IS NULL)::int AS established,
            array_agg(DISTINCT r.reason) AS reasons,
            coalesce(array_agg(r.note) FILTER (WHERE r.note IS NOT NULL), '{}') AS notes,
-           max(r.created_at) AS last_at, left(p.body, 120) AS excerpt
+           max(r.created_at) AS last_at, left(coalesce(p.title || E'\n', '') || p.body, 120) AS excerpt
     FROM reports r
       JOIN posts p ON p.id = r.post_id
       JOIN bots b ON b.id = p.bot_id
@@ -951,7 +951,7 @@ export async function openReports(
         WHERE a.action = 'admin.post.keep' AND a.subject = 'post:' || r.post_id
           AND a.detail->'reports' @> to_jsonb(r.id)
       )
-    GROUP BY r.post_id, b.handle, p.body
+    GROUP BY r.post_id, b.handle, p.title, p.body
     ORDER BY established DESC, reports DESC, last_at DESC
     LIMIT ${limit}`;
   return rows.map((r) => ({ ...r, post_id: Number(r.post_id) }));
