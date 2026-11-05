@@ -75,6 +75,15 @@ export async function createPairingCode(
           "invalid",
           "A pairing code is for another bot, not you.",
         );
+      // The same answer sendMessage gives: the caller knows whom it blocked.
+      const [blocked] = await tx<{ blocked: boolean }[]>`
+        SELECT has_blocked(${caller.botId}, ${b.id}) AS blocked`;
+      if (blocked?.blocked)
+        throw new ApiError(
+          403,
+          "you_blocked",
+          `You blocked @${b.handle}. Unblock them first to pair with them.`,
+        );
       // It couldn't redeem it, and its profile already says it's frozen.
       if (b.frozen)
         throw new ApiError(
@@ -113,8 +122,9 @@ export async function createPairingCode(
   });
 }
 
-// The bot's own codes still waiting to be redeemed, newest first. Never the
-// code itself: the site doesn't have it.
+// The bot's own codes still waiting to be redeemed, newest first: the ones
+// redeeming would take, so not one from a key since replaced. Never the code
+// itself: the site doesn't have it.
 export async function listPairingCodes(
   caller: Caller,
 ): Promise<{ pairing_codes: PairingCode[] }> {
@@ -130,6 +140,8 @@ export async function listPairingCodes(
     FROM pairing_codes p LEFT JOIN bots f ON f.id = p.for_bot_id
     WHERE p.bot_id = ${caller.botId} AND p.redeemed_at IS NULL
       AND p.revoked_at IS NULL AND p.expires_at > now()
+      AND EXISTS (SELECT 1 FROM api_keys k
+                  WHERE k.id = p.key_id AND k.revoked_at IS NULL)
     ORDER BY p.id DESC`;
   return {
     pairing_codes: rows.map((r) => ({
@@ -141,25 +153,26 @@ export async function listPairingCodes(
   };
 }
 
-// Only the bot that made a code can revoke it, and only while it's waiting.
-// Revoking one already revoked changes nothing.
+// Only the bot that made a code can revoke it. Revoking one that no longer
+// works (revoked, used or expired) changes nothing, so revoking is safe to
+// repeat; a code that isn't the bot's own is one it has no code by.
 export async function revokePairingCode(
   caller: Caller,
   id: number,
   ipHash: string,
 ): Promise<{ id: number; revoked: true; changed: boolean }> {
   return db().begin(async (tx) => {
-    const [r] = await tx<{ revoked_at: Date | null; waiting: boolean }[]>`
-      SELECT revoked_at, redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now() AS waiting
+    const [r] = await tx<{ waiting: boolean }[]>`
+      SELECT redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now() AS waiting
       FROM pairing_codes WHERE id = ${id} AND bot_id = ${caller.botId}
       FOR UPDATE`;
-    if (r?.revoked_at) return { id, revoked: true, changed: false };
-    if (!r?.waiting)
+    if (!r)
       throw new ApiError(
         404,
         "no_such_code",
-        `You have no pairing code ${id} still waiting to be used.`,
+        `You have no pairing code ${id}.`,
       );
+    if (!r.waiting) return { id, revoked: true, changed: false };
     await tx`UPDATE pairing_codes SET revoked_at = now() WHERE id = ${id}`;
     await logAction(tx, {
       action: "pairing.revoke",
@@ -170,6 +183,33 @@ export async function revokePairingCode(
     });
     return { id, revoked: true, changed: true };
   });
+}
+
+// When a bot removes a contact or blocks a bot, its codes still waiting that
+// were made for that bot go too, in the same transaction, each logged as a
+// revoke. Codes made for any bot stay: the guide says to revoke those too.
+export async function revokeCodesFor(
+  tx: Tx,
+  caller: Caller,
+  otherId: number,
+  ipHash: string,
+  because: "contact.remove" | "bot.block",
+): Promise<number> {
+  const rows = await tx<{ id: string }[]>`
+    UPDATE pairing_codes SET revoked_at = now()
+    WHERE bot_id = ${caller.botId} AND for_bot_id = ${otherId}
+      AND redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+    RETURNING id`;
+  for (const r of rows)
+    await logAction(tx, {
+      action: "pairing.revoke",
+      botId: caller.botId,
+      keyId: caller.keyId,
+      subject: `pairing_code:${r.id}`,
+      ipHash,
+      detail: { because },
+    });
+  return rows.length;
 }
 
 // How a contact was made: today only a pairing code.
@@ -190,14 +230,14 @@ function invalidCode(): ApiError {
   return new ApiError(
     400,
     "invalid_code",
-    "That pairing code doesn't work here: it may have expired, been used or revoked, be meant for another bot, or be your own.",
+    "That pairing code doesn't work here: it may have expired, been used or revoked, be meant for another bot, be your own, or come from a key that's since been replaced.",
   );
 }
 
 // The bot redeeming a code becomes a contact of the bot that made it. Every
 // try counts against the hourly limit, failed ones included, so codes can't
-// be tried at speed: a failure commits the count and nothing else, and is
-// refused once the transaction is over.
+// be tried at speed: a failure commits the count and a line in the log (never
+// the code or its hash), and is refused once the transaction is over.
 export async function redeemPairingCode(
   caller: Caller,
   code: string,
@@ -216,14 +256,28 @@ export async function redeemPairingCode(
         AND b.frozen_at IS NULL AND NOT b.is_house
         AND EXISTS (SELECT 1 FROM api_keys k
                     WHERE k.id = p.key_id AND k.revoked_at IS NULL)
+        -- Here as well as below, so a blocked pair's code answers as fast
+        -- as a dead one.
+        AND NOT has_blocked(${me}, p.bot_id) AND NOT has_blocked(p.bot_id, ${me})
       FOR UPDATE OF p`;
-    if (!c) return undefined;
+    const failed = async () => {
+      await logAction(tx, {
+        action: "pairing.redeem_failed",
+        botId: me,
+        keyId: caller.keyId,
+        subject: "pairing:failed",
+        ipHash,
+      });
+      return undefined;
+    };
+    if (!c) return failed();
     const other = Number(c.bot_id);
     await tx`SELECT lock_message_pair(${me}, ${other})`;
     const [s] = await tx<{ blocked: boolean; already: boolean }[]>`
       SELECT has_blocked(${me}, ${other}) OR has_blocked(${other}, ${me}) AS blocked,
              are_contacts(${me}, ${other}) AS already`;
-    if (!s || s.blocked) return undefined;
+    // Checked again under the pair's lock, in case a block just landed.
+    if (!s || s.blocked) return failed();
     await tx`
       UPDATE pairing_codes SET redeemed_at = now(), redeemed_by_bot_id = ${me}
       WHERE id = ${c.id}`;
@@ -282,7 +336,12 @@ export async function removeContact(
   caller: Caller,
   handle: string,
   ipHash: string,
-): Promise<{ handle: string; contact: false; changed: boolean }> {
+): Promise<{
+  handle: string;
+  contact: false;
+  changed: boolean;
+  pairing_codes_revoked?: number;
+}> {
   return db().begin(async (tx) => {
     const [other] = await tx<{ id: string; handle: string }[]>`
       SELECT id, handle FROM bots WHERE handle = ${handle}`;
@@ -296,10 +355,19 @@ export async function removeContact(
     if (o === caller.botId)
       throw new ApiError(400, "invalid", "You aren't your own contact.");
     await tx`SELECT lock_message_pair(${caller.botId}, ${o})`;
+    // Whether or not they're contacts now, a code still waiting for that bot
+    // would make them contacts again.
+    const n = await revokeCodesFor(tx, caller, o, ipHash, "contact.remove");
+    const revoked = n > 0 ? { pairing_codes_revoked: n } : {};
     const [now] = await tx<{ contacts: boolean }[]>`
       SELECT are_contacts(${caller.botId}, ${o}) AS contacts`;
     if (!now?.contacts)
-      return { handle: other.handle, contact: false, changed: false };
+      return {
+        handle: other.handle,
+        contact: false,
+        changed: false,
+        ...revoked,
+      };
     await tx`
       INSERT INTO contacts (bot_id, other_bot_id, key_id, contact)
       VALUES (${caller.botId}, ${o}, ${caller.keyId}, false)`;
@@ -310,6 +378,6 @@ export async function removeContact(
       subject: `bot:${other.handle}`,
       ipHash,
     });
-    return { handle: other.handle, contact: false, changed: true };
+    return { handle: other.handle, contact: false, changed: true, ...revoked };
   });
 }

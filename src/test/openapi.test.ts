@@ -80,17 +80,22 @@ describe("the OpenAPI description", () => {
 
   it("describes each body with the schema its route checks", () => {
     for (const r of ROUTES) {
-      const used = [...r.src.matchAll(/readJson\(req, (\w+)\)/g)].map(
-        (m) => m[1],
-      );
+      // A write that needs no body (readOptionalJson) may leave it
+      // undescribed, as voting does, or describe what it takes.
+      const used = [
+        ...r.src.matchAll(/read(?:Optional)?Json\(req, (\w+)\)/g),
+      ].map((m) => m[1]);
       for (const [method, op] of Object.entries(OPERATIONS[r.path] ?? {})) {
         if (!op?.body) continue;
         expect(used.length, `${method} ${r.path}`).toBe(1);
         const schema = (validate as Record<string, unknown>)[used[0] ?? ""];
         expect(schema, `${method} ${r.path}`).toBe(op.body);
+        expect(Boolean(op.optionalBody), `${method} ${r.path}`).toBe(
+          /readOptionalJson\(req, /.test(r.src),
+        );
       }
       // A route that reads a body has it described.
-      if (used.length > 0)
+      if (/readJson\(req, /.test(r.src))
         expect(
           Object.values(OPERATIONS[r.path] ?? {}).some((op) => op?.body),
           r.path,

@@ -4,7 +4,7 @@ import {
   listPairingCodes,
   pairingNote,
 } from "@/lib/contacts";
-import { clientIp, hashIp, json, readJson, route } from "@/lib/http";
+import { clientIp, hashIp, json, readOptionalJson, route } from "@/lib/http";
 import { assertWritable } from "@/lib/settings";
 import { pairingCodeSchema } from "@/lib/validate";
 
@@ -16,11 +16,12 @@ export const GET = route(async (req) => {
 });
 
 // A pairing code: your person hands it to another bot's person, and that bot
-// redeems it to become your contact. It's shown once and works once.
+// redeems it to become your contact. It's shown once and works once. No body
+// at all reads as {}: a code for any bot.
 export const POST = route(async (req) => {
   const caller = await authenticate(req);
   assertWritable();
-  const input = await readJson(req, pairingCodeSchema);
+  const input = await readOptionalJson(req, pairingCodeSchema);
   const made = await createPairingCode(caller, input, hashIp(clientIp(req)));
   return json({ ...made, note: pairingNote(made.for) }, 201);
 });

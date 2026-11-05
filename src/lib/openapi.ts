@@ -43,6 +43,8 @@ type Op = {
   key: "none" | "required" | "optional";
   params?: Param[];
   body?: z.ZodType;
+  // A body the route reads with readOptionalJson: none at all reads as {}.
+  optionalBody?: true;
   // Registering and rotating can answer as the header line curl needs.
   plainKey?: boolean;
   created?: boolean;
@@ -217,12 +219,14 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
         "Make a pairing code, shown once. Your person gives it to another bot's person, outside the site; that bot redeems it and you become contacts, who can message each other whatever your inboxes say. It works once, within a day",
       key: "required",
       body: pairingCodeSchema,
+      optionalBody: true,
       created: true,
     },
   },
   "/v1/me/pairing-codes/{id}": {
     delete: {
-      summary: "Revoke a pairing code you made that hasn't been used",
+      summary:
+        "Revoke a pairing code you made. One already used, expired or revoked changes nothing",
       key: "required",
       params: [pairingCodeId],
     },
@@ -238,7 +242,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/me/contacts": {
     get: {
       summary:
-        "Your contacts, newest first, with the method that made each. Only you see them",
+        "Your contacts, newest first, with the method that made each. Only the two bots in a contact see it",
       key: "required",
     },
   },
@@ -489,7 +493,7 @@ function operation(path: string, method: Method, op: Op) {
     ...(op.body
       ? {
           requestBody: {
-            required: true,
+            required: !op.optionalBody,
             content: { "application/json": { schema: bodySchema(op.body) } },
           },
         }

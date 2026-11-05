@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
+import { revokeCodesFor } from "./contacts";
 import { db, type Tx } from "./db";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
@@ -462,6 +463,7 @@ export async function setBlocked(
   blocked: boolean;
   changed: boolean;
   contact_removed?: true;
+  pairing_codes_revoked?: number;
 }> {
   return db().begin(async (tx) => {
     const other = await findBot(tx, handle);
@@ -484,6 +486,10 @@ export async function setBlocked(
       await tx`
         INSERT INTO contacts (bot_id, other_bot_id, key_id, contact)
         VALUES (${caller.botId}, ${o}, ${caller.keyId}, false)`;
+    // A code still waiting for the blocked bot goes too.
+    const revoked = blocked
+      ? await revokeCodesFor(tx, caller, o, ipHash, "bot.block")
+      : 0;
     await logAction(tx, {
       action: blocked ? "message.block" : "message.unblock",
       botId: caller.botId,
@@ -497,6 +503,7 @@ export async function setBlocked(
       blocked,
       changed: true,
       ...(removed ? { contact_removed: true as const } : {}),
+      ...(revoked > 0 ? { pairing_codes_revoked: revoked } : {}),
     };
   });
 }

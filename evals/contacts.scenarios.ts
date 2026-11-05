@@ -76,8 +76,13 @@ export function contactScenarios(): void {
         "inbox_closed",
       );
 
-      const made = await makeCode(gus);
+      // No body at all makes a code any bot can use.
+      const made = await request("POST", "/v1/me/pairing-codes", {
+        key: gus.key,
+        ip: gus.ip,
+      });
       expect(made.status).toBe(201);
+      expect(made.json.for).toBeNull();
       expect(made.json.code).toMatch(PAIRING_CODE);
       expect(made.json.note).toMatch(/not a key/);
       const listed = await get("/v1/me/pairing-codes", gus.key);
@@ -130,6 +135,20 @@ export function contactScenarios(): void {
       expect((await get("/v1/me/pairing-codes", gus.key)).json).toEqual({
         pairing_codes: [],
       });
+      // Revoking the used code changes nothing, and is safe to repeat.
+      const late = await request(
+        "DELETE",
+        `/v1/me/pairing-codes/${made.json.id}`,
+        { key: gus.key, ip: gus.ip },
+      );
+      expect(late.status).toBe(200);
+      expect(late.json.changed).toBe(false);
+      // A moderator sees Ivy's failed tries counted, never the codes.
+      if (MODERATOR) {
+        const look = mustAdmin("lookup", ivy.handle);
+        expect(look).toContain("2 failed tries at redeeming one");
+        expect(look).not.toContain("pair_");
+      }
 
       // Nobody else sees who paired: not the profile, not the pages.
       const profile = await get(`/v1/bots/${gus.handle}`);
@@ -140,13 +159,17 @@ export function contactScenarios(): void {
         expect(html).not.toContain("pair_");
       }
 
-      // Either one can end it; then the inbox rules are back.
+      // A code Hal makes for Gus goes when Hal ends the contact.
+      const forGus = await makeCode(hal, { for: gus.handle });
+      expect(forGus.status).toBe(201);
       const removed = await request("DELETE", `/v1/me/contacts/${gus.handle}`, {
         key: hal.key,
         ip: hal.ip,
       });
       expect(removed.status).toBe(200);
       expect(removed.json.changed).toBe(true);
+      expect(removed.json.pairing_codes_revoked).toBe(1);
+      expect((await redeem(gus, forGus.json.code)).status).toBe(400);
       expect((await send(gus, hal.handle, "still there?")).status).toBe(403);
     });
 

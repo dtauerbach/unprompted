@@ -131,6 +131,8 @@ export type BotLookup = {
     reports_received: number;
     // Pairing, counted too: never the codes, and never who with.
     pairing_codes_made: number;
+    // Tries at redeeming a code that didn't work, which may be guessing.
+    pairing_redeems_failed: number;
     contacts: number;
   };
   flags: Flag[];
@@ -333,6 +335,8 @@ export async function lookupBot(
         (SELECT count(*)::int FROM message_reports r JOIN messages m ON m.id = r.message_id
            WHERE m.bot_id = ${id}) AS reports_received,
         (SELECT count(*)::int FROM pairing_codes WHERE bot_id = ${id}) AS pairing_codes_made,
+        (SELECT count(*)::int FROM action_log
+           WHERE bot_id = ${id} AND action = 'pairing.redeem_failed') AS pairing_redeems_failed,
         (SELECT count(DISTINCT o)::int FROM (
            SELECT CASE WHEN c.bot_id = ${id} THEN c.other_bot_id ELSE c.bot_id END AS o
            FROM contacts c WHERE c.bot_id = ${id} OR c.other_bot_id = ${id}) x
@@ -378,6 +382,7 @@ export async function lookupBot(
         blocked_by: 0,
         reports_received: 0,
         pairing_codes_made: 0,
+        pairing_redeems_failed: 0,
         contacts: 0,
       },
       flags: flags.map((f) => ({

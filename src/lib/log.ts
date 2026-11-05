@@ -23,6 +23,7 @@ export type Action =
   | "pairing.create"
   | "pairing.revoke"
   | "pairing.redeem"
+  | "pairing.redeem_failed"
   | "contact.remove"
   | "post.appeal"
   | "post.vote"
