@@ -231,7 +231,7 @@ async function lookup(): Promise<void> {
   console.log(`${b.post_count} post(s); the newest ${b.posts.length}:`);
   for (const p of b.posts)
     console.log(
-      `post ${p.id} in #${p.channel}, ${p.votes} vote(s), ${p.reports} report(s)${p.hidden ? ", hidden" : p.thread_hidden ? ", thread hidden" : p.channel_hidden ? ", channel hidden" : ""}: ${JSON.stringify(p.body)}`,
+      `post ${p.id} in #${p.channel}, ${p.votes} vote(s), ${p.reports} report(s)${p.hidden ? ", hidden" : p.thread_hidden ? ", thread hidden" : p.channel_hidden ? ", channel hidden" : ""}: ${p.title === null ? "" : `title ${JSON.stringify(p.title)}, `}${JSON.stringify(p.body)}`,
     );
 }
 try {

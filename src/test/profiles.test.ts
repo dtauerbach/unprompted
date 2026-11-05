@@ -18,6 +18,7 @@ import {
   unbanBot,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { keyStatement, parsePublicKey } from "@/lib/profiles";
 import { call, freshIp, register, resetDb } from "./helpers";
 
@@ -226,6 +227,12 @@ describe("saving fields", () => {
       ["a field about the owner", [{ name: "Owner", value: "Pat" }]],
       ["a field about the human", [{ name: "My human", value: "Pat" }]],
       ["a field about the operator", [{ name: "Operator", value: "Pat" }]],
+      ["a field about the maker", [{ name: "Made by", value: "Pat" }]],
+      ["a field about the creator", [{ name: "Creator", value: "Pat" }]],
+      ["a field about who built it", [{ name: "Built by", value: "Pat" }]],
+      ["a field about the company", [{ name: "Company", value: "Acme" }]],
+      ["a line separator in a name", [{ name: "a\u2028b", value: "v" }]],
+      ["a paragraph separator in a name", [{ name: "a\u2029b", value: "v" }]],
       ["not a list", { name: "n", value: "v" }],
       ["an extra key", [{ name: "n", value: "v", url: "x" }]],
     ];
@@ -373,6 +380,21 @@ describe("reading a profile", () => {
   it("takes @ and capitals in the handle", async () => {
     await register("alice");
     expect((await readProfile("@Alice")).status).toBe(200);
+  });
+
+  it("reads the house account's too, though no bot can take its handle", async () => {
+    await syncWelcome(db(), "Welcome.");
+    for (const handle of [HOUSE_HANDLE, `@${HOUSE_HANDLE.toUpperCase()}`]) {
+      const res = await readProfile(handle);
+      expect(res.status, handle).toBe(200);
+      expect(res.body.profile.untrusted_fields).toEqual([]);
+    }
+    const a = await register("alice");
+    const got = await tool(a.key, "read_profile", {
+      handle: `@${HOUSE_HANDLE}`,
+    });
+    expect(got.isError).toBe(false);
+    expect(got.data.profile.untrusted_fields).toEqual([]);
   });
 
   it("is open to anyone, and a bot with no profile has empty fields", async () => {
@@ -535,6 +557,36 @@ describe("linking a signing key", () => {
         "invalid_signature",
       ],
     ];
+    const priv = generateKeyPairSync("ed25519").privateKey.export({
+      format: "pem",
+      type: "pkcs8",
+    });
+    cases.push(
+      [
+        "a private key, which would give its public half away",
+        {
+          public_key: priv.toString(),
+          signature: k.sign(keyStatement("alice")),
+        },
+        "private_key_sent",
+      ],
+      [
+        "a public key's block with a private one after it",
+        {
+          public_key: `${k.pem}\n${priv.toString()}`,
+          signature: k.sign(keyStatement("alice")),
+        },
+        "private_key_sent",
+      ],
+      [
+        "a block of another kind",
+        {
+          public_key: k.pem.replaceAll("PUBLIC KEY", "CERTIFICATE"),
+          signature: k.sign(keyStatement("alice")),
+        },
+        "invalid_key_format",
+      ],
+    );
     for (const [what, body, code] of cases) {
       const res = await call(linkRoute, { key: a.key, body });
       expect(res.status, what).toBe(400);

@@ -352,6 +352,9 @@ export default async function BotLookupPage({
                       ? ". Channel hidden"
                       : ""}
               </p>
+              {p.title !== null && (
+                <p className="break-words text-sm font-semibold">{p.title}</p>
+              )}
               <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
                 {p.body}
               </p>

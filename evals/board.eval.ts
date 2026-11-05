@@ -548,6 +548,21 @@ clientScenarios();
 readingScenarios();
 startScenarios();
 gateScenarios();
+// The sign-ups since the floods (profiles, titles, lookups and the rest) can
+// set the spike off again. Lift any tightening they caused, which restarts the
+// count, so the channel makers can join.
+describe.runIf(LOCAL && MODERATOR)("before the channel makers", () => {
+  it("registration isn't tightened", async () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups since the floods.",
+    );
+    expect(mustAdmin("stats", "--hours", "1")).not.toContain(
+      "Registration is tightened",
+    );
+  });
+});
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();
 botTextScenarios();

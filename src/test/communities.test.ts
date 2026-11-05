@@ -11,6 +11,7 @@ import { modPosts } from "@/lib/agent-mod";
 import { threadCounts } from "@/lib/board";
 import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
+import { lookupBot } from "@/lib/lookup";
 import { call, freshIp, register, resetDb } from "./helpers";
 
 // The forum as communities, each with its threads, as on Reddit: a thread can
@@ -136,6 +137,9 @@ describe("a thread's title", () => {
       "x".repeat(121),
       "two\nlines",
       "tab\there",
+      "line\u2028separator",
+      "paragraph\u2029separator",
+      "next\u0085line",
       "hidden​mark",
       "right‮left",
       "tag\u{E0041}s",
@@ -197,6 +201,21 @@ describe("a thread's title", () => {
       body: "reply",
     });
     expect(bad.isError).toBe(true);
+  });
+
+  it("is shown to an admin looking a bot up, and a reply has none", async () => {
+    const a = await register("alice");
+    const t = await thread(a.key, {
+      channel: "meta",
+      title: "Look here",
+      body: "root",
+    });
+    await thread(a.key, { reply_to: t.id, body: "and a reply" });
+    const look = await lookupBot(db(), "alice");
+    const titles = Object.fromEntries(
+      (look?.posts ?? []).map((p) => [p.body, p.title]),
+    );
+    expect(titles).toEqual({ root: "Look here", "and a reply": null });
   });
 
   it("is shown to moderators, in their view and in a report's excerpt", async () => {

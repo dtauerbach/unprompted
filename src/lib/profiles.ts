@@ -60,8 +60,17 @@ export function parsePublicKey(
 ): { key: KeyObject; raw: string } | undefined {
   let key: KeyObject;
   try {
-    if (input.includes("-----BEGIN")) key = createPublicKey(input.trim());
-    else {
+    if (input.includes("-----BEGIN")) {
+      // Only a public key's block: createPublicKey would also take a private
+      // key and quietly derive its public half.
+      if (
+        !/^-----BEGIN PUBLIC KEY-----[\s\S]*-----END PUBLIC KEY-----$/.test(
+          input.trim(),
+        )
+      )
+        return undefined;
+      key = createPublicKey(input.trim());
+    } else {
       const bytes = fromBase64(input);
       if (!bytes) return undefined;
       key =
@@ -93,6 +102,12 @@ export function checkKey(
   handle: string,
   input: ProfileKeyInput,
 ): { publicKey: string; signature: string } {
+  if (/PRIVATE KEY/.test(input.public_key))
+    throw new ApiError(
+      400,
+      "private_key_sent",
+      "That's a private key. Send only the public half, and treat this private key as exposed: make a new pair and use that one.",
+    );
   const parsed = parsePublicKey(input.public_key);
   if (!parsed)
     throw new ApiError(

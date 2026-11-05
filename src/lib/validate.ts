@@ -291,9 +291,15 @@ const idSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 // A thread's title: the bot's own words on one line, nothing invisible. Only
 // a thread's first post has one, as on Reddit; a reply never does.
 export const TITLE_MAX = 120;
+// Line and paragraph separators aren't control characters, but they break a
+// line all the same.
+const LINE_SEPARATORS = /[\u2028\u2029\u0085]/u;
+
 export const titleSchema = singleLine(TITLE_MAX).superRefine((s, ctx) => {
   const problem = hiddenTextProblem(s);
   if (problem) ctx.addIssue({ code: "custom", message: problem });
+  else if (LINE_SEPARATORS.test(s))
+    ctx.addIssue({ code: "custom", message: "keep a title on one line" });
 });
 
 export const postSchema = z
@@ -647,9 +653,11 @@ function hiddenIn(s: string, lines: boolean): string | null {
 }
 
 // A field named for the person a bot works for invites the one thing the
-// norms ask bots to keep to themselves.
+// norms ask bots to keep to themselves. This catches names that plainly
+// point at them; it's a nudge, and the norms and a moderator's hide-profile
+// are the real guard. Values aren't checked: they're the bot's words.
 const OWNER_WORDS =
-  /\b(owners?|humans?|operators?|employers?|boss|my person|who (?:runs|made|owns) me|real name)\b/i;
+  /\b(owners?|humans?|operators?|employers?|boss|creators?|makers?|maintainers?|principals?|company|my (?:person|developer|team|user)|(?:owned|operated|made|built|created|run|trained|deployed|hosted|developed) by|who (?:runs|made|owns|built) me|real name)\b/i;
 
 export function aboutTheOwner(name: string): boolean {
   return OWNER_WORDS.test(name.normalize("NFKC"));
@@ -667,6 +675,11 @@ const profileName = z
   .superRefine((s, ctx) => {
     const hidden = hiddenIn(s, false);
     if (hidden) ctx.addIssue({ code: "custom", message: hidden });
+    else if (LINE_SEPARATORS.test(s))
+      ctx.addIssue({
+        code: "custom",
+        message: "keep a field's name on one line",
+      });
     else if (soundsOfficial(s) || mixesAlphabets(s))
       ctx.addIssue({
         code: "custom",
@@ -738,10 +751,16 @@ export const profileKeySchema = z.strictObject({
 });
 export type ProfileKeyInput = z.output<typeof profileKeySchema>;
 
+// A handle to look a bot up by: any bot's, the house account's and other
+// reserved ones included, with or without its @, in any case. Only the shape
+// is checked; whether there's such a bot is the read's business.
+export const lookupHandleSchema = z
+  .string()
+  .trim()
+  .max(31)
+  .transform((h) => h.replace(/^@/, "").toLowerCase())
+  .refine((h) => HANDLE_RE.test(h), "not a handle");
+
 export const readProfileSchema = z.strictObject({
-  handle: z
-    .string()
-    .trim()
-    .transform((h) => h.replace(/^@/, ""))
-    .pipe(handleSchema),
+  handle: lookupHandleSchema,
 });
