@@ -407,6 +407,50 @@ describe("who may start a conversation", () => {
   });
 });
 
+describe("gates on replies and the trigger behind the app", () => {
+  it("gates replies with the message action", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    await send(b, "alice", "hi");
+    await setGates(
+      db(),
+      { message: [{ signal: "claimed", is: true }] },
+      "test",
+    );
+    const res = await send(a, "bob", "hello");
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("not_yet");
+    expect((await counts()).messages).toBe(1);
+  });
+
+  it("answers a write the trigger refuses with 403 not_accepting", async () => {
+    const a = await bot("alice");
+    await bot("bob");
+    // A race the app's own checks lost: bob closes between the check and the
+    // insert. Played by closing bob's inbox inside a trigger that runs first.
+    await db()`
+      CREATE FUNCTION test_close_bob() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        INSERT INTO inbox_settings (bot_id, key_id, open)
+        SELECT b.id, k.id, false FROM bots b JOIN api_keys k ON k.bot_id = b.id
+        WHERE b.handle = 'bob' LIMIT 1;
+        RETURN NEW;
+      END $$`;
+    await db()`
+      CREATE TRIGGER a_test_close_bob BEFORE INSERT ON messages
+      FOR EACH ROW EXECUTE FUNCTION test_close_bob()`;
+    try {
+      const res = await send(a, "bob", "hi");
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe("not_accepting");
+    } finally {
+      await db()`DROP TRIGGER a_test_close_bob ON messages`;
+      await db()`DROP FUNCTION test_close_bob()`;
+    }
+    expect((await counts()).messages).toBe(0);
+  });
+});
+
 describe("blocking", () => {
   it("stops messages both ways, says the same as a closed inbox, and undoes", async () => {
     const a = await bot("alice");
@@ -571,9 +615,11 @@ describe("the digest", () => {
     expect(d.body.messages.new).toEqual([]);
     expect(d.body.start).toBeDefined();
     await send(b, "alice", "hello");
-    // Without a cursor, it starts after the bot's own newest message.
+    // Without a cursor, each conversation starts after the bot's own newest
+    // message in it.
     d = await digest(b);
     expect(d.body.messages.new).toEqual([]);
+    expect(d.body.messages.since).toBe(null);
     const compact = await digest(a, "?view=compact&messages_since=0");
     expect(compact.body.messages.new[0]).toMatchObject({
       from: "bob",
@@ -581,6 +627,34 @@ describe("the digest", () => {
     });
     expect(compact.body.messages.new[0].request).toBeUndefined();
     expect(compact.body.messages.new[0].at).toMatch(/Z$/);
+  });
+
+  it("without a cursor, keeps a request waiting though the bot answered someone else since", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    const c = await bot("carol");
+    await send(a, "bob", "from alice");
+    await send(c, "bob", "from carol");
+    await send(b, "alice", "hi alice");
+    const d = await digest(b);
+    expect(
+      d.body.messages.new.map(
+        (m: { untrusted_body: string }) => m.untrusted_body,
+      ),
+    ).toEqual(["from carol"]);
+    void c;
+  });
+
+  it("gives a cursor that says nothing about other bots' messages", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    await bot("carol");
+    const first = await send(a, "bob", "hi");
+    await send(a, "carol", "hi");
+    await send(b, "alice", "hi");
+    expect((await digest(b)).body.messages.next_since).toBe(
+      first.body.message.id,
+    );
   });
 
   it("reaches back only a week, and leaves a sender's own messages out", async () => {
@@ -602,6 +676,25 @@ describe("the digest", () => {
     const a = await bot("alice");
     expect((await digest(a, "?messages_since=-1")).status).toBe(400);
     expect((await digest(a, "?messages_since=abc")).status).toBe(400);
+  });
+});
+
+describe("a block never changes a refusal that names a reason", () => {
+  it("still says waiting for a reply, and still names who the inbox takes", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    await send(a, "bob", "hi");
+    await block(b, "alice");
+    const waiting = await send(a, "bob", "again?");
+    expect(waiting.status).toBe(409);
+    expect(waiting.body.error.code).toBe("waiting_for_reply");
+    const c = await bot("carol");
+    await setInbox(c, { requests_from: "claimed" });
+    await block(c, "alice");
+    const named = await send(a, "carol", "hi");
+    expect(named.status).toBe(403);
+    expect(named.body.error.message).toMatch(/claimed/);
+    expect((await counts()).messages).toBe(1);
   });
 });
 
@@ -707,6 +800,38 @@ describe("the private limits", () => {
     expect(res.body.error.message).not.toMatch(/\b3\b/);
   });
 
+  it("caps private messages across the site, naming no number", async () => {
+    const a = await bot("alice");
+    await bot("bob");
+    await bot("carol");
+    await setAntiAbuse(db(), { message_global: 1 }, "test");
+    expect((await send(a, "bob", "hi")).status).toBe(201);
+    const res = await send(a, "carol", "hi");
+    expect(res.status).toBe(429);
+    expect(res.body.error.message).toMatch(/whole site/);
+    expect(res.body.error.message).not.toMatch(/\b1\b/);
+  });
+
+  it("counts a message report against the hourly report limit, and gates it", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    const ids: number[] = [];
+    ids.push((await send(a, "bob", "m0")).body.message.id);
+    await send(b, "alice", "ok");
+    for (let i = 1; i < 4; i++)
+      ids.push((await send(a, "bob", `m${i}`)).body.message.id);
+    await setAntiAbuse(db(), { report_per_hour: 2 }, "test");
+    expect((await report(b, ids[0] as number)).status).toBe(200);
+    expect((await report(b, ids[1] as number)).status).toBe(200);
+    expect((await report(b, ids[2] as number)).status).toBe(429);
+    await setAntiAbuse(db(), {}, "test");
+    await setGates(db(), { report: [{ signal: "claimed", is: true }] }, "test");
+    const gated = await report(b, ids[3] as number);
+    expect(gated.status).toBe(403);
+    expect(gated.body.error.code).toBe("not_yet");
+    expect((await counts()).reports).toBe(2);
+  });
+
   it("have defaults the repo keeps", () => {
     expect(ANTI_ABUSE_DEFAULTS.message_per_hour).toBeGreaterThan(0);
     expect(ANTI_ABUSE_DEFAULTS.message_requests_per_day).toBeGreaterThan(0);
@@ -809,9 +934,9 @@ describe("the connector", () => {
       (await tool(b.key, "block_bot", { handle: "alice" })).data.blocked,
     ).toBe(true);
     expect(
-      (await tool(a.key, "send_message", { to: "bob", body: "again" })).data
+      (await tool(b.key, "send_message", { to: "alice", body: "hi" })).data
         .error.code,
-    ).toBe("not_accepting");
+    ).toBe("you_blocked");
     expect(
       (await tool(b.key, "unblock_bot", { handle: "alice" })).data.blocked,
     ).toBe(false);

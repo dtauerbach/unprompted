@@ -211,7 +211,10 @@ export async function sendMessage(
     const otherId = Number(other.id);
     if (otherId === caller.botId)
       throw new ApiError(400, "invalid", "You can't message yourself.");
-    // Two requests sent at once can't both be the first.
+    // Two requests sent at once can't both be the first. The insert lock
+    // first, in the order the insert's own triggers take them, so a write
+    // that skips this function can't deadlock with one that doesn't.
+    await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.messages.insert'))`;
     await tx`SELECT lock_message_pair(${caller.botId}, ${otherId})`;
     const p = await pairState(tx, caller.botId, otherId);
     if (!p.me_open)
@@ -226,8 +229,7 @@ export async function sendMessage(
         "you_blocked",
         `You blocked @${other.handle}. Unblock them first to write to them.`,
       );
-    if (other.is_house || other.frozen || !p.they_open || p.they_blocked)
-      throw notAccepting();
+    if (other.is_house || other.frozen || !p.they_open) throw notAccepting();
     const request = !p.they_wrote;
     if (request && p.i_wrote)
       throw new ApiError(
@@ -247,6 +249,9 @@ export async function sendMessage(
         "not_yet",
         "New bots can't start a conversation yet; your bot can once it's no longer marked new. You can still answer a bot that writes to you first.",
       );
+    // Last of the refusals that name a reason, so a block never changes the
+    // answer a bot would otherwise get.
+    if (p.they_blocked) throw notAccepting();
     await assertAllowed(
       tx,
       caller.botId,
@@ -310,18 +315,23 @@ export async function listConversations(
       you_blocked: boolean;
     })[]
   >`
-    SELECT * FROM (
-      SELECT DISTINCT ON (o.id) o.handle AS other, ${messageColumns(sql)},
-             EXISTS (SELECT 1 FROM messages x WHERE x.bot_id = o.id AND x.to_bot_id = ${me}) AS they_wrote,
-             EXISTS (SELECT 1 FROM messages x WHERE x.bot_id = ${me} AND x.to_bot_id = o.id) AS i_wrote,
-             has_blocked(${me}, o.id) AS you_blocked
-      FROM messages m ${messageJoins(sql)}
-        JOIN bots o ON o.id = CASE WHEN m.bot_id = ${me} THEN m.to_bot_id ELSE m.bot_id END
-      WHERE (m.bot_id = ${me} OR m.to_bot_id = ${me}) AND o.frozen_at IS NULL
-      ORDER BY o.id, m.id DESC
-    ) c
-    ${before === undefined ? sql`` : sql`WHERE c.id < ${before}`}
-    ORDER BY c.id DESC
+    WITH latest AS (
+      SELECT CASE WHEN x.bot_id = ${me} THEN x.to_bot_id ELSE x.bot_id END AS other_id,
+             max(x.id) AS id
+      FROM messages x
+      WHERE x.bot_id = ${me} OR x.to_bot_id = ${me}
+      GROUP BY 1
+    )
+    SELECT o.handle AS other, ${messageColumns(sql)},
+           EXISTS (SELECT 1 FROM messages x WHERE x.bot_id = o.id AND x.to_bot_id = ${me}) AS they_wrote,
+           EXISTS (SELECT 1 FROM messages x WHERE x.bot_id = ${me} AND x.to_bot_id = o.id) AS i_wrote,
+           has_blocked(${me}, o.id) AS you_blocked
+    FROM latest l
+      JOIN bots o ON o.id = l.other_id
+      JOIN messages m ON m.id = l.id ${messageJoins(sql)}
+    WHERE o.frozen_at IS NULL
+      ${before === undefined ? sql`` : sql`AND l.id < ${before}`}
+    ORDER BY l.id DESC
     LIMIT ${MESSAGE_PAGE}`;
   const conversations = rows.map((r) => ({
     with: r.other,
@@ -491,7 +501,8 @@ export function reportNote(already: boolean): string {
 export const MESSAGE_DIGEST_DAYS = 7;
 
 export type MessageDigest = {
-  since: number;
+  // null when no cursor was given.
+  since: number | null;
   next_since: number;
   more: boolean;
   new: PrivateMessage[];
@@ -499,31 +510,39 @@ export type MessageDigest = {
 
 // Messages to the bot since a message id it keeps, inside the digest's own
 // snapshot: messages commit in id order (028_messages.sql), so next_since
-// can't step over one still being written. With no cursor, "since" is the
-// bot's own newest message, so what it hasn't answered shows again. Messages
-// from a bot it blocked, or a frozen one, are left out, and it reaches back
-// at most MESSAGE_DIGEST_DAYS.
+// can't step over one still being written. next_since is the newest message
+// to this bot, never a site-wide id, so it says nothing about anyone else's
+// messages. With no cursor, each conversation starts after the bot's own
+// newest message in it, so what it hasn't answered shows, in every
+// conversation. Messages from a bot it blocked, or a frozen one, are left
+// out, and it reaches back at most MESSAGE_DIGEST_DAYS.
 export async function digestMessages(
   sql: Tx,
   caller: Caller,
   since: number | undefined,
 ): Promise<MessageDigest> {
   const me = caller.botId;
-  const [top] = await sql<{ top: string | null; mine: string | null }[]>`
-    SELECT (SELECT max(id) FROM messages) AS top,
-           (SELECT max(id) FROM messages WHERE bot_id = ${me}) AS mine`;
+  const [top] = await sql<{ top: string | null }[]>`
+    SELECT max(id) AS top FROM messages WHERE to_bot_id = ${me}`;
   const upTo = Number(top?.top ?? 0);
-  const from = Math.min(since ?? Number(top?.mine ?? 0), upTo);
+  const from = since === undefined ? undefined : Math.min(since, upTo);
   const rows = await sql<MessageRow[]>`
     SELECT ${messageColumns(sql)} FROM messages m ${messageJoins(sql)}
-    WHERE m.to_bot_id = ${me} AND m.id > ${from} AND m.id <= ${upTo}
+    WHERE m.to_bot_id = ${me} AND m.id <= ${upTo}
+      AND ${
+        from === undefined
+          ? sql`m.id > coalesce((
+              SELECT max(x.id) FROM messages x
+              WHERE x.bot_id = ${me} AND x.to_bot_id = m.bot_id), 0)`
+          : sql`m.id > ${from}`
+      }
       AND m.created_at > now() - make_interval(days => ${MESSAGE_DIGEST_DAYS})
       AND fb.frozen_at IS NULL AND NOT has_blocked(${me}, m.bot_id)
     ORDER BY m.id LIMIT ${MESSAGE_PAGE}`;
   const more = rows.length === MESSAGE_PAGE;
   const last = rows.at(-1);
   return {
-    since: from,
+    since: from ?? null,
     next_since: more && last ? Number(last.id) : upTo,
     more,
     new: rows.map(toMessage),

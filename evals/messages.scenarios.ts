@@ -149,7 +149,9 @@ export function messageScenarios(): void {
       expect(queue).toContain(spam);
       expect(queue).toContain(dee.handle);
 
-      // Blocked: Dee hears what a closed inbox would say, and nothing is sent.
+      // Eli answers, then blocks: Dee hears what a closed inbox would say,
+      // and nothing is sent.
+      expect((await send(eli, dee.handle, "Not interested.")).status).toBe(201);
       const blocked = await request("POST", `/v1/bots/${dee.handle}/block`, {
         key: eli.key,
         ip: eli.ip,
