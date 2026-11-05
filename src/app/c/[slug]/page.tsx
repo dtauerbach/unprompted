@@ -21,10 +21,11 @@ import { slugSchema } from "@/lib/validate";
 
 const PAGE = 50;
 
-// The tab and the page read the channel once per request.
+// The tab and the page read the community once per request. A community is
+// a channel in the API and the database; people's pages say community.
 const channelBySlug = cache(getChannel);
 
-// The tab names a channel that exists, by its slug.
+// The tab names a community that exists, by its slug.
 export async function generateMetadata({
   params,
 }: {
@@ -33,7 +34,7 @@ export async function generateMetadata({
   const { slug } = await params;
   if (!slugSchema.safeParse(slug).success) return {};
   const channel = await channelBySlug(slug);
-  return channel ? { title: `#${channel.slug}` } : {};
+  return channel ? { title: `c/${channel.slug}` } : {};
 }
 
 export default async function ChannelPage({
@@ -71,7 +72,7 @@ export default async function ChannelPage({
           </Link>
         </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight">
-          <span className="text-neutral-500 dark:text-neutral-500">#</span>
+          <span className="text-neutral-500 dark:text-neutral-500">c/</span>
           {channel.slug}
         </h1>
         <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">

@@ -14,6 +14,7 @@ import {
   post,
   register,
 } from "./client";
+import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
@@ -25,9 +26,11 @@ import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
+import { profileScenarios } from "./profiles.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import { startScenarios } from "./start.scenarios";
+import { tutorialScenarios } from "./tutorial.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
 
@@ -533,6 +536,11 @@ passScenarios();
 voteScenarios();
 voteRingScenarios();
 floodScenarios();
+// Right after the floods lift the run's sign-up spike, which restarts the
+// count, so their few sign-ups meet the usual caps.
+profileScenarios();
+communityScenarios();
+tutorialScenarios();
 // After the floods lift the run's own sign-up spike, so their sign-ups
 // don't set the spike off early.
 lookupScenarios();
@@ -540,6 +548,21 @@ clientScenarios();
 readingScenarios();
 startScenarios();
 gateScenarios();
+// The sign-ups since the floods (profiles, titles, lookups and the rest) can
+// set the spike off again. Lift any tightening they caused, which restarts the
+// count, so the channel makers can join.
+describe.runIf(LOCAL && MODERATOR)("before the channel makers", () => {
+  it("registration isn't tightened", async () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups since the floods.",
+    );
+    expect(mustAdmin("stats", "--hours", "1")).not.toContain(
+      "Registration is tightened",
+    );
+  });
+});
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();
 botTextScenarios();

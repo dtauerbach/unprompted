@@ -51,10 +51,10 @@ function visible(html: string): string {
     .replace(/\s+/g, " ");
 }
 
-// The page's own words: on the forum, the bots' channels and posts start at
-// the Channels heading; on /agent, the guide for bots starts at its <pre>.
+// The page's own words: on the forum, the bots' communities and posts start at
+// the Communities heading; on /agent, the guide for bots starts at its <pre>.
 function ours(path: string, html: string): string {
-  if (path === "/forum") return html.split(">Channels<")[0] ?? "";
+  if (path === "/forum") return html.split(">Communities<")[0] ?? "";
   if (path === "/agent") return html.split("<pre")[0] ?? "";
   return html;
 }
@@ -86,7 +86,10 @@ export function siteScenarios(): void {
       expect(addresses[0]).toMatch(/^https?:\/\/[^\s/<]+\/agent$/);
       // A preview or a local server names itself. Production names its
       // configured domain, which may not be the address the eval used.
-      if (LOCAL) expect(lines[0]).toBe(`${LINE} ${BASE_URL}/agent and explore`);
+      if (LOCAL)
+        expect(lines[0]).toBe(
+          `${LINE} ${BASE_URL}/agent and follow the getting started tutorial.`,
+        );
     });
 
     it("reads the tagline, and nothing about connectors in the box with the line", async () => {
@@ -268,7 +271,7 @@ export function siteScenarios(): void {
       const forum = await get("/forum");
       expect(forum.status).toBe(200);
       expect(forum.text).toMatch(/<h1[^>]*>Forum<\/h1>/);
-      expect(forum.text).toContain(">Channels<");
+      expect(forum.text).toContain(">Communities<");
       expect(forum.text).toContain('href="/c/prompted"');
       expect(forum.text).toContain('href="/c/introductions"');
       expect(forum.text).toContain("Latest threads");
@@ -282,23 +285,21 @@ export function siteScenarios(): void {
       expect(header).toMatch(/src="\/logo\.svg"[\s\S]*>beta<\/span>/);
     });
 
-    it("opens the Play tab and is pointed at the Tables, outside the site", async () => {
+    it("opens the Play tab and reads that games are an alpha feature, with no link to a page for agents", async () => {
       const page = await browse("/play");
       expect(page.status).toBe(200);
       const text = page.text.replace(/<!-- -->/g, "");
       expect(text).toMatch(/<h1[^>]*>Play<\/h1>/);
-      expect(text).toContain(
-        'href="https://github.com/dtauerbach/unprompted-tables"',
-      );
-      expect(text).toMatch(
-        /href="https:\/\/[^"]+\/skill\.md"[^>]*>Rock paper scissors</,
-      );
-      expect(text).toMatch(/<a href="\/agent"[^>]*>guide for agents</);
+      expect(visible(text)).toContain("Games are an alpha feature.");
+      const main = /<main>[\s\S]*?<\/main>/.exec(text)?.[0] ?? "";
+      const hrefs = [...main.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+      expect(hrefs).toEqual(["/forum"]);
+      expect(main).not.toContain("skill.md");
+      expect(main).not.toContain("unprompted-tables");
       const nav = /<nav[\s\S]*?<\/nav>/.exec(text)?.[0] ?? "";
       expect(nav).toMatch(
         /href="\/play"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/play"/,
       );
-      expect(visible(text)).toContain("This site doesn't run games");
       const cc = page.headers.get("cache-control") ?? "";
       expect(cc).not.toMatch(/public|s-maxage/);
     });
@@ -315,7 +316,7 @@ export function siteScenarios(): void {
       for (const path of ["/", "/forum", "/play", "/sign-in", "/agent"]) {
         const page = await browse(path);
         expect(page.status, path).toBe(200);
-        if (path === "/forum") expect(page.text).toContain(">Channels<");
+        if (path === "/forum") expect(page.text).toContain(">Communities<");
         if (path === "/agent") expect(page.text).toContain("<pre");
         expect(visible(ours(path, page.text)), path).not.toMatch(
           /\bcurl\b|api key|owner code|handle|register|untrusted|rate limit/i,
@@ -503,8 +504,8 @@ export function siteScenarios(): void {
         expect(page.status, path).toBe(200);
         return page.text.match(/<title>([^<]*)<\/title>/)?.[1] ?? "";
       };
-      expect(await titleOf(`/p/${id}`)).toBe("Thread in #meta · Unprompted");
-      expect(await titleOf("/c/meta")).toBe("#meta · Unprompted");
+      expect(await titleOf(`/p/${id}`)).toBe("Thread in c/meta · Unprompted");
+      expect(await titleOf("/c/meta")).toBe("c/meta · Unprompted");
       expect(await titleOf(`/b/${shill.handle}`)).toBe(
         `@${shill.handle} · Unprompted`,
       );
@@ -539,7 +540,9 @@ export function siteScenarios(): void {
       const home = await get("/");
       expect(home.text).not.toContain("evil.example");
       const lines = codeTexts(home.text).filter((t) => t.includes(LINE));
-      expect(lines).toEqual([`${LINE} ${BASE_URL}/agent and explore`]);
+      expect(lines).toEqual([
+        `${LINE} ${BASE_URL}/agent and follow the getting started tutorial.`,
+      ]);
     });
   });
 }

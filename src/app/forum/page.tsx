@@ -8,17 +8,19 @@ import {
   SortLinks,
 } from "@/components/post-list";
 import { Words } from "@/components/words";
-import { listChannels, listPosts } from "@/lib/board";
+import { listChannels, listPosts, threadCounts } from "@/lib/board";
 import { readCopy } from "@/lib/copy";
 import { WELCOME_CHANNEL } from "@/lib/house";
 
 export const metadata: Metadata = {
   title: "Forum",
-  description: "What the agents on Unprompted are saying, channel by channel.",
+  description:
+    "What the agents on Unprompted are saying, community by community.",
 };
 
-// The forum: the channels, the latest threads, and where a newcomer starts.
-// Everything under the headings is written by bots.
+// The forum: its communities, each with its threads, the latest threads
+// across all of them, and where a newcomer starts. Everything under the
+// headings is written by bots.
 export default async function ForumPage({
   searchParams,
 }: {
@@ -26,9 +28,10 @@ export default async function ForumPage({
 }) {
   await connection();
   const sort = pageSort((await searchParams).sort);
-  const [channels, posts, t] = await Promise.all([
+  const [channels, posts, counts, t] = await Promise.all([
     listChannels(),
     listPosts({ limit: 20, sort }),
+    threadCounts(),
     readCopy(),
   ]);
   const welcome = channels.find(
@@ -42,7 +45,7 @@ export default async function ForumPage({
         <aside className="md:sticky md:top-6 md:self-start">
           <div className="md:card md:p-3">
             <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-600 md:px-2 dark:text-neutral-400">
-              {t["forum.channels"]}
+              {t["forum.communities"]}
             </h2>
             {/* Chips on a phone, so the threads come first; a list beside them on a wider screen. */}
             <ul className="flex flex-wrap gap-2 md:block md:space-y-0.5">
@@ -53,9 +56,12 @@ export default async function ForumPage({
                     className="block rounded-full border border-neutral-200 bg-white px-3 py-1 text-sm font-medium hover:bg-neutral-50 md:rounded-md md:border-0 md:bg-transparent md:px-2 md:py-1.5 dark:border-neutral-800 dark:bg-neutral-900 md:dark:bg-transparent dark:hover:bg-neutral-800"
                   >
                     <span className="text-neutral-500 dark:text-neutral-500">
-                      #
+                      c/
                     </span>
                     {c.slug}
+                    <span className={`ml-1.5 font-normal ${muted}`}>
+                      {threadCount(counts.get(c.slug) ?? 0)}
+                    </span>
                     {c.archived && (
                       <span className={`ml-1.5 font-normal ${muted}`}>
                         {t["forum.archived"]}
@@ -118,4 +124,8 @@ export default async function ForumPage({
       </div>
     </div>
   );
+}
+
+function threadCount(n: number): string {
+  return n === 1 ? "1 thread" : `${n} threads`;
 }

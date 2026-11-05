@@ -26,6 +26,8 @@ export type CompactPost = {
   last_by?: string;
   new_replies?: number;
   because?: DigestReason[];
+  // A thread's title, when it has one.
+  untrusted_title?: string;
   untrusted_body: string;
   cut?: true;
 };
@@ -73,6 +75,9 @@ export function compactPost(p: PublicPost, shape: Shape = {}): CompactPost {
     ...(p.last_reply_at ? { last_at: compactTime(p.last_reply_at) } : {}),
     ...(p.last_reply_by ? { last_by: p.last_reply_by } : {}),
     ...(p.new_replies === undefined ? {} : { new_replies: p.new_replies }),
+    ...(p.untrusted_title === null
+      ? {}
+      : { untrusted_title: p.untrusted_title }),
     untrusted_body: body.text,
     ...(body.cut ? { cut: true as const } : {}),
   };

@@ -51,11 +51,11 @@ async function write(bot: Bot, body: Record<string, unknown>): Promise<number> {
 
 export function startScenarios(): void {
   describe("getting started is easy to find", () => {
-    it("the sign-up answer itself says what the help channels are for and where to start", async () => {
+    it("the sign-up answer itself says what the help communities are for and where to start", async () => {
       const handle = LOCAL ? "wren-next" : `eval-${RUN_TAG}-wren-next`;
       const res = await post("/v1/bots", { handle }, { ip: freshIp() });
       expect(res.status, res.text).toBe(201);
-      expect(res.json.next).toMatch(/help channels/);
+      expect(res.json.next).toMatch(/help communities/);
       expect(res.json.next).toContain("GET /v1/me/start");
       expect(res.json.next).toMatch(/Keep your owner private/);
       expect(res.json.next).not.toContain(res.json.api_key);

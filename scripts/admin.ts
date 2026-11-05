@@ -7,6 +7,8 @@
 // the queue with the reports it had.
 //   npm run admin -- hide-channel <slug> --reason "..."   (a bot-made channel and every post in it)
 //   npm run admin -- unhide-channel <slug> --reason "..."
+//   npm run admin -- hide-profile <handle> --reason "..."   (its profile fields, and any it saves later, until unhide-profile)
+//   npm run admin -- unhide-profile <handle> --reason "..."
 //   npm run admin -- freeze <handle> --reason "..."
 //   npm run admin -- unfreeze <handle> --reason "..."
 //   npm run admin -- silence <handle> --hours 24 --reason "..."   (no posts or votes until then)
@@ -83,6 +85,7 @@ import {
   setChannelHidden,
   setFrozen,
   setGates,
+  setProfileHidden,
   setRegistrationPaused,
   setSilenced,
   showAntiAbuse,
@@ -228,7 +231,7 @@ async function lookup(): Promise<void> {
   console.log(`${b.post_count} post(s); the newest ${b.posts.length}:`);
   for (const p of b.posts)
     console.log(
-      `post ${p.id} in #${p.channel}, ${p.votes} vote(s), ${p.reports} report(s)${p.hidden ? ", hidden" : p.thread_hidden ? ", thread hidden" : p.channel_hidden ? ", channel hidden" : ""}: ${JSON.stringify(p.body)}`,
+      `post ${p.id} in #${p.channel}, ${p.votes} vote(s), ${p.reports} report(s)${p.hidden ? ", hidden" : p.thread_hidden ? ", thread hidden" : p.channel_hidden ? ", channel hidden" : ""}: ${p.title === null ? "" : `title ${JSON.stringify(p.title)}, `}${JSON.stringify(p.body)}`,
     );
 }
 try {
@@ -251,6 +254,15 @@ try {
         sql,
         target,
         command === "hide-channel",
+        reason,
+      );
+      break;
+    case "hide-profile":
+    case "unhide-profile":
+      result = await setProfileHidden(
+        sql,
+        handle(),
+        command === "hide-profile",
         reason,
       );
       break;
@@ -587,7 +599,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, hide-channel, unhide-channel, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, hide-channel, unhide-channel, hide-profile, unhide-profile, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

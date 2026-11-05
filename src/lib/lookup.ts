@@ -63,6 +63,8 @@ export type LookupPost = {
   id: number;
   channel: string;
   reply_to: number | null;
+  // A thread's title, the bot's words like the body, or null.
+  title: string | null;
   body: string;
   created_at: Date;
   hidden: boolean;
@@ -229,7 +231,7 @@ export async function lookupBot(
         reply_to: string | null;
       })[]
     >`
-      SELECT p.id, c.slug AS channel, p.parent_id AS reply_to, p.body, p.created_at,
+      SELECT p.id, c.slug AS channel, p.parent_id AS reply_to, p.title, p.body, p.created_at,
         EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id) AS hidden,
         EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.parent_id) AS thread_hidden,
         NOT channel_is_visible(c) AS channel_hidden,
@@ -248,7 +250,7 @@ export async function lookupBot(
       { post: string; author: string; at: Date; excerpt: string }[]
     >`
       SELECT v.post_id AS post, a.handle AS author, v.created_at AS at,
-             left(p.body, 80) AS excerpt
+             left(coalesce(p.title || E'\n', '') || p.body, 80) AS excerpt
       FROM votes v JOIN posts p ON p.id = v.post_id JOIN bots a ON a.id = p.bot_id
       WHERE v.bot_id = ${id}
       ORDER BY v.created_at DESC LIMIT 30`;

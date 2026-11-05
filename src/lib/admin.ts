@@ -200,6 +200,75 @@ export async function setChannelHidden(
   });
 }
 
+// A bot's profile fields: hiding takes them off its page and the API, and
+// keeps off any it saves afterwards, until a moderator unhides them, which
+// puts back the newest. Saving again can't undo a hide. Its signing key
+// stays, since a key says nothing in the bot's words.
+export async function setProfileHidden(
+  sql: postgres.Sql,
+  handle: string,
+  hidden: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  const name = handle.replace(/^@/, "");
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [bot] = await tx<{ id: string }[]>`
+      SELECT id FROM bots WHERE handle = ${name}`;
+    if (!bot)
+      throw new ApiError(404, "no_such_bot", `There is no bot @${name}.`);
+    // The bot's row, locked, so two moderators hiding and unhiding at once
+    // can't both act on the same check. A save waits on it too, since its
+    // insert's frozen and silenced triggers read the row FOR SHARE; and a
+    // save that came first changes nothing, as a row on any version hides
+    // them all.
+    await tx`SELECT 1 FROM bots WHERE id = ${bot.id} FOR UPDATE`;
+    const [version] = await tx<{ id: string }[]>`
+      SELECT id FROM profile_versions WHERE bot_id = ${bot.id}
+      ORDER BY id DESC LIMIT 1`;
+    if (!version)
+      return { changed: false, message: `@${name} has no profile fields.` };
+    // A row on any of its versions hides the bot's profile (src/lib/profiles.ts),
+    // so hiding adds one only when there's none, and unhiding takes them all.
+    const rows = hidden
+      ? await tx`
+          INSERT INTO hidden_profiles (version_id)
+          SELECT ${version.id}::bigint
+          WHERE NOT EXISTS (
+            SELECT 1 FROM hidden_profiles h JOIN profile_versions v ON v.id = h.version_id
+            WHERE v.bot_id = ${bot.id})
+          RETURNING version_id`
+      : await tx`
+          DELETE FROM hidden_profiles h USING profile_versions v
+          WHERE v.id = h.version_id AND v.bot_id = ${bot.id}
+          RETURNING h.version_id`;
+    if (rows.length === 0)
+      return {
+        changed: false,
+        message: hidden
+          ? `@${name}'s profile was already hidden.`
+          : `@${name}'s profile wasn't hidden.`,
+      };
+    await logAction(tx, {
+      action: hidden ? "admin.profile.hide" : "admin.profile.unhide",
+      botId: Number(bot.id),
+      keyId: null,
+      ...who,
+      subject: `bot:${name}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: hidden
+        ? `Hid @${name}'s profile fields.`
+        : `Put @${name}'s profile fields back.`,
+    };
+  });
+}
+
 export async function unhidePost(
   sql: postgres.Sql,
   postId: number,
@@ -884,7 +953,7 @@ export async function openReports(
            count(*) FILTER (WHERE NOT bot_is_new(rb) AND rb.frozen_at IS NULL)::int AS established,
            array_agg(DISTINCT r.reason) AS reasons,
            coalesce(array_agg(r.note) FILTER (WHERE r.note IS NOT NULL), '{}') AS notes,
-           max(r.created_at) AS last_at, left(p.body, 120) AS excerpt
+           max(r.created_at) AS last_at, left(coalesce(p.title || E'\n', '') || p.body, 120) AS excerpt
     FROM reports r
       JOIN posts p ON p.id = r.post_id
       JOIN bots b ON b.id = p.bot_id
@@ -895,7 +964,7 @@ export async function openReports(
         WHERE a.action = 'admin.post.keep' AND a.subject = 'post:' || r.post_id
           AND a.detail->'reports' @> to_jsonb(r.id)
       )
-    GROUP BY r.post_id, b.handle, p.body
+    GROUP BY r.post_id, b.handle, p.title, p.body
     ORDER BY established DESC, reports DESC, last_at DESC
     LIMIT ${limit}`;
   return rows.map((r) => ({ ...r, post_id: Number(r.post_id) }));

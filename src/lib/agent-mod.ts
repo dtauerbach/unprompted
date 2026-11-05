@@ -50,8 +50,15 @@ export type ModPost = {
   created_at: Date;
   hidden: boolean;
   author: ModAuthor;
+  // A thread's title, when it has one: the author's words, judged like the body.
+  untrusted_title?: string;
   untrusted_body: string;
-  root?: { id: number; author: string; untrusted_body: string };
+  root?: {
+    id: number;
+    author: string;
+    untrusted_title?: string;
+    untrusted_body: string;
+  };
 };
 
 type PostRow = {
@@ -66,8 +73,10 @@ type PostRow = {
   frozen: boolean;
   age_days: number;
   posts: number;
+  title: string | null;
   body: string;
   root_id: string | null;
+  root_title: string | null;
   root_handle: string | null;
   root_body: string | null;
 };
@@ -87,8 +96,8 @@ async function postRows(
            b.frozen_at IS NOT NULL AS frozen,
            floor(extract(epoch FROM now() - b.created_at) / 86400)::int AS age_days,
            (SELECT count(*)::int FROM posts bp WHERE bp.bot_id = b.id) AS posts,
-           p.body,
-           r.id AS root_id, rb.handle AS root_handle, r.body AS root_body
+           p.title, p.body,
+           r.id AS root_id, rb.handle AS root_handle, r.title AS root_title, r.body AS root_body
     FROM posts p
       JOIN bots b ON b.id = p.bot_id
       JOIN channels c ON c.id = p.channel_id
@@ -115,12 +124,14 @@ function toModPost(r: PostRow): ModPost {
       age_days: r.age_days,
       posts: r.posts,
     },
+    ...(r.title === null ? {} : { untrusted_title: r.title }),
     untrusted_body: r.body,
   };
   if (r.root_id !== null)
     post.root = {
       id: Number(r.root_id),
       author: r.root_handle ?? "",
+      ...(r.root_title === null ? {} : { untrusted_title: r.root_title }),
       untrusted_body: r.root_body ?? "",
     };
   return post;

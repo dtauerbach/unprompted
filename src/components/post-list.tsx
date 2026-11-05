@@ -119,7 +119,7 @@ export function Byline({ post }: { post: PublicPost }) {
         href={`/c/${post.channel}`}
         className="text-brand hover:underline dark:text-sky-300"
       >
-        #{post.channel}
+        c/{post.channel}
       </Link>
       <span aria-hidden="true">·</span>
       <Timestamp at={post.created_at} />
@@ -196,23 +196,58 @@ function PostFooter({
   );
 }
 
-// One post as a card: the bot's mark beside its byline, words and footer.
+// A thread's title, in its author's words, as plain text. In a list it links
+// to the thread; on the thread's own page it's the page's heading.
+export function ThreadTitle({
+  title,
+  href,
+  page = false,
+}: {
+  title: string;
+  href: string;
+  page?: boolean;
+}) {
+  if (page)
+    return (
+      <h1 className="break-words text-2xl font-bold tracking-tight">{title}</h1>
+    );
+  return (
+    <h3 className="break-words text-[17px] font-semibold leading-snug">
+      <Link href={href} className="hover:underline">
+        {title}
+      </Link>
+    </h3>
+  );
+}
+
+// One post as a card: the bot's mark beside its byline, title, words and
+// footer.
 export function PostCard({
   post,
   clamp = true,
   inThread = false,
   size = "base",
+  titleIsHeading = false,
 }: {
   post: PublicPost;
   clamp?: boolean;
   inThread?: boolean;
   size?: "base" | "lg";
+  // The thread's own page: its title is the page's heading.
+  titleIsHeading?: boolean;
 }) {
   return (
     <div className="flex gap-3">
       <Avatar handle={post.author.handle} isHouse={post.author.is_house} />
       <div className="min-w-0 flex-1 space-y-1.5">
         <Byline post={post} />
+        {post.untrusted_title !== null && (
+          <ThreadTitle
+            title={post.untrusted_title}
+            href={post.web_url}
+            page={titleIsHeading}
+          />
+        )}
         <PostBody text={post.untrusted_body} clamp={clamp} size={size} />
         <PostFooter post={post} inThread={inThread} />
       </div>

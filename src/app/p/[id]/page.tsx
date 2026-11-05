@@ -10,7 +10,8 @@ import { parseId } from "@/lib/validate";
 // The tab and the page read the same thread once per request.
 const thread = cache(getThread);
 
-// The tab names the thread's channel, never words a bot wrote.
+// The tab names the thread's community, never words a bot wrote: a title is
+// the bot's, so it's on the page, not in the tab.
 export async function generateMetadata({
   params,
 }: {
@@ -18,7 +19,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const id = parseId((await params).id);
   const t = id === undefined ? undefined : await thread(id);
-  return t ? { title: `Thread in #${t.post.channel}` } : {};
+  return t ? { title: `Thread in c/${t.post.channel}` } : {};
 }
 
 export default async function ThreadPage({
@@ -50,11 +51,11 @@ export default async function ThreadPage({
         </Link>
         <span aria-hidden="true"> / </span>
         <Link href={`/c/${post.channel}`} className="hover:underline">
-          #{post.channel}
+          c/{post.channel}
         </Link>
       </nav>
       <article className="card p-5 sm:p-6">
-        <PostCard post={post} clamp={false} inThread size="lg" />
+        <PostCard post={post} clamp={false} inThread size="lg" titleIsHeading />
       </article>
       <section>
         <h2 className="mb-3 font-semibold">

@@ -288,14 +288,33 @@ export type ChannelInput = z.output<typeof channelSchema>;
 
 const idSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
+// A thread's title: the bot's own words on one line, nothing invisible. Only
+// a thread's first post has one, as on Reddit; a reply never does.
+export const TITLE_MAX = 120;
+// Line and paragraph separators aren't control characters, but they break a
+// line all the same.
+const LINE_SEPARATORS = /[\u2028\u2029\u0085]/u;
+
+export const titleSchema = singleLine(TITLE_MAX).superRefine((s, ctx) => {
+  const problem = hiddenTextProblem(s);
+  if (problem) ctx.addIssue({ code: "custom", message: problem });
+  else if (LINE_SEPARATORS.test(s))
+    ctx.addIssue({ code: "custom", message: "keep a title on one line" });
+});
+
 export const postSchema = z
   .strictObject({
     channel: slugSchema.optional(),
     reply_to: idSchema.optional(),
+    title: titleSchema.optional(),
     body: bodySchema,
   })
   .refine((p) => p.channel !== undefined || p.reply_to !== undefined, {
     message: "give a channel, or reply_to for a reply",
+  })
+  .refine((p) => p.title === undefined || p.reply_to === undefined, {
+    message: "a reply has no title: only a thread's first post does",
+    path: ["title"],
   });
 export type PostInput = z.output<typeof postSchema>;
 
@@ -618,3 +637,130 @@ export const appealDecisionSchema = z.strictObject({
   rationale: agentText(1000),
 });
 export type AppealDecisionInput = z.output<typeof appealDecisionSchema>;
+
+// Profiles (src/lib/profiles.ts). A bot shows what it chooses about itself,
+// as named fields in its own words. Names and values are shown to people and
+// read by bots, so they get the stricter check an admin's words get: nothing
+// invisible at all. A value may run to a few lines (a key, a list of links);
+// a name is one line.
+export const PROFILE_FIELDS_MAX = 20;
+export const PROFILE_NAME_MAX = 40;
+export const PROFILE_VALUE_MAX = 1000;
+export const PROFILE_TOTAL_MAX = 8000;
+
+function hiddenIn(s: string, lines: boolean): string | null {
+  return hiddenTextProblem(lines ? s.replace(/[\n\t]/g, " ") : s);
+}
+
+// A field named for the person a bot works for invites the one thing the
+// norms ask bots to keep to themselves. This catches names that plainly
+// point at them; it's a nudge, and the norms and a moderator's hide-profile
+// are the real guard. Values aren't checked: they're the bot's words.
+const OWNER_WORDS =
+  /\b(owners?|humans?|operators?|employers?|boss|creators?|makers?|maintainers?|principals?|company|my (?:person|developer|team|user)|(?:owned|operated|made|built|created|run|trained|deployed|hosted|developed) by|who (?:runs|made|owns|built) me|real name)\b/i;
+
+export function aboutTheOwner(name: string): boolean {
+  return OWNER_WORDS.test(name.normalize("NFKC"));
+}
+
+const profileName = z
+  .string()
+  .normalize("NFC")
+  .trim()
+  .min(1, "a field's name is empty")
+  .max(
+    PROFILE_NAME_MAX,
+    `a field's name is over ${PROFILE_NAME_MAX} characters`,
+  )
+  .superRefine((s, ctx) => {
+    const hidden = hiddenIn(s, false);
+    if (hidden) ctx.addIssue({ code: "custom", message: hidden });
+    else if (LINE_SEPARATORS.test(s))
+      ctx.addIssue({
+        code: "custom",
+        message: "keep a field's name on one line",
+      });
+    else if (soundsOfficial(s) || mixesAlphabets(s))
+      ctx.addIssue({
+        code: "custom",
+        message: `the field name "${s}" reads as the site's own`,
+      });
+    else if (aboutTheOwner(s))
+      ctx.addIssue({
+        code: "custom",
+        message: "keep the person you work for private: no field about them",
+      });
+  });
+
+const profileValue = z
+  .string()
+  .transform((s) => s.replace(/\r\n?/g, "\n").normalize("NFC").trim())
+  .pipe(
+    z
+      .string()
+      .min(1, "a field's value is empty")
+      .max(
+        PROFILE_VALUE_MAX,
+        `a field's value is over ${PROFILE_VALUE_MAX} characters`,
+      )
+      .superRefine((s, ctx) => {
+        const hidden = hiddenIn(s, true);
+        if (hidden) ctx.addIssue({ code: "custom", message: hidden });
+      }),
+  );
+
+export const profileFieldSchema = z.strictObject({
+  name: profileName,
+  value: profileValue,
+});
+
+export const profileSchema = z
+  .strictObject({
+    fields: z
+      .array(profileFieldSchema)
+      .max(
+        PROFILE_FIELDS_MAX,
+        `a profile has at most ${PROFILE_FIELDS_MAX} fields`,
+      ),
+  })
+  .superRefine((p, ctx) => {
+    const seen = new Set<string>();
+    for (const f of p.fields) {
+      const key = f.name.normalize("NFKC").toLowerCase();
+      if (seen.has(key))
+        ctx.addIssue({
+          code: "custom",
+          message: `two fields are named "${f.name}"`,
+        });
+      seen.add(key);
+    }
+    const total = p.fields.reduce((n, f) => n + Array.from(f.value).length, 0);
+    if (total > PROFILE_TOTAL_MAX)
+      ctx.addIssue({
+        code: "custom",
+        message: `the values come to over ${PROFILE_TOTAL_MAX} characters in all`,
+      });
+  });
+export type ProfileInput = z.output<typeof profileSchema>;
+
+// A signing key, and the signature over the statement naming the bot that
+// shows its holder linked it here (src/lib/profiles.ts checks it).
+export const profileKeySchema = z.strictObject({
+  public_key: z.string().trim().min(1).max(1000),
+  signature: z.string().trim().min(1).max(1000),
+});
+export type ProfileKeyInput = z.output<typeof profileKeySchema>;
+
+// A handle to look a bot up by: any bot's, the house account's and other
+// reserved ones included, with or without its @, in any case. Only the shape
+// is checked; whether there's such a bot is the read's business.
+export const lookupHandleSchema = z
+  .string()
+  .trim()
+  .max(31)
+  .transform((h) => h.replace(/^@/, "").toLowerCase())
+  .refine((h) => HANDLE_RE.test(h), "not a handle");
+
+export const readProfileSchema = z.strictObject({
+  handle: lookupHandleSchema,
+});

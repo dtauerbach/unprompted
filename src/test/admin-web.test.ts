@@ -989,7 +989,7 @@ describe("admin pages", () => {
     await db()`
       INSERT INTO bot_text_versions (key, body, base, human_id)
       VALUES ('welcome',
-              ${welcome.replace("{{NORMS}}", `{{NORMS}}\n\n${"x".repeat(1900)}`)},
+              ${welcome.replace("{{NORMS}}", `{{NORMS}}\n\n${"x".repeat(1800)}`)},
               ${textHash(welcome)}, ${humanId})`;
     expect(renderToStaticMarkup(await p.forBots())).toContain(
       "The welcome post and the norms don&#x27;t fit together in one post",
@@ -1135,6 +1135,24 @@ describe("the lookup screen", () => {
     }
     // Not even a redirect that would say the bot exists.
     expect(nav.redirects).toEqual([]);
+  });
+
+  it("shows an admin a thread's title above its text, as plain text", async () => {
+    const p = await pages();
+    const a = await register("alice");
+    const res = await call((await import("@/app/v1/posts/route")).POST, {
+      key: a.key,
+      body: { channel: "meta", title: "<i>Free</i> tokens", body: "the body" },
+    });
+    expect(res.status).toBe(201);
+    await asAdmin();
+    const html = renderToStaticMarkup(await p.bot(botOf("alice"))).replace(
+      /<!-- -->/g,
+      "",
+    );
+    expect(html).toMatch(/>&lt;i&gt;Free&lt;\/i&gt; tokens<\/p>/);
+    expect(html).not.toContain("<i>Free</i>");
+    expect(html.indexOf("tokens")).toBeLessThan(html.indexOf("the body"));
   });
 
   it("refuses silencing and banning to anyone who isn't an admin, writing nothing", async () => {

@@ -71,6 +71,9 @@ export type PublicPost = {
     is_new: boolean;
   };
   reply_to: number | null;
+  // A thread's title, in its author's words, or null: replies never have
+  // one, and threads started before titles existed don't either.
+  untrusted_title: string | null;
   // Top-level posts in lists and threads only: visible replies, and when the
   // newest of them was posted and by whom (null until there is one).
   reply_count?: number;
@@ -108,6 +111,7 @@ type PostRow = {
   is_house: boolean;
   is_new: boolean;
   parent_id: string | null;
+  title: string | null;
   body: string;
   created_at: Date;
   reply_count?: number;
@@ -131,6 +135,7 @@ function toPost(r: PostRow): PublicPost {
       is_new: r.is_new,
     },
     reply_to: replyTo,
+    untrusted_title: r.title,
     ...(r.reply_count === undefined
       ? {}
       : {
@@ -334,11 +339,11 @@ export async function createPost(
     }
     const [row] = await tx<PostRow[]>`
       WITH inserted AS (
-        INSERT INTO posts (channel_id, bot_id, key_id, parent_id, body)
-        VALUES (${channelId}, ${caller.botId}, ${caller.keyId}, ${parentId}, ${input.body})
-        RETURNING id, channel_id, bot_id, parent_id, body, created_at
+        INSERT INTO posts (channel_id, bot_id, key_id, parent_id, title, body)
+        VALUES (${channelId}, ${caller.botId}, ${caller.keyId}, ${parentId}, ${input.title ?? null}, ${input.body})
+        RETURNING id, channel_id, bot_id, parent_id, title, body, created_at
       )
-      SELECT i.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, i.parent_id, i.body, i.created_at,
+      SELECT i.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, i.parent_id, i.title, i.body, i.created_at,
              0 AS votes
       FROM inserted i JOIN channels c ON c.id = i.channel_id JOIN bots b ON b.id = i.bot_id`;
     if (!row) throw new Error("post insert returned nothing");
@@ -416,6 +421,18 @@ export async function listChannels(): Promise<Channel[]> {
     WHERE channel_is_visible(c)
     ORDER BY ${channelOrder(sql)}`;
   return rows.map(toChannel);
+}
+
+// How many visible threads each community has, for the forum's list of
+// them. A community with none isn't in the map.
+export async function threadCounts(): Promise<Map<string, number>> {
+  const sql = db();
+  const rows = await sql<{ slug: string; threads: number }[]>`
+    SELECT c.slug, count(*)::int AS threads
+    FROM posts p JOIN channels c ON c.id = p.channel_id
+    WHERE p.parent_id IS NULL AND post_is_visible(p)
+    GROUP BY c.slug`;
+  return new Map(rows.map((r) => [r.slug, r.threads]));
 }
 
 export async function getChannel(slug: string): Promise<Channel | undefined> {
@@ -505,7 +522,7 @@ export async function getPinned(
 ): Promise<PublicPost | null> {
   if (channel.pinned_post_id === null) return null;
   const [r] = await db()<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
@@ -615,7 +632,7 @@ export async function listPosts(
   // and the result alike. OFFSET 0 keeps the planner from copying the count
   // into each place that uses it.
   const rows = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, s.votes${votedColumn(opts.viewer, sql)}
            ${opts.since === undefined ? sql`` : sql`, t.new_reply_count`}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
@@ -701,14 +718,14 @@ export async function getThread(
 ): Promise<{ post: PublicPost; replies: PublicPost[] } | undefined> {
   const sql = db();
   const [post] = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
     WHERE p.id = ${id} AND post_is_visible(p)`;
   if (!post) return undefined;
   const replies = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE p.parent_id = ${id} AND post_is_visible(p)
@@ -731,7 +748,7 @@ export async function listBotPosts(
   limit = 50,
 ): Promise<PublicPost[]> {
   const rows = await db()<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
            ${voteColumns(undefined)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE b.handle = ${handle} AND post_is_visible(p)
@@ -909,7 +926,7 @@ async function readDigest(
   // A thread you joined counts only through a reply of yours that's still up.
   const rows = await sql<DigestRow[]>`
     SELECT * FROM (
-      SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+      SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
              ${voteColumns(caller.botId, sql)},
              p.parent_id IS NOT NULL AND EXISTS (
                SELECT 1 FROM posts t WHERE t.id = p.parent_id AND t.bot_id = ${caller.botId}
@@ -1033,7 +1050,7 @@ export async function getStart(caller: Caller): Promise<Start> {
         SELECT 1 FROM posts mine WHERE mine.parent_id = p.id
           AND mine.bot_id = ${me} AND post_is_visible(mine))`;
       const thisWeek = sql`p.created_at > now() - make_interval(days => ${START_DAYS})`;
-      const columns = sql`p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.body, p.created_at,
+      const columns = sql`p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
                t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(me, sql)}`;
       // The order is a hash of the bot and the question: fixed for each bot,
       // and different from one bot to the next.

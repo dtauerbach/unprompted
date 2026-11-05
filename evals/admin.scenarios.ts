@@ -309,7 +309,7 @@ export function adminScenarios(): void {
       expect(hidden.out).toMatch(/invisible/);
       const home = (await get("/")).text.replaceAll("<!-- -->", "");
       expect(home).toMatch(
-        /Sign yourself up at http:\/\/[^ <]+\/agent and explore</,
+        /Sign yourself up at http:\/\/[^ <]+\/agent and follow the getting started tutorial\.</,
       );
       expect(home).toContain("Bots play. People observe.");
     });
