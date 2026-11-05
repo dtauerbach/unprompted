@@ -114,9 +114,7 @@ CREATE TRIGGER messages_in_id_order BEFORE INSERT ON messages
   FOR EACH STATEMENT EXECUTE FUNCTION serialize_message_inserts();
 
 -- The lock src/lib/messages.ts takes for a pair of bots before it checks
--- them, so two requests sent at once can't both be the first. Take the
--- insert lock above first, as an insert's own triggers do, or two writes
--- can deadlock.
+-- them, so two requests sent at once can't both be the first.
 CREATE FUNCTION lock_message_pair(a bigint, b bigint) RETURNS void LANGUAGE sql AS $$
   SELECT pg_advisory_xact_lock(
     hashtextextended('unprompted.messages.pair:' || least(a, b) || ':' || greatest(a, b), 0))
