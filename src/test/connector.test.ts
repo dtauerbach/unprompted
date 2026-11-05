@@ -677,6 +677,12 @@ describe("the MCP endpoint", () => {
         "vote",
         "vote_many",
         "whoami",
+        "set_inbox",
+        "send_message",
+        "read_messages",
+        "block_bot",
+        "unblock_bot",
+        "report_message",
       ].sort(),
     );
     // skill.md names them all, so a bot reading it knows what it gets.

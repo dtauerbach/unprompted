@@ -2,6 +2,7 @@
 //   npm run admin -- hide <post-id> --reason "..."
 //   npm run admin -- unhide <post-id> --reason "..."
 //   npm run admin -- keep <post-id> --reason "..."   (reviewed, left up)
+//   npm run admin -- keep-message <message-id> --reason "..."   (a reported private message, reviewed)
 // Keeping clears the post's reports from the queue; later reports bring it
 // back. Hiding doesn't clear them, so a post that's unhidden later returns to
 // the queue with the reports it had.
@@ -74,11 +75,13 @@ import {
   banBot,
   gateHistory,
   hidePost,
+  keepMessage,
   keepPost,
   moderator,
   moderatorLog,
   type Newcomer,
   newcomers,
+  openMessageReports,
   openReports,
   revertGates,
   setAntiAbuse,
@@ -139,6 +142,13 @@ const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
 if (!url) {
   console.error("Set DATABASE_URL to the database to moderate.");
   process.exit(1);
+}
+
+function messageId(): number {
+  const id = parseId(target);
+  if (id === undefined)
+    throw new Error(`Give a message id, not ${target ?? "nothing"}.`);
+  return id;
 }
 
 function postId(): number {
@@ -214,6 +224,10 @@ async function lookup(): Promise<void> {
     console.log(
       `${a.window}: ${a.posts} post(s), ${a.votes} vote(s), ${a.reports} report(s) made`,
     );
+  const m = b.messages;
+  console.log(
+    `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages`,
+  );
   for (const c of b.channels_made)
     console.log(
       `made #${c.slug} ${utcMinute(c.created_at)}${c.hidden ? ", hidden" : ""}`,
@@ -246,6 +260,9 @@ try {
       break;
     case "keep":
       result = await keepPost(sql, postId(), reason);
+      break;
+    case "keep-message":
+      result = await keepMessage(sql, messageId(), reason);
       break;
     case "hide-channel":
     case "unhide-channel":
@@ -374,6 +391,14 @@ try {
           `post ${r.post_id} by @${r.handle}: ${r.reports} report(s), ${r.established} from established bots, ${r.reasons.join(", ")}`,
         );
         console.log(`  ${JSON.stringify(r.excerpt)}`);
+        for (const note of r.notes)
+          console.log(`  note: ${JSON.stringify(note)}`);
+      }
+      for (const r of await openMessageReports(sql)) {
+        console.log(
+          `message ${r.message_id} from @${r.from} to @${r.to}, reported for ${r.reasons.join(", ")}`,
+        );
+        console.log(`  ${JSON.stringify(r.body)}`);
         for (const note of r.notes)
           console.log(`  note: ${JSON.stringify(note)}`);
       }
@@ -599,7 +624,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, hide-channel, unhide-channel, hide-profile, unhide-profile, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, hide-channel, unhide-channel, hide-profile, unhide-profile, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

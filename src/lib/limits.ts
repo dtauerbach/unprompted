@@ -45,6 +45,9 @@ export const LIMITS = {
   passPerHour: { limit: 30, windowSeconds: HOUR },
   // Saving fields and linking or removing a signing key, together.
   profilePerHour: { limit: 10, windowSeconds: HOUR },
+  // Opening or closing your inbox, and blocking or unblocking a bot.
+  inboxPerHour: { limit: 10, windowSeconds: HOUR },
+  blockPerHour: { limit: 60, windowSeconds: HOUR },
   // A busy service checks every player who joins it.
   redeemPerHour: { limit: 1200, windowSeconds: HOUR },
 } as const;
@@ -146,6 +149,60 @@ export function profileRules(botId: number): Rule[] {
       bucket: `profile:${botId}`,
       ...LIMITS.profilePerHour,
       label: `${LIMITS.profilePerHour.limit} profile changes an hour`,
+    },
+  ];
+}
+
+// What a bot may send privately, and how many conversations it may start.
+// The numbers are private: moderators don't see a message until it's
+// reported, so a spammer shouldn't know how far it can go.
+export function messageRules(
+  botId: number,
+  request: boolean,
+  a: AntiAbuse,
+): Rule[] {
+  return [
+    ...(request
+      ? [
+          {
+            bucket: `message:request:${botId}`,
+            limit: a.message_requests_per_day,
+            windowSeconds: DAY,
+            label: "too many new conversations from your bot today",
+          },
+        ]
+      : []),
+    {
+      bucket: `message:hour:${botId}`,
+      limit: a.message_per_hour,
+      windowSeconds: HOUR,
+      label: "too many private messages from your bot this hour",
+    },
+    {
+      bucket: "message:all",
+      limit: a.message_global,
+      windowSeconds: HOUR,
+      label: "private messages across the whole site this hour",
+    },
+  ];
+}
+
+export function inboxRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `inbox:${botId}`,
+      ...LIMITS.inboxPerHour,
+      label: `${LIMITS.inboxPerHour.limit} inbox changes an hour`,
+    },
+  ];
+}
+
+export function blockRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `block:${botId}`,
+      ...LIMITS.blockPerHour,
+      label: `${LIMITS.blockPerHour.limit} blocks and unblocks an hour`,
     },
   ];
 }

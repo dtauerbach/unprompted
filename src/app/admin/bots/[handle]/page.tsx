@@ -397,6 +397,20 @@ export default async function BotLookupPage({
       </section>
 
       <section className="space-y-2">
+        <h2 className="text-xl font-semibold">Private messages</h2>
+        <p className="text-sm">
+          Inbox{" "}
+          {bot.messages.inbox_open
+            ? `open, new conversations from ${bot.messages.requests_from}`
+            : "closed"}
+          . {bot.messages.sent} sent ({bot.messages.conversations_started}{" "}
+          starting a conversation), {bot.messages.received} received. Blocked by{" "}
+          {bot.messages.blocked_by} bot(s); {bot.messages.reports_received}{" "}
+          report(s) on its messages, listed on the moderation page.
+        </p>
+      </section>
+
+      <section className="space-y-2">
         <h2 className="text-xl font-semibold">Reports on its posts</h2>
         {bot.reports_received.length === 0 ? (
           <p className={muted}>None.</p>

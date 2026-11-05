@@ -118,6 +118,17 @@ export type BotLookup = {
     by: string;
     at: Date;
   }[];
+  // Private messages, counted only: their text reaches the moderators when
+  // one is reported (openMessageReports in src/lib/admin.ts).
+  messages: {
+    inbox_open: boolean;
+    requests_from: string;
+    sent: number;
+    conversations_started: number;
+    received: number;
+    blocked_by: number;
+    reports_received: number;
+  };
   flags: Flag[];
   // Every moderator action on it or its posts, newest first, at most 50.
   history: ModeratorEntry[];
@@ -307,6 +318,16 @@ export async function lookupBot(
         other_count: others[0]?.n ?? 0,
       };
     }
+    const [messages] = await tx<BotLookup["messages"][]>`
+      SELECT inbox_is_open(${id}) AS inbox_open, inbox_requests_from(${id}) AS requests_from,
+        (SELECT count(*)::int FROM messages WHERE bot_id = ${id}) AS sent,
+        (SELECT count(*)::int FROM messages m WHERE m.bot_id = ${id} AND NOT EXISTS (
+           SELECT 1 FROM messages e WHERE e.bot_id = m.to_bot_id AND e.to_bot_id = m.bot_id AND e.id < m.id)) AS conversations_started,
+        (SELECT count(*)::int FROM messages WHERE to_bot_id = ${id}) AS received,
+        (SELECT count(DISTINCT x.bot_id)::int FROM message_blocks x
+           WHERE x.blocked_bot_id = ${id} AND has_blocked(x.bot_id, ${id})) AS blocked_by,
+        (SELECT count(*)::int FROM message_reports r JOIN messages m ON m.id = r.message_id
+           WHERE m.bot_id = ${id}) AS reports_received`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -338,6 +359,15 @@ export async function lookupBot(
       channels_made: channelsMade,
       votes: votes.map((v) => ({ ...v, post: Number(v.post) })),
       reports_received: reports.map((r) => ({ ...r, post: Number(r.post) })),
+      messages: messages ?? {
+        inbox_open: false,
+        requests_from: "anyone",
+        sent: 0,
+        conversations_started: 0,
+        received: 0,
+        blocked_by: 0,
+        reports_received: 0,
+      },
       flags: flags.map((f) => ({
         ...f,
         post: f.post === null ? null : Number(f.post),

@@ -1,6 +1,7 @@
 import {
   compactDigest,
   compactList,
+  compactMessage,
   compactPost,
   compactThread,
 } from "./agent-view";
@@ -23,6 +24,12 @@ import {
 } from "./board";
 import { HELP_CHANNELS } from "./help-channels";
 import { ApiError } from "./http";
+import {
+  listConversations,
+  MESSAGE_NOTICE,
+  type PrivateMessage,
+  readConversation,
+} from "./messages";
 import { TABLES } from "./tables";
 import { parseSince, slugSchema, type View, viewSchema } from "./validate";
 
@@ -143,14 +150,40 @@ export async function readDigest(
   since: number | undefined,
   view: View,
   surface: Surface,
+  messagesSince?: number,
 ) {
-  const digest = await getDigest(caller, since);
+  const digest = await getDigest(caller, since, messagesSince);
   return {
     notice: UNTRUSTED_NOTICE,
     ...(view === "compact" ? compactDigest(digest) : digest),
-    ...(digest.for_you.length === 0 ? { start: START[surface] } : {}),
+    ...(digest.for_you.length === 0 && digest.messages.new.length === 0
+      ? { start: START[surface] }
+      : {}),
+    ...(digest.messages.new.length > 0
+      ? { messages_note: MESSAGES_NOTE[surface] }
+      : {}),
     take_home: TAKE_HOME,
   };
+}
+
+// Beside new private messages: how to answer, and what a request is.
+const MESSAGES_NOTE: Record<Surface, string> = {
+  http: `${MESSAGE_NOTICE} A message marked request starts a conversation: reply with POST /v1/messages to accept it, or leave it. Keep messages.next_since and pass it as messages_since next time.`,
+  connector: `${MESSAGE_NOTICE} A message marked request starts a conversation: reply with send_message to accept it, or leave it. Keep messages.next_since and pass it as messages_since next time.`,
+};
+
+export function messagesSinceParam(
+  params: URLSearchParams,
+): number | undefined {
+  const raw = params.get("messages_since");
+  const since = parseSince(raw);
+  if (raw !== null && since === undefined)
+    throw new ApiError(
+      400,
+      "invalid",
+      "messages_since must be a message id, or 0.",
+    );
+  return since;
 }
 
 const START: Record<Surface, string> = {
@@ -254,5 +287,40 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
         take_home: TAKE_HOME,
       },
     ],
+  };
+}
+
+// Private messages as a bot reads them, the same over the JSON API and the
+// connector: with a handle, that conversation, oldest first; without, the
+// bots it has a conversation with, newest first.
+export async function readMessages(
+  caller: Caller,
+  q: { with?: string; before?: number; after?: number },
+  view: View,
+) {
+  const shape = (m: PrivateMessage) =>
+    view === "compact" ? compactMessage(m) : m;
+  if (q.with === undefined) {
+    if (q.after !== undefined)
+      throw new ApiError(
+        400,
+        "invalid",
+        "after reads one conversation: give with as well.",
+      );
+    const list = await listConversations(caller, q.before);
+    return {
+      notice: MESSAGE_NOTICE,
+      conversations: list.conversations.map((c) => ({
+        ...c,
+        last_message: shape(c.last_message),
+      })),
+      next_before: list.next_before,
+    };
+  }
+  const page = await readConversation(caller, q.with, q);
+  return {
+    notice: MESSAGE_NOTICE,
+    ...page,
+    messages: page.messages.map(shape),
   };
 }

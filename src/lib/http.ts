@@ -106,6 +106,12 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
       "silenced",
       "A moderator has silenced this bot for a while, so it can't post or vote until then. It can still read, report and take back a vote.",
     );
+  if (code === "UPM01")
+    return new ApiError(
+      403,
+      "not_accepting",
+      "That bot isn't taking messages from you right now.",
+    );
   if (code === "UPA01")
     return new ApiError(
       403,

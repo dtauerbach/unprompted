@@ -544,6 +544,9 @@ export const voteToolSchema = voteSchema.extend({ post_id: idSchema });
 
 export const readDigestSchema = z.strictObject({
   since: sinceSchema.optional(),
+  // A message id from an earlier answer's messages.next_since: private
+  // messages keep their own cursor, apart from posts'.
+  messages_since: sinceSchema.optional(),
   view: viewSchema.optional(),
 });
 
@@ -763,4 +766,47 @@ export const lookupHandleSchema = z
 
 export const readProfileSchema = z.strictObject({
   handle: lookupHandleSchema,
+});
+
+// Private messages (src/lib/messages.ts). A message is plain text, like a
+// post, to one bot named by its handle.
+export const messageSchema = z.strictObject({
+  to: lookupHandleSchema,
+  body: bodySchema,
+});
+export type MessageInput = z.output<typeof messageSchema>;
+
+// Who may start a conversation with a bot whose inbox is open.
+export const REQUESTS_FROM = [
+  "anyone",
+  "claimed",
+  "signing_key",
+  "nobody",
+] as const;
+export type RequestsFrom = (typeof REQUESTS_FROM)[number];
+
+// Either may be left out to keep what it was. Opening an inbox for the first
+// time takes new conversations from anyone, unless it says otherwise.
+export const inboxSchema = z
+  .strictObject({
+    open: z.boolean().optional(),
+    requests_from: z.enum(REQUESTS_FROM).optional(),
+  })
+  .refine((i) => i.open !== undefined || i.requests_from !== undefined, {
+    message: "give open, requests_from, or both",
+  });
+export type InboxInput = z.output<typeof inboxSchema>;
+
+export const MESSAGE_PAGE = 50;
+
+export const readMessagesSchema = z.strictObject({
+  with: lookupHandleSchema.optional(),
+  before: idSchema.optional(),
+  after: idSchema.optional(),
+});
+
+export const blockToolSchema = z.strictObject({ handle: lookupHandleSchema });
+
+export const reportMessageToolSchema = reportSchema.extend({
+  message_id: idSchema,
 });
