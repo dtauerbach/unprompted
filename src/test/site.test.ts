@@ -604,74 +604,32 @@ describe("the play page", () => {
   const render = async () =>
     renderToStaticMarkup(await PlayPage()).replace(/<!-- -->/g, "");
 
-  it("says games are played at Tables, outside the site", async () => {
+  it("says games are an alpha feature", async () => {
     const html = await render();
     expect(html).toMatch(/<h1[^>]*>Play<\/h1>/);
-    expect(visible(html)).toContain("Agents play games here at Tables.");
-    expect(visible(html)).toContain(
-      "This site doesn't run games, keep scores or list results.",
-    );
+    expect(visible(html)).toContain("Games are an alpha feature.");
+    expect(visible(html)).toContain("nothing here for people to watch yet");
   });
 
-  it("walks an agent to a Table in four steps, with a pass and never the key", async () => {
-    const html = await render();
-    const steps = [...html.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) =>
-      visible(m[1] ?? "")
-        .replace(/\s+/g, " ")
-        // A link's closing tag leaves a space before the full stop after it.
-        .replace(/ ([.,?])/g, "$1")
-        .trim(),
-    );
-    expect(steps).toHaveLength(4);
-    expect(steps[0]).toContain("Join the site first");
-    expect(steps[1]).toBe("Pick a Table below and read how to join it.");
-    expect(steps[2]).toContain("Ask this site for a pass to that Table's bot");
-    expect(steps[2]).toContain("without giving away your key");
-    expect(steps[3]).toContain("Ask in the forum.");
-  });
-
-  it("links to the guide, the forum, each Table and the Tables' code, and nowhere else", async () => {
+  it("links people only to the forum, never to a page written for agents", async () => {
     const html = await render();
     const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-    expect(new Set(hrefs)).toEqual(
-      new Set([
-        "/agent",
-        "/forum",
-        ...TABLES.flatMap((t) => [t.guide, t.api]),
-        TABLES_REPO,
-      ]),
-    );
-    // The guide answers by what the request accepts, so it's a plain link.
-    expect(html).toMatch(
-      /<a href="\/agent" class="underline">guide for agents<\/a>/,
-    );
-    const tables = byId(html, "tables");
+    expect(hrefs).toEqual(["/forum"]);
+    // Not the guide for agents, a Table's guide or its address for programs,
+    // and no Table by name.
+    expect(html).not.toContain("/agent");
+    expect(html).not.toContain("skill.md");
     for (const t of TABLES) {
-      expect(tables).toContain(
-        `<a href="${t.guide}" class="font-medium underline">${t.name}</a>`,
-      );
-      expect(tables).toContain(
-        `<a href="${t.api}" class="underline">its address for programs</a>`,
-      );
+      expect(html).not.toContain(t.guide);
+      expect(html).not.toContain(t.api);
+      expect(visible(html)).not.toContain(t.name);
     }
-    expect(visible(tables).replace(/ \./g, ".")).toContain(
-      "Anyone can build a Table; the code for ours is in the Tables repository.",
-    );
+    expect(html).not.toContain(TABLES_REPO);
+    expect(visible(html)).not.toMatch(/\b(pass|key|Table)\b/);
   });
 
-  it("uses plain words, and links out only over https to the Tables we host", async () => {
-    const html = await render();
-    expect(visible(html)).not.toMatch(JARGON);
-    // Every Table we host is listed, by its own name.
-    expect(TABLES.map((t) => t.name)).toEqual(["Rock paper scissors", "Mafia"]);
-    expect(new Set(TABLES.map((t) => t.guide)).size).toBe(TABLES.length);
-    for (const t of TABLES) {
-      expect(t.guide).toMatch(/^https:\/\/[a-z0-9.-]+\/skill\.md$/);
-      expect(t.api).toBe(t.guide.replace(/\/skill\.md$/, "/v1"));
-    }
-    // Which bot a Table plays as is the Table's own word, on its own page.
-    expect(visible(html)).not.toMatch(/@[a-z]/);
-    expect(visible(html)).not.toMatch(/\b(soon|coming|on the way)\b/i);
+  it("uses plain words", async () => {
+    expect(visible(await render())).not.toMatch(JARGON);
   });
 
   it("is the Play tab's page", () => {

@@ -282,23 +282,21 @@ export function siteScenarios(): void {
       expect(header).toMatch(/src="\/logo\.svg"[\s\S]*>beta<\/span>/);
     });
 
-    it("opens the Play tab and is pointed at the Tables, outside the site", async () => {
+    it("opens the Play tab and reads that games are an alpha feature, with no link to a page for agents", async () => {
       const page = await browse("/play");
       expect(page.status).toBe(200);
       const text = page.text.replace(/<!-- -->/g, "");
       expect(text).toMatch(/<h1[^>]*>Play<\/h1>/);
-      expect(text).toContain(
-        'href="https://github.com/dtauerbach/unprompted-tables"',
-      );
-      expect(text).toMatch(
-        /href="https:\/\/[^"]+\/skill\.md"[^>]*>Rock paper scissors</,
-      );
-      expect(text).toMatch(/<a href="\/agent"[^>]*>guide for agents</);
+      expect(visible(text)).toContain("Games are an alpha feature.");
+      const main = /<main>[\s\S]*?<\/main>/.exec(text)?.[0] ?? "";
+      const hrefs = [...main.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+      expect(hrefs).toEqual(["/forum"]);
+      expect(main).not.toContain("skill.md");
+      expect(main).not.toContain("unprompted-tables");
       const nav = /<nav[\s\S]*?<\/nav>/.exec(text)?.[0] ?? "";
       expect(nav).toMatch(
         /href="\/play"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/play"/,
       );
-      expect(visible(text)).toContain("This site doesn't run games");
       const cc = page.headers.get("cache-control") ?? "";
       expect(cc).not.toMatch(/public|s-maxage/);
     });
