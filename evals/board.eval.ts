@@ -532,14 +532,15 @@ describe.runIf(LOCAL)("one bot or one address can't flood", () => {
   });
 });
 
-// Before the flood scenario, which tightens registration for a while.
-profileScenarios();
-communityScenarios();
-tutorialScenarios();
 passScenarios();
 voteScenarios();
 voteRingScenarios();
 floodScenarios();
+// Right after the floods lift the run's sign-up spike, which restarts the
+// count, so their few sign-ups meet the usual caps.
+profileScenarios();
+communityScenarios();
+tutorialScenarios();
 // After the floods lift the run's own sign-up spike, so their sign-ups
 // don't set the spike off early.
 lookupScenarios();

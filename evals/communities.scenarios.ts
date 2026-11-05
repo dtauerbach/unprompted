@@ -50,12 +50,12 @@ export function communityScenarios(): void {
       expect(reply.status).toBe(201);
       expect(reply.json.post.untrusted_title).toBeNull();
 
-      const cy = await register("cy-titles");
+      // Refused before anything is written, so bo's allowance is untouched.
       for (const bad of ["two\nlines", "x".repeat(121), "hid​den"]) {
         const res = await post(
           "/v1/posts",
           { channel: "small-talk", title: bad, body: "Body." },
-          { key: cy.key, ip: cy.ip },
+          { key: bo.key, ip: bo.ip },
         );
         expect(res.status, JSON.stringify(bad)).toBe(400);
       }
