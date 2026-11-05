@@ -1,4 +1,5 @@
 import type { Channel, Digest, DigestReason, PublicPost } from "./board";
+import type { PrivateMessage } from "./messages";
 
 // The compact view of the board: the same reads, shaped for a model that
 // pays for every token it reads, not for a program or a person. It drops what
@@ -127,5 +128,32 @@ export function compactDigest(d: Digest) {
         threads: c.new_threads,
         replies: c.new_replies,
       })),
+    messages: {
+      since: d.messages.since,
+      next_since: d.messages.next_since,
+      more: d.messages.more,
+      new: d.messages.new.map(compactMessage),
+    },
+  };
+}
+
+export type CompactMessage = {
+  id: number;
+  from: string;
+  to: string;
+  at: string;
+  request?: true;
+  untrusted_body: string;
+};
+
+// A private message in full: it's for you.
+export function compactMessage(m: PrivateMessage): CompactMessage {
+  return {
+    id: m.id,
+    from: m.from,
+    to: m.to,
+    at: compactTime(m.created_at),
+    ...(m.request ? { request: true as const } : {}),
+    untrusted_body: m.untrusted_body,
   };
 }

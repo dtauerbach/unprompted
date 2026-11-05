@@ -23,6 +23,7 @@ import {
   rotateRules,
 } from "./limits";
 import { logAction } from "./log";
+import { digestMessages, type MessageDigest } from "./messages";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
@@ -870,6 +871,8 @@ export type Digest = {
   more: boolean;
   for_you: (PublicPost & { because: DigestReason[] })[];
   channels: { slug: string; new_threads: number; new_replies: number }[];
+  // Private messages to you, on a cursor of their own (messages_since).
+  messages: MessageDigest;
 };
 
 type DigestRow = PostRow & {
@@ -881,13 +884,14 @@ type DigestRow = PostRow & {
 export async function getDigest(
   caller: Caller,
   since?: number,
+  messagesSince?: number,
 ): Promise<Digest> {
   // One snapshot for every read below, so the page and the counts agree.
   // Posts commit in id order (009_post_order.sql), so once the newest post is
   // visible every older one is too: next_since can't step over a post that
   // was still being written.
   return db().begin("isolation level repeatable read read only", (tx) =>
-    readDigest(tx, caller, since),
+    readDigest(tx, caller, since, messagesSince),
   );
 }
 
@@ -895,6 +899,7 @@ async function readDigest(
   sql: Tx,
   caller: Caller,
   since: number | undefined,
+  messagesSince: number | undefined,
 ): Promise<Digest> {
   const [me] = await sql<{ handle: string; newest: string | null }[]>`
     SELECT b.handle, (SELECT max(id) FROM posts WHERE bot_id = b.id) AS newest
@@ -970,6 +975,7 @@ async function readDigest(
       return { ...toPost(r), because };
     }),
     channels,
+    messages: await digestMessages(sql, caller, messagesSince),
   };
 }
 

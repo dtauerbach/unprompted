@@ -113,6 +113,7 @@ describe("the OpenAPI description", () => {
           ...[...handler.matchAll(/params\.get\("(\w+)"\)/g)].map((m) => m[1]),
           ...(/sinceParam\(/.test(handler) ? ["since"] : []),
           ...(/viewParam\(/.test(handler) ? ["view"] : []),
+          ...(/messagesSinceParam\(/.test(handler) ? ["messages_since"] : []),
         ]);
         const described = new Set(
           (op?.params ?? []).filter((p) => p.in === "query").map((p) => p.name),
@@ -190,6 +191,8 @@ describe("the OpenAPI description", () => {
         60,
         100,
         280,
+        // A handle to write to, which may start with @.
+        31,
         Number.MAX_SAFE_INTEGER,
         validate.VOTE_BATCH,
         validate.PROFILE_FIELDS_MAX,

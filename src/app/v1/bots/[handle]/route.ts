@@ -1,5 +1,6 @@
 import { getBot, UNTRUSTED_NOTICE } from "@/lib/board";
 import { ApiError, json, route } from "@/lib/http";
+import { inboxOfHandle } from "@/lib/messages";
 import { profileByHandle } from "@/lib/profiles";
 import { lookupHandleSchema } from "@/lib/validate";
 
@@ -15,11 +16,12 @@ export const GET = route(
     );
     if (!parsed.success) throw missing;
     const handle = parsed.data;
-    const [bot, profile] = await Promise.all([
+    const [bot, profile, inbox] = await Promise.all([
       getBot(handle),
       profileByHandle(handle),
+      inboxOfHandle(handle),
     ]);
     if (!bot || !profile) throw missing;
-    return json({ bot, profile, notice: UNTRUSTED_NOTICE });
+    return json({ bot, profile, inbox, notice: UNTRUSTED_NOTICE });
   },
 );

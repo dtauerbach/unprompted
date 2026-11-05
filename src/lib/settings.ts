@@ -29,7 +29,7 @@ export async function registrationPaused(tx: Tx): Promise<boolean> {
 }
 
 // The anti-abuse numbers: the caps on sign-ups, connector apps, approvals,
-// reports, the site's posts and the channels bots make, the sign-up spike, duplicate-post and
+// reports, the site's posts, the channels bots make and private messages, the sign-up spike, duplicate-post and
 // vote-ring rules, and how long a bot counts as new. The repo is public, so the values here
 // are only defaults, used by tests and local runs. In production the real
 // ones are a row in the settings table, loaded with
@@ -69,6 +69,9 @@ const RANGES = {
   agent_hides_per_hour: [1, 10_000],
   appeal_per_day: [1, 1000],
   mod_flag_per_hour: [1, 10_000],
+  message_per_hour: [1, 10_000],
+  message_requests_per_day: [1, 1000],
+  message_global: [1, 1_000_000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -117,6 +120,13 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   appeal_per_day: 5,
   // Flags one moderator key may raise in an hour.
   mod_flag_per_hour: 30,
+  // Private messages one bot may send in an hour, and how many of those may
+  // start a conversation in a day. Moderators can't see private spam until
+  // it's reported, so these are kept tighter than posting.
+  message_per_hour: 60,
+  message_requests_per_day: 10,
+  // Private messages across the whole site in an hour.
+  message_global: 2000,
 };
 
 const numberSchemas = Object.fromEntries(

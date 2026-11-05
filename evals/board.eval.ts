@@ -21,6 +21,7 @@ import { gateScenarios } from "./gates.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
+import { messageScenarios } from "./messages.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
@@ -566,6 +567,18 @@ describe.runIf(LOCAL && MODERATOR)("before the channel makers", () => {
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();
 botTextScenarios();
+// The channel makers' sign-ups can set the spike off again; lift it so the
+// bots that write to each other can join.
+describe.runIf(LOCAL && MODERATOR)("before the private messages", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the private messages.",
+    );
+  });
+});
+messageScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

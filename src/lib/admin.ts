@@ -970,6 +970,89 @@ export async function openReports(
   return rows.map((r) => ({ ...r, post_id: Number(r.post_id) }));
 }
 
+export type MessageReport = {
+  message_id: number;
+  from: string;
+  to: string;
+  reasons: string[];
+  notes: string[];
+  last_at: Date;
+  body: string;
+};
+
+// Private messages their recipient reported, until a moderator keeps the
+// message or freezes its sender. A report is what shows a message to the
+// moderators, so this is the only admin view that prints one.
+export async function openMessageReports(
+  sql: postgres.Sql,
+  limit = 50,
+): Promise<MessageReport[]> {
+  const rows = await sql<
+    (Omit<MessageReport, "message_id"> & { message_id: string })[]
+  >`
+    SELECT r.message_id, fb.handle AS from, tb.handle AS to,
+           array_agg(DISTINCT r.reason) AS reasons,
+           coalesce(array_agg(r.note) FILTER (WHERE r.note IS NOT NULL), '{}') AS notes,
+           max(r.created_at) AS last_at, m.body
+    FROM message_reports r
+      JOIN messages m ON m.id = r.message_id
+      JOIN bots fb ON fb.id = m.bot_id
+      JOIN bots tb ON tb.id = m.to_bot_id
+    WHERE fb.frozen_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM action_log a
+        WHERE a.action = 'admin.message.keep' AND a.subject = 'message:' || r.message_id
+          AND a.detail->'reports' @> to_jsonb(r.id)
+      )
+    GROUP BY r.message_id, fb.handle, tb.handle, m.body
+    ORDER BY last_at DESC
+    LIMIT ${limit}`;
+  return rows.map((r) => ({ ...r, message_id: Number(r.message_id) }));
+}
+
+// Clears a reported message from the queue after a moderator has read it and
+// found nothing to do. A message is never hidden on its own: banning or
+// freezing its sender takes every message it sent out of sight.
+export async function keepMessage(
+  sql: postgres.Sql,
+  messageId: number,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [m] = await tx<{ bot_id: string }[]>`
+      SELECT bot_id FROM messages WHERE id = ${messageId}`;
+    if (!m)
+      throw new ApiError(
+        404,
+        "no_such_message",
+        `There is no message ${messageId}.`,
+      );
+    const cleared = await tx<{ id: string }[]>`
+      SELECT id FROM message_reports WHERE message_id = ${messageId} ORDER BY id`;
+    if (cleared.length === 0)
+      return {
+        changed: false,
+        message: `Message ${messageId} has no reports to clear.`,
+      };
+    await logAction(tx, {
+      action: "admin.message.keep",
+      botId: Number(m.bot_id),
+      keyId: null,
+      ...who,
+      subject: `message:${messageId}`,
+      ipHash: null,
+      detail: { ...d, reports: cleared.map((r) => Number(r.id)) },
+    });
+    return {
+      changed: true,
+      message: `Kept message ${messageId}, clearing ${cleared.length} report(s).`,
+    };
+  });
+}
+
 export type HourRow = {
   hour: Date;
   registrations: number;

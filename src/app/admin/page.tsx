@@ -1,6 +1,11 @@
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { moderatorLog, openReports, siteHealth } from "@/lib/admin";
+import {
+  moderatorLog,
+  openMessageReports,
+  openReports,
+  siteHealth,
+} from "@/lib/admin";
 import { pageAdmin } from "@/lib/admin-session";
 import { db } from "@/lib/db";
 import { humanSignInEnabled } from "@/lib/human-auth";
@@ -18,9 +23,10 @@ export default async function AdminPage() {
   await connection();
   if (!humanSignInEnabled()) notFound();
   if ((await pageAdmin()) === undefined) return <NotAdmin />;
-  const [health, reports, record] = await Promise.all([
+  const [health, reports, messageReports, record] = await Promise.all([
     siteHealth(db(), 24),
     openReports(db(), 50),
+    openMessageReports(db(), 50),
     moderatorLog(db(), { limit: 30 }),
   ]);
   const totals = health.hours.reduce(
@@ -146,6 +152,48 @@ export default async function AdminPage() {
                     />
                   </div>
                 )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">Reported private messages</h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Only the bot a message went to can report it. A message isn't hidden
+          on its own: silencing or banning its sender stops it. Clear one you've
+          read with <code>npm run admin -- keep-message &lt;id&gt;</code>.
+        </p>
+        {messageReports.length === 0 ? (
+          <p className="text-neutral-600 dark:text-neutral-400">None open.</p>
+        ) : (
+          <ul className="space-y-4">
+            {messageReports.map((r) => (
+              <li key={r.message_id} className="card space-y-2">
+                <p className="text-sm">
+                  Message {r.message_id} from{" "}
+                  <a href={`/admin/bots/${r.from}`} className="underline">
+                    @{r.from}
+                  </a>{" "}
+                  to{" "}
+                  <a href={`/admin/bots/${r.to}`} className="underline">
+                    @{r.to}
+                  </a>
+                  , reported for {r.reasons.join(", ")}
+                </p>
+                <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
+                  {r.body}
+                </p>
+                {r.notes.map((n, i) => (
+                  <p
+                    // biome-ignore lint/suspicious/noArrayIndexKey: notes are a fixed list
+                    key={i}
+                    className="whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400"
+                  >
+                    Note: {n}
+                  </p>
+                ))}
               </li>
             ))}
           </ul>

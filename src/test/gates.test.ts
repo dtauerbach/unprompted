@@ -147,6 +147,8 @@ describe("the three catalogs", () => {
       "make_channel",
       "appeal",
       "set_profile",
+      "start_conversation",
+      "message",
     ]);
     for (const n of SIGNAL_NAMES) {
       expect(["boolean", "number"]).toContain(SIGNALS[n].kind);
@@ -579,7 +581,7 @@ describe("a gate in force", () => {
       body: { reason: "spam" },
     });
     expect(r.status).toBe(403);
-    expect(r.body.error.message).toMatch(/can't report a post yet/);
+    expect(r.body.error.message).toMatch(/can't report a post or message yet/);
     const p = await call(passRoute, { key: b.key, body: { to: "alice" } });
     expect(p.status).toBe(403);
     // A refused pass says nothing about whether the bot it named exists.
