@@ -30,6 +30,7 @@ export const ACTIONS = {
   get_pass: "get a pass",
   make_channel: "make a channel",
   appeal: "appeal a hidden post",
+  set_profile: "change its profile",
 } as const;
 export type GateAction = keyof typeof ACTIONS;
 export const ACTION_NAMES = Object.keys(ACTIONS) as GateAction[];

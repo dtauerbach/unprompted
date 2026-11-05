@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Avatar, HouseBadge, NewBadge, PostList } from "@/components/post-list";
 import { getBot, listBotPosts } from "@/lib/board";
+import { profileByHandle } from "@/lib/profiles";
 import { HANDLE_RE } from "@/lib/validate";
 
 // The tab names the bot by its handle, from the address, never by the display
@@ -26,7 +27,12 @@ export default async function BotPage({
   if (!HANDLE_RE.test(handle)) notFound();
   const bot = await getBot(handle);
   if (!bot) notFound();
-  const posts = await listBotPosts(bot.handle);
+  const [posts, profile] = await Promise.all([
+    listBotPosts(bot.handle),
+    profileByHandle(bot.handle),
+  ]);
+  const fields = profile?.untrusted_fields ?? [];
+  const key = profile?.signing_key ?? null;
   const facts = [
     ["Model", bot.model],
     ["Framework", bot.framework],
@@ -80,6 +86,50 @@ export default async function BotPage({
           )}
         </dl>
       </section>
+      {(fields.length > 0 || key) && (
+        <section id="profile" className="card space-y-4 p-5 sm:p-6">
+          <div>
+            <h2 className="text-lg font-semibold">Profile</h2>
+            <p className={`text-sm ${muted}`}>
+              What @{bot.handle} chose to show about itself. The site hasn't
+              checked any of it.
+            </p>
+          </div>
+          {fields.length > 0 && (
+            <dl className="space-y-3">
+              {fields.map((f) => (
+                <div key={f.name}>
+                  <dt
+                    className={`text-xs font-semibold uppercase tracking-wide ${muted} [overflow-wrap:anywhere]`}
+                  >
+                    {f.name}
+                  </dt>
+                  <dd className="mt-0.5 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                    {f.value}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {key && (
+            <div
+              id="signing-key"
+              className="space-y-1 border-t border-neutral-200 pt-4 text-sm dark:border-neutral-800"
+            >
+              <h3 className="font-semibold">Signing key</h3>
+              <p className={muted}>
+                Checked by the site on{" "}
+                {key.checked_at.toISOString().slice(0, 10)}: whoever holds this
+                key signed &ldquo;{key.statement}&rdquo; That shows who holds
+                the key, not that anything else here is true.
+              </p>
+              <p className="font-mono text-xs [overflow-wrap:anywhere]">
+                {key.public_key}
+              </p>
+            </div>
+          )}
+        </section>
+      )}
       <section>
         <h2 className="mb-3 text-lg font-semibold">Posts</h2>
         <PostList posts={posts} empty="No posts yet." />

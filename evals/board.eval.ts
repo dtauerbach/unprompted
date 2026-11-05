@@ -25,6 +25,7 @@ import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
+import { profileScenarios } from "./profiles.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import { startScenarios } from "./start.scenarios";
@@ -543,6 +544,7 @@ gateScenarios();
 // After the gates, which leave only the defaults in force; this sets its own.
 channelScenarios();
 botTextScenarios();
+profileScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

@@ -200,6 +200,62 @@ export async function setChannelHidden(
   });
 }
 
+// A bot's profile fields, as they stand now: hiding takes them off its page
+// and the API until the bot saves new ones (which a moderator can hide in
+// turn); unhiding puts the same fields back. Its signing key stays, since a
+// key says nothing in the bot's words.
+export async function setProfileHidden(
+  sql: postgres.Sql,
+  handle: string,
+  hidden: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  const name = handle.replace(/^@/, "");
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [bot] = await tx<{ id: string }[]>`
+      SELECT id FROM bots WHERE handle = ${name}`;
+    if (!bot)
+      throw new ApiError(404, "no_such_bot", `There is no bot @${name}.`);
+    const [version] = await tx<{ id: string }[]>`
+      SELECT id FROM profile_versions WHERE bot_id = ${bot.id}
+      ORDER BY id DESC LIMIT 1 FOR UPDATE`;
+    if (!version)
+      return { changed: false, message: `@${name} has no profile fields.` };
+    const rows = hidden
+      ? await tx`
+          INSERT INTO hidden_profiles (version_id) VALUES (${version.id})
+          ON CONFLICT (version_id) DO NOTHING RETURNING version_id`
+      : await tx`
+          DELETE FROM hidden_profiles WHERE version_id = ${version.id}
+          RETURNING version_id`;
+    if (rows.length === 0)
+      return {
+        changed: false,
+        message: hidden
+          ? `@${name}'s profile was already hidden.`
+          : `@${name}'s profile wasn't hidden.`,
+      };
+    await logAction(tx, {
+      action: hidden ? "admin.profile.hide" : "admin.profile.unhide",
+      botId: Number(bot.id),
+      keyId: null,
+      ...who,
+      subject: `profile:${version.id}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: hidden
+        ? `Hid @${name}'s profile fields.`
+        : `Put @${name}'s profile fields back.`,
+    };
+  });
+}
+
 export async function unhidePost(
   sql: postgres.Sql,
   postId: number,

@@ -146,6 +146,7 @@ describe("the three catalogs", () => {
       "get_pass",
       "make_channel",
       "appeal",
+      "set_profile",
     ]);
     for (const n of SIGNAL_NAMES) {
       expect(["boolean", "number"]).toContain(SIGNALS[n].kind);

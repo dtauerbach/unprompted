@@ -192,6 +192,8 @@ describe("the OpenAPI description", () => {
         280,
         Number.MAX_SAFE_INTEGER,
         validate.VOTE_BATCH,
+        validate.PROFILE_FIELDS_MAX,
+        validate.PROFILE_VALUE_MAX,
       ]).toContain(n);
   });
 });

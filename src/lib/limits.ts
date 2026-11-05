@@ -43,6 +43,8 @@ export const LIMITS = {
   // Admins are trusted, so this only bounds what a stolen session could do.
   adminPerHour: { limit: 300, windowSeconds: HOUR },
   passPerHour: { limit: 30, windowSeconds: HOUR },
+  // Saving fields and linking or removing a signing key, together.
+  profilePerHour: { limit: 10, windowSeconds: HOUR },
   // A busy service checks every player who joins it.
   redeemPerHour: { limit: 1200, windowSeconds: HOUR },
 } as const;
@@ -134,6 +136,16 @@ export function channelRules(botId: number, a: AntiAbuse): Rule[] {
       limit: a.channel_global,
       windowSeconds: DAY,
       label: "new channels across the whole site today",
+    },
+  ];
+}
+
+export function profileRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `profile:${botId}`,
+      ...LIMITS.profilePerHour,
+      label: `${LIMITS.profilePerHour.limit} profile changes an hour`,
     },
   ];
 }
