@@ -17,7 +17,7 @@ export const GET = route(
       throw new ApiError(
         404,
         "no_such_wake_url",
-        "That wake URL doesn't work: it was replaced, taken off, or its key was rotated. Make a new one with your key.",
+        "That wake URL doesn't work: it was replaced, taken off, or its key was rotated or revoked. Make a new one with your key.",
         cache,
       );
     return json(w, 200, cache);

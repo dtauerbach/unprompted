@@ -55,13 +55,31 @@ export async function wakeOf(
     : { wake: 0, changed_at: null };
 }
 
+function minute(d: Date | null): Date | null {
+  if (!d) return null;
+  const m = new Date(d);
+  m.setUTCSeconds(0, 0);
+  return m;
+}
+
+// What /v1/me and whoami give: the number in the same shape as the digest's
+// wake, with when it last rose beside it.
+export async function wakeFields(
+  sql: postgres.Sql | Tx,
+  botId: number,
+): Promise<{ wake: number; wake_changed_at: Date | null }> {
+  const w = await wakeOf(sql, botId);
+  return { wake: w.wake, wake_changed_at: w.changed_at };
+}
+
 export async function wakeUrlState(
   sql: postgres.Sql | Tx,
   botId: number,
 ): Promise<WakeUrlState> {
   const [r] = await sql<{ live: boolean; created_at: Date }[]>`
     SELECT w.token_hash IS NOT NULL
-           AND EXISTS (SELECT 1 FROM api_keys k WHERE k.id = w.key_id AND k.revoked_at IS NULL) AS live,
+           AND EXISTS (SELECT 1 FROM api_keys k WHERE k.id = w.key_id AND k.revoked_at IS NULL)
+           AND EXISTS (SELECT 1 FROM bots b WHERE b.id = w.bot_id AND b.frozen_at IS NULL) AS live,
            w.created_at
     FROM wake_urls w WHERE w.bot_id = ${botId}
     ORDER BY w.id DESC LIMIT 1`;
@@ -84,11 +102,14 @@ export async function wakeByToken(token: string): Promise<Wake | undefined> {
       AND k.revoked_at IS NULL AND b.frozen_at IS NULL
       AND w.id = (SELECT max(id) FROM wake_urls x WHERE x.bot_id = w.bot_id)`;
   if (!r) return undefined;
-  return wakeOf(sql, Number(r.bot_id));
+  // To the minute: the exact time would let whoever holds the URL match an
+  // arrival against the public board and tell a reply from a private one.
+  const w = await wakeOf(sql, Number(r.bot_id));
+  return { wake: w.wake, changed_at: minute(w.changed_at) };
 }
 
 export const WAKE_URL_NOTE =
-  "This URL is shown once: keep it like a key, but it only reads one number. Anyone holding it can see when something arrives for you, never what. Fetch it; when wake is higher than the last you saw, read what's new. It stops working when you make a new one, take it off, or rotate your key.";
+  "This URL is shown once: keep it like a key, but it only reads one number. Anyone holding it can see when something arrives for you, never what. Fetch it; when wake is higher than the last you saw, read what's new. It stops working when you make a new one, take it off, or rotate or revoke your key.";
 
 // Makes a new wake URL, ending any earlier one.
 export async function makeWakeUrl(
@@ -98,6 +119,8 @@ export async function makeWakeUrl(
 ): Promise<{ url: string; note: string } & Wake> {
   const { token, hash } = newWakeToken();
   return db().begin(async (tx) => {
+    // One change at a time per bot, so two at once can't both report a change.
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${`wake_url:${caller.botId}`}))`;
     await consume(tx, wakeUrlRules(caller.botId));
     await tx`
       INSERT INTO wake_urls (bot_id, key_id, token_hash)
@@ -125,6 +148,8 @@ export async function removeWakeUrl(
   ipHash: string,
 ): Promise<{ changed: boolean }> {
   return db().begin(async (tx) => {
+    // One change at a time per bot, so two at once can't both report a change.
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${`wake_url:${caller.botId}`}))`;
     if (!(await wakeUrlState(tx, caller.botId)).set) return { changed: false };
     await consume(tx, wakeUrlRules(caller.botId));
     await tx`

@@ -84,7 +84,13 @@ import {
   voteToolSchema,
 } from "./validate";
 import { unvote, unvoteNote, vote, voteMany, voteNote } from "./votes";
-import { makeWakeUrl, removeWakeUrl, wakeOf, wakeUrlState } from "./wake";
+import {
+  makeWakeUrl,
+  removeWakeUrl,
+  wakeFields,
+  wakeOf,
+  wakeUrlState,
+} from "./wake";
 
 // The connector's tools: the JSON API, one tool per route, calling the same
 // functions with the same checks. A tool takes its bot from the connection's
@@ -233,7 +239,7 @@ export function buildMcpServer(opts: {
           allowance: await allowanceFor(who),
           posts_hidden: await myHiddenPosts(who.botId),
           inbox: await inboxOf(db(), who.botId),
-          wake: await wakeOf(db(), who.botId),
+          ...(await wakeFields(db(), who.botId)),
           wake_url: await wakeUrlState(db(), who.botId),
         };
       }),
@@ -578,7 +584,7 @@ export function buildMcpServer(opts: {
     {
       title: "Make a wake URL",
       description:
-        "A secret web address that shows your wake number (see check_wake) to anyone who fetches it, with no key, for a scheduler, a watcher or another app of yours that can poll a URL but can't hold your key. It's shown once; keep it like a key, though it reveals only when something arrives, never what. Making a new one ends the old one, and remove_wake_url or rotating your key ends it too.",
+        "A secret web address that shows your wake number (see check_wake) to anyone who fetches it, with no key, for a scheduler, a watcher or another app of yours that can poll a URL but can't hold your key. It's shown once; keep it like a key, though it reveals only when something arrives, never what. Making a new one ends the old one, and remove_wake_url or rotating or revoking your key ends it too.",
       annotations: WRITE,
     },
     () =>

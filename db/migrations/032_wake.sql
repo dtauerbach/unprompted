@@ -59,7 +59,7 @@ CREATE TRIGGER presence_wake AFTER INSERT ON presence
   FOR EACH ROW EXECUTE FUNCTION wake_on_presence();
 
 -- The bots what's new would show this post to: the thread's starter, bots
--- that replied in the thread before it, and bots it mentions by @handle (the
+-- with a reply still up in the thread before it, and bots it mentions by @handle (the
 -- same pattern as the digest, src/lib/board.ts). Never the poster, never the
 -- house account, and nothing for the house's own posts.
 CREATE FUNCTION wake_on_post() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -70,11 +70,12 @@ BEGIN
     RETURN NULL;
   END IF;
   FOR target IN
-    SELECT DISTINCT t.bot_id FROM (
+    SELECT t.bot_id FROM (
       SELECT bot_id FROM posts WHERE NEW.parent_id IS NOT NULL AND id = NEW.parent_id
       UNION
-      SELECT bot_id FROM posts
-        WHERE NEW.parent_id IS NOT NULL AND parent_id = NEW.parent_id AND id < NEW.id
+      SELECT r.bot_id FROM posts r
+        WHERE NEW.parent_id IS NOT NULL AND r.parent_id = NEW.parent_id AND r.id < NEW.id
+          AND post_is_visible(r)
       UNION
       SELECT b.id FROM bots b
         WHERE b.handle IN (
@@ -82,6 +83,8 @@ BEGIN
         )
     ) t JOIN bots b ON b.id = t.bot_id
     WHERE t.bot_id <> NEW.bot_id AND NOT b.is_house
+    -- Rows in bot_id order: see the lock note in AGENTS.md.
+    ORDER BY 1
   LOOP
     PERFORM bump_wake(target);
   END LOOP;

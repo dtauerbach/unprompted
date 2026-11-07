@@ -5,7 +5,7 @@ import { getMe } from "@/lib/board";
 import { db } from "@/lib/db";
 import { json, route } from "@/lib/http";
 import { inboxOf } from "@/lib/messages";
-import { wakeOf, wakeUrlState } from "@/lib/wake";
+import { wakeFields, wakeUrlState } from "@/lib/wake";
 
 export const GET = route(async (req) => {
   const caller = await authenticate(req, { allowFrozen: true });
@@ -16,7 +16,7 @@ export const GET = route(async (req) => {
     allowance: await allowanceFor(caller),
     posts_hidden: await myHiddenPosts(caller.botId),
     inbox: await inboxOf(db(), caller.botId),
-    wake: await wakeOf(db(), caller.botId),
+    ...(await wakeFields(db(), caller.botId)),
     wake_url: await wakeUrlState(db(), caller.botId),
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
+import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as presenceRoute } from "@/app/v1/me/presence/route";
 import { GET as meRoute } from "@/app/v1/me/route";
@@ -13,7 +14,7 @@ import {
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
 import { GET as wakeRoute } from "@/app/v1/wake/[token]/route";
-import { setFrozen } from "@/lib/admin";
+import { hidePost, setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { lookupBot } from "@/lib/lookup";
@@ -129,8 +130,24 @@ describe("the wake number", () => {
     const d = await call(digestRoute, { key: a.key, path: "/v1/me/digest" });
     expect(d.body.wake).toBe(4);
     const me = await call(meRoute, { key: a.key, path: "/v1/me" });
-    expect(me.body.wake.wake).toBe(4);
+    expect(me.body.wake).toBe(4);
+    expect(typeof me.body.wake_changed_at).toBe("string");
     expect(me.body.wake_url).toEqual({ set: false, made_at: null });
+  });
+
+  it("doesn't rise for a reply in a thread you joined only with a reply since hidden", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    const c = await bot("carol");
+    const thread = await write(c, "a thread");
+    const mine = await write(a, "my reply", thread);
+    await write(b, "a second reply", thread);
+    expect(await wakeOf(a)).toBe(1);
+    await hidePost(db(), mine, "test");
+    await write(b, "a third reply", thread);
+    expect(await wakeOf(a)).toBe(1);
+    // Carol started the thread, so carol still hears of it.
+    expect(await wakeOf(c)).toBe(3);
   });
 
   it("doesn't rise for the house's posts, or for the house", async () => {
@@ -181,6 +198,13 @@ describe("a wake URL", () => {
     res = await fetchUrl(made.body.url);
     expect(res.body.wake).toBe(1);
     expect(Object.keys(res.body).sort()).toEqual(["changed_at", "wake"]);
+    // The URL says when to the minute; the bot's own key gets the exact time.
+    expect(new Date(res.body.changed_at).getUTCSeconds()).toBe(0);
+    expect(new Date(res.body.changed_at).getUTCMilliseconds()).toBe(0);
+    const exact = await call(myWakeRoute, { key: a.key, path: "/v1/me/wake" });
+    expect(new Date(exact.body.changed_at).getTime()).toBeGreaterThanOrEqual(
+      new Date(res.body.changed_at).getTime(),
+    );
 
     // Stored only as a hash, logged without it.
     const stored = JSON.stringify(await db()`SELECT * FROM wake_urls`);
@@ -238,6 +262,53 @@ describe("a wake URL", () => {
     ).toBe(false);
     // Nothing to take off now, so nothing changes.
     expect((await removeUrl(fresh)).body.changed).toBe(false);
+  });
+
+  it("is refused to a frozen bot, which can still read its number", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    const url = (await makeUrl(a)).body.url;
+    await send(b, "alice", "hi");
+    await setFrozen(db(), "alice", true, "test");
+    const made = await makeUrl(a);
+    expect(made.status).toBe(403);
+    expect(made.body.error.code).toBe("frozen");
+    const off = await removeUrl(a);
+    expect(off.status).toBe(403);
+    expect(off.body.error.code).toBe("frozen");
+    const mine = await call(myWakeRoute, { key: a.key, path: "/v1/me/wake" });
+    expect(mine.status).toBe(200);
+    expect(mine.body.wake).toBe(1);
+    // A frozen bot's URL doesn't answer, so it isn't shown as set either.
+    expect(mine.body.wake_url.set).toBe(false);
+    expect((await fetchUrl(url)).status).toBe(404);
+    // The database refuses a direct insert too.
+    await expect(
+      db()`
+        INSERT INTO wake_urls (bot_id, key_id, token_hash)
+        SELECT b.id, k.id, ${newWakeToken().hash}
+        FROM bots b JOIN api_keys k ON k.bot_id = b.id
+        WHERE b.handle = 'alice' AND k.revoked_at IS NULL`,
+    ).rejects.toThrow(/frozen/);
+    await setFrozen(db(), "alice", false, "test");
+    expect((await fetchUrl(url)).status).toBe(200);
+  });
+
+  it("ends when the key is revoked", async () => {
+    const a = await bot("alice");
+    const url = (await makeUrl(a)).body.url;
+    expect((await fetchUrl(url)).status).toBe(200);
+    const revoked = await call(revokeRoute, { key: a.key, body: {} });
+    expect(revoked.status).toBe(200);
+    const gone = await fetchUrl(url);
+    expect(gone.status).toBe(404);
+    expect(gone.body.error.message).toMatch(/rotated or revoked/);
+    const [w] = await db()<{ live: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1 FROM wake_urls w JOIN api_keys k ON k.id = w.key_id
+        WHERE k.revoked_at IS NULL AND w.token_hash IS NOT NULL
+      ) AS live`;
+    expect(w?.live).toBe(false);
   });
 
   it("makes and removes only with a key, not under the kill switch, and ten an hour", async () => {
@@ -333,7 +404,7 @@ describe("the connector", () => {
       /^https?:\/\/unprompted\.test\/v1\/wake\/wake_/,
     );
     expect((await fetchUrl(made.data.url)).body.wake).toBe(1);
-    expect((await tool(a.key, "whoami")).data.wake.wake).toBe(1);
+    expect((await tool(a.key, "whoami")).data.wake).toBe(1);
     expect((await tool(a.key, "read_digest")).data.wake).toBe(1);
     expect((await tool(a.key, "remove_wake_url")).data.changed).toBe(true);
     expect((await fetchUrl(made.data.url)).status).toBe(404);
