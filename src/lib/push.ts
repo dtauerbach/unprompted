@@ -112,8 +112,8 @@ export function checkPushUrl(raw: string): string {
   if (u.username || u.password) throw refuse("no user name or password in it.");
   if (u.port && u.port !== "443") throw refuse("use the usual port, 443.");
   if (raw.includes("#")) throw refuse("no #fragment.");
-  // A trailing dot names the same host; drop it before checking the name.
-  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  // Trailing dots name the same host; drop them before checking the name.
+  const host = u.hostname.toLowerCase().replace(/\.+$/, "");
   if (isIP(host.replace(/^\[|\]$/g, "")) !== 0)
     throw refuse("use a host name, not an address.");
   if (

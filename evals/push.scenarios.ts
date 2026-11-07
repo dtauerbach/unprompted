@@ -38,6 +38,7 @@ export function pushScenarios(): void {
         "https://push-eval.example.net:8443/hook",
         "https://push-eval.example.net/?a=1#",
         "https://db.internal./x",
+        "https://db.internal../x",
         "https://[::1]/x",
         "https://0x7f.1/x",
       ]) {

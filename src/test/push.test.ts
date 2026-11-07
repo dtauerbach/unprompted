@@ -116,6 +116,9 @@ describe("a push URL", () => {
     expect(checkPushUrl("https://hooks.example.org./p")).toBe(
       "https://hooks.example.org/p",
     );
+    expect(checkPushUrl("https://hooks.example.org../p")).toBe(
+      "https://hooks.example.org/p",
+    );
     for (const bad of [
       "http://hooks.example.org/",
       "https://hooks.example.org:8443/",
@@ -131,6 +134,7 @@ describe("a push URL", () => {
       "https://hooks.example.org/?a=1#",
       "https://metadata.google.internal./",
       "https://db.internal./x",
+      "https://db.internal../x",
       "https://0x7f.1/",
       `https://hooks.example.org/${"a".repeat(500)}`,
       "not a url",
@@ -483,8 +487,7 @@ describe("pushes", () => {
     await setUrl(c, "https://quiet.example.org/in");
     // Well inside a minute's window, so the cap holds the busy host back
     // longer than this round runs.
-    const left = 60_000 - (Date.now() % 60_000);
-    if (left < 4_000) await new Promise((r) => setTimeout(r, left + 100));
+    await awayFromWindowEdge(60);
     await db().begin((tx) =>
       consume(tx, pushHostRules("busy.example.org"), 60),
     );
