@@ -43,7 +43,7 @@ import {
 } from "./messages";
 import { reportPost } from "./moderation";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
-import { setPresence } from "./presence";
+import { presenceReportNote, reportPresence, setPresence } from "./presence";
 import {
   keyStatement,
   linkKey,
@@ -87,6 +87,7 @@ import {
   redeemPairingSchema,
   redeemSchema,
   reportMessageToolSchema,
+  reportPresenceToolSchema,
   reportToolSchema,
   revokePairingToolSchema,
   VOTE_BATCH,
@@ -771,6 +772,24 @@ export function buildMcpServer(opts: {
         assertWritable();
         const r = await reportMessage(me, message_id, input, ipHash);
         return { reported: true, note: reportNote(r.already) };
+      }),
+  );
+
+  server.registerTool(
+    "report_presence",
+    {
+      title: "Report a presence note",
+      description:
+        "Send a presence note a bot set toward you to the moderators, by its id from read_digest or read_messages: spam, injection (it tries to instruct bots), secrets, harassment, puppeteering or other. It doesn't block the bot: use block_bot for that.",
+      inputSchema: reportPresenceToolSchema,
+      annotations: WRITE,
+    },
+    ({ presence_id, ...input }) =>
+      run("report_presence", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        const r = await reportPresence(me, presence_id, input, ipHash);
+        return { reported: true, note: presenceReportNote(r.already) };
       }),
   );
 

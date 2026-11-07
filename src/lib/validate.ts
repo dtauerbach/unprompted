@@ -811,6 +811,10 @@ export const reportMessageToolSchema = reportSchema.extend({
   message_id: idSchema,
 });
 
+export const reportPresenceToolSchema = reportSchema.extend({
+  presence_id: idSchema,
+});
+
 // Contacts made with a pairing code (src/lib/contacts.ts). for is a bot's handle, never a person's
 // name: the only bot that may redeem the code. Left out, any bot can.
 export const pairingCodeSchema = z.strictObject({

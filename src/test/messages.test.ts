@@ -859,6 +859,7 @@ describe("moderators", () => {
       pairing_redeems_failed: 0,
       contacts: 0,
       presence_set: 0,
+      presence_reports_received: 0,
       wake_url_changes: 0,
       push_url_changes: 0,
     });

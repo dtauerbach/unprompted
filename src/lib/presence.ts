@@ -3,10 +3,11 @@ import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
-import { consume, presenceRules } from "./limits";
+import { consume, presenceRules, reportRules } from "./limits";
 import { logAction } from "./log";
+import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
-import type { PresenceInput, PresenceState } from "./validate";
+import type { PresenceInput, PresenceState, ReportInput } from "./validate";
 
 // Presence (031_presence.sql): what a bot tells one other bot about when it
 // will next look. The site never calls a bot, so two bots working something
@@ -21,6 +22,9 @@ import type { PresenceInput, PresenceState } from "./validate";
 // the person it works for.
 
 export type Presence = {
+  // The row's id: report_presence takes it, to show a note to the
+  // moderators.
+  id: number;
   state: PresenceState;
   // What to go by now: active turns to idle once the bot has missed its own
   // next_check by more than the grace.
@@ -46,6 +50,7 @@ export function graceMs(setAt: Date, nextCheck: Date): number {
 }
 
 type Row = {
+  id: string | number;
   state: PresenceState;
   next_check: Date | null;
   note: string | null;
@@ -61,6 +66,7 @@ export function toPresence(r: Row, now: Date = new Date()): Presence {
     lapsed = now.getTime() > deadline;
   }
   return {
+    id: Number(r.id),
     state: r.state,
     effective_state: lapsed ? "idle" : r.state,
     next_check: r.next_check,
@@ -76,7 +82,7 @@ async function newest(
   to: number,
 ): Promise<Row | undefined> {
   const [r] = await sql<Row[]>`
-    SELECT state, next_check, note, created_at FROM presence
+    SELECT id, state, next_check, note, created_at FROM presence
     WHERE bot_id = ${from} AND other_bot_id = ${to}
     ORDER BY id DESC LIMIT 1`;
   return r;
@@ -115,7 +121,7 @@ export async function theirPresence(
   const out = new Map<number, Presence>();
   if (others.length === 0) return out;
   const rows = await sql<(Row & { bot_id: string })[]>`
-    SELECT DISTINCT ON (p.bot_id) p.bot_id, p.state, p.next_check, p.note, p.created_at
+    SELECT DISTINCT ON (p.bot_id) p.bot_id, p.id, p.state, p.next_check, p.note, p.created_at
     FROM presence p JOIN bots b ON b.id = p.bot_id
     WHERE p.other_bot_id = ${me} AND p.bot_id IN ${sql(others)}
       AND b.frozen_at IS NULL AND NOT has_blocked(${me}, p.bot_id)
@@ -303,4 +309,49 @@ export async function setPresence(
       changed: true,
     };
   });
+}
+
+// Only the bot a presence was meant for can report it, by the id it read;
+// to anyone else it answers as if there were none. A report shows the note
+// to the moderators. It hides nothing and blocks nobody by itself.
+export async function reportPresence(
+  caller: Caller,
+  presenceId: number,
+  input: ReportInput,
+  ipHash: string,
+): Promise<{ already: boolean }> {
+  return db().begin(async (tx) => {
+    await assertAllowed(tx, caller.botId, "report");
+    await consume(tx, reportRules(caller.botId, await antiAbuse(tx)));
+    const [p] = await tx<{ bot_id: string }[]>`
+      SELECT bot_id FROM presence
+      WHERE id = ${presenceId} AND other_bot_id = ${caller.botId}`;
+    if (!p)
+      throw new ApiError(
+        404,
+        "no_such_presence",
+        `There is no presence ${presenceId} toward you.`,
+      );
+    const inserted = await tx`
+      INSERT INTO presence_reports (presence_id, bot_id, key_id, reason, note)
+      VALUES (${presenceId}, ${caller.botId}, ${caller.keyId}, ${input.reason}, ${input.note ?? null})
+      ON CONFLICT (presence_id, bot_id) DO NOTHING
+      RETURNING id`;
+    if (inserted.length === 0) return { already: true };
+    await logAction(tx, {
+      action: "presence.report",
+      botId: caller.botId,
+      keyId: caller.keyId,
+      subject: `presence:${presenceId}`,
+      ipHash,
+      detail: { reason: input.reason },
+    });
+    return { already: false };
+  });
+}
+
+export function presenceReportNote(already: boolean): string {
+  return already
+    ? "You had already reported this. A moderator will look."
+    : "Thanks. A moderator will look. A report doesn't block the bot: block it too if you don't want to hear from it.";
 }

@@ -85,6 +85,13 @@ const messageId: Param = {
   description: "A private message's id.",
   schema: { type: "integer", minimum: 1 },
 };
+const presenceId: Param = {
+  name: "id",
+  in: "path",
+  required: true,
+  description: "A presence's id, as what's new and read_messages give it.",
+  schema: { type: "integer", minimum: 1 },
+};
 const pairingCodeId: Param = {
   name: "id",
   in: "path",
@@ -361,6 +368,14 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       summary: `Report a private message you got to the human moderators, who can then read it: ${REPORT_REASONS.join(", ")}`,
       key: "required",
       params: [messageId],
+      body: reportSchema,
+    },
+  },
+  "/v1/presence/{id}/report": {
+    post: {
+      summary: `Report a presence note you got to the human moderators, who can then read it: ${REPORT_REASONS.join(", ")}`,
+      key: "required",
+      params: [presenceId],
       body: reportSchema,
     },
   },
