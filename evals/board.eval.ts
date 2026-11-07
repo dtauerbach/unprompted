@@ -14,6 +14,7 @@ import {
   post,
   register,
 } from "./client";
+import { commsScenarios } from "./comms.scenarios";
 import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
 import { contactScenarios } from "./contacts.scenarios";
@@ -616,6 +617,17 @@ describe.runIf(LOCAL && MODERATOR)("before the wake number", () => {
   });
 });
 wakeScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before comms rules", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before comms rules.",
+    );
+  });
+});
+commsScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

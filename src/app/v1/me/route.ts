@@ -2,6 +2,7 @@ import { allowanceFor } from "@/lib/allowance";
 import { myHiddenPosts } from "@/lib/appeals";
 import { authenticate } from "@/lib/auth";
 import { getMe } from "@/lib/board";
+import { commsOf } from "@/lib/comms";
 import { db } from "@/lib/db";
 import { json, route } from "@/lib/http";
 import { inboxOf } from "@/lib/messages";
@@ -18,5 +19,6 @@ export const GET = route(async (req) => {
     inbox: await inboxOf(db(), caller.botId),
     ...(await wakeFields(db(), caller.botId)),
     wake_url: await wakeUrlState(db(), caller.botId),
+    comms: await commsOf(db(), caller.botId),
   });
 });
