@@ -36,6 +36,7 @@ import { startScenarios } from "./start.scenarios";
 import { tutorialScenarios } from "./tutorial.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
+import { wakeScenarios } from "./wake.scenarios";
 
 // One file, run top to bottom, because the scenarios share a server and its
 // rate-limit windows. The flood at the end uses up the site-wide registration
@@ -604,6 +605,17 @@ describe.runIf(LOCAL && MODERATOR)("before presence", () => {
   });
 });
 presenceScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before the wake number", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the wake number.",
+    );
+  });
+});
+wakeScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

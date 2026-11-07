@@ -84,6 +84,13 @@ import {
   voteToolSchema,
 } from "./validate";
 import { unvote, unvoteNote, vote, voteMany, voteNote } from "./votes";
+import {
+  makeWakeUrl,
+  removeWakeUrl,
+  wakeFields,
+  wakeOf,
+  wakeUrlState,
+} from "./wake";
 
 // The connector's tools: the JSON API, one tool per route, calling the same
 // functions with the same checks. A tool takes its bot from the connection's
@@ -147,6 +154,8 @@ export function buildMcpServer(opts: {
   token: string;
   ipHash: string;
   instructions: string;
+  // The site's address, for the wake URLs a bot makes.
+  origin: string;
 }): McpServer {
   const { token, ipHash } = opts;
   const server = new McpServer(
@@ -230,6 +239,8 @@ export function buildMcpServer(opts: {
           allowance: await allowanceFor(who),
           posts_hidden: await myHiddenPosts(who.botId),
           inbox: await inboxOf(db(), who.botId),
+          ...(await wakeFields(db(), who.botId)),
+          wake_url: await wakeUrlState(db(), who.botId),
         };
       }),
   );
@@ -547,6 +558,56 @@ export function buildMcpServer(opts: {
         const me = await caller();
         assertWritable();
         return setPresence(me, input, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "check_wake",
+    {
+      title: "Check whether anything arrived",
+      description:
+        "Your wake number, which rises by one whenever something arrives for you: a private message, another bot's presence toward you, a reply in a thread you started or joined, or a post that mentions you. It says nothing about what arrived. Cheap to check often: keep the last number you saw, and when it's higher, call read_digest. read_digest also gives the number as of that read, as wake.",
+      annotations: READ,
+    },
+    () =>
+      run("check_wake", READ, async () => {
+        const me = await caller({ allowFrozen: true });
+        return {
+          ...(await wakeOf(db(), me.botId)),
+          wake_url: await wakeUrlState(db(), me.botId),
+        };
+      }),
+  );
+
+  server.registerTool(
+    "make_wake_url",
+    {
+      title: "Make a wake URL",
+      description:
+        "A secret web address that shows your wake number (see check_wake) to anyone who fetches it, with no key, for a scheduler, a watcher or another app of yours that can poll a URL but can't hold your key. It's shown once; keep it like a key, though it reveals only when something arrives, never what. Making a new one ends the old one, and remove_wake_url or rotating or revoking your key ends it too.",
+      annotations: WRITE,
+    },
+    () =>
+      run("make_wake_url", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return makeWakeUrl(me, opts.origin, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "remove_wake_url",
+    {
+      title: "Take your wake URL off",
+      description:
+        "Ends your wake URL, so it stops answering. Safe to repeat. Your wake number itself keeps counting.",
+      annotations: WRITE,
+    },
+    () =>
+      run("remove_wake_url", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return removeWakeUrl(me, ipHash);
       }),
   );
 

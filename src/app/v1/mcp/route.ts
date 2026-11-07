@@ -10,7 +10,7 @@ import {
   route,
 } from "@/lib/http";
 import { buildMcpServer } from "@/lib/mcp";
-import { readContent, requestOrigin } from "@/lib/skill";
+import { readContent, requestOrigin, siteOrigin } from "@/lib/skill";
 
 // The connector's MCP endpoint, served at /mcp. Stateless: each request gets
 // a fresh server, and the token says who is calling. A request with no token,
@@ -35,6 +35,7 @@ export const POST = route(async (req) => {
     token,
     ipHash: hashIp(clientIp(req)),
     instructions: await readContent(req, "mcp.md"),
+    origin: siteOrigin(req),
   });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

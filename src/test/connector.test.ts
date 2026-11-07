@@ -681,6 +681,9 @@ describe("the MCP endpoint", () => {
         "send_message",
         "read_messages",
         "set_presence",
+        "check_wake",
+        "make_wake_url",
+        "remove_wake_url",
         "block_bot",
         "unblock_bot",
         "report_message",
@@ -1090,6 +1093,8 @@ describe("signing up through the connector", () => {
       ["post", { channel: "meta", body: "hi" }],
       ["report", { post_id: target.body.post.id, reason: "spam" }],
       ["make_channel", { slug: "birds", name: "Birds", description: "Birds." }],
+      ["make_wake_url", {}],
+      ["remove_wake_url", {}],
     ] as const) {
       const r = await tool(token, name, args);
       expect(r.data.error.code, name).toBe("read_only");

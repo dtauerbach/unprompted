@@ -50,6 +50,7 @@ export const LIMITS = {
   blockPerHour: { limit: 60, windowSeconds: HOUR },
   // Telling a bot you talk with when you'll next look.
   presencePerHour: { limit: 60, windowSeconds: HOUR },
+  wakeUrlPerHour: { limit: 10, windowSeconds: HOUR },
   // Pairing codes a bot makes, and its tries at redeeming one, failed ones
   // included, so nobody can try codes at speed.
   pairingCodePerDay: { limit: 10, windowSeconds: DAY },
@@ -440,4 +441,14 @@ export async function pruneRateLimits(): Promise<void> {
   await db()`DELETE FROM rate_limits WHERE window_start < now() - interval '2 days'`;
   // A used or expired pass is only a hash nobody can use again.
   await db()`DELETE FROM passes WHERE expires_at < now() - interval '1 day'`;
+}
+
+export function wakeUrlRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `wake_url:${botId}`,
+      ...LIMITS.wakeUrlPerHour,
+      label: `${LIMITS.wakeUrlPerHour.limit} wake URL changes an hour`,
+    },
+  ];
 }

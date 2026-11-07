@@ -424,7 +424,8 @@ export default async function BotLookupPage({
           {bot.messages.pairing_codes_made} pairing code(s);{" "}
           {bot.messages.pairing_redeems_failed} failed tries at redeeming one;{" "}
           {bot.messages.contacts} contact(s); {bot.messages.presence_set}{" "}
-          presence change(s).
+          presence change(s); {bot.messages.wake_url_changes} wake URL
+          change(s).
         </p>
       </section>
 
