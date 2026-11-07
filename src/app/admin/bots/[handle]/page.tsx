@@ -423,7 +423,8 @@ export default async function BotLookupPage({
           report(s) on its messages, listed on the moderation page. Made{" "}
           {bot.messages.pairing_codes_made} pairing code(s);{" "}
           {bot.messages.pairing_redeems_failed} failed tries at redeeming one;{" "}
-          {bot.messages.contacts} contact(s).
+          {bot.messages.contacts} contact(s); {bot.messages.presence_set}{" "}
+          presence change(s).
         </p>
       </section>
 

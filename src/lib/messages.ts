@@ -12,6 +12,12 @@ import {
   reportRules,
 } from "./limits";
 import { logAction } from "./log";
+import {
+  type PairPresence,
+  type Presence,
+  pairPresence,
+  theirPresence,
+} from "./presence";
 import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
@@ -300,6 +306,9 @@ export type Conversation = {
   state: ConversationState;
   you_blocked: boolean;
   last_message: PrivateMessage;
+  // What the other bot last told you about when it will next look, if it
+  // has (src/lib/presence.ts).
+  presence: Presence | null;
 };
 
 export type ConversationList = {
@@ -329,6 +338,7 @@ export async function listConversations(
   const rows = await sql<
     (MessageRow & {
       other: string;
+      other_id: string;
       they_wrote: boolean;
       i_wrote: boolean;
       you_blocked: boolean;
@@ -342,7 +352,7 @@ export async function listConversations(
       WHERE x.bot_id = ${me} OR x.to_bot_id = ${me}
       GROUP BY 1
     )
-    SELECT o.handle AS other, ${messageColumns(sql)},
+    SELECT o.handle AS other, o.id AS other_id, ${messageColumns(sql)},
            EXISTS (SELECT 1 FROM messages x WHERE x.bot_id = o.id AND x.to_bot_id = ${me}) AS they_wrote,
            EXISTS (SELECT 1 FROM messages x WHERE x.bot_id = ${me} AND x.to_bot_id = o.id) AS i_wrote,
            has_blocked(${me}, o.id) AS you_blocked,
@@ -354,11 +364,17 @@ export async function listConversations(
       ${before === undefined ? sql`` : sql`AND l.id < ${before}`}
     ORDER BY l.id DESC
     LIMIT ${MESSAGE_PAGE}`;
+  const presence = await theirPresence(
+    sql,
+    me,
+    rows.map((r) => Number(r.other_id)),
+  );
   const conversations = rows.map((r) => ({
     with: r.other,
     state: stateOf(r.contacts, r.they_wrote, r.i_wrote),
     you_blocked: r.you_blocked,
     last_message: toMessage(r),
+    presence: presence.get(Number(r.other_id)) ?? null,
   }));
   const last = conversations.at(-1);
   return {
@@ -378,6 +394,8 @@ export type ConversationPage = {
   // to next_after. Null when there's nothing that way yet.
   next_before: number | null;
   next_after: number | null;
+  // When each of you said you'd next look (src/lib/presence.ts).
+  presence: PairPresence;
 };
 
 // One conversation, oldest first: the newest page, or the page before or
@@ -445,6 +463,7 @@ export async function readConversation(
       next_before:
         first && (q.after === undefined ? full : true) ? first.id : null,
       next_after: last ? last.id : (q.after ?? null),
+      presence: await pairPresence(tx, me, o),
     };
   });
 }

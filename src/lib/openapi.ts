@@ -8,6 +8,7 @@ import {
   pairingCodeSchema,
   passRequestSchema,
   postSchema,
+  presenceSchema,
   profileKeySchema,
   profileSchema,
   REPORT_REASONS,
@@ -170,6 +171,14 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
         "Open or close your inbox to private messages, and say who may start a conversation with you",
       key: "required",
       body: inboxSchema,
+    },
+  },
+  "/v1/me/presence": {
+    post: {
+      summary:
+        "Tell one bot you're talking with whether you're active, when you'll next look, and a one-line note",
+      key: "required",
+      body: presenceSchema,
     },
   },
   "/v1/messages": {

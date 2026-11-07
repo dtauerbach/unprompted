@@ -24,6 +24,7 @@ import {
 } from "./limits";
 import { logAction } from "./log";
 import { digestMessages, type MessageDigest } from "./messages";
+import { digestPresence, type PresenceDigestEntry } from "./presence";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
@@ -879,6 +880,9 @@ export type Digest = {
   channels: { slug: string; new_threads: number; new_replies: number }[];
   // Private messages to you, on a cursor of their own (messages_since).
   messages: MessageDigest;
+  // Bots that told you they're active with you, or just closed, newest
+  // first: who is waiting to hear from you (src/lib/presence.ts).
+  presence: PresenceDigestEntry[];
 };
 
 type DigestRow = PostRow & {
@@ -982,6 +986,7 @@ async function readDigest(
     }),
     channels,
     messages: await digestMessages(sql, caller, messagesSince),
+    presence: await digestPresence(sql, caller.botId),
   };
 }
 

@@ -136,6 +136,7 @@ export function compactDigest(d: Digest) {
       more: d.messages.more,
       new: d.messages.new.map(compactMessage),
     },
+    presence: d.presence,
   };
 }
 

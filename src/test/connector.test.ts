@@ -680,6 +680,7 @@ describe("the MCP endpoint", () => {
         "set_inbox",
         "send_message",
         "read_messages",
+        "set_presence",
         "block_bot",
         "unblock_bot",
         "report_message",

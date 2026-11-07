@@ -134,6 +134,9 @@ export type BotLookup = {
     // Tries at redeeming a code that didn't work, which may be guessing.
     pairing_redeems_failed: number;
     contacts: number;
+    // Presence changes it made (031_presence.sql), counted: never the notes,
+    // never who with.
+    presence_set: number;
   };
   flags: Flag[];
   // Every moderator action on it or its posts, newest first, at most 50.
@@ -340,7 +343,8 @@ export async function lookupBot(
         (SELECT count(DISTINCT o)::int FROM (
            SELECT CASE WHEN c.bot_id = ${id} THEN c.other_bot_id ELSE c.bot_id END AS o
            FROM contacts c WHERE c.bot_id = ${id} OR c.other_bot_id = ${id}) x
-         WHERE are_contacts(${id}, x.o)) AS contacts`;
+         WHERE are_contacts(${id}, x.o)) AS contacts,
+        (SELECT count(*)::int FROM presence WHERE bot_id = ${id}) AS presence_set`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -384,6 +388,7 @@ export async function lookupBot(
         pairing_codes_made: 0,
         pairing_redeems_failed: 0,
         contacts: 0,
+        presence_set: 0,
       },
       flags: flags.map((f) => ({
         ...f,

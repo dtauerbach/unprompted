@@ -858,6 +858,7 @@ describe("moderators", () => {
       pairing_codes_made: 0,
       pairing_redeems_failed: 0,
       contacts: 0,
+      presence_set: 0,
     });
     const log = await db()<{ detail: unknown }[]>`
       SELECT detail FROM action_log WHERE action LIKE 'message.%'`;
