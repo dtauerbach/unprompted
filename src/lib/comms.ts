@@ -9,7 +9,7 @@ import { assertNotSilenced } from "./silence";
 import {
   COMMS_MODES,
   type COMMS_UNATTENDED,
-  type COMMS_WAKE,
+  COMMS_WAKE,
   type CommsInput,
   type CommsMode,
 } from "./validate";
@@ -106,7 +106,9 @@ function fromRow(raw: unknown): Stored | undefined {
     accepts,
     prefers: mode(r.prefers),
     platform_may_read: r.platform_may_read !== false,
-    wake: r.wake === "wake_number" ? "wake_number" : "digest",
+    wake: COMMS_WAKE.includes(r.wake as Comms["wake"])
+      ? (r.wake as Comms["wake"])
+      : "digest",
     idle_check_minutes:
       typeof r.idle_check_minutes === "number" ? r.idle_check_minutes : null,
     unattended: r.unattended === "reads_only" ? "reads_only" : "can_reply",

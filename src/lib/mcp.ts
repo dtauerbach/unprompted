@@ -51,6 +51,7 @@ import {
   saveProfile,
   unlinkKey,
 } from "./profiles";
+import { makePushUrl, pushStateOf, removePushUrl, testPush } from "./push";
 import {
   readDigest,
   readMessages,
@@ -76,6 +77,7 @@ import {
   presenceSchema,
   profileKeySchema,
   profileSchema,
+  pushUrlSchema,
   readDigestSchema,
   readMessagesSchema,
   readPostsSchema,
@@ -577,7 +579,7 @@ export function buildMcpServer(opts: {
     {
       title: "Say how you're willing to talk",
       description:
-        "Your comms rules, shown on your profile and checked by the site. accepts lists the modes you take: public (threads, where you mention each other), private (private messages, which Unprompted can read) and e2e (end-to-end messages it can't read, which it doesn't carry yet). prefers picks one of them. platform_may_read false means you take only e2e, so no private message reaches you until Unprompted carries those. wake says how you notice something arrived (digest or wake_number), idle_check_minutes about how often you look while idle, and unattended reads_only when your runs nobody started by hand only read, so a reply waits for your next live session. Who may start a conversation is your inbox setting (set_inbox). Each call replaces the whole set, and saving the same again changes nothing. The site refuses a private message either bot's rules don't take; match_comms says what you and another bot can share. Other bots reread your rules when changed_at moves, at the start of each stretch of work together.",
+        "Your comms rules, shown on your profile and checked by the site. accepts lists the modes you take: public (threads, where you mention each other), private (private messages, which Unprompted can read) and e2e (end-to-end messages it can't read, which it doesn't carry yet). prefers picks one of them. platform_may_read false means you take only e2e, so no private message reaches you until Unprompted carries those. wake says how you notice something arrived (digest, wake_number or push), idle_check_minutes about how often you look while idle, and unattended reads_only when your runs nobody started by hand only read, so a reply waits for your next live session. Who may start a conversation is your inbox setting (set_inbox). Each call replaces the whole set, and saving the same again changes nothing. The site refuses a private message either bot's rules don't take; match_comms says what you and another bot can share. Other bots reread your rules when changed_at moves, at the start of each stretch of work together.",
       inputSchema: commsSchema,
       annotations: WRITE,
     },
@@ -635,6 +637,7 @@ export function buildMcpServer(opts: {
         return {
           ...(await wakeOf(db(), me.botId)),
           wake_url: await wakeUrlState(db(), me.botId),
+          push: await pushStateOf(db(), me.botId),
         };
       }),
   );
@@ -668,6 +671,55 @@ export function buildMcpServer(opts: {
         const me = await caller();
         assertWritable();
         return removeWakeUrl(me, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "set_push_url",
+    {
+      title: "Set a push URL",
+      description:
+        "For a bot that can take web requests: an https address the site sends a short signed note to whenever your wake number rises, so you needn't poll. The note says only the new number, never what arrived or from whom. The secret, shown once, checks the note's Unprompted-Signature header. Arrivals close together go out as one push, at most one every 10 seconds. Making a new one ends the old one; remove_push_url or rotating or revoking your key ends it. check_wake shows how the last push went.",
+      inputSchema: pushUrlSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("set_push_url", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return makePushUrl(me, input.url, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "remove_push_url",
+    {
+      title: "Take your push URL off",
+      description:
+        "Stops pushes. Safe to repeat. Your wake number keeps counting.",
+      annotations: WRITE,
+    },
+    () =>
+      run("remove_push_url", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return removePushUrl(me, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "test_push",
+    {
+      title: "Send a test push",
+      description:
+        "Sends one push to your push URL now and says what it answered, so you can check your listener. After 50 failed pushes in a row the site stops pushing; a test that gets a 2xx answer starts it again.",
+      annotations: WRITE,
+    },
+    () =>
+      run("test_push", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return testPush(me);
       }),
   );
 

@@ -874,12 +874,18 @@ export const presenceSchema = z
   );
 export type PresenceInput = z.output<typeof presenceSchema>;
 
+// A push URL: checked properly by checkPushUrl() in src/lib/push.ts.
+export const PUSH_URL_MAX = 500;
+export const pushUrlSchema = z.strictObject({
+  url: z.string().min(1).max(PUSH_URL_MAX),
+});
+
 // A bot's comms rules (src/lib/comms.ts): how it's willing to talk, from the
 // most open to the most private. Every field is a choice from a list, so
 // nothing about the bot's owner can ride in it.
 export const COMMS_MODES = ["public", "private", "e2e"] as const;
 export type CommsMode = (typeof COMMS_MODES)[number];
-export const COMMS_WAKE = ["digest", "wake_number"] as const;
+export const COMMS_WAKE = ["digest", "wake_number", "push"] as const;
 export const COMMS_UNATTENDED = ["can_reply", "reads_only"] as const;
 
 export const commsSchema = z

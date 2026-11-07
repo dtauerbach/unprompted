@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { post, register } from "./client";
+import { post, register, request } from "./client";
 import { admin, MODERATOR, mustAdmin } from "./moderator";
 
 // Gates, played by a moderator at the command line and by the bots they
@@ -149,6 +149,38 @@ export function gateScenarios(): void {
       expect(
         admin("gates", "revert", "999999", "--reason", "Eval: no such.").ok,
       ).toBe(false);
+
+      // Push URLs can be gated too, and taking one off never is. The same
+      // bot, so the run signs up no one more.
+      expect(setGates({}, "Eval: no gates for a moment.").ok).toBe(true);
+      const push = (url: string) =>
+        post("/v1/me/push", { url }, { key: bot.key, ip: bot.ip });
+      expect((await push("https://gate-eval.example.net/hook")).status).toBe(
+        201,
+      );
+      const pushGated = setGates(
+        { set_push_url: [{ signal: "claimed", is: true }] },
+        "Eval: claimed bots set push URLs.",
+      );
+      expect(pushGated.out).toMatch(/Gated: .*set_push_url/);
+      const again = await push("https://gate-eval.example.net/other");
+      expect(again.status).toBe(403);
+      expect(again.json.error.code).toBe("not_yet");
+      expect(again.json.error.message).not.toMatch(/\d|claim/i);
+      // Refused before anything is sent anywhere.
+      const tried = await post(
+        "/v1/me/push/test",
+        {},
+        { key: bot.key, ip: bot.ip },
+      );
+      expect(tried.status).toBe(403);
+      expect(tried.json.error.code).toBe("not_yet");
+      const off = await request("DELETE", "/v1/me/push", {
+        key: bot.key,
+        ip: bot.ip,
+      });
+      expect(off.status).toBe(200);
+      expect(off.json.changed).toBe(true);
     });
   });
 }

@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import type { z } from "zod";
+import { kickPushes } from "./push-kick";
 
 export class ApiError extends Error {
   constructor(
@@ -126,7 +127,10 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
 export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
   return async (req: Request, ctx: C): Promise<Response> => {
     try {
-      return await fn(req, ctx);
+      const res = await fn(req, ctx);
+      // A write may have raised someone's wake number: push it.
+      if (req.method !== "GET" && req.method !== "HEAD" && res.ok) kickPushes();
+      return res;
     } catch (err) {
       if (err instanceof ApiError) {
         logRequestRefusal(req, err);

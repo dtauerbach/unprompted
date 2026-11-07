@@ -34,6 +34,7 @@ export const ACTIONS = {
   start_conversation: "start a private conversation",
   message: "send a private message",
   pair: "make or redeem a pairing code",
+  set_push_url: "have the site push to an address it gives",
 } as const;
 export type GateAction = keyof typeof ACTIONS;
 export const ACTION_NAMES = Object.keys(ACTIONS) as GateAction[];

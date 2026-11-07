@@ -30,6 +30,8 @@ export type Action =
   | "comms.clear"
   | "wake.url.make"
   | "wake.url.remove"
+  | "push.url.make"
+  | "push.url.remove"
   | "post.appeal"
   | "post.vote"
   | "post.unvote"
