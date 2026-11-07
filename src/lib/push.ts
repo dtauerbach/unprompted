@@ -124,6 +124,8 @@ export function checkPushUrl(raw: string): string {
     )
   )
     throw refuse("it must be a public host name.");
+  // One spelling per host, so it has one cap and one name in the log.
+  u.hostname = host;
   const out = u.toString();
   if (out.length > URL_MAX) throw refuse(`keep it to ${URL_MAX} characters.`);
   return out;
@@ -238,8 +240,9 @@ export async function removePushUrl(
 ): Promise<{ changed: boolean }> {
   return db().begin(async (tx) => {
     await lockBot(tx, caller.botId);
+    // Not counted, so taking it off always works; each one follows a set,
+    // which is.
     if (!(await pushStateOf(tx, caller.botId)).set) return { changed: false };
-    await consume(tx, pushUrlRules(caller.botId));
     await tx`
       INSERT INTO push_urls (bot_id, key_id) VALUES (${caller.botId}, ${caller.keyId})`;
     await tx`UPDATE push_state SET pending_since = NULL WHERE bot_id = ${caller.botId}`;
@@ -376,8 +379,16 @@ type Claimed = { bot_id: string; handle: string; url: string; salt: string };
 export async function drainPushes(
   deliver: Deliver = deliverer,
 ): Promise<number> {
+  return (await drainBatch(deliver)).sent;
+}
+
+// One batch: how many went out, and how many rows it took up (sent, put
+// off or cleared), so a full batch can go straight on to the next.
+async function drainBatch(
+  deliver: Deliver,
+): Promise<{ sent: number; seen: number }> {
   const sql = db();
-  const claimed = await sql.begin(async (tx) => {
+  const batch = await sql.begin(async (tx) => {
     const rows = await tx<Claimed[]>`
       SELECT s.bot_id, b.handle, p.url, p.salt
       FROM push_state s
@@ -431,8 +442,9 @@ export async function drainPushes(
         WHERE bot_id = ${r.bot_id}`;
       out.push(r);
     }
-    return out;
+    return { out, seen: rows.length };
   });
+  const { out: claimed, seen } = batch;
   await Promise.all(
     claimed.map(async (r) => {
       const { wake } = await wakeOf(sql, Number(r.bot_id));
@@ -450,7 +462,7 @@ export async function drainPushes(
         WHERE bot_id = ${r.bot_id}`;
     }),
   );
-  return claimed.length;
+  return { sent: claimed.length, seen };
 }
 
 // Sends one push now, so a bot can check its listener, and says how it went.
@@ -504,15 +516,18 @@ async function nextDue(): Promise<Date | null> {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Sends what's waiting, then keeps an eye out for a little while: pushes
-// held back by the gap go out when it ends, and arrivals committed just
-// after the write that started this are caught too.
+// held back by the gap, or by a host's cap, go out when it ends. An arrival
+// after this round has nothing left to wait for starts its own round, from
+// the write that brought it.
 export async function drainForAWhile(
   deliver: Deliver = deliverer,
   forMs: number = DRAIN_FOR_MS,
 ): Promise<void> {
   const until = Date.now() + forMs;
   while (Date.now() < until) {
-    await drainPushes(deliver);
+    // A full batch may have more behind it: go on at once. It can't spin,
+    // since every row a batch takes up leaves the claimable set.
+    if ((await drainBatch(deliver)).seen === PUSH_BATCH) continue;
     // Nothing waiting: done. Every write kicks its own round, so an arrival
     // after this one starts another.
     const due = await nextDue();

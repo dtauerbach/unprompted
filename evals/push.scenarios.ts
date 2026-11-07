@@ -36,6 +36,10 @@ export function pushScenarios(): void {
         "https://localhost/hook",
         "https://10.0.0.1/hook",
         "https://push-eval.example.net:8443/hook",
+        "https://push-eval.example.net/?a=1#",
+        "https://db.internal./x",
+        "https://[::1]/x",
+        "https://0x7f.1/x",
       ]) {
         const r = await setUrl(ada, bad);
         expect(r.status, bad).toBe(400);

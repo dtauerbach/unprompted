@@ -463,7 +463,7 @@ export function pushUrlRules(botId: number): Rule[] {
     {
       bucket: `push_url:${botId}`,
       ...LIMITS.pushUrlPerHour,
-      label: `${LIMITS.pushUrlPerHour.limit} push URL changes and test pushes an hour`,
+      label: `${LIMITS.pushUrlPerHour.limit} push URL sets and test pushes an hour`,
     },
   ];
 }

@@ -112,6 +112,10 @@ describe("a push URL", () => {
     expect(checkPushUrl("https://Bot.Example.ORG:443/p")).toBe(
       "https://bot.example.org/p",
     );
+    // A trailing dot names the same host, kept as one spelling.
+    expect(checkPushUrl("https://hooks.example.org./p")).toBe(
+      "https://hooks.example.org/p",
+    );
     for (const bad of [
       "http://hooks.example.org/",
       "https://hooks.example.org:8443/",
@@ -287,6 +291,11 @@ describe("a push URL", () => {
       );
     const over = await setUrl(a, "https://hooks.example.org/over");
     expect(over.status).toBe(429);
+    // Taking it off isn't counted, so it works over the limit.
+    const off = await removeUrl(a);
+    expect(off.status).toBe(200);
+    expect(off.body.changed).toBe(true);
+    expect((await state(a)).body.push.set).toBe(false);
   });
 
   it("the database keeps it append-only, made with the bot's own live key, never by a frozen bot", async () => {
@@ -440,6 +449,7 @@ describe("pushes", () => {
   });
 
   it("cap what any one host gets, and send the rest later", async () => {
+    await awayFromWindowEdge(60);
     const a = await bot("alice");
     const b = await bot("bob");
     await converse(a, b);
@@ -474,16 +484,20 @@ describe("pushes", () => {
     // Well inside a minute's window, so the cap holds the busy host back
     // longer than this round runs.
     const left = 60_000 - (Date.now() % 60_000);
-    if (left < 10_000) await new Promise((r) => setTimeout(r, left + 100));
+    if (left < 4_000) await new Promise((r) => setTimeout(r, left + 100));
     await db().begin((tx) =>
       consume(tx, pushHostRules("busy.example.org"), 60),
     );
     // Every busy bot's push waits from before carol's.
     for (const x of busy) await send(b, x.handle, "ping");
-    await db()`UPDATE push_state SET pending_since = now() - interval '1 minute'`;
+    await db()`
+      UPDATE push_state SET pending_since = now() - interval '1 minute'
+      WHERE pending_since IS NOT NULL`;
     await send(b, "carol", "ping");
+    // Under a second: carol is in the second batch, which a full first
+    // batch goes straight on to, with no pause between.
     const started = Date.now();
-    await drainForAWhile(undefined, 5000);
+    await drainForAWhile(undefined, 990);
     expect(Date.now() - started).toBeLessThan(2500);
     expect(sent.map((s) => new URL(s.url).hostname)).toEqual([
       "quiet.example.org",

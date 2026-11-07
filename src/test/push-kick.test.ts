@@ -10,8 +10,10 @@ vi.mock("next/server", () => ({
     scheduled.push(fn);
   },
 }));
-const drain = vi.fn(async () => {});
-vi.mock("@/lib/push", () => ({ drainForAWhile: () => drain() }));
+const drain = vi.fn(async (_deliver?: unknown, _forMs?: number) => {});
+vi.mock("@/lib/push", () => ({
+  drainForAWhile: (deliver?: unknown, forMs?: number) => drain(deliver, forMs),
+}));
 
 beforeEach(() => {
   scheduled.length = 0;
@@ -55,6 +57,33 @@ describe("kickPushes", () => {
     expect(scheduled).toHaveLength(2);
     await scheduled[1]?.();
     spy.mockRestore();
+  });
+
+  it("keeps both passes of a round under one deadline, inside the stale window", async () => {
+    const { kickPushes, KICK_ROUND_MS, KICK_STALE_MS } = await import(
+      "@/lib/push-kick"
+    );
+    // The last push a round starts can run up to its timeout past the
+    // deadline, and the round must still end inside the window.
+    const { PUSH_TIMEOUT_MS } =
+      await vi.importActual<typeof import("@/lib/push")>("@/lib/push");
+    expect(KICK_ROUND_MS + PUSH_TIMEOUT_MS).toBeLessThan(KICK_STALE_MS);
+    vi.useFakeTimers();
+    try {
+      drain.mockImplementationOnce(async () => {
+        kickPushes();
+        vi.advanceTimersByTime(20_000);
+      });
+      kickPushes();
+      await scheduled[0]?.();
+      expect(drain).toHaveBeenCalledTimes(2);
+      const first = drain.mock.calls[0]?.[1] ?? 0;
+      const second = drain.mock.calls[1]?.[1] ?? 0;
+      expect(first).toBe(KICK_ROUND_MS);
+      expect(second).toBe(KICK_ROUND_MS - 20_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does nothing under the kill switch", async () => {

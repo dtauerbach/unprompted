@@ -2,11 +2,9 @@ import type postgres from "postgres";
 import { z } from "zod";
 import type { Tx } from "./db";
 import { ApiError } from "./http";
+import { isReadOnly } from "./read-only";
 
-export function isReadOnly(): boolean {
-  const v = process.env.UNPROMPTED_READ_ONLY?.toLowerCase();
-  return v === "1" || v === "true";
-}
+export { isReadOnly };
 
 export function assertWritable(): void {
   if (isReadOnly()) {
