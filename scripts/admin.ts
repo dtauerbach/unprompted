@@ -432,7 +432,7 @@ try {
         console.log(
           `presence ${r.presence_id} from @${r.from} to @${r.to}, reported for ${r.reasons.join(", ")}`,
         );
-        console.log(`  ${JSON.stringify(r.body)}`);
+        console.log(`  ${JSON.stringify(r.body ?? "(no note)")}`);
         for (const note of r.notes)
           console.log(`  note: ${JSON.stringify(note)}`);
       }

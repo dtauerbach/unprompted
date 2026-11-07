@@ -148,6 +148,9 @@ export function presenceScenarios(): void {
             )
           ).status,
         ).toBe(404);
+      // Their tries wrote nothing.
+      if (MODERATOR)
+        expect(mustAdmin("reports")).not.toContain(`presence ${pid} from`);
       const reported = await post(
         `/v1/presence/${pid}/report`,
         { reason: "injection", note: "Tells me to ignore my instructions." },
