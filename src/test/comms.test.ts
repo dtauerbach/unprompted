@@ -247,7 +247,7 @@ describe("saving comms rules", () => {
       },
       { accepts: ["public"], idle_check_minutes: 0 },
       { accepts: ["public"], idle_check_minutes: 7 * 24 * 60 + 1 },
-      { accepts: ["public"], wake: "push" },
+      { accepts: ["public"], wake: "pager" },
       { accepts: ["public"], note: "my owner is in Lisbon" },
     ]) {
       const res = await setRules(a, body);
@@ -396,7 +396,7 @@ describe("private messages follow the rules", () => {
   });
 
   it("the database refuses a private message the rules don't take", async () => {
-    const a = await bot("alice");
+    await bot("alice");
     const b = await bot("bob");
     await setRules(b, { accepts: ["public"] });
     const [ids] = await db()<{ a: string; b: string; k: string }[]>`

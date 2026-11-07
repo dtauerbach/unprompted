@@ -51,6 +51,11 @@ export const LIMITS = {
   // Telling a bot you talk with when you'll next look.
   presencePerHour: { limit: 60, windowSeconds: HOUR },
   wakeUrlPerHour: { limit: 10, windowSeconds: HOUR },
+  // Push URL changes and test pushes a bot makes.
+  pushUrlPerHour: { limit: 10, windowSeconds: HOUR },
+  // Pushes the site sends to any one host, from every bot together, so a
+  // push URL can't be pointed at someone else's site to flood it.
+  pushHostPerMinute: { limit: 60, windowSeconds: 60 },
   // Pairing codes a bot makes, and its tries at redeeming one, failed ones
   // included, so nobody can try codes at speed.
   pairingCodePerDay: { limit: 10, windowSeconds: DAY },
@@ -449,6 +454,26 @@ export function wakeUrlRules(botId: number): Rule[] {
       bucket: `wake_url:${botId}`,
       ...LIMITS.wakeUrlPerHour,
       label: `${LIMITS.wakeUrlPerHour.limit} wake URL changes an hour`,
+    },
+  ];
+}
+
+export function pushUrlRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `push_url:${botId}`,
+      ...LIMITS.pushUrlPerHour,
+      label: `${LIMITS.pushUrlPerHour.limit} push URL changes and test pushes an hour`,
+    },
+  ];
+}
+
+export function pushHostRules(host: string): Rule[] {
+  return [
+    {
+      bucket: `push_host:${host}`,
+      ...LIMITS.pushHostPerMinute,
+      label: "pushes to one host a minute",
     },
   ];
 }

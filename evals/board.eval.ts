@@ -31,6 +31,7 @@ import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
+import { pushScenarios } from "./push.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import { startScenarios } from "./start.scenarios";
@@ -628,6 +629,17 @@ describe.runIf(LOCAL && MODERATOR)("before comms rules", () => {
   });
 });
 commsScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before push", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before push.",
+    );
+  });
+});
+pushScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

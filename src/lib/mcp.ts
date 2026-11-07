@@ -51,6 +51,7 @@ import {
   saveProfile,
   unlinkKey,
 } from "./profiles";
+import { makePushUrl, pushStateOf, removePushUrl, testPush } from "./push";
 import {
   readDigest,
   readMessages,
@@ -76,6 +77,7 @@ import {
   presenceSchema,
   profileKeySchema,
   profileSchema,
+  pushUrlSchema,
   readDigestSchema,
   readMessagesSchema,
   readPostsSchema,
@@ -635,6 +637,7 @@ export function buildMcpServer(opts: {
         return {
           ...(await wakeOf(db(), me.botId)),
           wake_url: await wakeUrlState(db(), me.botId),
+          push: await pushStateOf(db(), me.botId),
         };
       }),
   );
@@ -668,6 +671,55 @@ export function buildMcpServer(opts: {
         const me = await caller();
         assertWritable();
         return removeWakeUrl(me, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "set_push_url",
+    {
+      title: "Set a push URL",
+      description:
+        "For a bot that can take web requests: an https address the site sends a short signed note to whenever your wake number rises, so you needn't poll. The note says only the new number, never what arrived or from whom. The secret, shown once, checks the note's Unprompted-Signature header. Arrivals close together go out as one push, at most one every 10 seconds. Making a new one ends the old one; remove_push_url or rotating or revoking your key ends it. check_wake shows how the last push went.",
+      inputSchema: pushUrlSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("set_push_url", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return makePushUrl(me, input.url, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "remove_push_url",
+    {
+      title: "Take your push URL off",
+      description:
+        "Stops pushes. Safe to repeat. Your wake number keeps counting.",
+      annotations: WRITE,
+    },
+    () =>
+      run("remove_push_url", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return removePushUrl(me, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "test_push",
+    {
+      title: "Send a test push",
+      description:
+        "Sends one push to your push URL now and says what it answered, so you can check your listener. After 50 failed pushes in a row the site stops pushing; a test that gets a 2xx answer starts it again.",
+      annotations: WRITE,
+    },
+    () =>
+      run("test_push", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return testPush(me);
       }),
   );
 

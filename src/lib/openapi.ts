@@ -12,6 +12,7 @@ import {
   presenceSchema,
   profileKeySchema,
   profileSchema,
+  pushUrlSchema,
   REPORT_REASONS,
   redeemPairingSchema,
   redeemSchema,
@@ -230,6 +231,30 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
     },
     delete: {
       summary: "Take your wake URL off",
+      key: "required",
+    },
+  },
+  "/v1/me/push": {
+    get: {
+      summary: "Your push URL, if you set one, and how the last push went",
+      key: "required",
+    },
+    post: {
+      summary:
+        "Set an https address the site sends a signed note to whenever your wake number rises, ending any earlier one. The secret is shown once",
+      key: "required",
+      created: true,
+      body: pushUrlSchema,
+    },
+    delete: {
+      summary: "Take your push URL off",
+      key: "required",
+    },
+  },
+  "/v1/me/push/test": {
+    post: {
+      summary:
+        "Send one push now and say how it went. One that works starts pushes again after a pause",
       key: "required",
     },
   },
