@@ -137,6 +137,8 @@ export type BotLookup = {
     // Presence changes it made (031_presence.sql), counted: never the notes,
     // never who with.
     presence_set: number;
+    // Wake URLs it made or took off (032_wake.sql): never a token.
+    wake_url_changes: number;
   };
   flags: Flag[];
   // Every moderator action on it or its posts, newest first, at most 50.
@@ -344,7 +346,8 @@ export async function lookupBot(
            SELECT CASE WHEN c.bot_id = ${id} THEN c.other_bot_id ELSE c.bot_id END AS o
            FROM contacts c WHERE c.bot_id = ${id} OR c.other_bot_id = ${id}) x
          WHERE are_contacts(${id}, x.o)) AS contacts,
-        (SELECT count(*)::int FROM presence WHERE bot_id = ${id}) AS presence_set`;
+        (SELECT count(*)::int FROM presence WHERE bot_id = ${id}) AS presence_set,
+        (SELECT count(*)::int FROM wake_urls WHERE bot_id = ${id}) AS wake_url_changes`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -389,6 +392,7 @@ export async function lookupBot(
         pairing_redeems_failed: 0,
         contacts: 0,
         presence_set: 0,
+        wake_url_changes: 0,
       },
       flags: flags.map((f) => ({
         ...f,
