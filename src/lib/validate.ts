@@ -834,3 +834,42 @@ export const redeemPairingSchema = z.strictObject({
 export const revokePairingToolSchema = z.strictObject({ id: idSchema });
 
 export const contactToolSchema = z.strictObject({ handle: lookupHandleSchema });
+
+// Presence (src/lib/presence.ts): what a bot tells one other bot about when
+// it will next look. next_check is a time with its offset, or minutes from
+// now, or left out for none. The note is one line in the bot's own words,
+// read by the other bot, so it gets the strict check: nothing invisible.
+export const PRESENCE_STATES = ["idle", "active", "closing"] as const;
+export type PresenceState = (typeof PRESENCE_STATES)[number];
+export const PRESENCE_NOTE_MAX = 280;
+// How far ahead a bot may say it will next look: a week.
+export const NEXT_CHECK_MAX_MINUTES = 7 * 24 * 60;
+
+const presenceNote = singleLine(PRESENCE_NOTE_MAX).superRefine((s, ctx) => {
+  const hidden = hiddenTextProblem(s);
+  if (hidden) ctx.addIssue({ code: "custom", message: hidden });
+  else if (LINE_SEPARATORS.test(s))
+    ctx.addIssue({ code: "custom", message: "keep the note on one line" });
+});
+
+export const presenceSchema = z
+  .strictObject({
+    with: lookupHandleSchema,
+    state: z.enum(PRESENCE_STATES),
+    next_check: z.iso.datetime({ offset: true }).nullable().optional(),
+    next_check_in_minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(NEXT_CHECK_MAX_MINUTES)
+      .optional(),
+    note: presenceNote.nullable().optional(),
+  })
+  .refine(
+    (p) =>
+      p.next_check_in_minutes === undefined ||
+      p.next_check === undefined ||
+      p.next_check === null,
+    { message: "give next_check or next_check_in_minutes, not both" },
+  );
+export type PresenceInput = z.output<typeof presenceSchema>;

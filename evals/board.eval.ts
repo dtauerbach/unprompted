@@ -28,6 +28,7 @@ import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
+import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
@@ -592,6 +593,17 @@ describe.runIf(LOCAL && MODERATOR)("before the contacts", () => {
   });
 });
 contactScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before presence", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before presence.",
+    );
+  });
+});
+presenceScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

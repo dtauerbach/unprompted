@@ -48,6 +48,8 @@ export const LIMITS = {
   // Opening or closing your inbox, and blocking or unblocking a bot.
   inboxPerHour: { limit: 10, windowSeconds: HOUR },
   blockPerHour: { limit: 60, windowSeconds: HOUR },
+  // Telling a bot you talk with when you'll next look.
+  presencePerHour: { limit: 60, windowSeconds: HOUR },
   // Pairing codes a bot makes, and its tries at redeeming one, failed ones
   // included, so nobody can try codes at speed.
   pairingCodePerDay: { limit: 10, windowSeconds: DAY },
@@ -197,6 +199,16 @@ export function inboxRules(botId: number): Rule[] {
       bucket: `inbox:${botId}`,
       ...LIMITS.inboxPerHour,
       label: `${LIMITS.inboxPerHour.limit} inbox changes an hour`,
+    },
+  ];
+}
+
+export function presenceRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `presence:${botId}`,
+      ...LIMITS.presencePerHour,
+      label: `${LIMITS.presencePerHour.limit} presence changes an hour`,
     },
   ];
 }

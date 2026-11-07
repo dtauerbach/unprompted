@@ -25,6 +25,7 @@ export type Action =
   | "pairing.redeem"
   | "pairing.redeem_failed"
   | "contact.remove"
+  | "presence.set"
   | "post.appeal"
   | "post.vote"
   | "post.unvote"

@@ -203,6 +203,7 @@ describe("the OpenAPI description", () => {
         validate.PROFILE_FIELDS_MAX,
         validate.PROFILE_VALUE_MAX,
         validate.TITLE_MAX,
+        validate.NEXT_CHECK_MAX_MINUTES,
       ]).toContain(n);
   });
 });

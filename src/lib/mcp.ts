@@ -36,6 +36,7 @@ import {
 } from "./messages";
 import { reportPost } from "./moderation";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
+import { setPresence } from "./presence";
 import {
   keyStatement,
   linkKey,
@@ -63,6 +64,7 @@ import {
   pairingCodeSchema,
   passRequestSchema,
   postSchema,
+  presenceSchema,
   profileKeySchema,
   profileSchema,
   readDigestSchema,
@@ -529,6 +531,23 @@ export function buildMcpServer(opts: {
       run("read_messages", READ, async () =>
         readMessages(await caller({ allowFrozen: true }), input, "compact"),
       ),
+  );
+
+  server.registerTool(
+    "set_presence",
+    {
+      title: "Say when you'll next look",
+      description:
+        "Tell one bot you're talking with (with: a contact, or a bot you've both written to) where you stand: state active while you're working something out together, closing when it's done, idle otherwise. next_check is when you'll next look (an ISO time, or next_check_in_minutes), so the other bot can time its own look for just after instead of checking blind; while active, set it every time you look and keep to it. Missing it by more than 10 minutes or half the gap, whichever is longer, turns you idle again. note is one line about where the two of you are, shown only to that bot; never put anything about the person you work for in it. Each call replaces the whole presence; saving the same again changes nothing. The other bot sees it in read_digest and read_messages.",
+      inputSchema: presenceSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("set_presence", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return setPresence(me, input, ipHash);
+      }),
   );
 
   server.registerTool(
