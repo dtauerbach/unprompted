@@ -244,6 +244,57 @@ describe("two bots in a conversation", () => {
   });
 });
 
+describe("more of the edges", () => {
+  it("a third bot sees neither side, even reading the conversation by handle", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    const c = await bot("carol");
+    await talking(a, b);
+    await set(a, { with: "bob", state: "active", next_check_in_minutes: 9 });
+    const r = await read(c, "?with=alice");
+    expect(r.status).toBe(200);
+    expect(r.body.presence).toEqual({ yours: null, theirs: null });
+    expect((await digest(c)).body.presence).toEqual([]);
+  });
+
+  it("takes a time with any offset, and gives it back in UTC", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    await talking(a, b);
+    const at = new Date(Date.now() + 30 * 60_000);
+    at.setUTCSeconds(0, 0);
+    // The same instant written five hours behind UTC.
+    const local = new Date(at.getTime() - 5 * 3_600_000)
+      .toISOString()
+      .replace("Z", "-05:00");
+    const res = await set(a, {
+      with: "bob",
+      state: "active",
+      next_check: local,
+    });
+    expect(res.status).toBe(200);
+    expect(new Date(res.body.presence.yours.next_check).getTime()).toBe(
+      at.getTime(),
+    );
+  });
+
+  it("the gate holds back saving the same again too", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    await talking(a, b);
+    const body = { with: "bob", state: "idle" };
+    expect((await set(a, body)).status).toBe(200);
+    await setGates(
+      db(),
+      { message: [{ signal: "claimed", is: true }] },
+      "test",
+    );
+    const res = await set(a, body);
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("not_yet");
+  });
+});
+
 describe("refusals", () => {
   it("a bot it hasn't talked with, itself, the house and an unknown handle", async () => {
     const a = await bot("alice");
@@ -285,11 +336,17 @@ describe("refusals", () => {
     expect((await send(b, "alice", "hi")).body.error.code).toBe(
       "not_accepting",
     );
-    // Neither sees the other's presence while the block stands, anywhere.
+    // The blocker doesn't see the blocked bot's presence, anywhere.
     expect((await read(a, "?with=bob")).body.presence.theirs).toBeNull();
     expect((await read(a)).body.conversations[0].presence).toBeNull();
     expect((await digest(a)).body.presence).toEqual([]);
-    expect((await digest(b)).body.presence).toEqual([]);
+    // The blocked bot still sees the blocker's, as it still sees its
+    // messages: hiding it would tell it about the block.
+    expect((await read(b, "?with=alice")).body.presence.theirs.state).toBe(
+      "active",
+    );
+    expect((await read(b, "?with=alice")).body.messages).toHaveLength(2);
+    expect((await digest(b)).body.presence[0].with).toBe("alice");
     // Your own still shows to you.
     expect((await read(a, "?with=bob")).body.presence.yours.state).toBe(
       "active",
@@ -464,6 +521,12 @@ describe("the database backs every rule", () => {
       code: "UPM01",
     });
     await unblock(b, "alice");
+    // Outside contacts, both inboxes must be open.
+    await call(inboxRoute, { key: b.key, body: { open: false } });
+    await expect(insert("alice", "bob")).rejects.toMatchObject({
+      code: "UPM01",
+    });
+    await call(inboxRoute, { key: b.key, body: { open: true } });
     await setFrozen(db(), "bob", true, "test");
     await expect(insert("alice", "bob")).rejects.toMatchObject({
       code: "UPM01",

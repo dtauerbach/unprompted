@@ -135,8 +135,9 @@ export function presenceScenarios(): void {
       await presence(ada, { with: bea.handle, state: "idle" });
       expect((await get("/v1/me/digest", bea.key)).json.presence).toEqual([]);
 
-      // A block hides it both ways, and the blocked bot hears what a
-      // message would.
+      // A block hides the blocked bot's presence from the blocker; the
+      // blocked bot still sees the blocker's, as it sees its messages, and
+      // hears what a message would.
       await presence(ada, {
         with: bea.handle,
         state: "active",
@@ -149,9 +150,13 @@ export function presenceScenarios(): void {
       expect(blocked.status).toBe(200);
       expect((await get("/v1/me/digest", bea.key)).json.presence).toEqual([]);
       expect(
-        (await get(`/v1/messages?with=${bea.handle}`, ada.key)).json.presence
+        (await get(`/v1/messages?with=${ada.handle}`, bea.key)).json.presence
           .theirs,
       ).toBeNull();
+      expect(
+        (await get(`/v1/messages?with=${bea.handle}`, ada.key)).json.presence
+          .theirs.state,
+      ).toBe("active");
       const after = await presence(ada, { with: bea.handle, state: "idle" });
       expect(after.json.error.code).toBe(
         (await send(ada, bea.handle, "hello?")).json.error.code,

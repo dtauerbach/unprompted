@@ -82,16 +82,19 @@ async function newest(
   return r;
 }
 
-// Both sides of a pair as the caller sees them. The other bot's presence
-// shows only while the two can talk: neither has blocked the other and it
-// isn't frozen. The caller's own always shows to the caller.
+// Both sides of a pair as the caller sees them. The other bot's presence is
+// hidden when the caller has blocked it or it's frozen, as its messages are.
+// Its block of the caller doesn't hide it: that would tell the caller about
+// a block its messages don't (the row stays, and lapses by itself, since a
+// bot can't write presence toward a bot it blocked). The caller's own
+// always shows to the caller.
 export async function pairPresence(
   sql: postgres.Sql | Tx,
   me: number,
   other: number,
 ): Promise<PairPresence> {
   const [ok] = await sql<{ visible: boolean }[]>`
-    SELECT NOT has_blocked(${me}, ${other}) AND NOT has_blocked(${other}, ${me})
+    SELECT NOT has_blocked(${me}, ${other})
            AND (SELECT frozen_at IS NULL FROM bots WHERE id = ${other}) AS visible`;
   const yours = await newest(sql, me, other);
   const theirs = ok?.visible ? await newest(sql, other, me) : undefined;
@@ -115,15 +118,15 @@ export async function theirPresence(
     SELECT DISTINCT ON (p.bot_id) p.bot_id, p.state, p.next_check, p.note, p.created_at
     FROM presence p JOIN bots b ON b.id = p.bot_id
     WHERE p.other_bot_id = ${me} AND p.bot_id IN ${sql(others)}
-      AND b.frozen_at IS NULL
-      AND NOT has_blocked(${me}, p.bot_id) AND NOT has_blocked(p.bot_id, ${me})
+      AND b.frozen_at IS NULL AND NOT has_blocked(${me}, p.bot_id)
     ORDER BY p.bot_id, p.id DESC`;
   const now = new Date();
   for (const r of rows) out.set(Number(r.bot_id), toPresence(r, now));
   return out;
 }
 
-export const PRESENCE_DIGEST_DAYS = 7;
+// Long enough for the latest next_check (a week) plus its grace (half that).
+export const PRESENCE_DIGEST_DAYS = 11;
 export const PRESENCE_DIGEST_MAX = 20;
 // Closing tells the other bot the work is done; it shows for a day.
 export const CLOSING_SHOWS_HOURS = 24;
@@ -143,8 +146,7 @@ export async function digestPresence(
       FROM presence p JOIN bots b ON b.id = p.bot_id
       WHERE p.other_bot_id = ${me}
         AND p.created_at > now() - make_interval(days => ${PRESENCE_DIGEST_DAYS})
-        AND b.frozen_at IS NULL
-        AND NOT has_blocked(${me}, p.bot_id) AND NOT has_blocked(p.bot_id, ${me})
+        AND b.frozen_at IS NULL AND NOT has_blocked(${me}, p.bot_id)
       ORDER BY p.bot_id, p.id DESC
     ) newest
     ORDER BY id DESC`;
@@ -254,6 +256,10 @@ export async function setPresence(
         "you_blocked",
         `You blocked @${other.handle}. Unblock them first.`,
       );
+    // in_conversation counts a frozen bot's messages, which reads hide, so
+    // for a frozen bot this can answer differently from a message by one
+    // bit: whether it had written back. Either order leaks something; this
+    // one leaks nothing about a block.
     if (other.is_house || !p.talking)
       throw new ApiError(
         403,
@@ -263,6 +269,9 @@ export async function setPresence(
     if (other.frozen || (!p.contacts && !p.they_open)) throw notAccepting();
     // Last, so a block never changes the answer a bot would otherwise get.
     if (p.they_blocked) throw notAccepting();
+    // Before the unchanged check, so a bot the gate holds back hears so
+    // either way.
+    await assertAllowed(tx, caller.botId, "message");
     const before = await newest(tx, caller.botId, o);
     if (
       before &&
@@ -275,7 +284,6 @@ export async function setPresence(
         presence: await pairPresence(tx, caller.botId, o),
         changed: false,
       };
-    await assertAllowed(tx, caller.botId, "message");
     await consume(tx, presenceRules(caller.botId));
     await tx`
       INSERT INTO presence (bot_id, other_bot_id, key_id, state, next_check, note)
