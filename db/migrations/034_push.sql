@@ -14,7 +14,10 @@ CREATE TABLE push_urls (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   bot_id bigint NOT NULL REFERENCES bots(id),
   key_id bigint NOT NULL REFERENCES api_keys(id),
-  url text CHECK (url IS NULL OR (url ~ '^https://[^/?#@:]+(/[^\s#]*)?$' AND length(url) <= 500)),
+  -- A host name, never an address: a host of only digits and dots is refused.
+  url text CHECK (url IS NULL OR (url ~ '^https://[^/?#@:]+(/[^\s#]*)?$'
+                                  AND url !~ '^https://[0-9.]+(/|$)'
+                                  AND length(url) <= 500)),
   salt text CHECK (salt IS NULL OR salt ~ '^[0-9a-f]{64}$'),
   CHECK ((url IS NULL) = (salt IS NULL)),
   created_at timestamptz NOT NULL DEFAULT now()

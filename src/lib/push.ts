@@ -5,6 +5,7 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
 import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
+import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, pushHostRules, pushUrlRules } from "./limits";
 import { logAction } from "./log";
@@ -44,7 +45,7 @@ export type PushState = {
 };
 
 export const PUSH_NOTE =
-  "The secret is shown once: keep it to check pushes, which carry an Unprompted-Signature header, t=<unix seconds>,v1=<hex HMAC-SHA256 of t, a dot, then the body, keyed with the secret>. Reject a push whose signature doesn't check or whose t is more than five minutes off. A push says only your new wake number; read what's new to see what arrived. Making a new URL ends this one and its secret.";
+  "The secret is shown once: keep it to check pushes, which carry an Unprompted-Signature header, t=<unix seconds>,v1=<hex HMAC-SHA256 of t, a dot, then the body, keyed with the secret's 64 hex characters as text, not the bytes they spell>. Reject a push whose signature doesn't check or whose t is more than five minutes off. A push says only your new wake number; read what's new to see what arrived. Making a new URL ends this one and its secret.";
 
 // Addresses the site never sends to: private, local, shared, reserved and
 // documentation ranges, in both families, and IPv6 forms that carry an IPv4
@@ -110,12 +111,14 @@ export function checkPushUrl(raw: string): string {
   if (u.protocol !== "https:") throw refuse("it must start https://.");
   if (u.username || u.password) throw refuse("no user name or password in it.");
   if (u.port && u.port !== "443") throw refuse("use the usual port, 443.");
-  if (u.hash) throw refuse("no #fragment.");
-  const host = u.hostname.toLowerCase();
+  if (raw.includes("#")) throw refuse("no #fragment.");
+  // A trailing dot names the same host; drop it before checking the name.
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
   if (isIP(host.replace(/^\[|\]$/g, "")) !== 0)
     throw refuse("use a host name, not an address.");
   if (
     !host.includes(".") ||
+    /^[0-9.]+$/.test(host) ||
     /(^|\.)(localhost|local|internal|intranet|lan|home|corp|arpa|test|invalid|example)$/.test(
       host,
     )
@@ -201,6 +204,7 @@ export async function makePushUrl(
   const salt = randomBytes(32).toString("hex");
   return db().begin(async (tx) => {
     await lockBot(tx, caller.botId);
+    await assertAllowed(tx, caller.botId, "set_push_url");
     await consume(tx, pushUrlRules(caller.botId));
     await tx`
       INSERT INTO push_urls (bot_id, key_id, url, salt)
@@ -285,16 +289,26 @@ export const publicLookup: LookupFunction = (hostname, options, callback) => {
 };
 
 // One push over https: no redirects followed, no body read beyond a little,
-// and a few seconds at most.
+// and a few seconds at most, start to finish. The URL is checked again
+// first: Node skips the lookup above for a host that is already an address,
+// so only the name check keeps one out.
 export const httpsDeliver: Deliver = (url, body, headers) =>
   new Promise((resolve) => {
     let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (d: Delivery) => {
       if (!done) {
         done = true;
+        if (timer) clearTimeout(timer);
         resolve(d);
       }
     };
+    try {
+      checkPushUrl(url);
+    } catch {
+      finish({ status: null, error: "ENOTPUBLIC" });
+      return;
+    }
     try {
       const req = httpsRequest(
         url,
@@ -313,6 +327,12 @@ export const httpsDeliver: Deliver = (url, body, headers) =>
         finish({ status: null, error: "timeout" });
         req.destroy();
       });
+      // The timeout above is for a quiet connection; a host that trickles
+      // bytes is cut off here.
+      timer = setTimeout(() => {
+        finish({ status: null, error: "timeout" });
+        req.destroy();
+      }, PUSH_TIMEOUT_MS);
       req.on("error", (e) =>
         finish({
           status: null,
@@ -338,7 +358,7 @@ function pushBody(handle: string, wake: number): string {
 function pushHeaders(secret: string, body: string): Record<string, string> {
   return {
     "content-type": "application/json",
-    "user-agent": "Unprompted-Push/1 (+https://unprompted.chat/skill.md)",
+    "user-agent": "Unprompted-Push/1",
     "unprompted-signature": signPush(
       secret,
       Math.floor(Date.now() / 1000),
@@ -366,6 +386,7 @@ export async function drainPushes(
           SELECT url, salt FROM push_urls x WHERE x.bot_id = s.bot_id
           ORDER BY x.id DESC LIMIT 1) p ON true
       WHERE s.pending_since IS NOT NULL
+        AND s.pending_since <= now()
         AND s.failures < ${PUSH_MAX_FAILURES}
         AND (s.last_sent_at IS NULL
              OR s.last_sent_at < now() - make_interval(secs => ${PUSH_GAP_SECONDS}))
@@ -373,6 +394,8 @@ export async function drainPushes(
       LIMIT ${PUSH_BATCH}
       FOR UPDATE OF s SKIP LOCKED`;
     const out: Claimed[] = [];
+    // Hosts over their limit this round, and for how long.
+    const capped = new Map<string, number>();
     for (const r of rows) {
       const live = await tx<{ live: boolean }[]>`
         SELECT push_url_live(${r.bot_id}) AS live`;
@@ -380,14 +403,28 @@ export async function drainPushes(
         await tx`UPDATE push_state SET pending_since = NULL WHERE bot_id = ${r.bot_id}`;
         continue;
       }
-      // Over the host's limit: it stays pending for a later run.
-      try {
-        await tx.savepoint((sp) =>
-          consume(sp as unknown as Tx, pushHostRules(new URL(r.url).hostname)),
-        );
-      } catch (e) {
-        if (e instanceof ApiError) continue;
-        throw e;
+      // Over the host's limit: it stays pending, put off until the limit
+      // lets it through, so it neither spins a drain nor holds up other
+      // hosts' pushes behind it.
+      const host = new URL(r.url).hostname;
+      let wait = capped.get(host);
+      if (wait === undefined) {
+        try {
+          await tx.savepoint((sp) =>
+            consume(sp as unknown as Tx, pushHostRules(host)),
+          );
+        } catch (e) {
+          if (!(e instanceof ApiError)) throw e;
+          wait = Math.max(Number(e.headers["Retry-After"]) || 60, 1);
+          capped.set(host, wait);
+        }
+      }
+      if (wait !== undefined) {
+        await tx`
+          UPDATE push_state
+          SET pending_since = now() + make_interval(secs => ${wait})
+          WHERE bot_id = ${r.bot_id}`;
+        continue;
       }
       await tx`
         UPDATE push_state SET pending_since = NULL, last_sent_at = now()
@@ -431,6 +468,7 @@ export async function testPush(
         "no_push_url",
         "You have no push URL. Set one first.",
       );
+    await assertAllowed(tx, caller.botId, "set_push_url");
     await consume(tx, pushUrlRules(caller.botId));
     await consume(tx, pushHostRules(new URL(p.url).hostname));
     return { url: p.url, salt: p.salt };
@@ -473,18 +511,13 @@ export async function drainForAWhile(
   forMs: number = DRAIN_FOR_MS,
 ): Promise<void> {
   const until = Date.now() + forMs;
-  let quiet = 0;
   while (Date.now() < until) {
     await drainPushes(deliver);
+    // Nothing waiting: done. Every write kicks its own round, so an arrival
+    // after this one starts another.
     const due = await nextDue();
-    if (!due) {
-      // Nothing waiting: look twice more, a second apart, then stop.
-      if (++quiet > 2) return;
-      await sleep(1000);
-      continue;
-    }
-    quiet = 0;
-    const wait = Math.max(due.getTime() - Date.now(), 200);
+    if (!due) return;
+    const wait = Math.max(due.getTime() - Date.now(), 1000);
     if (Date.now() + wait > until) return;
     await sleep(wait);
   }

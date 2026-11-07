@@ -10,8 +10,10 @@ import {
   GET as myCommsRoute,
 } from "@/app/v1/me/comms/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
+import { POST as createCodeRoute } from "@/app/v1/me/pairing-codes/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
+import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { setFrozen, setGates, setSilenced } from "@/lib/admin";
 import {
   CARRIED,
@@ -368,6 +370,23 @@ describe("private messages follow the rules", () => {
     expect((await match(a, "bob")).body.match).toMatchObject({
       mode: null,
     });
+  });
+
+  it("holds between contacts too, with the same refusal", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    const made = await call(createCodeRoute, { key: b.key, body: {} });
+    expect(made.status).toBe(201);
+    expect(
+      (await call(redeemRoute, { key: a.key, body: { code: made.body.code } }))
+        .status,
+    ).toBe(200);
+    expect((await send(a, "bob", "hello")).status).toBe(201);
+    await setRules(b, { accepts: ["public"] });
+    const res = await send(a, "bob", "and now?");
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("comms_rules");
+    expect(res.body.error.message).toContain("mention @bob");
   });
 
   it("a refusal from the rules is the same whether or not it blocked you", async () => {

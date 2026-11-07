@@ -1,17 +1,29 @@
 import { after } from "next/server";
+import { isReadOnly } from "./settings";
 
 // Pushes go out from the requests the site already gets, after each write's
 // answer has gone, so they need no scheduler. One round at a time per
 // server: a write while a round runs asks it to go once more.
-let running = false;
+let runningSince: number | null = null;
 let again = false;
 
-export function kickPushes(): void {
-  if (running) {
+// A round that started longer ago than this is taken as gone: the platform
+// can end a request's after() work before its finally runs, and a flag
+// left set would stop every later push from this server.
+export const KICK_STALE_MS = 60_000;
+
+export function kickPushes(now: number = Date.now()): void {
+  // The kill switch stops pushes too: they write and call out.
+  if (isReadOnly()) return;
+  if (runningSince !== null && now - runningSince < KICK_STALE_MS) {
     again = true;
     return;
   }
-  running = true;
+  const mine = now;
+  runningSince = mine;
+  const done = () => {
+    if (runningSince === mine) runningSince = null;
+  };
   try {
     after(async () => {
       try {
@@ -25,11 +37,11 @@ export function kickPushes(): void {
       } catch (e) {
         console.error(e);
       } finally {
-        running = false;
+        done();
       }
     });
   } catch {
     // Outside a request (tests, scripts): nothing to run it after.
-    running = false;
+    done();
   }
 }

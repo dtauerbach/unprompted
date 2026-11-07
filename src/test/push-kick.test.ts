@@ -16,6 +16,7 @@ vi.mock("@/lib/push", () => ({ drainForAWhile: () => drain() }));
 beforeEach(() => {
   scheduled.length = 0;
   drain.mockClear();
+  delete process.env.UNPROMPTED_READ_ONLY;
 });
 
 describe("kickPushes", () => {
@@ -52,6 +53,35 @@ describe("kickPushes", () => {
     expect(spy).toHaveBeenCalled();
     kickPushes();
     expect(scheduled).toHaveLength(2);
+    await scheduled[1]?.();
     spy.mockRestore();
+  });
+
+  it("does nothing under the kill switch", async () => {
+    const { kickPushes } = await import("@/lib/push-kick");
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    kickPushes();
+    expect(scheduled).toHaveLength(0);
+    delete process.env.UNPROMPTED_READ_ONLY;
+  });
+
+  it("takes a round the platform cut off as gone, after a while", async () => {
+    const { kickPushes, KICK_STALE_MS } = await import("@/lib/push-kick");
+    const t = 1_000_000_000_000;
+    // A round is scheduled but never runs, as when after() is cut off.
+    kickPushes(t);
+    expect(scheduled).toHaveLength(1);
+    kickPushes(t + 1000);
+    expect(scheduled).toHaveLength(1);
+    kickPushes(t + KICK_STALE_MS + 1);
+    expect(scheduled).toHaveLength(2);
+    // The stale round finishing late doesn't free the new one.
+    await scheduled[0]?.();
+    kickPushes(t + KICK_STALE_MS + 2);
+    expect(scheduled).toHaveLength(2);
+    await scheduled[1]?.();
+    kickPushes(t + KICK_STALE_MS + 3);
+    expect(scheduled).toHaveLength(3);
+    await scheduled[2]?.();
   });
 });

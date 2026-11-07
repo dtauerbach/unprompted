@@ -12,7 +12,7 @@ import {
 } from "@/app/v1/me/push/route";
 import { POST as testRoute } from "@/app/v1/me/push/test/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
-import { setFrozen } from "@/lib/admin";
+import { setFrozen, setGates } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { consume, pushHostRules } from "@/lib/limits";
 import { lookupBot } from "@/lib/lookup";
@@ -22,6 +22,7 @@ import {
   type Delivery,
   drainForAWhile,
   drainPushes,
+  httpsDeliver,
   isPublicAddress,
   PUSH_GAP_SECONDS,
   PUSH_MAX_FAILURES,
@@ -123,6 +124,10 @@ describe("a push URL", () => {
       "https://intranet/",
       "https://example.com.test/",
       "https://hooks.example.org/#frag",
+      "https://hooks.example.org/?a=1#",
+      "https://metadata.google.internal./",
+      "https://db.internal./x",
+      "https://0x7f.1/",
       `https://hooks.example.org/${"a".repeat(500)}`,
       "not a url",
       "ftp://hooks.example.org/",
@@ -160,6 +165,46 @@ describe("a push URL", () => {
       publicLookup("localhost", {}, (e) => resolve(e)),
     );
     expect(err?.code).toBe("ENOTPUBLIC");
+  });
+
+  it("is checked again as it's sent, so an address in place of a name never gets a connection", async () => {
+    // Node skips the lookup for a host that is already an address; the
+    // deliverer refuses before connecting. None of these touch the network.
+    for (const url of [
+      "https://localhost/x",
+      "https://127.0.0.1/x",
+      "https://10.255.255.1/x",
+      "https://169.254.169.254/latest/meta-data",
+      "https://[::1]/x",
+      "http://hooks.example.org/",
+    ])
+      expect(await httpsDeliver(url, "{}", {}), url).toEqual({
+        status: null,
+        error: "ENOTPUBLIC",
+      });
+  });
+
+  it("answers 400, not 500, for a trailing empty #", async () => {
+    const a = await bot("alice");
+    const res = await setUrl(a, "https://hooks.example.org/?a=1#");
+    expect(res.status).toBe(400);
+    expect(res.body.error.message).toMatch(/fragment/);
+  });
+
+  it("is under the set_push_url gate, and taking it off never is", async () => {
+    const a = await bot("alice");
+    expect((await setUrl(a, "https://hooks.example.org/")).status).toBe(201);
+    await setGates(
+      db(),
+      { set_push_url: [{ signal: "claimed", is: true }] },
+      "test",
+    );
+    const refused = await setUrl(a, "https://hooks.example.org/2");
+    expect(refused.status).toBe(403);
+    expect(refused.body.error.code).toBe("not_yet");
+    expect((await testPush(a)).body.error.code).toBe("not_yet");
+    expect(sent).toHaveLength(0);
+    expect((await removeUrl(a)).status).toBe(200);
   });
 
   it("is set with a key, shows its secret once, and keeps only a salt", async () => {
@@ -266,6 +311,14 @@ describe("a push URL", () => {
         SELECT b.id, k.id, 'http://x.example.org/', ${salt}
         FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'alice'`,
     ).rejects.toThrow(/check/);
+    for (const ip of ["https://10.0.0.1/hook", "https://127.0.0.1"])
+      await expect(
+        db()`
+          INSERT INTO push_urls (bot_id, key_id, url, salt)
+          SELECT b.id, k.id, ${ip}, ${salt}
+          FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'alice'`,
+        ip,
+      ).rejects.toThrow(/check/);
     await expect(
       db()`
         INSERT INTO push_urls (bot_id, key_id, url, salt)
@@ -396,11 +449,49 @@ describe("pushes", () => {
       consume(tx, pushHostRules("busy.example.org"), 60),
     );
     expect(await drainPushes()).toBe(0);
-    const [p] = await db()<{ pending: boolean }[]>`
-      SELECT pending_since IS NOT NULL AS pending FROM push_state`;
-    expect(p?.pending).toBe(true);
+    // Still waiting, put off until the cap lets it through.
+    const [p] = await db()<{ later: boolean }[]>`
+      SELECT pending_since > now() AS later FROM push_state`;
+    expect(p?.later).toBe(true);
     await db()`DELETE FROM rate_limits WHERE bucket LIKE 'push_host:%'`;
+    expect(await drainPushes()).toBe(0);
+    await db()`UPDATE push_state SET pending_since = now()`;
     expect(await drainPushes()).toBe(1);
+  });
+
+  it("don't let a host over its cap hold up others, or spin a round", async () => {
+    const b = await bot("bob");
+    const busy: Bot[] = [];
+    for (let i = 0; i < 12; i++) {
+      const x = await bot(`busy${i}`);
+      await converse(b, x);
+      await setUrl(x, `https://busy.example.org/in/${i}`);
+      busy.push(x);
+    }
+    const c = await bot("carol");
+    await converse(b, c);
+    await setUrl(c, "https://quiet.example.org/in");
+    // Well inside a minute's window, so the cap holds the busy host back
+    // longer than this round runs.
+    const left = 60_000 - (Date.now() % 60_000);
+    if (left < 10_000) await new Promise((r) => setTimeout(r, left + 100));
+    await db().begin((tx) =>
+      consume(tx, pushHostRules("busy.example.org"), 60),
+    );
+    // Every busy bot's push waits from before carol's.
+    for (const x of busy) await send(b, x.handle, "ping");
+    await db()`UPDATE push_state SET pending_since = now() - interval '1 minute'`;
+    await send(b, "carol", "ping");
+    const started = Date.now();
+    await drainForAWhile(undefined, 5000);
+    expect(Date.now() - started).toBeLessThan(2500);
+    expect(sent.map((s) => new URL(s.url).hostname)).toEqual([
+      "quiet.example.org",
+    ]);
+    // Each refused host is asked once a round, not once a row.
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM push_state WHERE pending_since > now()`;
+    expect(r?.n).toBe(12);
   });
 
   it("stop when the URL is taken off, replaced, or its key rotated or revoked, or the bot frozen", async () => {
