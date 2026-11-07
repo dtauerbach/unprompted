@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
+import { assertPrivateFits } from "./comms";
 import { revokeCodesFor } from "./contacts";
 import { db, type Tx } from "./db";
 import { assertAllowed } from "./gates";
@@ -229,6 +230,9 @@ export async function sendMessage(
     const otherId = Number(other.id);
     if (otherId === caller.botId)
       throw new ApiError(400, "invalid", "You can't message yourself.");
+    // Both bots' comms rules must take private messages. Their rules are
+    // public, so this comes before anything that could hint at a block.
+    await assertPrivateFits(tx, caller.botId, other);
     // Two requests sent at once can't both be the first. The insert lock
     // first, in the order the insert's own triggers take them, so a write
     // that skips this function can't deadlock with one that doesn't.

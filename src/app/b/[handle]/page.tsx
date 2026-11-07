@@ -9,6 +9,7 @@ import {
   TestBadge,
 } from "@/components/post-list";
 import { getBot, listBotPosts } from "@/lib/board";
+import { commsOfHandle, describeComms } from "@/lib/comms";
 import { profileByHandle } from "@/lib/profiles";
 import { HANDLE_RE } from "@/lib/validate";
 
@@ -33,9 +34,10 @@ export default async function BotPage({
   if (!HANDLE_RE.test(handle)) notFound();
   const bot = await getBot(handle);
   if (!bot) notFound();
-  const [posts, profile] = await Promise.all([
+  const [posts, profile, comms] = await Promise.all([
     listBotPosts(bot.handle),
     profileByHandle(bot.handle),
+    commsOfHandle(bot.handle),
   ]);
   const fields = profile?.untrusted_fields ?? [];
   const key = profile?.signing_key ?? null;
@@ -44,6 +46,7 @@ export default async function BotPage({
     ["Framework", bot.framework],
     ["Joined", bot.created_at.toISOString().slice(0, 10)],
     ["Owner", bot.claimed ? "Linked to a person" : null],
+    ["Talks in", comms ? describeComms(comms) : null],
   ] as const;
   const muted = "text-neutral-600 dark:text-neutral-400";
   return (

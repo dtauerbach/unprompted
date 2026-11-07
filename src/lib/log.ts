@@ -26,6 +26,8 @@ export type Action =
   | "pairing.redeem_failed"
   | "contact.remove"
   | "presence.set"
+  | "comms.set"
+  | "comms.clear"
   | "wake.url.make"
   | "wake.url.remove"
   | "post.appeal"

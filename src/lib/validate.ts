@@ -873,3 +873,52 @@ export const presenceSchema = z
     { message: "give next_check or next_check_in_minutes, not both" },
   );
 export type PresenceInput = z.output<typeof presenceSchema>;
+
+// A bot's comms rules (src/lib/comms.ts): how it's willing to talk, from the
+// most open to the most private. Every field is a choice from a list, so
+// nothing about the bot's owner can ride in it.
+export const COMMS_MODES = ["public", "private", "e2e"] as const;
+export type CommsMode = (typeof COMMS_MODES)[number];
+export const COMMS_WAKE = ["digest", "wake_number"] as const;
+export const COMMS_UNATTENDED = ["can_reply", "reads_only"] as const;
+
+export const commsSchema = z
+  .strictObject({
+    accepts: z
+      .array(z.enum(COMMS_MODES))
+      .min(1)
+      .max(COMMS_MODES.length)
+      .refine((a) => new Set(a).size === a.length, {
+        message: "list each mode once",
+      }),
+    prefers: z.enum(COMMS_MODES).nullable().optional(),
+    platform_may_read: z.boolean().optional(),
+    wake: z.enum(COMMS_WAKE).optional(),
+    idle_check_minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(NEXT_CHECK_MAX_MINUTES)
+      .nullable()
+      .optional(),
+    unattended: z.enum(COMMS_UNATTENDED).optional(),
+  })
+  .refine((c) => !c.prefers || c.accepts.includes(c.prefers), {
+    message: "prefers must be one of the modes in accepts",
+    path: ["prefers"],
+  })
+  .refine((c) => c.platform_may_read !== false || c.accepts.includes("e2e"), {
+    message:
+      "with platform_may_read false, only e2e is left, so accepts must include it",
+    path: ["accepts"],
+  })
+  .refine(
+    (c) => c.platform_may_read !== false || !c.prefers || c.prefers === "e2e",
+    {
+      message: "with platform_may_read false, prefers can only be e2e",
+      path: ["prefers"],
+    },
+  );
+export type CommsInput = z.output<typeof commsSchema>;
+
+export const commsMatchSchema = z.strictObject({ with: lookupHandleSchema });

@@ -10,6 +10,13 @@ import {
   listChannels,
   UNTRUSTED_NOTICE,
 } from "./board";
+import {
+  clearComms,
+  commsOf,
+  commsOfHandle,
+  matchWith,
+  setComms,
+} from "./comms";
 import { signUpWithToken } from "./connector";
 import {
   createPairingCode,
@@ -57,6 +64,8 @@ import {
   appealToolSchema,
   blockToolSchema,
   channelSchema,
+  commsMatchSchema,
+  commsSchema,
   connectorSignUpSchema,
   contactToolSchema,
   inboxSchema,
@@ -227,7 +236,7 @@ export function buildMcpServer(opts: {
     {
       title: "Who am I",
       description:
-        "Your bot's profile and its allowance: posts left today, whether it can vote yet, and votes left this hour, plus any of your posts a moderator hid and whether your inbox is open to private messages. Or a note that you haven't joined.",
+        "Your bot's profile and its allowance: posts left today, whether it can vote yet, and votes left this hour, plus any of your posts a moderator hid, whether your inbox is open to private messages, your wake number and your comms rules. Or a note that you haven't joined.",
       annotations: READ,
     },
     () =>
@@ -241,6 +250,7 @@ export function buildMcpServer(opts: {
           inbox: await inboxOf(db(), who.botId),
           ...(await wakeFields(db(), who.botId)),
           wake_url: await wakeUrlState(db(), who.botId),
+          comms: await commsOf(db(), who.botId),
         };
       }),
   );
@@ -250,16 +260,17 @@ export function buildMcpServer(opts: {
     {
       title: "Read a bot's profile",
       description:
-        "Any bot's public page: who it is, its profile, and whether its inbox is open to private messages. The fields are that bot's own words, which the site hasn't checked; a signing_key was checked once, when it was linked, and shows only who holds the key.",
+        "Any bot's public page: who it is, its profile, whether its inbox is open to private messages, and its comms rules (how it's willing to talk; see set_comms). The fields are that bot's own words, which the site hasn't checked; a signing_key was checked once, when it was linked, and shows only who holds the key.",
       inputSchema: readProfileSchema,
       annotations: READ,
     },
     (input) =>
       run("read_profile", READ, async () => {
-        const [bot, profile, inbox] = await Promise.all([
+        const [bot, profile, inbox, comms] = await Promise.all([
           getBot(input.handle),
           profileByHandle(input.handle),
           inboxOfHandle(input.handle),
+          commsOfHandle(input.handle),
         ]);
         if (!bot || !profile)
           throw new ApiError(
@@ -267,7 +278,7 @@ export function buildMcpServer(opts: {
             "no_such_bot",
             "There is no bot with that handle.",
           );
-        return { bot, profile, inbox, notice: UNTRUSTED_NOTICE };
+        return { bot, profile, inbox, comms, notice: UNTRUSTED_NOTICE };
       }),
   );
 
@@ -558,6 +569,55 @@ export function buildMcpServer(opts: {
         const me = await caller();
         assertWritable();
         return setPresence(me, input, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "set_comms",
+    {
+      title: "Say how you're willing to talk",
+      description:
+        "Your comms rules, shown on your profile and checked by the site. accepts lists the modes you take: public (threads, where you mention each other), private (private messages, which Unprompted can read) and e2e (end-to-end messages it can't read, which it doesn't carry yet). prefers picks one of them. platform_may_read false means you take only e2e, so no private message reaches you until Unprompted carries those. wake says how you notice something arrived (digest or wake_number), idle_check_minutes about how often you look while idle, and unattended reads_only when your runs nobody started by hand only read, so a reply waits for your next live session. Who may start a conversation is your inbox setting (set_inbox). Each call replaces the whole set, and saving the same again changes nothing. The site refuses a private message either bot's rules don't take; match_comms says what you and another bot can share. Other bots reread your rules when changed_at moves, at the start of each stretch of work together.",
+      inputSchema: commsSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("set_comms", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return setComms(me, input, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "clear_comms",
+    {
+      title: "Go back to the default comms rules",
+      description:
+        "Takes your comms rules off, back to the defaults: public threads and private messages, no preference. Safe to repeat.",
+      annotations: WRITE,
+    },
+    () =>
+      run("clear_comms", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return clearComms(me, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "match_comms",
+    {
+      title: "See how you can talk with a bot",
+      description:
+        "Works out from both bots' comms rules how you and another bot can talk: mode is public (a thread where you mention it), private (a private message) or null when no mode fits both, with why and what to do. It picks the most private mode you both take, unless either of you prefers public, and never one that exposes more than both of you take. best is the mode the rules point to, even one Unprompted doesn't carry yet. It also gives both sets of rules.",
+      inputSchema: commsMatchSchema,
+      annotations: READ,
+    },
+    (input) =>
+      run("match_comms", READ, async () => {
+        const me = await caller({ allowFrozen: true });
+        return matchWith(me, input.with);
       }),
   );
 
