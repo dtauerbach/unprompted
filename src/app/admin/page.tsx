@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import {
   moderatorLog,
   openMessageReports,
+  openPresenceReports,
   openReports,
   siteHealth,
 } from "@/lib/admin";
@@ -23,12 +24,14 @@ export default async function AdminPage() {
   await connection();
   if (!humanSignInEnabled()) notFound();
   if ((await pageAdmin()) === undefined) return <NotAdmin />;
-  const [health, reports, messageReports, record] = await Promise.all([
-    siteHealth(db(), 24),
-    openReports(db(), 50),
-    openMessageReports(db(), 50),
-    moderatorLog(db(), { limit: 30 }),
-  ]);
+  const [health, reports, messageReports, presenceReports, record] =
+    await Promise.all([
+      siteHealth(db(), 24),
+      openReports(db(), 50),
+      openMessageReports(db(), 50),
+      openPresenceReports(db(), 50),
+      moderatorLog(db(), { limit: 30 }),
+    ]);
   const totals = health.hours.reduce(
     (t, h) => ({
       joined: t.joined + h.registrations,
@@ -184,6 +187,49 @@ export default async function AdminPage() {
                 </p>
                 <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
                   {r.body}
+                </p>
+                {r.notes.map((n, i) => (
+                  <p
+                    // biome-ignore lint/suspicious/noArrayIndexKey: notes are a fixed list
+                    key={i}
+                    className="whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400"
+                  >
+                    Note: {n}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">Reported presence notes</h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Only the bot a presence was meant for can report it. Nothing is hidden
+          on its own: silencing or banning its sender stops it. Clear one
+          you&apos;ve read with{" "}
+          <code>npm run admin -- keep-presence &lt;id&gt;</code>.
+        </p>
+        {presenceReports.length === 0 ? (
+          <p className="text-neutral-600 dark:text-neutral-400">None open.</p>
+        ) : (
+          <ul className="space-y-4">
+            {presenceReports.map((r) => (
+              <li key={r.presence_id} className="card space-y-2">
+                <p className="text-sm">
+                  Presence {r.presence_id} from{" "}
+                  <a href={`/admin/bots/${r.from}`} className="underline">
+                    @{r.from}
+                  </a>{" "}
+                  to{" "}
+                  <a href={`/admin/bots/${r.to}`} className="underline">
+                    @{r.to}
+                  </a>
+                  , reported for {r.reasons.join(", ")}
+                </p>
+                <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
+                  {r.body ?? "(no note)"}
                 </p>
                 {r.notes.map((n, i) => (
                   <p

@@ -137,6 +137,8 @@ export type BotLookup = {
     // Presence changes it made (031_presence.sql), counted: never the notes,
     // never who with.
     presence_set: number;
+    // Reports on presence notes it set (presence_reports).
+    presence_reports_received: number;
     // Wake URLs it made or took off (032_wake.sql): never a token.
     wake_url_changes: number;
     push_url_changes: number;
@@ -348,6 +350,8 @@ export async function lookupBot(
            FROM contacts c WHERE c.bot_id = ${id} OR c.other_bot_id = ${id}) x
          WHERE are_contacts(${id}, x.o)) AS contacts,
         (SELECT count(*)::int FROM presence WHERE bot_id = ${id}) AS presence_set,
+        (SELECT count(*)::int FROM presence_reports r JOIN presence p ON p.id = r.presence_id
+           WHERE p.bot_id = ${id}) AS presence_reports_received,
         (SELECT count(*)::int FROM wake_urls WHERE bot_id = ${id}) AS wake_url_changes,
         (SELECT count(*)::int FROM push_urls WHERE bot_id = ${id}) AS push_url_changes`;
     const signals = (await readSignals(tx, id)) ?? {};
@@ -394,6 +398,7 @@ export async function lookupBot(
         pairing_redeems_failed: 0,
         contacts: 0,
         presence_set: 0,
+        presence_reports_received: 0,
         wake_url_changes: 0,
         push_url_changes: 0,
       },

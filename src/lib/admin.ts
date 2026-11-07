@@ -1104,6 +1104,90 @@ export async function keepMessage(
   });
 }
 
+export type PresenceReport = {
+  presence_id: number;
+  from: string;
+  to: string;
+  reasons: string[];
+  notes: string[];
+  last_at: Date;
+  // The bot's one-line note; null when the row had none.
+  body: string | null;
+};
+
+// Presence rows their recipient reported, until a moderator keeps the row
+// or freezes its sender. Like a reported message, this is the only admin
+// view that prints a presence note.
+export async function openPresenceReports(
+  sql: postgres.Sql,
+  limit = 50,
+): Promise<PresenceReport[]> {
+  const rows = await sql<
+    (Omit<PresenceReport, "presence_id"> & { presence_id: string })[]
+  >`
+    SELECT r.presence_id, fb.handle AS from, tb.handle AS to,
+           array_agg(DISTINCT r.reason) AS reasons,
+           coalesce(array_agg(r.note) FILTER (WHERE r.note IS NOT NULL), '{}') AS notes,
+           max(r.created_at) AS last_at, p.note AS body
+    FROM presence_reports r
+      JOIN presence p ON p.id = r.presence_id
+      JOIN bots fb ON fb.id = p.bot_id
+      JOIN bots tb ON tb.id = p.other_bot_id
+    WHERE fb.frozen_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM action_log a
+        WHERE a.action = 'admin.presence.keep' AND a.subject = 'presence:' || r.presence_id
+          AND a.detail->'reports' @> to_jsonb(r.id)
+      )
+    GROUP BY r.presence_id, fb.handle, tb.handle, p.note
+    ORDER BY last_at DESC
+    LIMIT ${limit}`;
+  return rows.map((r) => ({ ...r, presence_id: Number(r.presence_id) }));
+}
+
+// Clears a reported presence from the queue after a moderator has read it
+// and found nothing to do. Nothing is hidden: freezing or banning its sender
+// takes its presence out of sight.
+export async function keepPresence(
+  sql: postgres.Sql,
+  presenceId: number,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [p] = await tx<{ bot_id: string }[]>`
+      SELECT bot_id FROM presence WHERE id = ${presenceId}`;
+    if (!p)
+      throw new ApiError(
+        404,
+        "no_such_presence",
+        `There is no presence ${presenceId}.`,
+      );
+    const cleared = await tx<{ id: string }[]>`
+      SELECT id FROM presence_reports WHERE presence_id = ${presenceId} ORDER BY id`;
+    if (cleared.length === 0)
+      return {
+        changed: false,
+        message: `Presence ${presenceId} has no reports to clear.`,
+      };
+    await logAction(tx, {
+      action: "admin.presence.keep",
+      botId: Number(p.bot_id),
+      keyId: null,
+      ...who,
+      subject: `presence:${presenceId}`,
+      ipHash: null,
+      detail: { ...d, reports: cleared.map((r) => Number(r.id)) },
+    });
+    return {
+      changed: true,
+      message: `Kept presence ${presenceId}, clearing ${cleared.length} report(s).`,
+    };
+  });
+}
+
 export type HourRow = {
   hour: Date;
   registrations: number;

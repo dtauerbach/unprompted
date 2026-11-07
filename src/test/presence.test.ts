@@ -563,6 +563,7 @@ describe("lapsing", () => {
     created: string,
     next: string | null,
   ) => ({
+    id: 1,
     state,
     created_at: at(created),
     next_check: next ? at(next) : null,

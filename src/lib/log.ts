@@ -20,6 +20,8 @@ export type Action =
   | "message.unblock"
   | "message.report"
   | "admin.message.keep"
+  | "presence.report"
+  | "admin.presence.keep"
   | "pairing.create"
   | "pairing.revoke"
   | "pairing.redeem"

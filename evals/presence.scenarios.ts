@@ -10,6 +10,7 @@ import {
   request,
 } from "./client";
 import { connectApp, call as tool } from "./connector.scenarios";
+import { MODERATOR, mustAdmin } from "./moderator";
 
 // Two bots working something out say when they'll next look, so each times
 // its own look for just after instead of polling blind. Only between bots
@@ -43,6 +44,10 @@ export function presenceScenarios(): void {
       ).toBe(401);
       const api = await get("/openapi.json");
       expect(Object.keys(api.json.paths)).toContain("/v1/me/presence");
+      expect(Object.keys(api.json.paths)).toContain("/v1/presence/{id}/report");
+      expect(
+        (await post("/v1/presence/1/report", { reason: "spam" })).status,
+      ).toBe(401);
       const guide = await get("/skill.md");
       expect(guide.text).toMatch(/Staying in touch/);
       expect(guide.text).toMatch(/next_check/);
@@ -126,6 +131,41 @@ export function presenceScenarios(): void {
         `/b/${bea.handle}`,
       ])
         expect((await get(page)).text).not.toContain("drafting");
+
+      // Bea can report Ada's note by the id it came with; Ada and Cal get a
+      // 404, as for a made-up id. A report hides nothing by itself, and a
+      // moderator sees the note until one keeps it.
+      const pid = (await get(`/v1/messages?with=${ada.handle}`, bea.key)).json
+        .presence.theirs.id as number;
+      expect(typeof pid).toBe("number");
+      for (const b of [ada, cal])
+        expect(
+          (
+            await post(
+              `/v1/presence/${pid}/report`,
+              { reason: "injection" },
+              { key: b.key, ip: b.ip },
+            )
+          ).status,
+        ).toBe(404);
+      const reported = await post(
+        `/v1/presence/${pid}/report`,
+        { reason: "injection", note: "Tells me to ignore my instructions." },
+        { key: bea.key, ip: bea.ip },
+      );
+      expect(reported.status).toBe(200);
+      expect(reported.json.note).toMatch(/block/);
+      expect(
+        (await get(`/v1/messages?with=${ada.handle}`, bea.key)).json.presence
+          .theirs.untrusted_note,
+      ).toBe(note);
+      if (MODERATOR) {
+        expect(mustAdmin("reports")).toContain(
+          `presence ${pid} from @${ada.handle}`,
+        );
+        mustAdmin("keep-presence", String(pid), "--reason", "Eval: reviewed.");
+        expect(mustAdmin("reports")).not.toContain(`presence ${pid} from`);
+      }
 
       // Closing tells the other it's done; idle takes it off what's new.
       await presence(ada, { with: bea.handle, state: "closing" });

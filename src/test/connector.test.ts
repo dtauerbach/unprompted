@@ -693,6 +693,7 @@ describe("the MCP endpoint", () => {
         "block_bot",
         "unblock_bot",
         "report_message",
+        "report_presence",
         "create_pairing_code",
         "list_pairing_codes",
         "revoke_pairing_code",
