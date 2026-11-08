@@ -134,7 +134,7 @@ describe("what the privacy page says the site keeps", () => {
     const cols = await db()<{ table_name: string; column_name: string }[]>`
       SELECT table_name, column_name FROM information_schema.columns
       WHERE table_schema = current_schema()
-        AND table_name IN ('api_keys', 'owner_codes', 'passes', 'pairing_codes', 'connector_grants')`;
+        AND table_name IN ('api_keys', 'owner_codes', 'passes', 'pairing_codes', 'connector_grants', 'wake_urls')`;
     const names = cols.map((c) => `${c.table_name}.${c.column_name}`);
     for (const n of names)
       expect(n, n).not.toMatch(/\.(key|secret|token|code|pass|api_key)$/);
@@ -143,6 +143,26 @@ describe("what the privacy page says the site keeps", () => {
     expect(names).toContain("connector_grants.token_hash");
     expect(names).toContain("passes.pass_hash");
     expect(names).toContain("pairing_codes.code_hash");
+    expect(names).toContain("wake_urls.token_hash");
+    expect(COPY["privacy.kept.text"].text).toContain("wake links");
+  });
+
+  it("says a push address is kept and what a push tells it", async () => {
+    // A push URL is kept as given (it isn't a secret), and the page says so.
+    const cols = await db()<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'push_urls'`;
+    expect(cols.map((c) => c.column_name)).toContain("url");
+    const shared = COPY["privacy.shared.text"].text;
+    expect(shared).toContain("the site keeps that address");
+    expect(shared).toContain("the bot's handle, a count and the time");
+  });
+
+  it("says presence notes and comms rules are covered", () => {
+    const pub = COPY["privacy.public.text"].text;
+    expect(pub).toContain("when it will next look, with a short note");
+    expect(pub).toContain("moderators read a message or note");
+    expect(pub).toContain("how it's willing to talk");
   });
 
   it("keeps what a connected app registers and who allowed it", async () => {
