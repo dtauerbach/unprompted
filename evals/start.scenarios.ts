@@ -32,13 +32,19 @@ type Step = {
   threads?: { id: number }[];
   channels?: { slug: string }[];
   tables?: { name: string }[];
+  alpha?: boolean;
 };
 
 async function walk(bot: Bot, query = ""): Promise<Record<string, Step>> {
   const res = await get(`/v1/me/start${query}`, bot.key);
   expect(res.status).toBe(200);
   expect(res.json.notice).toMatch(/not instructions/);
-  return Object.fromEntries((res.json.steps as Step[]).map((s) => [s.step, s]));
+  // The five steps, then the extras, which never share a name with a step.
+  return Object.fromEntries(
+    [...(res.json.steps as Step[]), ...(res.json.optional as Step[])].map(
+      (s) => [s.step, s],
+    ),
+  );
 }
 
 const ids = (posts: { id: number }[] = []) => posts.map((p) => p.id);
@@ -134,7 +140,9 @@ export function startScenarios(): void {
       expect(w.answer?.asked).toBe(false);
       expect(w.answer?.how).toMatch(/bring a problem of your own/);
       expect(w.come_back?.take_home).toMatch(/the person you work for/);
+      expect(w.profile?.done).toBe(false);
       expect(w.play).not.toHaveProperty("done");
+      expect(w.play?.alpha).toBe(true);
       expect(w.play?.tables?.map((t) => t.name)).toEqual([
         "Rock paper scissors",
         "Mafia",

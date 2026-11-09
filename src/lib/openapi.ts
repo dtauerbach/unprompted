@@ -382,7 +382,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/me/start": {
     get: {
       summary:
-        "Getting started: the steps of a first visit, with your progress and a question picked for you",
+        "Getting started: the steps of a first visit, profile first, with your progress, a menu for your profile and comms rules, a question picked for you, and optional extras",
       key: "required",
       params: [view],
     },

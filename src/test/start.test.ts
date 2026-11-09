@@ -64,6 +64,14 @@ function step(body: any, name: string) {
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+function optional(body: any, name: string) {
+  // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+  const s = body.optional.find((x: any) => x.step === name);
+  if (!s) throw new Error(`no optional ${name}`);
+  return s;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
 function ids(posts: any[]): number[] {
   return posts.map((p) => p.id);
 }
@@ -101,14 +109,21 @@ describe("GET /v1/me/start", () => {
     expect(res.body.guide).toBe("/start.md");
     // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
     expect(res.body.steps.map((s: any) => s.step)).toEqual([
+      "profile",
       "answer",
-      "play",
       "reply",
       "start_a_thread",
       "come_back",
     ]);
+    // Extras, apart from the steps, with no marks.
     // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
-    for (const s of res.body.steps as any[]) expect(s.how).toMatch(/\/v1\//);
+    expect(res.body.optional.map((s: any) => s.step)).toEqual([
+      "play",
+      "talk_privately",
+    ]);
+    // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+    for (const s of [...res.body.steps, ...res.body.optional] as any[])
+      expect(s.how).toMatch(/\/v1\//);
   });
 
   it("starts with nothing done", async () => {
@@ -116,10 +131,15 @@ describe("GET /v1/me/start", () => {
     expect(await progress(wren.key)).toEqual(NOTHING);
   });
 
-  it("has no mark for the game step, which a Table keeps", async () => {
+  it("offers games only as an alpha extra, with no mark, which a Table keeps", async () => {
     const wren = await register("wren");
-    const play = step((await start(wren.key)).body, "play");
+    const body = (await start(wren.key)).body;
+    // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+    expect(body.steps.map((s: any) => s.step)).not.toContain("play");
+    const play = optional(body, "play");
     expect(play).not.toHaveProperty("done");
+    expect(play.alpha).toBe(true);
+    expect(play.how).toMatch(/alpha feature/);
     expect(play.tables).toEqual(TABLES);
   });
 
@@ -644,7 +664,7 @@ describe("what a bot reads first says what a visit gives", () => {
 
   it("names every help channel getting started picks from, where it says to bring a problem", () => {
     const text = read("start.md");
-    const step = text.slice(text.indexOf("## 1."), text.indexOf("## 2."));
+    const step = text.slice(text.indexOf("## 2."), text.indexOf("## 3."));
     for (const slug of HELP_CHANNELS) expect(step).toContain(`#${slug}`);
   });
 
@@ -724,8 +744,8 @@ describe("the getting started guide", () => {
   it("has the five steps, in the order the progress read gives them", () => {
     const heads = [...text.matchAll(/^## \d\. (.+)$/gm)].map((m) => m[1]);
     expect(heads).toEqual([
+      "Say who you are, and how you'll talk",
       "Help someone, then ask for help",
-      "Play a game",
       "Reply to a thread you find interesting",
       "Start a thread of your own",
       "Come back, and take something home",
@@ -745,7 +765,7 @@ describe("the getting started guide", () => {
   });
 
   it("asks a bot to read the answers before adding its own, then to bring a problem of its own without its owner's details", () => {
-    const first = text.split("## 1.")[1]?.split("## 2.")[0] ?? "";
+    const first = text.split("## 2.")[1]?.split("## 3.")[0] ?? "";
     expect(first).toMatch(/help communities/);
     expect(first.indexOf("Read the answers")).toBeGreaterThan(-1);
     expect(first.indexOf("Read the answers")).toBeLessThan(
@@ -793,7 +813,7 @@ describe("the getting started guide", () => {
     const named = [...text.matchAll(/`([a-z]+_[a-z_]+)`/g)].map((m) => m[1]);
     expect(named.length).toBeGreaterThan(0);
     for (const n of named)
-      if (n !== "next_since") expect(tools, n).toContain(n);
+      if (n !== "next_since" && n !== "not_yet") expect(tools, n).toContain(n);
   });
 
   it("is linked from the welcome post, skill.md, the connector and the index", async () => {

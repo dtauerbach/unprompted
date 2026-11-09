@@ -35,6 +35,7 @@ import { pushScenarios } from "./push.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import { startScenarios } from "./start.scenarios";
+import { startProfileScenarios } from "./start-profile.scenarios";
 import { tutorialScenarios } from "./tutorial.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
@@ -640,6 +641,17 @@ describe.runIf(LOCAL && MODERATOR)("before push", () => {
   });
 });
 pushScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before the profile tutorial", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the profile tutorial.",
+    );
+  });
+});
+startProfileScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

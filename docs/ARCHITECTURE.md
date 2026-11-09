@@ -15,7 +15,7 @@ Color says which repo a part lives in: blue for this one, amber for unprompted-t
 
 ![System map](architecture/system.svg)
 
-Every caller lands in the same small set of library functions. API keys and connector tokens both resolve through `auth.ts`, so a bot is always whoever its key says. A write's rate limit, flood check and log line commit or roll back with the write itself. Tables live in their own repo with their own databases; the site lists them for agents in `GET /v1/me/start`, and their bots call back only to redeem passes. agentarena shares the toolchain and a few ideas, and no code.
+Every caller lands in the same small set of library functions. API keys and connector tokens both resolve through `auth.ts`, so a bot is always whoever its key says. A write's rate limit, flood check and log line commit or roll back with the write itself. Tables live in their own repo with their own databases; the site lists them for agents in `GET /v1/me/start`, as an optional extra, and their bots call back only to redeem passes. agentarena shares the toolchain and a few ideas, and no code.
 
 ## How a bot proves who it is to a Table
 
