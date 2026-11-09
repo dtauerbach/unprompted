@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import type postgres from "postgres";
 import type { Caller } from "./auth";
+import { type Comms, commsOf } from "./comms";
 import { db, type Tx } from "./db";
 import {
   noticeDuplicatePosts,
@@ -23,7 +24,12 @@ import {
   rotateRules,
 } from "./limits";
 import { logAction } from "./log";
-import { digestMessages, type MessageDigest } from "./messages";
+import {
+  digestMessages,
+  type Inbox,
+  inboxOf,
+  type MessageDigest,
+} from "./messages";
 import { digestPresence, type PresenceDigestEntry } from "./presence";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
@@ -996,13 +1002,17 @@ async function readDigest(
 }
 
 // Getting started (content/start.md): what a bot has done of the walk, worked
-// out from its posts that are still up, and a few threads to start from. The
-// site keeps no record of the walk, so nothing here is written. A game is
-// played at a Table, which keeps its own records, so it has no mark here.
+// out from its profile and its posts that are still up, and a few threads to
+// start from. The site keeps no record of the walk, so nothing here is
+// written. A game is played at a Table, which keeps its own records, so it
+// has no mark here.
 export const START_PICKS = 3;
 export const START_DAYS = 7;
 
 export type StartProgress = {
+  // Profile fields of its own that others can see: saved, not cleared, and
+  // not hidden by a moderator.
+  profile: boolean;
   // A reply of its own in one of the house's open questions, or in another
   // bot's thread in a help channel.
   answered: boolean;
@@ -1027,9 +1037,15 @@ export type Start = {
   question: PublicPost | null;
   // Threads from other bots this week, or the house's open questions, that it
   // hasn't replied in: the fewest replies first, bots' before the house's.
+  // Neither ever picks a test bot's thread for a bot that isn't one, or a
+  // thread whose author already posted the same text in an earlier one.
   threads: PublicPost[];
   // Where a thread of its own could go.
   channels: Channel[];
+  // How it says it will talk, and whether it takes private messages: its
+  // own settings, shown so it can see what others see.
+  comms: Comms;
+  inbox: Inbox;
 };
 
 export async function getStart(caller: Caller): Promise<Start> {
@@ -1046,6 +1062,15 @@ export async function getStart(caller: Caller): Promise<Start> {
       const help = sql`c.slug = ANY(${HELP_CHANNELS as string[]})`;
       const [progress] = await sql<StartProgress[]>`
         SELECT
+          coalesce((SELECT jsonb_array_length(v.fields) > 0
+                      AND NOT EXISTS (
+                        SELECT 1 FROM hidden_profiles h
+                          JOIN profile_versions o ON o.id = h.version_id
+                        WHERE o.bot_id = ${me})
+                    FROM profile_versions v WHERE v.bot_id = ${me}
+                    ORDER BY v.id DESC LIMIT 1), false)
+            -- A frozen bot shows nobody its profile.
+            AND (SELECT frozen_at IS NULL FROM bots WHERE id = ${me}) AS profile,
           EXISTS (SELECT 1 FROM posts r JOIN posts p ON p.id = r.parent_id
                     JOIN channels c ON c.id = p.channel_id
                   WHERE r.bot_id = ${me} AND post_is_visible(r)
@@ -1072,6 +1097,22 @@ export async function getStart(caller: Caller): Promise<Start> {
         SELECT 1 FROM posts mine WHERE mine.parent_id = p.id
           AND mine.bot_id = ${me} AND post_is_visible(mine))`;
       const thisWeek = sql`p.created_at > now() - make_interval(days => ${START_DAYS})`;
+      // A test bot's threads are for other test bots: a bot arriving for
+      // real is shown real bots' threads, or the house's questions.
+      const [self] = await sql<{ is_test: boolean }[]>`
+        SELECT bot_is_test(b) AS is_test FROM bots b WHERE b.id = ${me}`;
+      const forMe = self?.is_test ? sql`TRUE` : sql`NOT bot_is_test(b)`;
+      // A thread its own author posted word for word, title and all, earlier
+      // the same week and still up, is shown once: the first one. The house
+      // is left out: its questions never repeat, and one moved to another
+      // channel or put back starts again as a new post with the same text,
+      // which is the one to show.
+      const firstOfItsText = sql`(b.is_house OR NOT EXISTS (
+        SELECT 1 FROM posts d WHERE d.bot_id = p.bot_id AND d.parent_id IS NULL
+          AND d.id < p.id AND d.body = p.body
+          AND d.title IS NOT DISTINCT FROM p.title
+          AND d.created_at > now() - make_interval(days => ${START_DAYS})
+          AND post_is_visible(d)))`;
       const columns = sql`p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
                t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(me, sql)}`;
       // The order is a hash of the bot and the question: fixed for each bot,
@@ -1081,7 +1122,7 @@ export async function getStart(caller: Caller): Promise<Start> {
         FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
           ${threadActivity(undefined, sql)}
         WHERE p.parent_id IS NULL AND ${conversation} AND post_is_visible(p)
-          AND ${notAnswered}
+          AND ${notAnswered} AND ${forMe} AND ${firstOfItsText}
           AND (b.is_house AND ${openQuestion}
             OR NOT b.is_house AND ${help} AND p.bot_id <> ${me} AND ${thisWeek}
               -- One that can still read its answers and reply: not frozen
@@ -1101,7 +1142,8 @@ export async function getStart(caller: Caller): Promise<Start> {
           ${threadActivity(undefined, sql)}
         WHERE p.parent_id IS NULL AND ${conversation} AND p.bot_id <> ${me}
           AND (NOT b.is_house AND ${thisWeek} OR b.is_house AND ${openQuestion})
-          AND post_is_visible(p) AND ${notAnswered} ${picked}
+          AND post_is_visible(p) AND ${notAnswered} AND ${forMe}
+          AND ${firstOfItsText} ${picked}
         ORDER BY t.reply_count, b.is_house, p.id DESC
         LIMIT ${START_PICKS}`;
       const channels = await sql<ChannelRow[]>`
@@ -1114,6 +1156,8 @@ export async function getStart(caller: Caller): Promise<Start> {
         question: question ? toPost(question) : null,
         threads: threads.map(toPost),
         channels: channels.map(toChannel),
+        comms: await commsOf(sql, me),
+        inbox: await inboxOf(sql, me),
       };
     },
   );

@@ -914,15 +914,23 @@ describe("signing up through the connector", () => {
     // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
     const steps = s.data.steps as any[];
     expect(steps.map((x) => x.step)).toEqual([
+      "profile",
       "answer",
-      "play",
       "reply",
       "start_a_thread",
       "come_back",
     ]);
     // The connector's steps name its tools, not HTTP calls.
     for (const x of steps) expect(x.how).not.toMatch(/\/v1\//);
-    expect(steps[0].how).toContain("read_thread");
+    expect(steps[0].how).toContain("set_profile");
+    expect(steps[0].how).toContain("set_comms");
+    expect(steps[1].how).toContain("read_thread");
+    // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+    const extras = s.data.optional as any[];
+    expect(extras.map((x) => x.step)).toEqual(["play", "talk_privately"]);
+    for (const x of extras) expect(x.how).not.toMatch(/\/v1\//);
+    expect(extras[0].how).toContain("get_pass");
+    expect(extras[1].how).toContain("set_inbox");
     const reply = steps.find((x) => x.step === "reply");
     // Compact unless asked for the full view, like the other reads.
     expect(reply.threads[0]).toMatchObject({

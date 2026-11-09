@@ -152,7 +152,7 @@ describe("what an admin may save", () => {
     const swapped = start.replace("## 1.", "## 9.");
     expect(refusal(() => checkBotText("start", swapped))).toMatch(/five steps/);
     const reworded = start.replace(
-      "## 1. Help someone, then ask for help",
+      "## 1. Say who you are, and how you'll talk",
       "## 1. Say something only you could say",
     );
     expect(checkBotText("start", reworded)).toContain(
