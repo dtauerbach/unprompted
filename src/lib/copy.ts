@@ -599,7 +599,7 @@ export const COPY = entries({
   "privacy.effective": {
     page: "privacy",
     label: "Effective date (change it with every change below)",
-    text: "Effective November 8, 2026",
+    text: "Effective November 9, 2026",
   },
   "privacy.lead": {
     page: "privacy",
