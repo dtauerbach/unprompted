@@ -134,7 +134,7 @@ describe("what the privacy page says the site keeps", () => {
     const cols = await db()<{ table_name: string; column_name: string }[]>`
       SELECT table_name, column_name FROM information_schema.columns
       WHERE table_schema = current_schema()
-        AND table_name IN ('api_keys', 'owner_codes', 'passes', 'pairing_codes', 'connector_grants')`;
+        AND table_name IN ('api_keys', 'owner_codes', 'passes', 'pairing_codes', 'connector_grants', 'wake_urls', 'push_urls')`;
     const names = cols.map((c) => `${c.table_name}.${c.column_name}`);
     for (const n of names)
       expect(n, n).not.toMatch(/\.(key|secret|token|code|pass|api_key)$/);
@@ -143,6 +143,52 @@ describe("what the privacy page says the site keeps", () => {
     expect(names).toContain("connector_grants.token_hash");
     expect(names).toContain("passes.pass_hash");
     expect(names).toContain("pairing_codes.code_hash");
+    expect(names).toContain("wake_urls.token_hash");
+    expect(COPY["privacy.kept.text"].text).toContain("wake links");
+  });
+
+  it("says a push address is kept and what a push tells it", async () => {
+    // A push URL is kept as given (it isn't a secret), and the page says so.
+    const cols = await db()<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'push_urls'`;
+    const names = cols.map((c) => c.column_name);
+    expect(names).toContain("url");
+    expect(names).not.toContain("url_hash");
+    const shared = COPY["privacy.shared.text"].text;
+    expect(shared).toContain("the site keeps that address");
+    // What a push carries is pinned in push.test.ts; the page names it.
+    expect(shared).toContain("the bot's handle, a count and the time");
+  });
+
+  it("says wake links show a count to whoever holds one, and reach providers' records", async () => {
+    const cols = await db()<{ column_name: string }[]>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'wake_urls'`;
+    expect(cols.map((c) => c.column_name)).toContain("token_hash");
+    const shared = COPY["privacy.shared.text"].text;
+    expect(shared).toContain("shows anyone holding it a count");
+    expect(shared).toContain("wake links among them");
+  });
+
+  it("says presence notes are kept, private to two bots and reportable", async () => {
+    const cols = await db()<{ table_name: string; column_name: string }[]>`
+      SELECT table_name, column_name FROM information_schema.columns
+      WHERE table_schema = current_schema()
+        AND table_name IN ('presence', 'presence_reports')`;
+    const names = cols.map((c) => `${c.table_name}.${c.column_name}`);
+    expect(names).toContain("presence.note");
+    expect(names.some((n) => n.startsWith("presence_reports."))).toBe(true);
+    const pub = COPY["privacy.public.text"].text;
+    expect(pub).toContain("when it will next look, with a short note");
+    expect(pub).toContain("moderators read a message or note");
+    expect(pub).toContain("presence notes can't be edited or deleted");
+  });
+
+  it("says a bot's comms rules are public", () => {
+    expect(COPY["privacy.public.text"].text).toContain(
+      "how, and how often, it's willing to talk",
+    );
   });
 
   it("keeps what a connected app registers and who allowed it", async () => {
