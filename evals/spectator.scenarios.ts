@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { get, LOCAL } from "./client";
+import { get, LOCAL, RUN_TAG, register } from "./client";
+import { MODERATOR, mustAdmin } from "./moderator";
 
 // A person watches a game a Table sends the site as a spectator feed
 // (docs/SPECTATOR.md). The Table here is a fake one this run serves, hostile
@@ -10,6 +11,9 @@ import { get, LOCAL } from "./client";
 // too big, one off the format, one that redirects. The site must draw what
 // fits the format as plain text and show "can't reach" for the rest, never a
 // script, a link out or an error page.
+//
+// A bot the moderators have frozen or silenced keeps its seat in the
+// drawing, but not its words or its profile link, until that's lifted.
 //
 // The site reads it only when started with UNPROMPTED_LOCAL_TABLES naming
 // this address (CI's eval job does), so remotely this is skipped.
@@ -35,6 +39,10 @@ function hostile(id = "m_hostile") {
   f.participants[1].label = '<img src=x onerror="alert(2)">';
   return f;
 }
+
+// The handle the Table gives Ada in m_stopped, and what Ada says there.
+let stoppedHandle = "nobody";
+const STOPPED_WORDS = `seat me by the window ${RUN_TAG}`;
 
 function fakeTable(): Server {
   const over = { ...fixture("over.json") };
@@ -74,7 +82,16 @@ function fakeTable(): Server {
       return;
     }
     if (url === "/v1/spectate/m_off")
-      return send(res, { ...hostile(), html: "<script>alert(3)</script>" });
+      return send(res, {
+        ...hostile("m_off"),
+        html: "<script>alert(3)</script>",
+      });
+    if (url === "/v1/spectate/m_stopped") {
+      const f = hostile("m_stopped");
+      f.participants[0].handle = stoppedHandle;
+      f.timeline[1].text = STOPPED_WORDS;
+      return send(res, f);
+    }
     // Points at a valid feed for this very match, so a site that followed
     // the redirect would draw it; only refusing redirects shows "can't reach".
     if (url === "/v1/spectate/m_redirect") {
@@ -160,6 +177,39 @@ export function spectatorScenarios(): void {
         expect(Date.now() - started, id).toBeLessThan(9000);
       }
     });
+
+    it.runIf(MODERATOR)(
+      "hides the words of a bot the moderators stopped, until that's lifted",
+      async () => {
+        const bot = await register("ruddy");
+        stoppedHandle = bot.handle;
+        const page = async () => {
+          const res = await get(`/play/${SLUG}/m_stopped`);
+          expect(res.status).toBe(200);
+          return res.text;
+        };
+        const shown = (html: string) => {
+          expect(html).toContain(STOPPED_WORDS);
+          expect(html).toContain(`href="/b/${bot.handle}"`);
+        };
+        // Nothing of it anywhere in the response, the page's data included.
+        const hidden = (html: string) => {
+          expect(html).not.toContain(STOPPED_WORDS);
+          expect(html).not.toContain(`/b/${bot.handle}`);
+          expect(html).toContain("Hidden by the moderators.");
+        };
+        shown(await page());
+        const reason = ["--reason", "eval: spectator hide"];
+        mustAdmin("freeze", bot.handle, ...reason);
+        hidden(await page());
+        mustAdmin("unfreeze", bot.handle, ...reason);
+        shown(await page());
+        mustAdmin("silence", bot.handle, "--hours", "1", ...reason);
+        hidden(await page());
+        mustAdmin("unsilence", bot.handle, ...reason);
+        shown(await page());
+      },
+    );
 
     it("answers 404 for a match the Table doesn't have, or a Table it doesn't know", async () => {
       expect((await get(`/play/${SLUG}/m_nothing`)).status).toBe(404);

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import MatchPage, { generateMetadata } from "@/app/play/[table]/[match]/page";
 import PlayPage from "@/app/play/page";
 import { currentTab } from "@/components/nav";
+import { Refresh } from "@/components/refresh";
 import { MatchView, shown } from "@/components/spectator";
 import { COPY, type Copy } from "@/lib/copy";
 import { db } from "@/lib/db";
@@ -56,6 +57,16 @@ const t = Object.fromEntries(
 ) as Copy;
 
 const LOCAL = "http://localhost:3003/v1/spectate";
+
+// Whether a rendered element tree holds a component, before React runs it.
+function holds(node: unknown, type: unknown): boolean {
+  if (Array.isArray(node)) return node.some((n) => holds(n, type));
+  if (node && typeof node === "object" && "type" in node) {
+    const el = node as { type: unknown; props?: { children?: unknown } };
+    return el.type === type || holds(el.props?.children, type);
+  }
+  return false;
+}
 
 // Answers fetches from a table of addresses; anything else is a network error.
 function serve(routes: Record<string, () => Response>) {
@@ -365,8 +376,30 @@ describe("a match's page", () => {
     expect(text).toContain("Hidden by the moderators.");
     expect(html).not.toContain('href="/b/ruby"');
     expect(html).toContain('href="/b/wren"');
-    // Started and the phase's end come from the copy store.
-    expect(text).toMatch(/Started /);
+  });
+
+  it("takes its own words from the copy store", () => {
+    const feed = feedSchema.parse(fixture("live.json"));
+    const text = visible(
+      renderToStaticMarkup(
+        createElement(MatchView, {
+          feed,
+          table: "Dinner party",
+          t: {
+            ...t,
+            "play.started": "Began {when}",
+            "play.phase_until": "{phase} till {time} UTC",
+            "play.withheld": "Words withheld.",
+          },
+          withheld: new Set(["ada"]),
+        }),
+      ),
+    );
+    expect(text).toContain("Began ");
+    expect(text).toContain(" till ");
+    expect(text).toContain("Words withheld.");
+    expect(text).not.toContain("Started ");
+    expect(text).not.toContain("Hidden by the moderators.");
   });
 
   it("names the tab after tables.ts, never after the feed", async () => {
@@ -398,6 +431,21 @@ describe("a match's page", () => {
       expect(html).toContain('href="/play"');
     });
 
+    it("keeps refreshing a live match and one it couldn't read, not a finished one", async () => {
+      const live = fixture("live.json");
+      const over = fixture("over.json");
+      over.match.id = "m_overOverOver";
+      serve({
+        [`${LOCAL}/${live.match.id}`]: () => json(live),
+        [`${LOCAL}/${over.match.id}`]: () => json(over),
+      });
+      const tree = (match: string) =>
+        MatchPage({ params: Promise.resolve({ table: "dinner", match }) });
+      expect(holds(await tree(live.match.id), Refresh), "live").toBe(true);
+      expect(holds(await tree("m_down"), Refresh), "unreachable").toBe(true);
+      expect(holds(await tree(over.match.id), Refresh), "over").toBe(false);
+    });
+
     it("hides a frozen or silenced bot's words, and shows them again after", async () => {
       const id = "m_AbCdEfGhIjKl";
       serve({ [`${LOCAL}/${id}`]: () => json(fixture("live.json")) });
@@ -420,7 +468,7 @@ describe("a match's page", () => {
         UPDATE bots SET silenced_until = now() - interval '1 minute'
         WHERE handle = 'ruby'`;
       expect(visible(await page("dinner", id))).toContain(said);
-      // Freezing a bot the feed doesn't name hides nothing.
+      // Freezing another player hides nothing of Ada's.
       await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'wren'`;
       expect(visible(await page("dinner", id))).toContain(said);
     });

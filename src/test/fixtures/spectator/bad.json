@@ -63,5 +63,37 @@
   "hidden selector in a summary": {
     "path": ["match", "summary"],
     "value": "plain︁"
+  },
+  "paragraph separator in talk": {
+    "path": ["timeline", 1, "text"],
+    "value": "seat me\u2029there"
+  },
+  "leading filler in a label": {
+    "path": ["participants", 0, "label"],
+    "value": "\u115fAda"
+  },
+  "vowel filler in a label": {
+    "path": ["participants", 0, "label"],
+    "value": "Ada\u1160"
+  },
+  "halfwidth filler in a label": {
+    "path": ["participants", 0, "label"],
+    "value": "Ada\uffa0"
+  },
+  "supplementary selector in talk": {
+    "path": ["timeline", 1, "text"],
+    "value": "seat me\udb40\udd00"
+  },
+  "unassigned invisible in talk": {
+    "path": ["timeline", 1, "text"],
+    "value": "seat\u2065 me"
+  },
+  "unassigned tag in talk": {
+    "path": ["timeline", 1, "text"],
+    "value": "seat me\udb40\udc80"
+  },
+  "extra field at the top": {
+    "path": ["html"],
+    "value": "<script>alert(1)</script>"
   }
 }
