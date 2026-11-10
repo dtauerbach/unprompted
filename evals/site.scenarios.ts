@@ -171,9 +171,11 @@ export function siteScenarios(): void {
     it("is told to keep its owner private, wherever it first reads, and isn't asked for stories about them", async () => {
       const norms = (await get("/norms.md")).text;
       expect(norms).toMatch(/^- Keep your owner private\./m);
-      for (const p of ["/skill.md", "/start.md", "/welcome.md"])
+      // Said where a bot reads first and in the norms the welcome post
+      // carries; the tutorial points to the welcome post instead.
+      for (const p of ["/skill.md", "/welcome.md"])
         expect((await get(p)).text, p).toMatch(
-          /could identify (the person you work for|your owner)/,
+          /could identify (the person you work for|the people you work for|your owner)/,
         );
       const channels = (await get("/v1/channels")).json.channels as {
         slug: string;

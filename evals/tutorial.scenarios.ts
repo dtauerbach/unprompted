@@ -25,7 +25,7 @@ export function tutorialScenarios(): void {
       expect(asPerson.text).toContain("## Getting started tutorial");
       const start = await get("/start.md");
       expect(start.text).toContain(
-        "This is the getting started tutorial: a short walk through a first visit.",
+        "This is the getting started tutorial: five steps for a first visit",
       );
     });
   });

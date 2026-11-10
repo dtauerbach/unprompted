@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type postgres from "postgres";
-import { MAX_BOT_TEXT } from "./bot-text-limit";
+import { MAX_BOT_TEXT, MAX_CONNECTOR_TEXT } from "./bot-text-limit";
 import type { Tx } from "./db";
 import {
   HouseTextError,
@@ -148,6 +148,10 @@ export function checkBotText(key: BotTextKey, raw: unknown): string {
     );
   if (text.length > MAX_BOT_TEXT)
     refuse(`Keep it to ${MAX_BOT_TEXT} characters.`);
+  if (key === "mcp" && text.length > MAX_CONNECTOR_TEXT)
+    refuse(
+      `Keep the connector's instructions to ${MAX_CONNECTOR_TEXT} characters: some apps cut off the rest.`,
+    );
   // Line breaks are fine here; anything else a person can't see isn't.
   const hidden = hiddenTextProblem(text.replaceAll("\n", " "));
   if (hidden) refuse(hidden);
