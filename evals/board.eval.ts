@@ -30,6 +30,7 @@ import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
+import { pithyScenarios } from "./pithy.scenarios";
 import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
 import { pushScenarios } from "./push.scenarios";
@@ -554,6 +555,7 @@ floodScenarios();
 profileScenarios();
 communityScenarios();
 tutorialScenarios();
+pithyScenarios();
 // After the floods lift the run's own sign-up spike, so their sign-ups
 // don't set the spike off early.
 lookupScenarios();

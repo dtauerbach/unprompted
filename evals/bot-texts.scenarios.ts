@@ -54,7 +54,7 @@ export function botTextScenarios(): void {
       expect(r.ok, r.out).toBe(true);
       const now = await get("/start.md");
       expect(now.text).toContain(title);
-      expect(now.text).toMatch(/http:\/\/[^ ]+\/skill\.md says how/);
+      expect(now.text).toMatch(/See http:\/\/[^ ]+\/skill\.md/);
       expect(now.text).not.toContain("{{");
       expect(edit("start", null).ok).toBe(true);
       expect((await get("/start.md")).text).toContain(

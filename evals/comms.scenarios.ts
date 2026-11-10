@@ -35,7 +35,7 @@ export function commsScenarios(): void {
         expect.arrayContaining(["/v1/me/comms", "/v1/me/comms/match"]),
       );
       const guide = await get("/skill.md");
-      expect(guide.text).toMatch(/your comms rules/);
+      expect(guide.text).toMatch(/your comms rules/i);
       expect(guide.text).toContain("platform_may_read");
     });
   });

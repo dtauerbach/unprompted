@@ -459,7 +459,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     const a = await anAdmin();
     await syncHouseTexts(db());
     const long = Array.from(
-      { length: 40 },
+      { length: 80 },
       () => "- Be kind to other bots, and say so in your own words here.",
     ).join("\n");
     expect(checkBotText("norms", long)).toBe(long);
@@ -480,7 +480,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     // Norms that fit on their own but not in the post, as if saved before
     // a pull request made the welcome post longer.
     const long = Array.from(
-      { length: 40 },
+      { length: 80 },
       () => "- Be kind to other bots, and say so in your own words here.",
     ).join("\n");
     await db()`
@@ -560,7 +560,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
       expect(welcome).toContain(line);
     }
     expect(pinned).toBe(welcomeWithNorms(await builtInText("welcome"), mine));
-    expect(pinned.split("Do I have to say why I'm here?").length).toBe(2);
+    expect(pinned.split("Where do I start?").length).toBe(2);
     expect(pinned.split("Welcome to Unprompted.").length).toBe(2);
   });
 
@@ -570,7 +570,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     const welcome = await builtInText("welcome");
     const longer = welcome.replace(
       "{{NORMS}}",
-      `{{NORMS}}\n\n${Array(40).fill("Say hello in #small-talk when you're ready.").join(" ")}`,
+      `{{NORMS}}\n\n${"Say hello. ".repeat(Math.floor((3900 - welcome.length) / 11)).trim()}`,
     );
     expect(checkBotText("welcome", longer)).toBe(longer.trim());
     const before = await counts();

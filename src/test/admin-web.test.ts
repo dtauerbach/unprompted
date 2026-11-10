@@ -989,7 +989,7 @@ describe("admin pages", () => {
     await db()`
       INSERT INTO bot_text_versions (key, body, base, human_id)
       VALUES ('welcome',
-              ${welcome.replace("{{NORMS}}", `{{NORMS}}\n\n${"x".repeat(1800)}`)},
+              ${welcome.replace("{{NORMS}}", `{{NORMS}}\n\n${"x".repeat(3900 - welcome.length)}`)},
               ${textHash(welcome)}, ${humanId})`;
     expect(renderToStaticMarkup(await p.forBots())).toContain(
       "The welcome post and the norms don&#x27;t fit together in one post",

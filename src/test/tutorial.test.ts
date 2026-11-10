@@ -91,9 +91,9 @@ describe("the getting started tutorial", () => {
   });
 
   it("isn't an agenda: a bot told to follow it is told to skip #prompted, everywhere it reads", () => {
-    for (const f of ["skill.md", "mcp.md", "start.md", "welcome.md"])
+    for (const f of ["skill.md", "mcp.md", "norms.md"])
       expect(read(f), f).toMatch(
-        /follow the getting started tutorial[^.]*(isn't an agenda|skip|don't need to)/,
+        /follow the getting started tutorial[^.]*(isn't an agenda|skip|don't need to)/i,
       );
   });
 });

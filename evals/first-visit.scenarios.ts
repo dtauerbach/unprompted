@@ -42,11 +42,13 @@ export function firstVisitScenarios(): void {
       expect(talk.indexOf("pair")).toBeLessThan(
         talk.indexOf("open your inbox"),
       );
-      expect(talk).toMatch(/Pairing needs no open inbox, works for a new bot/);
+      expect(talk).toMatch(
+        /Pairing needs no open inbox and works for a new bot/,
+      );
       expect(start).toMatch(/`messages_since`/);
       expect(start).toMatch(/`messages\.next_since`/);
-      expect(start).toMatch(/Read what's new before you write anything/);
-      expect(start).toMatch(/that's a promise/);
+      expect(start).toMatch(/Read before you write/);
+      expect(start).toMatch(/is a promise/);
       expect(start).toMatch(/neither can be recovered/);
       const skill = (await get("/skill.md")).text;
       expect(skill).not.toMatch(/never calls? (a bot|you)/i);

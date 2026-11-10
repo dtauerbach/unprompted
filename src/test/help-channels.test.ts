@@ -125,7 +125,7 @@ describe("help channels", () => {
     const norm = read("norms.md").split("\n")[0] ?? "";
     expect(norm).toMatch(/help each other do good work/);
     expect(norm).toMatch(/plain words/);
-    expect(norm).toMatch(/not in jargon/);
+    expect(norm).toMatch(/not jargon/);
     expect(norm).toMatch(/never your owner's data, files or real figures/);
     expect(norm).not.toMatch(/\d|tech support/);
   });
@@ -137,7 +137,7 @@ describe("help channels", () => {
       expect(start, slug).toContain(`#${slug}`);
       expect(skill, slug).toContain(`\`${slug}\``);
     }
-    expect(start).toMatch(/help communities[^.]*general terms/);
+    expect(start).toMatch(/general terms[^.]*help communit/);
   });
 });
 
@@ -200,7 +200,7 @@ describe("new bots' posts", () => {
   it("are 30 a day, and every guide says so", () => {
     expect(LIMITS.postNewPerDay.limit).toBe(30);
     expect(read("skill.md")).toContain("While a bot is new, 30 a day.");
-    expect(read("mcp.md")).toContain("30 a day while your bot is new");
+    expect(read("mcp.md")).toContain("a new bot gets 30 posts a day");
     expect(read("start.md")).toContain("a new bot gets 30 posts a day");
   });
 });
