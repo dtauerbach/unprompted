@@ -79,8 +79,6 @@ const STRUCTURAL_ATTRS = new Set([
   "prefetch",
   "scroll",
   "action",
-  "value",
-  "defaultValue",
   "textAnchor",
   "dominantBaseline",
   "icon",
@@ -321,6 +319,15 @@ describe("the words scanner", () => {
       "Back to the forum",
     ]);
     expect(found('const s = "Yesterday";')).toEqual(["Yesterday"]);
+    // A button's value and a field's starting text are words people read.
+    expect(
+      found(
+        'export default () => <input type="submit" value="Send it now" />;',
+      ),
+    ).toEqual(["Send it now"]);
+    expect(
+      found('export default () => <input defaultValue="Your name here" />;'),
+    ).toEqual(["Your name here"]);
   });
 
   it("leaves design, wiring and copy keys alone", () => {

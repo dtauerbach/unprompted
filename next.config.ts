@@ -29,6 +29,9 @@ const approvalHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // The dev server logs every request's path, and the copy connector's
+  // address holds a key (src/lib/copy-mcp.ts).
+  logging: { incomingRequests: { ignore: [/\/copy\/mcp/i] } },
   // content/ is read from disk at request time, so it must ship with the server bundle.
   outputFileTracingIncludes: {
     "/skill.md": ["./content/skill.md"],
@@ -47,6 +50,7 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       { source: "/mcp", destination: "/v1/mcp" },
+      { source: "/copy/mcp", destination: "/v1/copy/mcp" },
       { source: "/copy/mcp/:token", destination: "/v1/copy/mcp/:token" },
       {
         source: "/.well-known/oauth-authorization-server",

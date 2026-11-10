@@ -42,7 +42,7 @@ export default async function AuthorizePage({
           {t["connect.bad_link"]}
         </h1>
         <p className="card text-neutral-700 dark:text-neutral-300">
-          {check.message}
+          {t[check.copy]}
         </p>
       </div>
     );

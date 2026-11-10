@@ -7,8 +7,9 @@ import { moderatorReasonSchema } from "./validate";
 // Who may use the admin space. An admin is a human who has signed in with
 // Google at least once and was then added from the command line, by someone
 // with database access (scripts/admin.ts). Nothing over HTTP adds one. Its
-// role is 'admin', everything, or 'copy', a copy editor, who may change the
-// words on people's pages and nothing else (src/lib/copy-editors.ts).
+// role is 'admin', everything, kept in admins, or 'copy', a copy editor, who
+// may change the words on people's pages and nothing else, kept apart in
+// copy_editors (038) so nothing that reads admins mistakes one for an admin.
 export const ADMIN_ROLES = ["admin", "copy"] as const;
 export type AdminRole = (typeof ADMIN_ROLES)[number];
 
@@ -19,7 +20,7 @@ export async function adminFor(
 ): Promise<number | undefined> {
   const [row] = await sql<{ id: string }[]>`
     SELECT h.id FROM humans h JOIN admins a ON a.human_id = h.id
-    WHERE h.auth_user_id = ${authUserId} AND a.role = 'admin'`;
+    WHERE h.auth_user_id = ${authUserId}`;
   return row ? Number(row.id) : undefined;
 }
 
@@ -29,8 +30,13 @@ export async function roleFor(
   authUserId: string,
 ): Promise<{ humanId: number; role: AdminRole } | undefined> {
   const [row] = await sql<{ id: string; role: AdminRole }[]>`
-    SELECT h.id, a.role FROM humans h JOIN admins a ON a.human_id = h.id
-    WHERE h.auth_user_id = ${authUserId}`;
+    SELECT h.id, 'admin' AS role FROM humans h JOIN admins a ON a.human_id = h.id
+    WHERE h.auth_user_id = ${authUserId}
+    UNION ALL
+    SELECT h.id, 'copy' AS role FROM humans h
+      JOIN copy_editors c ON c.human_id = h.id
+    WHERE h.auth_user_id = ${authUserId}
+    ORDER BY role LIMIT 1`;
   return row ? { humanId: Number(row.id), role: row.role } : undefined;
 }
 
@@ -46,7 +52,7 @@ export async function adminHumanId(
     const id = await authUserId(tx, target);
     const [row] = await tx<{ id: string }[]>`
       SELECT h.id FROM humans h JOIN admins a ON a.human_id = h.id
-      WHERE h.auth_user_id = ${id} AND a.role = 'admin'`;
+      WHERE h.auth_user_id = ${id}`;
     if (!row)
       throw new ApiError(
         403,
@@ -110,14 +116,16 @@ export async function addAdmin(
     throw new ApiError(400, "invalid_role", "The role is admin or copy.");
   return sql.begin(async (tx) => {
     const humanId = await ensureHuman(tx, await authUserId(tx, target));
-    const added = await tx`
-      INSERT INTO admins (human_id, role) VALUES (${humanId}, ${role})
-      ON CONFLICT (human_id) DO NOTHING RETURNING human_id`;
-    if (added.length === 0) {
-      const [had] = await tx<{ role: AdminRole }[]>`
-        SELECT role FROM admins WHERE human_id = ${humanId}`;
-      return { changed: false, humanId, role: had?.role ?? "admin" };
-    }
+    // The same lock the one-role trigger takes, so two adds can't race.
+    await tx`SELECT pg_advisory_xact_lock(hashtext(${`admin_role:${humanId}`}))`;
+    const [had] = await tx<{ role: AdminRole }[]>`
+      SELECT 'admin' AS role FROM admins WHERE human_id = ${humanId}
+      UNION ALL
+      SELECT 'copy' AS role FROM copy_editors WHERE human_id = ${humanId}`;
+    if (had) return { changed: false, humanId, role: had.role };
+    if (role === "admin")
+      await tx`INSERT INTO admins (human_id) VALUES (${humanId})`;
+    else await tx`INSERT INTO copy_editors (human_id) VALUES (${humanId})`;
     await logAction(tx, {
       action: "access.admin.add",
       botId: null,
@@ -131,31 +139,58 @@ export async function addAdmin(
   });
 }
 
+// Removes an admin or a copy editor. An admin's copy keys are revoked with
+// them, so adding them back later doesn't bring a key back to life.
 export async function removeAdmin(
   sql: postgres.Sql,
   target: AdminTarget,
   reason: string,
   by: string,
-): Promise<{ changed: boolean }> {
+): Promise<{ changed: boolean; role?: AdminRole; revokedKeys?: number }> {
   const why = reasonOf(reason);
   return sql.begin(async (tx) => {
     const id = await authUserId(tx, target);
-    const removed = await tx<{ human_id: string }[]>`
+    const [admin] = await tx<{ human_id: string }[]>`
       DELETE FROM admins USING humans h
       WHERE admins.human_id = h.id AND h.auth_user_id = ${id}
       RETURNING admins.human_id`;
-    const row = removed[0];
+    const [editor] = admin
+      ? []
+      : await tx<{ human_id: string }[]>`
+          DELETE FROM copy_editors USING humans h
+          WHERE copy_editors.human_id = h.id AND h.auth_user_id = ${id}
+          RETURNING copy_editors.human_id`;
+    const row = admin ?? editor;
     if (!row) return { changed: false };
+    const humanId = Number(row.human_id);
+    const role: AdminRole = admin ? "admin" : "copy";
     await logAction(tx, {
       action: "access.admin.remove",
       botId: null,
       keyId: null,
-      humanId: Number(row.human_id),
-      subject: `human:${row.human_id}`,
+      humanId,
+      subject: `human:${humanId}`,
       ipHash: null,
-      detail: { reason: why, by },
+      detail: { reason: why, by, role },
     });
-    return { changed: true };
+    let revokedKeys = 0;
+    if (admin) {
+      const keys = await tx<{ id: string }[]>`
+        UPDATE copy_keys SET revoked_at = now()
+        WHERE human_id = ${humanId} AND revoked_at IS NULL RETURNING id`;
+      for (const k of keys)
+        await logAction(tx, {
+          action: "access.copykey.revoke",
+          botId: null,
+          keyId: null,
+          humanId,
+          subject: `copykey:${k.id}`,
+          ipHash: null,
+          detail: { reason: "Its maker stopped being an admin.", by },
+        });
+      revokedKeys = keys.length;
+    }
+    return { changed: true, role, revokedKeys };
   });
 }
 
@@ -166,6 +201,12 @@ export type AdminRow = {
   role: AdminRole;
   added_at: Date;
 };
+
+// Admins and copy editors, each with their role.
+function roles(sql: postgres.Sql) {
+  return sql`(SELECT human_id, 'admin' AS role, added_at FROM admins
+    UNION ALL SELECT human_id, 'copy' AS role, added_at FROM copy_editors)`;
+}
 
 // For the command line only: it names each admin by email where Neon Auth
 // has one, so the person running it can tell who is who.
@@ -183,7 +224,7 @@ export async function listAdmins(sql: postgres.Sql): Promise<AdminRow[]> {
         }[]
       >`
         SELECT a.human_id, h.auth_user_id, u.email, a.role, a.added_at
-        FROM admins a JOIN humans h ON h.id = a.human_id
+        FROM ${roles(sql)} a JOIN humans h ON h.id = a.human_id
           LEFT JOIN neon_auth."user" u ON u.id::text = h.auth_user_id
         ORDER BY a.added_at`
     : await sql<
@@ -196,7 +237,7 @@ export async function listAdmins(sql: postgres.Sql): Promise<AdminRow[]> {
         }[]
       >`
         SELECT a.human_id, h.auth_user_id, NULL AS email, a.role, a.added_at
-        FROM admins a JOIN humans h ON h.id = a.human_id
+        FROM ${roles(sql)} a JOIN humans h ON h.id = a.human_id
         ORDER BY a.added_at`;
   return rows.map((r) => ({ ...r, human_id: Number(r.human_id) }));
 }

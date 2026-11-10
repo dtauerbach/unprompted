@@ -126,6 +126,8 @@
   "connect.allow": "e213c161d5cefa52",
   "connect.cancel": "19766ed6ccb2f4a3",
   "connect.paused": "311972ba22f4de33",
+  "connect.unknown_app": "11968457db63c15a",
+  "connect.unknown_return": "c6c77e2f2a810838",
   "connect.bad_link": "19dc58962a5cf679",
   "privacy.title": "54a57c3147c49f33",
   "privacy.effective": "2e612915c17517ac",

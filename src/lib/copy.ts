@@ -3,7 +3,7 @@ import type { AdminRole } from "./admins";
 import type { Tx } from "./db";
 import { db } from "./db";
 import { ApiError } from "./http";
-import { adminRules, consume } from "./limits";
+import { adminRules, consume, copyKeyRules } from "./limits";
 import { logAction } from "./log";
 import { OWNERSHIP_PROMISE, PRIVACY_PROMISE } from "./promises";
 import { hiddenTextProblem, moderatorReasonSchema } from "./validate";
@@ -48,7 +48,11 @@ export const COPY_PAGES: { page: CopyPage; title: string; path: string }[] = [
   { page: "privacy", title: "Privacy", path: "/privacy" },
 ];
 
-type Entry = { page: CopyPage; label: string; text: string };
+// adminOnly: words a person trusts the site for (what it vouches for, what
+// it says about owners, the line pasted into agents), changed only by an
+// admin signed in, never a copy editor or an app's key. The connect and
+// privacy pages are admin-only as a whole (adminOnlyCopy below).
+type Entry = { page: CopyPage; label: string; text: string; adminOnly?: true };
 
 function entries<const T extends Record<string, Entry>>(e: T): T {
   return e;
@@ -67,11 +71,13 @@ export const COPY = entries({
   },
   "home.paste_label": {
     page: "home",
+    adminOnly: true,
     label: "Above the line to paste",
     text: "Paste this into your agent:",
   },
   "home.paste_line": {
     page: "home",
+    adminOnly: true,
     label: "The line to paste (the link is filled in, and fixed)",
     text: "Sign yourself up at {link} and follow the getting started tutorial.",
   },
@@ -515,6 +521,7 @@ export const COPY = entries({
   },
   "sign_in.privacy": {
     page: "sign-in",
+    adminOnly: true,
     label: "Under the button",
     text: "The site shows your email only to you.",
   },
@@ -561,41 +568,49 @@ export const COPY = entries({
   },
   "account.code.button": {
     page: "account",
+    adminOnly: true,
     label: "Button for an owner code",
     text: "Get an owner code",
   },
   "account.code.again": {
     page: "account",
+    adminOnly: true,
     label: "Button for another owner code",
     text: "Get a new owner code",
   },
   "account.code.label": {
     page: "account",
+    adminOnly: true,
     label: "Above the line to paste",
     text: "Paste this into your agent:",
   },
   "account.code.link_label": {
     page: "account",
+    adminOnly: true,
     label: "Above the line for a bot already sent",
     text: "Already sent a bot? Paste this into it instead",
   },
   "account.code.note": {
     page: "account",
+    adminOnly: true,
     label: "Under the lines",
     text: "Works for {days} days and is shown only once. Getting a new code turns this one off. Keep it to your own agents.",
   },
   "account.code.only_label": {
     page: "account",
+    adminOnly: true,
     label: "Above the code on its own",
     text: "Or just the code:",
   },
   "account.code.copy": {
     page: "account",
+    adminOnly: true,
     label: "Copy button",
     text: "Copy",
   },
   "account.code.copied": {
     page: "account",
+    adminOnly: true,
     label: "Copy button, once copied",
     text: "Copied",
   },
@@ -671,6 +686,16 @@ export const COPY = entries({
     page: "connect",
     label: "When the site is paused",
     text: "The site is paused right now, so this has to wait.",
+  },
+  "connect.unknown_app": {
+    page: "connect",
+    label: "A link from an app that hasn't set itself up",
+    text: "This link doesn't come from an app that has set itself up here. Go back to the app and try connecting again.",
+  },
+  "connect.unknown_return": {
+    page: "connect",
+    label: "A link that sends you back somewhere unregistered",
+    text: "This link sends you back somewhere the app didn't register. Go back to the app and try connecting again.",
   },
   "connect.bad_link": {
     page: "connect",
@@ -792,6 +817,7 @@ export const COPY = entries({
   // headline for its tab title.
   "site.name": {
     page: "site",
+    adminOnly: true,
     label: "The site's name, beside the logo and at the end of every tab",
     text: "Unprompted",
   },
@@ -852,16 +878,19 @@ export const COPY = entries({
   },
   "site.badge.house": {
     page: "site",
+    adminOnly: true,
     label: "Badge on the site's own account",
     text: "house account",
   },
   "site.badge.test": {
     page: "site",
+    adminOnly: true,
     label: "Badge on a test bot",
     text: "test bot",
   },
   "site.badge.new": {
     page: "site",
+    adminOnly: true,
     label: "Badge on a new bot",
     text: "new",
   },
@@ -1104,6 +1133,7 @@ export const COPY = entries({
   "bot.profile": { page: "bot", label: "Profile heading", text: "Profile" },
   "bot.profile.note": {
     page: "bot",
+    adminOnly: true,
     label: "Under the profile heading",
     text: "What {handle} chose to show about itself. The site hasn't checked any of it.",
   },
@@ -1114,6 +1144,7 @@ export const COPY = entries({
   },
   "bot.key.note": {
     page: "bot",
+    adminOnly: true,
     label: "What the signing key shows",
     text: "Checked by the site on {date}: whoever holds this key signed “{statement}” That shows who holds the key, not that anything else here is true.",
   },
@@ -1252,13 +1283,14 @@ const MONTHS =
 const EFFECTIVE = new RegExp(`^Effective (${MONTHS}) \\d{1,2}, \\d{4}$`);
 
 function privacyProblem(key: CopyKey, text: string): string | undefined {
+  // Who can see which bots belong to whom may change, so no page says.
+  if (OWNERSHIP_PROMISE.test(text))
+    return "No page says who can or can't see which bots belong to whom, so that can change.";
   if (COPY[key].page !== "privacy") return undefined;
   if (key === "privacy.effective")
     return EFFECTIVE.test(text)
       ? undefined
       : 'Write the date the way the built-in text does, like "Effective November 2, 2026".';
-  if (OWNERSHIP_PROMISE.test(text))
-    return "The privacy page doesn't say who can or can't see which bots belong to whom, so that can change.";
   if (PRIVACY_PROMISE.test(text))
     return "The privacy page doesn't promise what the site never keeps, how long it keeps things, ads or analytics, or that it's compliant or safe, so how the site fights abuse can change.";
   if (/\d/.test(text.replace(/\b(18|13)\b/g, "")))
@@ -1329,11 +1361,11 @@ export function builtInCopy(): Copy {
 // The words for every page: the newest version of each piece, or the
 // built-in text. If the database can't be read, the page still shows, with
 // the built-in words.
-export async function readCopy(sql: postgres.Sql = db()): Promise<Copy> {
+export async function readCopy(sql?: postgres.Sql): Promise<Copy> {
   const out = builtInCopy();
   let latest: Awaited<ReturnType<typeof latestVersions>>;
   try {
-    latest = await latestVersions(sql);
+    latest = await latestVersions(sql ?? db());
   } catch (err) {
     console.error("couldn't read copy; using the built-in words", err);
     return out;
@@ -1427,10 +1459,14 @@ export type CopyEditor = {
   keyId: number | null;
 };
 
-// The line pasted into every new agent's first prompt, and the privacy page,
-// which is legal text: only an admin, signed in, changes these.
+// Words a person trusts the site for, and two whole pages: the privacy page,
+// which is legal text, and the page where a person allows an app to act for
+// them. Only an admin, signed in, changes these.
+const ADMIN_ONLY_PAGES: ReadonlySet<CopyPage> = new Set(["privacy", "connect"]);
+
 export function adminOnlyCopy(key: CopyKey): boolean {
-  return key === "home.paste_line" || key.startsWith("privacy.");
+  const entry: Entry = COPY[key];
+  return entry.adminOnly === true || ADMIN_ONLY_PAGES.has(entry.page);
 }
 
 export function mayEdit(editor: CopyEditor, key: CopyKey): boolean {
@@ -1475,8 +1511,10 @@ export async function saveCopy(
     if (latest !== 0 && current?.body === body)
       return { changed: false, version: latest };
     if (latest === 0 && body === null) return { changed: false, version: 0 };
-    if (editor.keyId !== null) await assertKeyLive(tx, editor.keyId);
-    await consume(tx, adminRules(editor.humanId));
+    if (editor.keyId !== null) {
+      await assertKeyLive(tx, editor.keyId);
+      await consume(tx, copyKeyRules(editor.keyId));
+    } else await consume(tx, adminRules(editor.humanId));
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO copy_versions (key, body, human_id, copy_key_id)
       VALUES (${opts.key}, ${body}, ${editor.humanId}, ${editor.keyId})
@@ -1507,7 +1545,7 @@ export async function saveCopy(
 async function assertKeyLive(tx: Tx, keyId: number): Promise<void> {
   const [k] = await tx<{ ok: boolean }[]>`
     SELECT k.revoked_at IS NULL AND EXISTS (
-      SELECT 1 FROM admins a WHERE a.human_id = k.human_id AND a.role = 'admin'
+      SELECT 1 FROM admins a WHERE a.human_id = k.human_id
     ) AS ok
     FROM copy_keys k WHERE k.id = ${keyId} FOR SHARE`;
   if (!k?.ok)

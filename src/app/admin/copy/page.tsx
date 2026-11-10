@@ -65,7 +65,7 @@ export default async function CopyPage() {
                   <time dateTime={c.created_at.toISOString()}>
                     {when(c.created_at)}
                   </time>{" "}
-                  by {savedBy(c)}:{" "}
+                  by {savedBy(c, admin)}:{" "}
                   <Link href={`/admin/copy/${c.key}`} className="underline">
                     {COPY[c.key].label}
                   </Link>
@@ -89,10 +89,11 @@ export default async function CopyPage() {
           <h2 className="text-xl font-semibold">Keys for apps</h2>
           <p className={MUTED}>
             A key lets an app, such as your assistant, change these words as a
-            copy editor: never the privacy page or the line people paste into
-            their agents. Its changes are saved under your name and count
-            against your hourly limit. It stops working if you stop being an
-            admin.
+            copy editor: never the privacy and connect pages, the line people
+            paste into their agents, or what the site vouches for. Its changes
+            are saved under your name, with an hourly limit of its own. Its
+            address can end up in request logs, so revoke a key you no longer
+            use. Removing you as an admin revokes your keys.
           </p>
           {writable && <MakeCopyKeyForm />}
           {keys_.length > 0 && (
@@ -102,6 +103,9 @@ export default async function CopyPage() {
                   <p className="text-sm">
                     Key {k.id}, {k.label}, made {when(k.created_at)} by human{" "}
                     {k.human_id}
+                    {k.last_saved_at
+                      ? `, last saved ${when(k.last_saved_at)}`
+                      : ", never used to save"}
                     {k.revoked_at
                       ? `, revoked ${when(k.revoked_at)}`
                       : k.live

@@ -1,4 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import {
   COPY,
@@ -14,9 +16,9 @@ import {
   slotsOf,
   versionBody,
 } from "./copy";
-import type { CopyKeyEditor } from "./copy-editors";
+import { type CopyKeyEditor, copyEditorForKey } from "./copy-editors";
 import { db } from "./db";
-import { ApiError, logRefusal } from "./http";
+import { ApiError, clientIp, hashIp, logRefusal, MAX_BODY_BYTES } from "./http";
 import { assertWritable } from "./settings";
 
 // The copy connector: the words on people's pages, for an app holding a copy
@@ -133,7 +135,7 @@ export function buildCopyMcpServer(opts: {
     {
       title: "A piece's history",
       description:
-        "Every saved version of one piece, newest first, with who saved it and when, and the original.",
+        "Every saved version of one piece, newest first, with who saved it (this key, an app or a person) and when, and the original. words null: that version went back to the original.",
       inputSchema: z.strictObject({ key: keySchema }),
       annotations: READ,
     },
@@ -147,7 +149,13 @@ export function buildCopyMcpServer(opts: {
           versions: versions.slice(0, 50).map((v) => ({
             version: v.id,
             words: v.body,
-            by: v.copy_key ? `key:${v.copy_key}` : `human:${v.human_id}`,
+            // Human ids and other keys' labels show only to full admins.
+            by:
+              v.copy_key === editor.label
+                ? "this key"
+                : v.copy_key
+                  ? "an app"
+                  : "a person",
             at: v.created_at.toISOString(),
           })),
         };
@@ -214,4 +222,31 @@ export function buildCopyMcpServer(opts: {
   );
 
   return server;
+}
+
+// One MCP request with a copy key, from either address: /copy/mcp/<key>, for
+// an app that takes only a URL, or /copy/mcp with Authorization: Bearer, for
+// one that can send a header and so keep the key out of request logs.
+// Stateless, like /mcp.
+export async function serveCopyMcp(
+  req: Request,
+  key: string | undefined,
+): Promise<Response> {
+  const editor = await copyEditorForKey(db(), key);
+  const server = buildCopyMcpServer({
+    editor,
+    ipHash: hashIp(clientIp(req)),
+    saved: () => revalidatePath("/", "layout"),
+  });
+  const transport = new WebStandardStreamableHTTPServerTransport({
+    sessionIdGenerator: undefined,
+    enableJsonResponse: true,
+    maxRequestBodySize: MAX_BODY_BYTES,
+  });
+  await server.connect(transport);
+  try {
+    return await transport.handleRequest(req);
+  } finally {
+    await server.close();
+  }
 }

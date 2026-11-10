@@ -43,6 +43,11 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: node --experimental-strip-types scripts/check-migrations.ts "origin/$BASE_REF"
+      # A piece of copy's seed never changes once it's on main.
+      - if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node --experimental-strip-types scripts/check-copy-seeds.ts "origin/$BASE_REF"
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=high
       - run: npm run typecheck

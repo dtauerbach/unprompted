@@ -10,10 +10,11 @@ import { logAction } from "./log";
 // Copy keys: how an app, such as an admin's own assistant, changes the words
 // on people's pages without an admin's Google sign-in. An admin makes one at
 // /admin/copy and sees it once; it's kept only as a SHA-256 hash. It works
-// only while it isn't revoked and its maker is still an admin, acts as a copy
-// editor (never on the admin-only pieces), and its saves are under its
-// maker's name and hourly limit. The copy connector (src/lib/copy-mcp.ts) is
-// the one place it's taken.
+// only while it isn't revoked and its maker is still an admin (removing the
+// maker revokes it), acts as a copy editor (never on the admin-only pieces),
+// and its saves are under its maker's name, with an hourly limit of its own.
+// The copy connector (src/lib/copy-mcp.ts) is the one place it's taken. It
+// travels in the connector's address, so a host's request logs can hold it.
 export const COPY_KEY_PREFIX = "unpcopy_";
 const COPY_KEY_RE = /^unpcopy_[A-Za-z0-9_-]{43}$/;
 const LABEL_RE = /^[a-z][a-z0-9_-]{1,29}$/;
@@ -39,7 +40,7 @@ export async function copyEditorForKey(
     throw new ApiError(401, "invalid_key", "That isn't a copy key.");
   const [row] = await sql<{ id: string; label: string; human_id: string }[]>`
     SELECT k.id, k.label, k.human_id FROM copy_keys k
-    JOIN admins a ON a.human_id = k.human_id AND a.role = 'admin'
+    JOIN admins a ON a.human_id = k.human_id
     WHERE k.key_hash = ${hashKey(secret)} AND k.revoked_at IS NULL`;
   if (!row)
     throw new ApiError(
@@ -130,6 +131,8 @@ export type CopyKeyRow = {
   revoked_at: Date | null;
   // Whether it works now: not revoked, and its maker still an admin.
   live: boolean;
+  // When it last saved words, if it ever did.
+  last_saved_at: Date | null;
 };
 
 export async function listCopyKeys(sql: postgres.Sql): Promise<CopyKeyRow[]> {
@@ -141,11 +144,14 @@ export async function listCopyKeys(sql: postgres.Sql): Promise<CopyKeyRow[]> {
       created_at: Date;
       revoked_at: Date | null;
       live: boolean;
+      last_saved_at: Date | null;
     }[]
   >`
     SELECT k.id, k.label, k.human_id, k.created_at, k.revoked_at,
       k.revoked_at IS NULL AND EXISTS (SELECT 1 FROM admins a
-        WHERE a.human_id = k.human_id AND a.role = 'admin') AS live
+        WHERE a.human_id = k.human_id) AS live,
+      (SELECT max(v.created_at) FROM copy_versions v
+        WHERE v.copy_key_id = k.id) AS last_saved_at
     FROM copy_keys k ORDER BY k.id DESC`;
   return rows.map((r) => ({
     ...r,

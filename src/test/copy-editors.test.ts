@@ -1,6 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { savedBy } from "@/app/admin/copy-who";
 import { POST as copyMcpRoute } from "@/app/v1/copy/mcp/[token]/route";
+import { POST as copyMcpHeaderRoute } from "@/app/v1/copy/mcp/route";
 import {
   addAdmin,
   adminFor,
@@ -13,6 +15,7 @@ import {
   COPY,
   type CopyEditor,
   type CopyKey,
+  checkCopy,
   copyHistory,
   readCopy,
   recentCopyChanges,
@@ -29,6 +32,7 @@ import {
 import { db } from "@/lib/db";
 import { redactPath } from "@/lib/http";
 import { hashKey } from "@/lib/keys";
+import { LIMITS } from "@/lib/limits";
 import { freshIp, register, resetDb } from "./helpers";
 
 // Copy editors: people (role 'copy') and apps (copy keys) that change the
@@ -93,7 +97,7 @@ function form(fields: Record<string, string>): FormData {
 }
 
 describe("the copy editor role", () => {
-  it("is a role on the admins row, and isn't an admin", async () => {
+  it("is a role of its own, and isn't an admin", async () => {
     const editor = await aCopyEditor();
     expect(await adminFor(db(), "google-editor")).toBeUndefined();
     expect(await roleFor(db(), "google-editor")).toEqual({
@@ -129,12 +133,24 @@ describe("the copy editor role", () => {
     expect(await adminFor(db(), "google-editor")).toBeUndefined();
   });
 
-  it("can't be made by the database with any other role", async () => {
-    const [h] = await db()<{ id: string }[]>`
-      INSERT INTO humans (auth_user_id) VALUES ('google-raw') RETURNING id`;
+  // Copy editors live apart from admins, so code that reads admins (code
+  // from before roles, a rolled-back deploy) never sees one as an admin.
+  it("is kept apart from admins, and no one is both", async () => {
+    const editor = await aCopyEditor();
+    const [inAdmins] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM admins WHERE human_id = ${editor}`;
+    expect(inAdmins?.n).toBe(0);
     await expect(
-      db()`INSERT INTO admins (human_id, role) VALUES (${h?.id ?? 0}, 'owner')`,
-    ).rejects.toThrow(/check/i);
+      db()`INSERT INTO admins (human_id) VALUES (${editor})`,
+    ).rejects.toThrow(/not both/);
+    const admin = await anAdmin();
+    await expect(
+      db()`INSERT INTO copy_editors (human_id) VALUES (${admin})`,
+    ).rejects.toThrow(/not both/);
+    const [cols] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM information_schema.columns
+      WHERE table_name = 'admins' AND column_name = 'role'`;
+    expect(cols?.n).toBe(0);
   });
 
   it("saves words and is recorded as who saved them", async () => {
@@ -173,6 +189,63 @@ describe("the copy editor role", () => {
         }),
       ).rejects.toThrow(/Only an admin/);
     expect(await db()`SELECT 1 FROM copy_versions`).toHaveLength(0);
+  });
+
+  // Words a person trusts the site for: what it vouches for, what it says
+  // about owners, the page that allows an app, and the badges and name.
+  it("can't change what the site vouches for, or the connect page", async () => {
+    const trusted: CopyKey[] = [
+      "bot.profile.note",
+      "bot.key.note",
+      "connect.back",
+      "connect.app_named",
+      "connect.unknown_app",
+      "home.paste_label",
+      "account.code.note",
+      "site.badge.house",
+      "site.name",
+      "sign_in.privacy",
+    ];
+    for (const key of trusted) expect(adminOnlyCopy(key), key).toBe(true);
+    for (const key of ["home.tagline", "forum.title"] as const)
+      expect(adminOnlyCopy(key), key).toBe(false);
+    const editor = await aCopyEditor();
+    const admin = await anAdmin();
+    const k = await aKey(admin);
+    const key = await copyEditorForKey(db(), k.secret);
+    for (const who of [
+      { humanId: editor, role: "copy" as const, keyId: null },
+      key,
+    ])
+      await expect(
+        saveCopy(db(), {
+          key: "bot.profile.note",
+          body: "Checked by the site: what {handle} says about itself is true.",
+          after: 0,
+          editor: who,
+          ipHash: null,
+        }),
+      ).rejects.toMatchObject({ code: "admin_only" });
+    // An admin, signed in, still can.
+    const r = await saveCopy(db(), {
+      key: "connect.back",
+      body: "You'll go back to {host} once you allow it.",
+      after: 0,
+      editor: asAdmin(admin),
+      ipHash: null,
+    });
+    expect(r.changed).toBe(true);
+  });
+
+  it("holds every piece, not only the privacy page, to no promise about owners", () => {
+    for (const key of [
+      "sign_in.privacy",
+      "home.tagline",
+      "forum.title",
+    ] as const)
+      expect(() =>
+        checkCopy(key, "Nobody sees which bots belong to you."),
+      ).toThrow(/which bots belong to whom/);
   });
 });
 
@@ -465,6 +538,81 @@ describe("copy keys", () => {
     ]);
   });
 
+  it("are revoked, and logged, when their maker is removed, so adding them back brings none back", async () => {
+    const admin = await anAdmin();
+    const k = await aKey(admin);
+    const removed = await removeAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Left.",
+      "x",
+    );
+    expect(removed).toEqual({ changed: true, role: "admin", revokedKeys: 1 });
+    await anAdmin();
+    await expect(copyEditorForKey(db(), k.secret)).rejects.toMatchObject({
+      code: "invalid_key",
+    });
+    const [row] = await listCopyKeys(db());
+    expect(row?.revoked_at).toBeInstanceOf(Date);
+    const logs = await db()<{ action: string; detail: { role?: string } }[]>`
+      SELECT action, detail FROM action_log
+      WHERE action IN ('access.admin.remove', 'access.copykey.revoke')
+      ORDER BY id`;
+    expect(logs.map((l) => l.action)).toEqual([
+      "access.admin.remove",
+      "access.copykey.revoke",
+    ]);
+    expect(logs[0]?.detail.role).toBe("admin");
+  });
+
+  it("show when each last saved words", async () => {
+    const admin = await anAdmin();
+    const k = await aKey(admin);
+    expect((await listCopyKeys(db()))[0]?.last_saved_at).toBeNull();
+    await saveCopy(db(), {
+      key: "forum.title",
+      body: "Saved by the key.",
+      after: 0,
+      editor: await copyEditorForKey(db(), k.secret),
+      ipHash: null,
+    });
+    expect((await listCopyKeys(db()))[0]?.last_saved_at).toBeInstanceOf(Date);
+  });
+
+  it("spend their own budget, and leave their maker's alone when it runs out", async () => {
+    const admin = await anAdmin();
+    const k = await aKey(admin);
+    const editor = await copyEditorForKey(db(), k.secret);
+    let after = 0;
+    for (let i = 0; i < LIMITS.copyKeyPerHour.limit; i++)
+      after = (
+        await saveCopy(db(), {
+          key: "forum.title",
+          body: `Words ${i}.`,
+          after,
+          editor,
+          ipHash: null,
+        })
+      ).version;
+    await expect(
+      saveCopy(db(), {
+        key: "forum.title",
+        body: "One too many.",
+        after,
+        editor,
+        ipHash: null,
+      }),
+    ).rejects.toMatchObject({ status: 429 });
+    const mine = await saveCopy(db(), {
+      key: "forum.title",
+      body: "The maker's own words.",
+      after,
+      editor: asAdmin(admin),
+      ipHash: null,
+    });
+    expect(mine.changed).toBe(true);
+  });
+
   it("are refused at the save itself if revoked after the request began", async () => {
     const admin = await anAdmin();
     const k = await aKey(admin);
@@ -482,13 +630,17 @@ describe("copy keys", () => {
     expect(await db()`SELECT 1 FROM copy_versions`).toHaveLength(0);
   });
 
-  it("save under their maker's name and hourly limit, and never the admin-only words", async () => {
+  it("save under their maker's name and their own hourly limit, and never the admin-only words", async () => {
     const admin = await anAdmin();
     const k = await aKey(admin);
     const editor = await copyEditorForKey(db(), k.secret);
-    const [before] = await db()<{ count: number }[]>`
-      SELECT coalesce(sum(count), 0)::int AS count FROM rate_limits
-      WHERE bucket = ${`admin:${admin}`}`;
+    const spent = async (bucket: string) =>
+      (
+        await db()<{ count: number }[]>`
+          SELECT coalesce(sum(count), 0)::int AS count FROM rate_limits
+          WHERE bucket = ${bucket}`
+      )[0]?.count ?? 0;
+    const before = await spent(`admin:${admin}`);
     const r = await saveCopy(db(), {
       key: "forum.title",
       body: "From the key.",
@@ -499,10 +651,9 @@ describe("copy keys", () => {
     const [v] = await db()<{ human_id: string; copy_key_id: string }[]>`
       SELECT human_id, copy_key_id FROM copy_versions WHERE id = ${r.version}`;
     expect(v).toEqual({ human_id: String(admin), copy_key_id: String(k.id) });
-    const [after] = await db()<{ count: number }[]>`
-      SELECT coalesce(sum(count), 0)::int AS count FROM rate_limits
-      WHERE bucket = ${`admin:${admin}`}`;
-    expect((after?.count ?? 0) - (before?.count ?? 0)).toBe(1);
+    // The key's own budget, never its maker's.
+    expect(await spent(`admin:${admin}`)).toBe(before);
+    expect(await spent(`copykey:${k.id}`)).toBe(1);
     const [log] = await db()<{ detail: unknown }[]>`
       SELECT detail FROM action_log WHERE action = 'copy.edit'`;
     expect(log?.detail).toEqual({ version: r.version, copy_key: k.id });
@@ -637,6 +788,8 @@ describe("the copy connector", () => {
 
   it("refuses no key, a dead key and a bot's key, and never logs the key", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
     const bot = await register("alice");
     const none = await mcp(undefined, "tools/list");
     expect(none.status).toBe(401);
@@ -647,10 +800,33 @@ describe("the copy connector", () => {
       expect(r.status).toBe(401);
       expect(r.body.error.code).toBe("invalid_key");
     }
-    const logged = warn.mock.calls.map((c) => String(c[0])).join("\n");
+    const logged = [warn, error, log]
+      .flatMap((s) => s.mock.calls.map((c) => c.map(String).join(" ")))
+      .join("\n");
     expect(logged).toContain("/v1/copy/mcp/[key]");
     expect(logged).not.toContain(fake);
     expect(logged).not.toContain(bot.key);
+  });
+
+  it("takes the key in a header at /copy/mcp, for an app that can send one", async () => {
+    const key = await aConnectorKey();
+    const call = (auth?: string) =>
+      copyMcpHeaderRoute(
+        new Request("http://unprompted.test/v1/copy/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+            "x-real-ip": freshIp(),
+            ...(auth ? { authorization: auth } : {}),
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+        }),
+        { params: Promise.resolve({}) },
+      );
+    expect((await call(`Bearer ${key}`)).status).toBe(200);
+    expect((await call()).status).toBe(401);
+    expect((await call(`Bearer unpcopy_${"C".repeat(43)}`)).status).toBe(401);
   });
 
   it("has four tools: list, history, edit and restore", async () => {
@@ -703,7 +879,7 @@ describe("the copy connector", () => {
     expect(h.data.versions[0]).toMatchObject({
       version: e.data.version,
       words: "Words from the assistant.",
-      by: "key:assistant",
+      by: "this key",
     });
     const back = await tool(key, "restore_copy", {
       key: "home.tagline",
@@ -799,5 +975,22 @@ describe("redactPath", () => {
     expect(redactPath("/copy/mcp/unpcopy_abc")).toBe("/copy/mcp/[key]");
     expect(redactPath("/v1/posts/1/vote")).toBe("/v1/posts/1/vote");
     expect(redactPath("/v1/mcp")).toBe("/v1/mcp");
+    // Odd spellings of the address, and a key anywhere else in a path.
+    expect(redactPath("//copy/mcp/unpcopy_abc")).toBe("//copy/mcp/[key]");
+    expect(redactPath("/Copy/MCP/unpcopy_abc")).toBe("/Copy/MCP/[key]");
+    expect(redactPath(`/x/unpcopy_${"A".repeat(43)}/y`)).toBe(
+      "/x/unpcopy_[key]/y",
+    );
+  });
+});
+
+describe("who saved a version, on the copy pages", () => {
+  it("names people and keys to admins, and only a person or an app to copy editors", () => {
+    const person = { human_id: 3, copy_key: null };
+    const app = { human_id: 3, copy_key: "assistant" };
+    expect(savedBy(person, true)).toBe("human 3");
+    expect(savedBy(app, true)).toBe("key assistant, made by human 3");
+    expect(savedBy(person, false)).toBe("a person");
+    expect(savedBy(app, false)).toBe("an app");
   });
 });

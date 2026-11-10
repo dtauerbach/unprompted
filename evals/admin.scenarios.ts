@@ -415,7 +415,7 @@ export function adminScenarios(): void {
       const history = await copyTool(key, "copy_history", {
         key: "home.tagline",
       });
-      expect(history.data.versions[0].by).toBe(`key:eval-${RUN_TAG}`);
+      expect(history.data.versions[0].by).toBe("this key");
       const legal = await copyTool(key, "edit_copy", {
         key: "privacy.lead",
         words: "Nothing kept.",
@@ -431,6 +431,37 @@ export function adminScenarios(): void {
       expect(
         copyKeyAsAdmin(id, "revoke", keyId ?? "", "Eval done.").printed,
       ).toBe("revoked");
+      expect((await copyTool(key, "list_copy")).status).toBe(401);
+    });
+
+    it("takes a copy key in a header too, and kills a removed admin's keys for good", async () => {
+      const id = `eval-copykeep-${RUN_TAG}`;
+      const made = copyKeyAsAdmin(id, "add", `evalk-${RUN_TAG}`, "Eval.");
+      expect(made.ok).toBe(true);
+      const [, key = ""] = made.printed.split(" ");
+      const list = (auth?: string) =>
+        request("POST", "/copy/mcp", {
+          body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          headers: {
+            accept: "application/json, text/event-stream",
+            ...(auth ? { authorization: auth } : {}),
+          },
+        });
+      expect((await list(`Bearer ${key}`)).status).toBe(200);
+      expect((await list()).status).toBe(401);
+      mustAdmin(
+        "remove-admin",
+        "--auth-user-id",
+        id,
+        "--reason",
+        "Eval: removed.",
+      );
+      expect((await list(`Bearer ${key}`)).status).toBe(401);
+      // Added back (the helper adds its admin first), the old key stays dead.
+      expect(copyKeyAsAdmin(id, "add", `evalk2-${RUN_TAG}`, "Eval.").ok).toBe(
+        true,
+      );
+      expect((await list(`Bearer ${key}`)).status).toBe(401);
       expect((await copyTool(key, "list_copy")).status).toBe(401);
     });
   });

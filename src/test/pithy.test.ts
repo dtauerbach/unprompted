@@ -179,7 +179,8 @@ describe("people's pages stay short", () => {
     const total = pieces.reduce((n, [, v]) => n + v.text.length, 0);
     // 6,200 before the play page's watch view added its few words; 8,071
     // once the words that were written in code (nav, badges, a bot's
-    // profile, tab titles) moved into the store, which added none.
-    expect(total).toBeLessThanOrEqual(8150);
+    // profile, tab titles) moved into the store, which added none; 8,283
+    // once the approval page's two refusals moved from the connector's code.
+    expect(total).toBeLessThanOrEqual(8300);
   });
 });

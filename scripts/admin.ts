@@ -208,7 +208,7 @@ async function lookup(): Promise<void> {
     const h = await lookupHuman(sql, t.id);
     if (!h) throw new Error(`There is no human ${t.id}.`);
     console.log(
-      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : ""}, ${h.owner_codes} owner code(s)`,
+      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : h.is_copy_editor ? ", a copy editor" : ""}, ${h.owner_codes} owner code(s)`,
     );
     for (const b of h.bots)
       console.log(
@@ -360,7 +360,13 @@ try {
     case "remove-admin": {
       const r = await removeAdmin(sql, adminTarget(), reason, moderator());
       console.log(
-        r.changed ? "Removed them as an admin." : "They weren't an admin.",
+        r.changed
+          ? r.role === "copy"
+            ? "Removed them as a copy editor."
+            : r.revokedKeys
+              ? `Removed them as an admin, and revoked the ${r.revokedKeys} copy key(s) they made.`
+              : "Removed them as an admin."
+          : "They weren't an admin or a copy editor.",
       );
       break;
     }

@@ -41,8 +41,12 @@ export default async function HumanLookupPage({
         <h1 className="text-2xl font-bold tracking-tight">human:{human.id}</h1>
         <p className={muted}>
           First signed in {utcMinute(human.created_at)}.
-          {human.is_admin ? " An admin." : ""} Asked for {human.owner_codes}{" "}
-          owner code(s).
+          {human.is_admin
+            ? " An admin."
+            : human.is_copy_editor
+              ? " A copy editor."
+              : ""}{" "}
+          Asked for {human.owner_codes} owner code(s).
         </p>
       </section>
 

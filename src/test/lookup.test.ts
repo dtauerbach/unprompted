@@ -214,6 +214,19 @@ describe("looking up a bot", () => {
     });
     const asAdmin = await lookupHuman(db(), admin.humanId);
     expect(asAdmin?.is_admin).toBe(true);
+    expect(asAdmin?.is_copy_editor).toBe(false);
+    // A copy editor is shown as one, never as an admin.
+    const editor = await addAdmin(
+      db(),
+      { authUserId: "google-c" },
+      "Words.",
+      "x",
+      "copy",
+    );
+    expect(await lookupHuman(db(), editor.humanId)).toMatchObject({
+      is_admin: false,
+      is_copy_editor: true,
+    });
     // An admin's own changes are among what they did.
     expect(asAdmin?.history[0]).toMatchObject({
       action: "admin.bot.silence",

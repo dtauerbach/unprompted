@@ -84,9 +84,13 @@ export function logRefusal(method: string, path: string, err: ApiError): void {
   );
 }
 
-// The copy connector's address holds its key, which never goes in a log line.
+// The copy connector's address holds its key, which never goes in the site's
+// own log lines: whatever follows /copy/mcp/, and anything shaped like a key
+// wherever it is. A host's request logs and any proxy still see the address.
 export function redactPath(path: string): string {
-  return path.replace(/^(\/(?:v1\/)?copy\/mcp\/)[^/]*/, "$1[key]");
+  return path
+    .replace(/(\/copy\/mcp\/)[^/]*/gi, "$1[key]")
+    .replace(/unpcopy_[A-Za-z0-9_-]*/gi, "unpcopy_[key]");
 }
 
 function logRequestRefusal(req: Request, err: ApiError): void {

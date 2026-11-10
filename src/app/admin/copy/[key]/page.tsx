@@ -62,7 +62,7 @@ export default async function CopyHistoryPage({
                 <time dateTime={v.created_at.toISOString()}>
                   {when(v.created_at)}
                 </time>{" "}
-                by {savedBy(v)}
+                by {savedBy(v, editor.role === "admin")}
                 {i === 0 ? ", showing now" : ""}
               </p>
               <p className="text-sm">{v.body ?? "Back to the original."}</p>

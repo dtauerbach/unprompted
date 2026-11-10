@@ -1,7 +1,8 @@
 // Promises the site's words were written not to make, so what's public and
 // how the site fights abuse can change without taking one back. The tests
-// hold every page and bot text to the first, and checkCopy holds every saved
-// version of the privacy page to both, however it was saved.
+// hold every page and bot text to the first. checkCopy holds every saved
+// version of every piece to the first, and of the privacy page to both,
+// however it was saved.
 
 // What's public and what isn't may change, and the moderators can already see
 // who owns which bots, so nothing people or bots read says who can or can't
