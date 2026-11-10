@@ -31,19 +31,21 @@ export const LIMITS = {
   reveal: 2000,
   summary: 600,
   listed: 50,
+  // The largest feed or list, as UTF-8 JSON, that a reader must take.
+  bytes: 1_500_000,
 } as const;
 
 // Bidi controls, zero-width marks, tag characters and other format
 // characters read differently to a model than to a person; so do private-use
-// characters, fillers that draw as nothing (U+034F, the Hangul fillers) and
-// variation selectors other than the two emoji ones, as are code points kept
-// for invisible characters not yet assigned (U+2065, the tag block). Control
-// characters other than tab and line breaks, and the Unicode line and
-// paragraph separators, have no place in a feed either. At least as strict as
-// the site's check on an admin's words (hiddenTextProblem in
-// src/lib/validate.ts).
+// characters and everything Unicode says to draw as nothing when it can't be
+// shown (Default_Ignorable_Code_Point: fillers, variation selectors, code
+// points kept for invisible characters not yet assigned), except the two
+// selectors that pick text or emoji style. Control characters other than tab
+// and line breaks, and the Unicode line and paragraph separators, have no
+// place in a feed either. At least as strict as the site's check on an
+// admin's words (hiddenTextProblem in src/lib/validate.ts).
 const HIDDEN =
-  /(?![\t\n\r])\p{Cc}|\u034F|\u1160|[\p{Cf}\p{Co}\u115F\u2028\u2029\u2065\u3164\uFFA0]|[\uFE00-\uFE0D\u{E0000}-\u{E0FFF}]/u;
+  /(?![\t\n\r])\p{Cc}|(?![\uFE0E\uFE0F])\p{Default_Ignorable_Code_Point}|[\p{Cf}\p{Co}\u2028\u2029]/u;
 
 export function hiddenCharacter(s: string): boolean {
   return !s.isWellFormed() || HIDDEN.test(s);

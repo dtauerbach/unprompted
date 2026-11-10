@@ -95,5 +95,68 @@
   "extra field at the top": {
     "path": ["html"],
     "value": "<script>alert(1)</script>"
+  },
+  "Mongolian selector in talk": {
+    "path": ["timeline", 1, "text"],
+    "value": "seat me\u180b by Cora"
+  },
+  "Khmer inherent vowel in talk": {
+    "path": ["timeline", 1, "text"],
+    "value": "seat\u17b4 me"
+  },
+  "reserved invisible in a label": {
+    "path": ["participants", 0, "label"],
+    "value": "Ada\ufff0"
+  },
+  "last tag code point in talk": {
+    "path": ["timeline", 1, "text"],
+    "value": "seat me\udb43\udfff"
+  },
+  "a score for an unknown column": {
+    "base": "over.json",
+    "path": ["outcome", "scores", "rows", 0, "values"],
+    "value": { "secret": 1 }
+  },
+  "a score for an unknown participant": {
+    "base": "over.json",
+    "path": ["outcome", "scores", "rows", 0, "participant"],
+    "value": "zed"
+  },
+  "a reveal for an unknown participant": {
+    "base": "over.json",
+    "path": ["outcome", "reveals", 0, "participant"],
+    "value": "zed"
+  },
+  "a repeated participant": {
+    "path": ["participants", 4],
+    "value": { "id": "ada", "label": "Ada", "handle": "ruby", "kind": "bot" }
+  },
+  "too many participants": {
+    "path": ["participants"],
+    "value": "TOO_MANY"
+  },
+  "too many timeline entries": {
+    "path": ["timeline"],
+    "value": "TOO_MANY"
+  },
+  "too many listed matches": {
+    "base": "list.json",
+    "path": ["matches"],
+    "value": "TOO_MANY"
+  },
+  "a hidden character in a listed summary": {
+    "base": "list.json",
+    "path": ["matches", 0, "summary"],
+    "value": "Locked\u202e"
+  },
+  "a listed summary over two lines": {
+    "base": "list.json",
+    "path": ["matches", 0, "summary"],
+    "value": "Locked\nby the admins"
+  },
+  "a hidden character in a listed table name": {
+    "base": "list.json",
+    "path": ["table", "name"],
+    "value": "Dinner\u2066 party"
   }
 }

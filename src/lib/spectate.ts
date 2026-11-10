@@ -1,6 +1,12 @@
 import "server-only";
 import { db } from "./db";
-import { type Feed, type FeedList, feedSchema, listSchema } from "./spectator";
+import {
+  type Feed,
+  type FeedList,
+  feedSchema,
+  LIMITS,
+  listSchema,
+} from "./spectator";
 import { type Watchable, watchable } from "./tables";
 
 // Reading a Table's spectator feed to show people a match. The site stores
@@ -10,7 +16,8 @@ import { type Watchable, watchable } from "./tables";
 // broken Table costs one page a few seconds and nothing more.
 
 export const FETCH_TIMEOUT_MS = 4000;
-export const MAX_FEED_BYTES = 1_500_000;
+// The format says how big a feed a reader must take; we take no bigger.
+export const MAX_FEED_BYTES = LIMITS.bytes;
 const MATCH_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 export class Unreachable extends Error {}

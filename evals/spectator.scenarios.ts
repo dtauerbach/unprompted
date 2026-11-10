@@ -221,15 +221,22 @@ export function spectatorModerationScenarios(): void {
           expect(res.status).toBe(200);
           return res.text;
         };
+        // How often its player's name shows: its seat and its row stay put.
+        const named = (html: string) =>
+          html.replace(/<[^>]+>/g, " ").split("Ada").length - 1;
+        let seen = 0;
         const shown = (html: string) => {
           expect(html).toContain(STOPPED_WORDS);
           expect(html).toContain(`href="/b/${bot.handle}"`);
+          seen = named(html);
+          expect(seen).toBeGreaterThanOrEqual(3);
         };
         // Nothing of it anywhere in the response, the page's data included.
         const hidden = (html: string) => {
           expect(html).not.toContain(STOPPED_WORDS);
           expect(html).not.toContain(`/b/${bot.handle}`);
           expect(html).toContain("Hidden by the moderators.");
+          expect(named(html)).toBe(seen);
         };
         shown(await page());
         const reason = ["--reason", "eval: spectator hide"];

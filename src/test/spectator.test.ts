@@ -118,16 +118,49 @@ describe("the spectator feed format, as the site reads it", () => {
     expect(listSchema.safeParse(fixture("list.json")).success).toBe(true);
   });
 
+  // Each bad case changes one thing in a good fixture, live.json unless it
+  // names another. "LONG" stands for text one over its limit, and "TOO_MANY"
+  // for a list one entry over its limit, padded with copies of its first
+  // entry under new ids, which must pass at exactly the limit.
+  const MANY: Record<string, number> = {
+    participants: LIMITS.participants,
+    timeline: LIMITS.timeline,
+    matches: LIMITS.listed,
+  };
   const bad = fixture("bad.json") as Record<
     string,
-    { path: (string | number)[]; value: unknown }
+    { base?: string; path: (string | number)[]; value: unknown }
   >;
-  for (const [name, { path: keys, value }] of Object.entries(bad))
+  for (const [name, c] of Object.entries(bad))
     it(`refuses a feed with ${name}`, () => {
-      const v = value === "LONG" ? "x".repeat(LIMITS.text + 1) : value;
-      expect(
-        feedSchema.safeParse(setPath(fixture("live.json"), keys, v)).success,
-      ).toBe(false);
+      const good = fixture(c.base ?? "live.json");
+      const schema = c.base === "list.json" ? listSchema : feedSchema;
+      expect(schema.safeParse(good).success).toBe(true);
+      let value = c.value;
+      if (value === "LONG") value = "x".repeat(LIMITS.text + 1);
+      if (value === "TOO_MANY") {
+        let list: unknown = good;
+        for (const k of c.path)
+          list = (list as Record<string | number, unknown>)[k];
+        const items = list as Record<string, unknown>[];
+        const limit = MANY[String(c.path.at(-1))];
+        if (!limit || !items[0]) throw new Error(`no limit for ${name}`);
+        const first = items[0];
+        const padded = [
+          ...items,
+          ...Array.from({ length: limit + 1 - items.length }, (_, i) =>
+            "id" in first ? { ...first, id: `${first.id}${i}` } : first,
+          ),
+        ];
+        expect(
+          schema.safeParse(setPath(good, c.path, padded.slice(0, limit)))
+            .success,
+        ).toBe(true);
+        value = padded;
+      }
+      expect(schema.safeParse(setPath(good, c.path, value)).success).toBe(
+        false,
+      );
     });
 
   it("finds hidden characters and strips them for a Table", () => {
@@ -148,7 +181,13 @@ describe("the spectator feed format, as the site reads it", () => {
     ])
       expect(hiddenCharacter(`a${c}b`), c).toBe(true);
     // Emoji keep their own selector; ordinary scripts and line breaks pass.
-    for (const ok of ["love ❤️", "日本語 ok", "two\nlines", "tab\there"])
+    for (const ok of [
+      "love ❤️",
+      "smile ☺\ufe0e",
+      "日本語 ok",
+      "two\nlines",
+      "tab\there",
+    ])
       expect(hiddenCharacter(ok), ok).toBe(false);
     expect(visibleText("a‮b​c")).toBe("abc");
     expect(visibleText("x".repeat(10), 4)).toBe("xxxx");
@@ -376,30 +415,58 @@ describe("a match's page", () => {
     expect(text).toContain("Hidden by the moderators.");
     expect(html).not.toContain('href="/b/ruby"');
     expect(html).toContain('href="/b/wren"');
-  });
-
-  it("takes its own words from the copy store", () => {
-    const feed = feedSchema.parse(fixture("live.json"));
-    const text = visible(
+    // Ada keeps a seat and a row; only the words and the link go.
+    const open = visible(
       renderToStaticMarkup(
-        createElement(MatchView, {
-          feed,
-          table: "Dinner party",
-          t: {
-            ...t,
-            "play.started": "Began {when}",
-            "play.phase_until": "{phase} till {time} UTC",
-            "play.withheld": "Words withheld.",
-          },
-          withheld: new Set(["ada"]),
-        }),
+        createElement(MatchView, { feed, table: "Dinner party", t }),
       ),
     );
-    expect(text).toContain("Began ");
-    expect(text).toContain(" till ");
-    expect(text).toContain("Words withheld.");
-    expect(text).not.toContain("Started ");
-    expect(text).not.toContain("Hidden by the moderators.");
+    const named = (s: string) => s.split("Ada").length - 1;
+    expect(named(open)).toBeGreaterThanOrEqual(3);
+    expect(named(text)).toBe(named(open));
+  });
+
+  it("takes every word of its own from the copy store", () => {
+    // Each piece MatchView uses, marked, so the page must show the marked
+    // version, live or over, wherever it shows the piece at all.
+    const keys = [
+      "play.from",
+      "play.live",
+      "play.outcome",
+      "play.over",
+      "play.phase_until",
+      "play.reveals",
+      "play.started",
+      "play.timeline",
+      "play.updating",
+      "play.who",
+      "play.withheld",
+    ];
+    // Any piece it starts using joins the list.
+    const source = readFileSync(
+      path.join(import.meta.dirname, "../components/spectator.tsx"),
+      "utf8",
+    );
+    for (const k of source.match(/(?<=t\[")play\.[a-z_]+(?="\])/g) ?? [])
+      expect(keys, k).toContain(k);
+    const marked = { ...t };
+    for (const k of keys)
+      marked[k as keyof Copy] = `«${k}» ${t[k as keyof Copy]}`;
+    const shownText = ["live.json", "over.json"]
+      .map((name) =>
+        visible(
+          renderToStaticMarkup(
+            createElement(MatchView, {
+              feed: feedSchema.parse(fixture(name)),
+              table: "Dinner party",
+              t: marked,
+              withheld: new Set(["ada"]),
+            }),
+          ),
+        ),
+      )
+      .join("\n");
+    for (const k of keys) expect(shownText, k).toContain(`«${k}»`);
   });
 
   it("names the tab after tables.ts, never after the feed", async () => {
