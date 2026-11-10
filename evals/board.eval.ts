@@ -35,7 +35,10 @@ import { profileScenarios } from "./profiles.scenarios";
 import { pushScenarios } from "./push.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
-import { spectatorScenarios } from "./spectator.scenarios";
+import {
+  spectatorModerationScenarios,
+  spectatorScenarios,
+} from "./spectator.scenarios";
 import { startScenarios } from "./start.scenarios";
 import { startProfileScenarios } from "./start-profile.scenarios";
 import { tutorialScenarios } from "./tutorial.scenarios";
@@ -558,6 +561,9 @@ clientScenarios();
 readingScenarios();
 startScenarios();
 gateScenarios();
+// Lifts any tightening before its one sign-up; the lift below then restarts
+// the count, so it costs the scenarios after it nothing.
+spectatorModerationScenarios();
 // The sign-ups since the floods (profiles, titles, lookups and the rest) can
 // set the spike off again. Lift any tightening they caused, which restarts the
 // count, so the channel makers can join.

@@ -107,17 +107,22 @@ function fakeTable(): Server {
 
 const tags = (html: string) => [...html.matchAll(/<[^>]+>/g)].map((m) => m[0]);
 
+// Serves the fake Table for the scenarios of the describe it's called in.
+function servingFakeTable(): void {
+  let server: Server;
+  beforeAll(async () => {
+    server = fakeTable();
+    await new Promise<void>((r) => server.listen(PORT, "127.0.0.1", r));
+  });
+  afterAll(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+}
+
 export function spectatorScenarios(): void {
   describe.runIf(LOCAL && configured)("a person watches a game", () => {
-    let server: Server;
-    beforeAll(async () => {
-      server = fakeTable();
-      await new Promise<void>((r) => server.listen(PORT, "127.0.0.1", r));
-    });
-    afterAll(() => {
-      server.closeAllConnections();
-      server.close();
-    });
+    servingFakeTable();
 
     it("finds the matches on the Play page, linking only here", async () => {
       const res = await get("/play");
@@ -178,9 +183,27 @@ export function spectatorScenarios(): void {
       }
     });
 
-    it.runIf(MODERATOR)(
-      "hides the words of a bot the moderators stopped, until that's lifted",
-      async () => {
+    it("answers 404 for a match the Table doesn't have, or a Table it doesn't know", async () => {
+      expect((await get(`/play/${SLUG}/m_nothing`)).status).toBe(404);
+      expect((await get("/play/nosuchtable/m_hostile")).status).toBe(404);
+      expect((await get(`/play/${SLUG}/..%2F..%2Fadmin`)).status).toBe(404);
+    });
+  });
+}
+
+// Its own scenario, placed in the run just before registration is lifted,
+// so its one sign-up doesn't use up the run's budget (see board.eval.ts).
+export function spectatorModerationScenarios(): void {
+  describe.runIf(LOCAL && configured && MODERATOR)(
+    "a person watches a game with a stopped player",
+    () => {
+      servingFakeTable();
+      it("hides the words of a bot the moderators stopped, until that's lifted", async () => {
+        mustAdmin(
+          "resume-registration",
+          "--reason",
+          "Eval: this run's own sign-ups before the spectator's.",
+        );
         const bot = await register("ruddy");
         stoppedHandle = bot.handle;
         const page = async () => {
@@ -208,13 +231,7 @@ export function spectatorScenarios(): void {
         hidden(await page());
         mustAdmin("unsilence", bot.handle, ...reason);
         shown(await page());
-      },
-    );
-
-    it("answers 404 for a match the Table doesn't have, or a Table it doesn't know", async () => {
-      expect((await get(`/play/${SLUG}/m_nothing`)).status).toBe(404);
-      expect((await get("/play/nosuchtable/m_hostile")).status).toBe(404);
-      expect((await get(`/play/${SLUG}/..%2F..%2Fadmin`)).status).toBe(404);
-    });
-  });
+      });
+    },
+  );
 }
