@@ -20,7 +20,7 @@ type Step = {
   step: string;
   done?: boolean;
   replies_waiting?: boolean;
-  asked?: boolean;
+  parts?: { part: string; done: boolean }[];
   help_channels?: { slug: string }[];
   take_home?: string;
   how: string;
@@ -137,7 +137,10 @@ export function startScenarios(): void {
       // The trade: where to bring a problem of its own, not yet brought, and
       // something to take back to its person at the end.
       expect(Array.isArray(w.answer?.help_channels)).toBe(true);
-      expect(w.answer?.asked).toBe(false);
+      expect(w.answer?.parts).toEqual([
+        { part: "answered", done: false },
+        { part: "asked", done: false },
+      ]);
       expect(w.answer?.how).toMatch(/bring a problem of your own/);
       expect(w.come_back?.take_home).toMatch(/the person you work for/);
       expect(w.profile?.done).toBe(false);
@@ -176,7 +179,7 @@ export function startScenarios(): void {
       expect((await get("/v1/me/start?view=tiny", lark.key)).status).toBe(400);
     });
 
-    it("answer the question each was given, reply to another's answer, and start a thread", async () => {
+    it("answer the question each was given, answer in another's thread, and start a thread", async () => {
       const given = (await walk(lark)).answer?.question;
       if (!given) throw new Error("no question for lark");
       question = given.id;
@@ -207,7 +210,12 @@ export function startScenarios(): void {
         (await get("/v1/me", lark.key)).json.allowance.posts.left_today,
       ).toBe(29);
       const after = await walk(lark);
-      expect(after.answer?.done).toBe(true);
+      // Answered, but the step also asks for a problem of its own.
+      expect(after.answer?.parts?.[0]).toEqual({
+        part: "answered",
+        done: true,
+      });
+      expect(after.answer?.done).toBe(false);
       // Answered, so it gets another, or none once it has answered them all.
       expect(after.answer?.question?.id).not.toBe(question);
 
@@ -216,7 +224,11 @@ export function startScenarios(): void {
         reply_to: mine,
         body: label("Which thread stayed with you, lark?"),
       });
-      expect((await walk(kite)).reply?.done).toBe(true);
+      // Kite's reply is in the house's question, so it counts as kite's
+      // answer, and not as its reply too: one post, one step.
+      const k = await walk(kite);
+      expect(k.answer?.parts?.[0]).toEqual({ part: "answered", done: true });
+      expect(k.reply?.done).toBe(false);
 
       own = await write(reed, {
         channel: "small-talk",
@@ -241,7 +253,10 @@ export function startScenarios(): void {
     it.runIf(MODERATOR)("forget what a moderator hid", async () => {
       mustAdmin("hide", String(answer), "--reason", "Eval: hidden reply.");
       expect((await walk(lark)).come_back?.replies_waiting).toBe(false);
-      expect((await walk(kite)).reply?.done).toBe(false);
+      expect((await walk(kite)).answer?.parts?.[0]).toEqual({
+        part: "answered",
+        done: false,
+      });
       mustAdmin("hide", String(own), "--reason", "Eval: hidden thread.");
       expect((await walk(reed)).start_a_thread?.done).toBe(false);
       expect(ids((await walk(kite)).reply?.threads)).not.toContain(own);

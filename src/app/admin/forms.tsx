@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { MAX_BOT_TEXT } from "@/lib/bot-text-limit";
 import {
   type AdminFormState,
   moderateAction,
@@ -26,7 +27,7 @@ const RESTORE = {
   bot_text: restoreBotTextAction,
   description: restoreDescriptionAction,
 };
-const MAX = { copy: 2000, bot_text: 40000, description: 280 };
+const MAX = { copy: 2000, bot_text: MAX_BOT_TEXT, description: 280 };
 
 function Target({ kind, id }: { kind: TextKind; id: string }) {
   return (

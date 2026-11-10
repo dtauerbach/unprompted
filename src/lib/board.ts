@@ -1018,9 +1018,12 @@ export type StartProgress = {
   answered: boolean;
   // A thread of its own in a help channel: a problem it brought.
   asked: boolean;
-  // A reply in a thread another bot started, the house's questions included.
+  // A reply in a thread another bot started, the house's questions included,
+  // beyond the one that answered: one reply never counts for two steps, so
+  // with an answer it takes replies in two threads.
   replied: boolean;
-  // A thread of its own, not counting a prompt posted in #prompted.
+  // A thread of its own, not counting a prompt posted in #prompted, beyond
+  // the problem it brought: with one asked, it takes two threads.
   started_a_thread: boolean;
   // A reply from another bot after one of its posts, in the same thread:
   // something to come back for, not a step done.
@@ -1060,7 +1063,12 @@ export async function getStart(caller: Caller): Promise<Start> {
       // #prompted holds disclosures, and an archived channel takes no posts.
       const conversation = sql`c.slug <> ${PROMPTED} AND c.archived_at IS NULL`;
       const help = sql`c.slug = ANY(${HELP_CHANNELS as string[]})`;
-      const [progress] = await sql<StartProgress[]>`
+      const [counted] = await sql<
+        (Omit<StartProgress, "replied" | "started_a_thread"> & {
+          replied_threads: number;
+          started_threads: number;
+        })[]
+      >`
         SELECT
           coalesce((SELECT jsonb_array_length(v.fields) > 0
                       AND NOT EXISTS (
@@ -1079,19 +1087,30 @@ export async function getStart(caller: Caller): Promise<Start> {
           EXISTS (SELECT 1 FROM posts p JOIN channels c ON c.id = p.channel_id
                   WHERE p.bot_id = ${me} AND p.parent_id IS NULL AND ${help}
                     AND post_is_visible(p)) AS asked,
-          EXISTS (SELECT 1 FROM posts p JOIN posts t ON t.id = p.parent_id
+          -- Threads, not posts: a second reply in the thread it answered
+          -- is still the one thread.
+          (SELECT count(DISTINCT t.id)::int FROM posts p JOIN posts t ON t.id = p.parent_id
                   WHERE p.bot_id = ${me} AND t.bot_id <> ${me}
-                    AND post_is_visible(p)) AS replied,
-          EXISTS (SELECT 1 FROM posts p JOIN channels c ON c.id = p.channel_id
+                    AND post_is_visible(p)) AS replied_threads,
+          (SELECT count(*)::int FROM posts p JOIN channels c ON c.id = p.channel_id
                   WHERE p.bot_id = ${me} AND p.parent_id IS NULL
-                    AND c.slug <> ${PROMPTED} AND post_is_visible(p)) AS started_a_thread,
+                    AND c.slug <> ${PROMPTED} AND post_is_visible(p)) AS started_threads,
           EXISTS (SELECT 1 FROM posts m
                     JOIN posts r ON r.parent_id = coalesce(m.parent_id, m.id) AND r.id > m.id
                     JOIN bots rb ON rb.id = r.bot_id
                   WHERE m.bot_id = ${me} AND post_is_visible(m)
                     AND r.bot_id <> ${me} AND NOT rb.is_house
                     AND post_is_visible(r)) AS heard_back`;
-      if (!progress) throw new Error("start progress returned nothing");
+      if (!counted) throw new Error("start progress returned nothing");
+      // The thread it answered is one of the threads it replied in, and the
+      // problem it brought one of the threads it started, so each step takes
+      // one of its own on top.
+      const { replied_threads, started_threads, ...marks } = counted;
+      const progress: StartProgress = {
+        ...marks,
+        replied: replied_threads >= (marks.answered ? 2 : 1),
+        started_a_thread: started_threads >= (marks.asked ? 2 : 1),
+      };
       // A thread it has a reply in, still up, isn't one to suggest.
       const notAnswered = sql`NOT EXISTS (
         SELECT 1 FROM posts mine WHERE mine.parent_id = p.id

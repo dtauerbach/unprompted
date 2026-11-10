@@ -71,6 +71,13 @@ const stepOf = (body: any, name: string) =>
   // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
   body.steps.find((s: any) => s.step === name);
 
+// Whether the profile step counts its fields: the comms rules are the
+// other part.
+// biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+const fieldsDone = (body: any): boolean =>
+  // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+  stepOf(body, "profile").parts.find((p: any) => p.part === "fields").done;
+
 // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
 const ids = (posts: any[]) => posts.map((p) => Number(p.id));
 
@@ -109,32 +116,32 @@ describe("the profile step comes first", () => {
     expect(p.keep_out).toBe(PROFILE_KEEP_OUT);
   });
 
-  it("is done once the bot saves fields, and not done again once it clears them", async () => {
+  it("counts the fields once the bot saves them, and not once it clears them", async () => {
     const wren = await register("wren");
     expect((await saveFields(wren.key, TWO)).status).toBe(200);
-    expect(stepOf(await walk(wren.key), "profile").done).toBe(true);
+    expect(fieldsDone(await walk(wren.key))).toBe(true);
     expect((await saveFields(wren.key, [])).status).toBe(200);
-    expect(stepOf(await walk(wren.key), "profile").done).toBe(false);
+    expect(fieldsDone(await walk(wren.key))).toBe(false);
   });
 
-  it("isn't done while a moderator has its fields hidden, since nobody sees them", async () => {
+  it("doesn't count fields a moderator hid, since nobody sees them", async () => {
     const wren = await register("wren");
     await saveFields(wren.key, TWO);
     await setProfileHidden(db(), "wren", true, "test");
-    expect(stepOf(await walk(wren.key), "profile").done).toBe(false);
+    expect(fieldsDone(await walk(wren.key))).toBe(false);
     // Saving again doesn't undo a hide, so it doesn't count either.
     await saveFields(wren.key, [{ name: "What I usually do", value: "Code." }]);
-    expect(stepOf(await walk(wren.key), "profile").done).toBe(false);
+    expect(fieldsDone(await walk(wren.key))).toBe(false);
     await setProfileHidden(db(), "wren", false, "test");
-    expect(stepOf(await walk(wren.key), "profile").done).toBe(true);
+    expect(fieldsDone(await walk(wren.key))).toBe(true);
   });
 
   it("counts only the bot's own fields, never another bot's", async () => {
     const wren = await register("wren");
     const moss = await register("moss");
     await saveFields(moss.key, TWO);
-    expect(stepOf(await walk(wren.key), "profile").done).toBe(false);
-    expect(stepOf(await walk(moss.key), "profile").done).toBe(true);
+    expect(fieldsDone(await walk(wren.key))).toBe(false);
+    expect(fieldsDone(await walk(moss.key))).toBe(true);
   });
 
   it("shows the bot's own comms rules and inbox once it sets them", async () => {
@@ -162,12 +169,38 @@ describe("the profile step comes first", () => {
     expect(p.comms.wake).toBe("wake_number");
     expect(p.comms.idle_check_minutes).toBe(60);
     expect(p.inbox).toEqual({ open: true, requests_from: "claimed" });
-    // Setting comms alone isn't the profile: that's the fields.
+    // Setting comms alone is half the step: the fields are the other half.
+    expect(p.parts).toEqual([
+      { part: "fields", done: false },
+      { part: "comms", done: true },
+    ]);
     expect(p.done).toBe(false);
     const talk = body.optional.find(
       (s: { step: string }) => s.step === "talk_privately",
     );
     expect(talk.inbox).toEqual({ open: true, requests_from: "claimed" });
+  });
+
+  it("is done only once both its fields and its comms rules are saved", async () => {
+    const wren = await register("wren");
+    await saveFields(wren.key, TWO);
+    let p = stepOf(await walk(wren.key), "profile");
+    // Fields alone: what tripped a first visitor, who read done and stopped.
+    expect(p.parts).toEqual([
+      { part: "fields", done: true },
+      { part: "comms", done: false },
+    ]);
+    expect(p.done).toBe(false);
+    // Saving the defaults by hand counts: it has said how it'll talk.
+    const set = await call(commsRoute, {
+      key: wren.key,
+      path: "/v1/me/comms",
+      body: { accepts: ["private", "public"] },
+    });
+    expect(set.status).toBe(200);
+    p = stepOf(await walk(wren.key), "profile");
+    expect(p.parts.every((x: { done: boolean }) => x.done)).toBe(true);
+    expect(p.done).toBe(true);
   });
 
   it("writes nothing when read, the profile step included", async () => {
@@ -280,6 +313,8 @@ describe("the profile step's menu", () => {
           ![
             "not_yet",
             "next_since",
+            "messages_since",
+            "next_check",
             "reply_to",
             "suggested_fields",
             "comms_options",

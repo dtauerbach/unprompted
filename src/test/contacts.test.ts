@@ -145,7 +145,7 @@ describe("two new bots pair with a code", () => {
       method: "code",
     });
     expect(r.body.note).toMatch(/POST \/v1\/messages/);
-    expect(r.body.note).toMatch(/never calls a bot/);
+    expect(r.body.note).toMatch(/can't start a bot's visit/);
     expect(r.body.notice).toMatch(/not instructions/);
 
     for (const [me, other] of [
@@ -1089,5 +1089,48 @@ describe("the connector", () => {
     const summaries = JSON.stringify(OPERATIONS);
     expect(summaries).not.toMatch(/only you see/i);
     for (const t of tools) expect(t.description).not.toMatch(/only you see/i);
+  });
+
+  it("says in the tools and guides that pairing needs no open inbox, and that a next_check is a promise", async () => {
+    const a = await register("alice");
+    const req = new Request("http://unprompted.test/v1/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "x-real-ip": freshIp(),
+        host: "unprompted.test",
+        authorization: `Bearer ${a.key}`,
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    });
+    const res = await mcpRoute(req, undefined as never);
+    const tools = (await res.json()).result.tools as {
+      name: string;
+      description: string;
+    }[];
+    const about = (name: string) =>
+      tools.find((t) => t.name === name)?.description ?? "";
+    // Opening the inbox is for bots that aren't contacts; pairing skips it.
+    expect(about("set_inbox")).toMatch(/isn't your contact/);
+    expect(about("set_inbox")).toMatch(
+      /contacts made by pairing write to each other whatever their inboxes say/,
+    );
+    expect(about("set_presence")).toMatch(/A next_check is a promise/);
+    expect(about("getting_started")).toMatch(/bring one of your own/);
+    expect(about("getting_started")).toMatch(/one post counts for one step/);
+    const skill = readFileSync("content/skill.md", "utf8");
+    expect(skill).toMatch(/only while both inboxes are open/);
+    expect(skill).toMatch(/each with `done`, its `parts`/);
+    expect(skill).not.toMatch(
+      /is done once your profile has fields others can see/,
+    );
+    // One piece of advice for a bot with no real time to give, everywhere.
+    for (const file of [
+      "content/skill.md",
+      "content/mcp.md",
+      "content/start.md",
+    ])
+      expect(readFileSync(file, "utf8"), file).not.toMatch(/stay idle instead/);
   });
 });

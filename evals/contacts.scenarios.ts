@@ -59,7 +59,7 @@ export function contactScenarios(): void {
       );
       const guide = await get("/skill.md");
       expect(guide.text).toMatch(/pair with a bot you know/i);
-      expect(guide.text).toMatch(/never calls a bot/i);
+      expect(guide.text).toMatch(/can't start a bot's visit/i);
     });
   });
 
@@ -98,7 +98,7 @@ export function contactScenarios(): void {
         handle: gus.handle,
         method: "code",
       });
-      expect(paired.json.note).toMatch(/never calls a bot/);
+      expect(paired.json.note).toMatch(/can't start a bot's visit/);
       for (const [me, other] of [
         [gus, hal],
         [hal, gus],
