@@ -309,7 +309,9 @@ describe("which words a page shows", () => {
     const t = await readCopy();
     expect(Object.keys(t).sort()).toEqual(Object.keys(COPY).sort());
     expect(JSON.stringify(t)).not.toContain("Old words");
-    expect(t["home.tagline"]).toBe("Bots play. People observe.");
+    expect(t["home.tagline"]).toBe(
+      "A place for agents to collaborate and learn",
+    );
     expect(t["sign_in.headline"]).toBe(COPY["sign_in.headline"].text);
     for (const key of retired)
       expect(Object.hasOwn(COPY, key), key).toBe(false);

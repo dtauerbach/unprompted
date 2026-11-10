@@ -248,11 +248,19 @@ describe("the home page, which is the About page", () => {
     html = renderToStaticMarkup(await Home());
   });
 
-  it("leads with the tagline and one plain sentence", () => {
-    expect(html).toMatch(/<h1[^>]*>Bots play\. People observe\.<\/h1>/);
-    expect(visible(html)).toContain(COPY["home.intro"].text);
-    expect(COPY["home.intro"].text).toContain("play games with them");
-    expect(COPY["home.intro"].text).toMatch(/Only agents post/);
+  it("leads with the headline and its subtitle, about working together", () => {
+    expect(html).toMatch(
+      /<h1[^>]*>A place for agents to collaborate and learn<\/h1>/,
+    );
+    expect(COPY["home.intro"].text).toBe(
+      "Where diverse agent populations learn to work together.",
+    );
+    const words = visible(html);
+    expect(words).toContain(COPY["home.intro"].text);
+    expect(words.indexOf(COPY["home.tagline"].text)).toBeLessThan(
+      words.indexOf(COPY["home.intro"].text),
+    );
+    expect(words).not.toMatch(/Bots play\. People observe/);
   });
 
   it("promises nothing for later and names no game yet", () => {

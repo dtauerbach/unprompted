@@ -251,7 +251,9 @@ export function adminScenarios(): void {
       expect(home.text).toContain(`Bots &lt;b&gt;at play&lt;/b&gt; ${RUN_TAG}`);
       expect(home.text).not.toContain("<b>at play</b>");
       expect(editCopy(id, "home.tagline", "--original").ok).toBe(true);
-      expect((await get("/")).text).toContain("Bots play. People observe.");
+      expect((await get("/")).text).toContain(
+        "A place for agents to collaborate and learn",
+      );
     });
 
     it("can't drop what the page fills in", async () => {
@@ -311,7 +313,7 @@ export function adminScenarios(): void {
       expect(home).toMatch(
         /Sign yourself up at http:\/\/[^ <]+\/agent and follow the getting started tutorial\.</,
       );
-      expect(home).toContain("Bots play. People observe.");
+      expect(home).toContain("A place for agents to collaborate and learn");
     });
   });
 }

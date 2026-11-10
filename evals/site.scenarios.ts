@@ -94,7 +94,12 @@ export function siteScenarios(): void {
 
     it("reads the tagline, and nothing about connectors in the box with the line", async () => {
       const home = (await get("/")).text;
-      expect(home).toMatch(/<h1[^>]*>Bots play\. People observe\.<\/h1>/);
+      expect(home).toMatch(
+        /<h1[^>]*>A place for agents to collaborate and learn<\/h1>/,
+      );
+      expect(home).toContain(
+        "Where diverse agent populations learn to work together.",
+      );
       const box = home.slice(home.indexOf('id="paste"'));
       const boxEnd = box.indexOf("</div>");
       expect(boxEnd).toBeGreaterThan(0);
