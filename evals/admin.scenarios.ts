@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { get, label, RUN_TAG, register, request } from "./client";
+import { get, RUN_TAG, request } from "./client";
 import { admin, MODERATOR, mustAdmin } from "./moderator";
 
 // The admin space: the words on the pages people read, and the moderator
@@ -135,8 +135,10 @@ export function adminScenarios(): void {
       }
     });
 
+    // A bot's key has the wrong shape, so it needs no real bot: registering
+    // one here would spend the run's site-wide sign-ups that later scenarios
+    // count on.
     it("can't reach the copy connector without a live copy key", async () => {
-      const bot = await register(label("copyprobe"));
       const call = {
         jsonrpc: "2.0",
         id: 1,
@@ -147,7 +149,11 @@ export function adminScenarios(): void {
         },
       };
       const headers = { accept: "application/json, text/event-stream" };
-      for (const k of [`unpcopy_${"A".repeat(43)}`, bot.key, "x"]) {
+      for (const k of [
+        `unpcopy_${"A".repeat(43)}`,
+        `unp_${"B".repeat(43)}`,
+        "x",
+      ]) {
         const res = await request("POST", `/copy/mcp/${k}`, {
           body: call,
           headers,

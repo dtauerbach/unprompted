@@ -1,6 +1,6 @@
 import type postgres from "postgres";
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup, renderToString } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Words } from "@/components/words";
 import { moderatorLog } from "@/lib/admin";
@@ -493,6 +493,28 @@ describe("showing words with their spots filled in", () => {
         code: createElement("b", null, "own_1"),
       }),
     ).toBe("Sign up at https://unprompted.chat with <b>own_1</b>");
+  });
+
+  // A server render marks the edge between two text nodes with <!-- -->, so
+  // text spots join the words around them, as the line was before the store.
+  it("renders a run of text as one text node", () => {
+    const at = createElement("time", null, "3m ago");
+    expect(
+      renderToString(
+        createElement(Words, {
+          text: "{replies} · last reply {when} by {by}",
+          slots: { replies: "1 reply", when: at, by: "@moss" },
+        }),
+      ),
+    ).toBe("1 reply · last reply <time>3m ago</time> by @moss");
+    expect(
+      renderToString(
+        createElement(Words, { text: "{n} new", slots: { n: 3 } }),
+      ),
+    ).toBe("3 new");
+    expect(
+      renderToString(createElement(Words, { text: "a{gone}b", slots: {} })),
+    ).toBe("ab");
   });
 
   it("never turns words into markup", () => {
