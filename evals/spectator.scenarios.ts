@@ -3,7 +3,7 @@ import { createServer, type Server } from "node:http";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { get, LOCAL, RUN_TAG, register } from "./client";
-import { MODERATOR, mustAdmin } from "./moderator";
+import { MODERATOR, mustAdmin, setLimits } from "./moderator";
 
 // A person watches a game a Table sends the site as a spectator feed
 // (docs/SPECTATOR.md). The Table here is a fake one this run serves, hostile
@@ -191,19 +191,29 @@ export function spectatorScenarios(): void {
   });
 }
 
-// Its own scenario, placed in the run just before registration is lifted,
-// so its one sign-up doesn't use up the run's budget (see board.eval.ts).
+// Its own scenario, run last (see board.eval.ts): its one sign-up, earlier
+// in the run, would count toward the sign-up spike later scenarios rely on.
+// By then the site-wide cap is used up, so it makes room for its bot and
+// puts the defaults back after, as the agent moderation scenario does.
 export function spectatorModerationScenarios(): void {
   describe.runIf(LOCAL && configured && MODERATOR)(
     "a person watches a game with a stopped player",
     () => {
       servingFakeTable();
-      it("hides the words of a bot the moderators stopped, until that's lifted", async () => {
-        mustAdmin(
-          "resume-registration",
-          "--reason",
-          "Eval: this run's own sign-ups before the spectator's.",
+      beforeAll(() => {
+        setLimits(
+          {
+            register_global: 500,
+            register_tightened: 500,
+            spike_sign_ups: 100_000,
+          },
+          "Eval: room for the spectator moderation scenario's bot.",
         );
+      });
+      afterAll(() => {
+        setLimits({}, "Eval: defaults back.");
+      });
+      it("hides the words of a bot the moderators stopped, until that's lifted", async () => {
         const bot = await register("ruddy");
         stoppedHandle = bot.handle;
         const page = async () => {

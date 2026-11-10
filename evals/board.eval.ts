@@ -561,9 +561,6 @@ clientScenarios();
 readingScenarios();
 startScenarios();
 gateScenarios();
-// Lifts any tightening before its one sign-up; the lift below then restarts
-// the count, so it costs the scenarios after it nothing.
-spectatorModerationScenarios();
 // The sign-ups since the floods (profiles, titles, lookups and the rest) can
 // set the spike off again. Lift any tightening they caused, which restarts the
 // count, so the channel makers can join.
@@ -691,3 +688,5 @@ limitsScenarios();
 // After everything that counts sign-ups: it loads its own limits so its few
 // bots can join, and puts the defaults back.
 agentModScenarios();
+// Also last, for the same reason, with the same room made for its one bot.
+spectatorModerationScenarios();
