@@ -39,13 +39,18 @@ if (invoked) {
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
   const mergeBase = git("merge-base", base, "HEAD");
-  let before: Record<string, string> = {};
+  // Only a base without the file passes unchecked; one that can't be read
+  // or parsed fails.
   try {
-    before = JSON.parse(git("show", `${mergeBase}:${FILE}`));
+    git("cat-file", "-e", `${mergeBase}:${FILE}`);
   } catch {
     console.log("The base branch has no copy seeds yet.");
     process.exit(0);
   }
+  const before = JSON.parse(git("show", `${mergeBase}:${FILE}`)) as Record<
+    string,
+    string
+  >;
   const changed = changedSeeds(before, JSON.parse(readFileSync(FILE, "utf8")));
   if (changed.length) {
     console.error(

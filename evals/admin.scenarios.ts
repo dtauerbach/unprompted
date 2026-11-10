@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { get, RUN_TAG, request } from "./client";
+import { awayFromWindowEdge, get, RUN_TAG, request } from "./client";
 import { admin, MODERATOR, mustAdmin } from "./moderator";
 
 // The admin space: the words on the pages people read, and the moderator
@@ -463,6 +463,58 @@ export function adminScenarios(): void {
       );
       expect((await list(`Bearer ${key}`)).status).toBe(401);
       expect((await copyTool(key, "list_copy")).status).toBe(401);
+    });
+
+    it("adds a copy editor from the command line, who can't make keys", async () => {
+      const id = `eval-copyed-${RUN_TAG}`;
+      const target = ["--auth-user-id", id];
+      expect(
+        mustAdmin(
+          "add-admin",
+          ...target,
+          "--role",
+          "copy",
+          "--reason",
+          "Eval.",
+        ),
+      ).toMatch(/as a copy editor\./);
+      expect(mustAdmin("admins")).toMatch(/copy editor since/);
+      // Already a copy editor: the key helper can't make them an admin, and
+      // a copy editor can't make a key.
+      const made = copyKeyAsAdmin(id, "add", `evaled-${RUN_TAG}`, "Eval.");
+      expect(made.ok).toBe(false);
+      expect(
+        mustAdmin("remove-admin", ...target, "--reason", "Eval done."),
+      ).toMatch(/Removed them as a copy editor\./);
+    });
+
+    it("holds a copy key to its own hourly budget", async () => {
+      await awayFromWindowEdge(3600);
+      const id = `eval-copybudget-${RUN_TAG}`;
+      const made = copyKeyAsAdmin(id, "add", `evalb-${RUN_TAG}`, "Eval.");
+      expect(made.ok).toBe(true);
+      const [keyId, key = ""] = made.printed.split(" ");
+      const list = await copyTool(key, "list_copy", { page: "forum" });
+      let after = list.data.pages[0].pieces.find(
+        (p: { key: string }) => p.key === "forum.title",
+      ).version;
+      let refusedAt = -1;
+      let code = "";
+      for (let i = 0; i <= 60 && refusedAt < 0; i++) {
+        const r = await copyTool(key, "edit_copy", {
+          key: "forum.title",
+          words: `Budget ${i} ${RUN_TAG}`,
+          after,
+        });
+        if (r.data.error) [refusedAt, code] = [i, r.data.error.code];
+        else after = r.data.version;
+      }
+      expect([refusedAt, code]).toEqual([60, "rate_limited"]);
+      // The key's maker still saves: the key spent only its own budget.
+      expect(editCopy(id, "forum.title", "--original").ok).toBe(true);
+      expect(
+        copyKeyAsAdmin(id, "revoke", keyId ?? "", "Eval done.").printed,
+      ).toBe("revoked");
     });
   });
 }

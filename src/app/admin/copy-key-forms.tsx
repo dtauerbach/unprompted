@@ -57,7 +57,9 @@ function NewAddress({ secret }: { secret: string }) {
     <div className="space-y-2 rounded-md border border-amber-300 p-3 dark:border-amber-800">
       <p className="text-sm">
         Add this address as a custom connector in the app. Anyone who has it can
-        change the words, so keep it out of chats and files.
+        change the words, so keep it out of chats and files. An app that can
+        send a header should use {origin}/copy/mcp with the key as
+        Authorization: Bearer instead, which keeps it out of request logs.
       </p>
       <input
         readOnly

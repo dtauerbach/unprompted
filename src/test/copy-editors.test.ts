@@ -153,6 +153,32 @@ describe("the copy editor role", () => {
     expect(cols?.n).toBe(0);
   });
 
+  it("can't become both by changing who a row names", async () => {
+    const editor = await aCopyEditor();
+    const admin = await anAdmin();
+    const third = await anAdmin("google-third");
+    await expect(
+      db()`UPDATE admins SET human_id = ${editor} WHERE human_id = ${third}`,
+    ).rejects.toThrow(/not both/);
+    await expect(
+      db()`UPDATE copy_editors SET human_id = ${admin} WHERE human_id = ${editor}`,
+    ).rejects.toThrow(/not both/);
+  });
+
+  it("is taken from both tables on removal, should anyone be in both", async () => {
+    const admin = await anAdmin();
+    await db().begin(async (tx) => {
+      await tx`SET LOCAL session_replication_role = replica`;
+      await tx`INSERT INTO copy_editors (human_id) VALUES (${admin})`;
+    });
+    await removeAdmin(db(), { authUserId: "google-admin" }, "Left.", "x");
+    expect(await roleFor(db(), "google-admin")).toBeUndefined();
+    const left = await db()`
+      SELECT 1 FROM admins WHERE human_id = ${admin}
+      UNION ALL SELECT 1 FROM copy_editors WHERE human_id = ${admin}`;
+    expect(left).toHaveLength(0);
+  });
+
   it("saves words and is recorded as who saved them", async () => {
     const editor = await aCopyEditor();
     const r = await saveCopy(db(), {
@@ -205,6 +231,13 @@ describe("the copy editor role", () => {
       "site.badge.house",
       "site.name",
       "sign_in.privacy",
+      "bot.owner",
+      "bot.owner.linked",
+      "bot.frozen",
+      "play.from",
+      "play.watch_lead",
+      "play.withheld",
+      "account.bot_line_frozen",
     ];
     for (const key of trusted) expect(adminOnlyCopy(key), key).toBe(true);
     for (const key of ["home.tagline", "forum.title"] as const)
@@ -611,6 +644,66 @@ describe("copy keys", () => {
       ipHash: null,
     });
     expect(mine.changed).toBe(true);
+  });
+
+  it("are made only by someone who is still an admin", async () => {
+    const editor = await aCopyEditor();
+    await expect(aKey(editor)).rejects.toMatchObject({
+      status: 403,
+      code: "not_an_admin",
+    });
+    const admin = await anAdmin();
+    await removeAdmin(db(), { authUserId: "google-admin" }, "Left.", "x");
+    await expect(aKey(admin)).rejects.toMatchObject({ code: "not_an_admin" });
+    expect(await listCopyKeys(db())).toHaveLength(0);
+  });
+
+  it("check their budget before taking a lock, so refused saves can't hold off a revoke", async () => {
+    const admin = await anAdmin();
+    const k = await aKey(admin);
+    const editor = await copyEditorForKey(db(), k.secret);
+    let after = 0;
+    for (let i = 0; i < LIMITS.copyKeyPerHour.limit; i++)
+      after = (
+        await saveCopy(db(), {
+          key: "forum.title",
+          body: `Words ${i}.`,
+          after,
+          editor,
+          ipHash: null,
+        })
+      ).version;
+    // A revoke under way holds the key's row.
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked = () => {};
+    const held = new Promise<void>((r) => {
+      locked = r;
+    });
+    const revoking = db().begin(async (tx) => {
+      await tx`SELECT 1 FROM copy_keys WHERE id = ${k.id} FOR UPDATE`;
+      locked();
+      await gate;
+    });
+    await held;
+    const outcome = await Promise.race([
+      saveCopy(db(), {
+        key: "forum.title",
+        body: "One too many.",
+        after,
+        editor,
+        ipHash: null,
+      }).then(
+        () => "saved",
+        (e: { status?: number }) => `refused ${e.status}`,
+      ),
+      new Promise((r) => setTimeout(() => r("waited"), 3000)),
+    ]);
+    release();
+    await revoking;
+    expect(outcome).toBe("refused 429");
   });
 
   it("are refused at the save itself if revoked after the request began", async () => {

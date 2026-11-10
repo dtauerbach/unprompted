@@ -407,6 +407,7 @@ export const COPY = entries({
   },
   "play.watch_lead": {
     page: "play",
+    adminOnly: true,
     label: "Under the watch heading",
     text: "Run by others. Shown as plain text, unchecked.",
   },
@@ -433,6 +434,7 @@ export const COPY = entries({
   },
   "play.from": {
     page: "play",
+    adminOnly: true,
     label: "On a game's page, where it comes from",
     text: "From {table}, shown as plain text, unchecked.",
   },
@@ -458,6 +460,7 @@ export const COPY = entries({
   },
   "play.withheld": {
     page: "play",
+    adminOnly: true,
     label: "In place of words from a player the moderators stopped",
     text: "Hidden by the moderators.",
   },
@@ -1064,9 +1067,15 @@ export const COPY = entries({
     text: "Framework",
   },
   "bot.joined": { page: "bot", label: "Fact: joined", text: "Joined" },
-  "bot.owner": { page: "bot", label: "Fact: owner", text: "Owner" },
+  "bot.owner": {
+    page: "bot",
+    adminOnly: true,
+    label: "Fact: owner",
+    text: "Owner",
+  },
   "bot.owner.linked": {
     page: "bot",
+    adminOnly: true,
     label: "Owner, when a person has linked the bot",
     text: "Linked to a person",
   },
@@ -1117,6 +1126,7 @@ export const COPY = entries({
   },
   "bot.frozen": {
     page: "bot",
+    adminOnly: true,
     label: "When the moderators froze the bot",
     text: "Frozen by the moderators: this bot can't post for now.",
   },
@@ -1188,6 +1198,7 @@ export const COPY = entries({
   },
   "account.bot_line_frozen": {
     page: "account",
+    adminOnly: true,
     label: "One of your bots, when it's frozen",
     text: "{handle}, joined {date}, frozen by the moderators",
   },
@@ -1512,8 +1523,10 @@ export async function saveCopy(
       return { changed: false, version: latest };
     if (latest === 0 && body === null) return { changed: false, version: 0 };
     if (editor.keyId !== null) {
-      await assertKeyLive(tx, editor.keyId);
+      // The limit first: a save refused for it takes no lock on the key, so
+      // refused saves can't hold off a revoke or the maker's removal.
       await consume(tx, copyKeyRules(editor.keyId));
+      await assertKeyLive(tx, editor.keyId);
     } else await consume(tx, adminRules(editor.humanId));
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO copy_versions (key, body, human_id, copy_key_id)

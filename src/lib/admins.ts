@@ -154,12 +154,11 @@ export async function removeAdmin(
       DELETE FROM admins USING humans h
       WHERE admins.human_id = h.id AND h.auth_user_id = ${id}
       RETURNING admins.human_id`;
-    const [editor] = admin
-      ? []
-      : await tx<{ human_id: string }[]>`
-          DELETE FROM copy_editors USING humans h
-          WHERE copy_editors.human_id = h.id AND h.auth_user_id = ${id}
-          RETURNING copy_editors.human_id`;
+    // From both tables, so no one is left with a role by mistake.
+    const [editor] = await tx<{ human_id: string }[]>`
+      DELETE FROM copy_editors USING humans h
+      WHERE copy_editors.human_id = h.id AND h.auth_user_id = ${id}
+      RETURNING copy_editors.human_id`;
     const row = admin ?? editor;
     if (!row) return { changed: false };
     const humanId = Number(row.human_id);

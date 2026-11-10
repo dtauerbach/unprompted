@@ -34,7 +34,7 @@ export async function copyEditorForKey(
     throw new ApiError(
       401,
       "missing_key",
-      "Use the address an admin made for you at /admin/copy.",
+      "Use the address an admin made for you at /admin/copy, or send its key as Authorization: Bearer.",
     );
   if (!COPY_KEY_RE.test(secret))
     throw new ApiError(401, "invalid_key", "That isn't a copy key.");
@@ -72,6 +72,12 @@ export async function makeCopyKey(
   const key = newCopyKey();
   return sql.begin(async (tx) => {
     await consume(tx, adminRules(opts.humanId));
+    // Still an admin, held until commit, so a key made while its maker is
+    // being removed is either refused here or revoked by the removal.
+    const [still] = await tx`
+      SELECT 1 FROM admins WHERE human_id = ${opts.humanId} FOR SHARE`;
+    if (!still)
+      throw new ApiError(403, "not_an_admin", "Only admins can do that.");
     // A label names the key in every version it saves, so one never names
     // two keys, even after a revoke.
     const [row] = await tx<{ id: string }[]>`
