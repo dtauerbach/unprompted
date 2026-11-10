@@ -2,7 +2,16 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Timestamp } from "@/components/timestamp";
+import { builtInCopy } from "@/lib/copy";
 import { exactUtc, relativeTime } from "@/lib/time";
+
+const T = builtInCopy();
+const WORDS = {
+  justNow: T["site.time.just_now"],
+  minutes: T["site.time.minutes"],
+  hours: T["site.time.hours"],
+  yesterday: T["site.time.yesterday"],
+};
 
 const NOW = new Date("2026-10-29T12:00:00.000Z");
 const SECOND = 1000;
@@ -11,7 +20,7 @@ const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
 function ago(ms: number): string {
-  return relativeTime(new Date(NOW.getTime() - ms), NOW);
+  return relativeTime(new Date(NOW.getTime() - ms), NOW, WORDS);
 }
 
 describe("relativeTime", () => {
@@ -48,34 +57,40 @@ describe("relativeTime", () => {
 
   it("gives the date, in UTC, from two days on", () => {
     expect(ago(2 * DAY)).toBe("Oct 27");
-    expect(relativeTime(new Date("2026-01-01T00:00:00Z"), NOW)).toBe("Jan 1");
-    // 23:30 on the 26th in New York is already the 27th in UTC.
-    expect(relativeTime(new Date("2026-10-26T23:30:00-04:00"), NOW)).toBe(
-      "Oct 27",
+    expect(relativeTime(new Date("2026-01-01T00:00:00Z"), NOW, WORDS)).toBe(
+      "Jan 1",
     );
+    // 23:30 on the 26th in New York is already the 27th in UTC.
+    expect(
+      relativeTime(new Date("2026-10-26T23:30:00-04:00"), NOW, WORDS),
+    ).toBe("Oct 27");
   });
 
   it("adds the year once it isn't this year's", () => {
-    expect(relativeTime(new Date("2025-12-31T23:59:59Z"), NOW)).toBe(
+    expect(relativeTime(new Date("2025-12-31T23:59:59Z"), NOW, WORDS)).toBe(
       "Dec 31, 2025",
     );
-    expect(relativeTime(new Date("2019-03-05T10:00:00Z"), NOW)).toBe(
+    expect(relativeTime(new Date("2019-03-05T10:00:00Z"), NOW, WORDS)).toBe(
       "Mar 5, 2019",
     );
     // Across New Year, a post from two days back is last year's.
     const newYear = new Date("2027-01-01T06:00:00Z");
-    expect(relativeTime(new Date("2026-12-30T05:00:00Z"), newYear)).toBe(
+    expect(relativeTime(new Date("2026-12-30T05:00:00Z"), newYear, WORDS)).toBe(
       "Dec 30, 2026",
     );
-    expect(relativeTime(new Date("2026-12-31T05:00:00Z"), newYear)).toBe(
+    expect(relativeTime(new Date("2026-12-31T05:00:00Z"), newYear, WORDS)).toBe(
       "yesterday",
     );
   });
 
   it("doesn't depend on anything but its arguments", () => {
     const at = new Date(NOW.getTime() - 3 * HOUR);
-    expect(relativeTime(at, NOW)).toBe(relativeTime(at, new Date(NOW)));
-    expect(relativeTime(at, new Date(NOW.getTime() + DAY))).toBe("yesterday");
+    expect(relativeTime(at, NOW, WORDS)).toBe(
+      relativeTime(at, new Date(NOW), WORDS),
+    );
+    expect(relativeTime(at, new Date(NOW.getTime() + DAY), WORDS)).toBe(
+      "yesterday",
+    );
   });
 });
 
@@ -90,11 +105,23 @@ describe("exactUtc", () => {
   });
 });
 
+describe("relativeTime's words", () => {
+  it("come from the copy store, so an admin's edit shows", () => {
+    const w = { ...WORDS, minutes: "{n} min", yesterday: "a day ago" };
+    expect(relativeTime(new Date(NOW.getTime() - 4 * MINUTE), NOW, w)).toBe(
+      "4 min",
+    );
+    expect(relativeTime(new Date(NOW.getTime() - 30 * HOUR), NOW, w)).toBe(
+      "a day ago",
+    );
+  });
+});
+
 describe("Timestamp", () => {
   it("renders the relative time in a time element with the exact time", () => {
     const at = new Date("2026-10-29T09:15:00.000Z");
     const html = renderToStaticMarkup(
-      createElement(Timestamp, { at, now: NOW }),
+      createElement(Timestamp, { at, now: NOW, t: T }),
     );
     expect(html).toBe(
       '<time dateTime="2026-10-29T09:15:00.000Z" title="2026-10-29 09:15:00 UTC">2h ago</time>',
@@ -103,7 +130,10 @@ describe("Timestamp", () => {
 
   it("measures from the time it is rendered when given no now", () => {
     const html = renderToStaticMarkup(
-      createElement(Timestamp, { at: new Date(Date.now() - 5 * MINUTE) }),
+      createElement(Timestamp, {
+        at: new Date(Date.now() - 5 * MINUTE),
+        t: T,
+      }),
     );
     expect(html).toMatch(/>5m ago<\/time>$/);
   });

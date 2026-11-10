@@ -9,7 +9,7 @@ import Home from "@/app/page";
 import PlayPage from "@/app/play/page";
 import SignInPage from "@/app/sign-in/page";
 import { POST as post } from "@/app/v1/posts/route";
-import { currentTab, NAV, NavLinks } from "@/components/nav";
+import { currentTab, NAV, type NavLabels, NavLinks } from "@/components/nav";
 import { hidePost, setFrozen } from "@/lib/admin";
 import { siteStats } from "@/lib/board";
 import { COPY } from "@/lib/copy";
@@ -497,9 +497,19 @@ describe("the sign-in page", () => {
   });
 });
 
+// The tab bar's words, as the layout passes them from the copy store.
+const LABELS: NavLabels = {
+  label: COPY["site.nav.label"].text,
+  "/agent": COPY["site.nav.agents"].text,
+  "/forum": COPY["site.nav.forum"].text,
+  "/play": COPY["site.nav.play"].text,
+  "/": COPY["site.nav.about"].text,
+  "/sign-in": COPY["site.nav.sign_up"].text,
+};
+
 describe("the menu", () => {
   it("has four tabs and the sign-up icon, in order, and nothing about moderation", () => {
-    expect(NAV.map((n) => [n.label, n.href])).toEqual([
+    expect(NAV.map((n) => [LABELS[n.href], n.href])).toEqual([
       ["Agents", "/agent"],
       ["Forum", "/forum"],
       ["Play", "/play"],
@@ -510,7 +520,7 @@ describe("the menu", () => {
 
   it("draws sign-up as a person icon at the far right, named for people", () => {
     const html = renderToStaticMarkup(
-      createElement(NavLinks, { current: undefined }),
+      createElement(NavLinks, { current: undefined, labels: LABELS }),
     );
     const links = [...html.matchAll(/<a [^>]*>[\s\S]*?<\/a>/g)].map(
       (m) => m[0],
@@ -521,7 +531,7 @@ describe("the menu", () => {
     expect(last).toMatch(/class="[^"]*ml-auto[^"]*"/);
     expect(last).toContain('<span class="sr-only">Sign up (for humans)</span>');
     const current = renderToStaticMarkup(
-      createElement(NavLinks, { current: "/sign-in" }),
+      createElement(NavLinks, { current: "/sign-in", labels: LABELS }),
     );
     expect(current).toMatch(
       /<a [^>]*href="\/sign-in"[^>]*aria-current="page"|<a [^>]*aria-current="page"[^>]*href="\/sign-in"/,
@@ -553,20 +563,20 @@ describe("the menu", () => {
 
   it("marks the current tab, and only that one", () => {
     const html = renderToStaticMarkup(
-      createElement(NavLinks, { current: "/forum" }),
+      createElement(NavLinks, { current: "/forum", labels: LABELS }),
     );
     expect(html.match(/aria-current="page"/g)).toHaveLength(1);
     const current = /<a [^>]*aria-current="page"[^>]*>/.exec(html)?.[0] ?? "";
     expect(current).toContain('href="/forum"');
     const none = renderToStaticMarkup(
-      createElement(NavLinks, { current: undefined }),
+      createElement(NavLinks, { current: undefined, labels: LABELS }),
     );
     expect(none).not.toContain("aria-current");
   });
 
-  it("sits in a layout with About and Source in the footer, and no moderation log", () => {
+  it("sits in a layout with About and Source in the footer, and no moderation log", async () => {
     const html = renderToStaticMarkup(
-      RootLayout({ children: createElement("p", null, "page") }),
+      await RootLayout({ children: createElement("p", null, "page") }),
     );
     const nav = byId(html.replace("<nav ", '<nav id="main-nav" '), "main-nav");
     const tabs = [...nav.matchAll(/href="([^"]*)"[^>]*>([^<]*)</g)].map((m) => [
@@ -590,9 +600,9 @@ describe("the menu", () => {
     expect(html).not.toMatch(/Everything in the forum is written by bots/);
   });
 
-  it("marks the site as a beta, in red, inside the link home", () => {
+  it("marks the site as a beta, in red, inside the link home", async () => {
     const html = renderToStaticMarkup(
-      RootLayout({ children: createElement("p", null, "page") }),
+      await RootLayout({ children: createElement("p", null, "page") }),
     );
     const header = html.slice(0, html.indexOf("</header>"));
     const home = /<a [^>]*href="\/"[^>]*>[\s\S]*?<\/a>/.exec(header)?.[0] ?? "";

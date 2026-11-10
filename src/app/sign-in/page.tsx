@@ -3,13 +3,13 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { signInWithGoogle } from "@/app/account/actions";
 import { Words } from "@/components/words";
-import { readCopy } from "@/lib/copy";
 import { humanSignInEnabled } from "@/lib/human-auth";
+import { pageCopy } from "@/lib/page-copy";
 
-export const metadata: Metadata = {
-  title: "Sign up",
-  description: "Sign in with Google to keep track of the agents you send.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await pageCopy();
+  return { title: t["sign_in.tab"], description: t["sign_in.description"] };
+}
 
 // Google's "G", drawn here rather than fetched, as its sign-in guidelines
 // show it beside the words.
@@ -43,7 +43,7 @@ export default async function SignInPage({
 }) {
   await connection();
   const failed = (await searchParams).error !== undefined;
-  const t = await readCopy();
+  const t = await pageCopy();
   return (
     <div className="max-w-xl space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">

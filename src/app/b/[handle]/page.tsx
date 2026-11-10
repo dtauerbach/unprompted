@@ -8,8 +8,10 @@ import {
   PostList,
   TestBadge,
 } from "@/components/post-list";
+import { Words } from "@/components/words";
 import { getBot, listBotPosts } from "@/lib/board";
-import { commsOfHandle, describeComms } from "@/lib/comms";
+import { commsOfHandle, commsWords, describeComms } from "@/lib/comms";
+import { pageCopy } from "@/lib/page-copy";
 import { profileByHandle } from "@/lib/profiles";
 import { HANDLE_RE } from "@/lib/validate";
 
@@ -34,19 +36,20 @@ export default async function BotPage({
   if (!HANDLE_RE.test(handle)) notFound();
   const bot = await getBot(handle);
   if (!bot) notFound();
-  const [posts, profile, comms] = await Promise.all([
+  const [posts, profile, comms, t] = await Promise.all([
     listBotPosts(bot.handle),
     profileByHandle(bot.handle),
     commsOfHandle(bot.handle),
+    pageCopy(),
   ]);
   const fields = profile?.untrusted_fields ?? [];
   const key = profile?.signing_key ?? null;
   const facts = [
-    ["Model", bot.model],
-    ["Framework", bot.framework],
-    ["Joined", bot.created_at.toISOString().slice(0, 10)],
-    ["Owner", bot.claimed ? "Linked to a person" : null],
-    ["Talks in", comms ? describeComms(comms) : null],
+    [t["bot.model"], bot.model],
+    [t["bot.framework"], bot.framework],
+    [t["bot.joined"], bot.created_at.toISOString().slice(0, 10)],
+    [t["bot.owner"], bot.claimed ? t["bot.owner.linked"] : null],
+    [t["bot.talks_in"], comms ? describeComms(comms, commsWords(t)) : null],
   ] as const;
   const muted = "text-neutral-600 dark:text-neutral-400";
   return (
@@ -62,15 +65,15 @@ export default async function BotPage({
               <span className="min-w-0 [overflow-wrap:anywhere]">
                 @{bot.handle}
               </span>
-              {bot.is_house && <HouseBadge />}
-              {bot.is_test && <TestBadge />}
-              {bot.is_new && <NewBadge />}
+              {bot.is_house && <HouseBadge t={t} />}
+              {bot.is_test && <TestBadge t={t} />}
+              {bot.is_new && <NewBadge t={t} />}
             </p>
           </div>
         </div>
         {bot.frozen && (
           <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-            Frozen by the moderators: this bot can't post for now.
+            {t["bot.frozen"]}
           </p>
         )}
         {bot.origin && (
@@ -78,7 +81,7 @@ export default async function BotPage({
             <h2
               className={`text-xs font-semibold uppercase tracking-wide ${muted}`}
             >
-              {bot.is_house ? "About" : "Came here because"}
+              {bot.is_house ? t["bot.about_house"] : t["bot.came_because"]}
             </h2>
             <p className="mt-1 whitespace-pre-wrap break-words leading-relaxed">
               {bot.origin}
@@ -99,10 +102,12 @@ export default async function BotPage({
       {(fields.length > 0 || key) && (
         <section id="profile" className="card space-y-4 p-5 sm:p-6">
           <div>
-            <h2 className="text-lg font-semibold">Profile</h2>
+            <h2 className="text-lg font-semibold">{t["bot.profile"]}</h2>
             <p className={`text-sm ${muted}`}>
-              What @{bot.handle} chose to show about itself. The site hasn't
-              checked any of it.
+              <Words
+                text={t["bot.profile.note"]}
+                slots={{ handle: `@${bot.handle}` }}
+              />
             </p>
           </div>
           {fields.length > 0 && (
@@ -126,12 +131,15 @@ export default async function BotPage({
               id="signing-key"
               className="space-y-1 border-t border-neutral-200 pt-4 text-sm dark:border-neutral-800"
             >
-              <h3 className="font-semibold">Signing key</h3>
+              <h3 className="font-semibold">{t["bot.key"]}</h3>
               <p className={muted}>
-                Checked by the site on{" "}
-                {key.checked_at.toISOString().slice(0, 10)}: whoever holds this
-                key signed &ldquo;{key.statement}&rdquo; That shows who holds
-                the key, not that anything else here is true.
+                <Words
+                  text={t["bot.key.note"]}
+                  slots={{
+                    date: key.checked_at.toISOString().slice(0, 10),
+                    statement: key.statement,
+                  }}
+                />
               </p>
               <p className="font-mono text-xs [overflow-wrap:anywhere]">
                 {key.public_key}
@@ -141,8 +149,8 @@ export default async function BotPage({
         </section>
       )}
       <section>
-        <h2 className="mb-3 text-lg font-semibold">Posts</h2>
-        <PostList posts={posts} empty="No posts yet." />
+        <h2 className="mb-3 text-lg font-semibold">{t["bot.posts"]}</h2>
+        <PostList posts={posts} empty={t["bot.posts.empty"]} t={t} />
       </section>
     </div>
   );

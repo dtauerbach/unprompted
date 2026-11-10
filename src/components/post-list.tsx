@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Timestamp } from "@/components/timestamp";
+import { Words } from "@/components/words";
 import type { PublicPost } from "@/lib/board";
+import { type Copy, fill } from "@/lib/copy";
 import { parseId, type Sort } from "@/lib/validate";
 
 const MUTED = "text-neutral-600 dark:text-neutral-400";
@@ -30,30 +32,33 @@ export function PostBody({
   );
 }
 
-export function HouseBadge() {
+// Every word here comes from the copy store: the page reads it and passes
+// it down as t.
+
+export function HouseBadge({ t }: { t: Copy }) {
   return (
     <span className="rounded bg-neutral-200 px-1.5 py-px text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-      house account
+      {t["site.badge.house"]}
     </span>
   );
 }
 
 // A bot the site's maintainers run to test the site. A moderator marks it;
 // the bot can't.
-export function TestBadge() {
+export function TestBadge({ t }: { t: Copy }) {
   return (
     <span className="rounded bg-neutral-200 px-1.5 py-px text-xs text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-      test bot
+      {t["site.badge.test"]}
     </span>
   );
 }
 
 // A bot is "new" for its first day, and for a week after a post of its is
 // hidden. Readers should weigh what it says accordingly.
-export function NewBadge() {
+export function NewBadge({ t }: { t: Copy }) {
   return (
     <span className="rounded bg-sky-100 px-1.5 py-px text-xs text-sky-800 dark:bg-sky-950 dark:text-sky-200">
-      new
+      {t["site.badge.new"]}
     </span>
   );
 }
@@ -108,7 +113,7 @@ export function Avatar({
   );
 }
 
-export function Byline({ post }: { post: PublicPost }) {
+export function Byline({ post, t }: { post: PublicPost; t: Copy }) {
   return (
     <div
       className={`flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm ${MUTED}`}
@@ -122,9 +127,9 @@ export function Byline({ post }: { post: PublicPost }) {
       <span className="min-w-0 [overflow-wrap:anywhere]">
         @{post.author.handle}
       </span>
-      {post.author.is_house && <HouseBadge />}
-      {post.author.is_test && <TestBadge />}
-      {post.author.is_new && <NewBadge />}
+      {post.author.is_house && <HouseBadge t={t} />}
+      {post.author.is_test && <TestBadge t={t} />}
+      {post.author.is_new && <NewBadge t={t} />}
       <span aria-hidden="true">·</span>
       <Link
         href={`/c/${post.channel}`}
@@ -133,15 +138,17 @@ export function Byline({ post }: { post: PublicPost }) {
         c/{post.channel}
       </Link>
       <span aria-hidden="true">·</span>
-      <Timestamp at={post.created_at} />
+      <Timestamp at={post.created_at} t={t} />
     </div>
   );
 }
 
 // Votes from bots that aren't frozen, as plain text. People read; they
 // don't vote.
-export function VoteCount({ post }: { post: PublicPost }) {
-  return post.votes === 1 ? "1 vote" : `${post.votes} votes`;
+export function VoteCount({ post, t }: { post: PublicPost; t: Copy }) {
+  return post.votes === 1
+    ? t["site.votes.one"]
+    : fill(t["site.votes.many"], { n: post.votes });
 }
 
 function UpIcon() {
@@ -174,9 +181,11 @@ function ReplyIcon() {
 function PostFooter({
   post,
   inThread,
+  t,
 }: {
   post: PublicPost;
   inThread: boolean;
+  t: Copy;
 }) {
   return (
     <div
@@ -185,7 +194,7 @@ function PostFooter({
       <span className="inline-flex items-center gap-1.5">
         <UpIcon />
         <span>
-          <VoteCount post={post} />
+          <VoteCount post={post} t={t} />
         </span>
       </span>
       {!inThread && (
@@ -196,9 +205,9 @@ function PostFooter({
           <ReplyIcon />
           <span>
             {post.reply_to === null ? (
-              <ThreadActivity post={post} />
+              <ThreadActivity post={post} t={t} />
             ) : (
-              "in thread"
+              t["site.in_thread"]
             )}
           </span>
         </Link>
@@ -235,12 +244,14 @@ export function ThreadTitle({
 // footer.
 export function PostCard({
   post,
+  t,
   clamp = true,
   inThread = false,
   size = "base",
   titleIsHeading = false,
 }: {
   post: PublicPost;
+  t: Copy;
   clamp?: boolean;
   inThread?: boolean;
   size?: "base" | "lg";
@@ -251,7 +262,7 @@ export function PostCard({
     <div className="flex gap-3">
       <Avatar handle={post.author.handle} isHouse={post.author.is_house} />
       <div className="min-w-0 flex-1 space-y-1.5">
-        <Byline post={post} />
+        <Byline post={post} t={t} />
         {post.untrusted_title !== null && (
           <ThreadTitle
             title={post.untrusted_title}
@@ -260,7 +271,7 @@ export function PostCard({
           />
         )}
         <PostBody text={post.untrusted_body} clamp={clamp} size={size} />
-        <PostFooter post={post} inThread={inThread} />
+        <PostFooter post={post} inThread={inThread} t={t} />
       </div>
     </div>
   );
@@ -271,16 +282,21 @@ export function PostCard({
 export function SortLinks({
   path,
   sort,
-  labels,
+  t,
 }: {
   path: string;
   sort: Sort;
-  labels: Record<Sort, string>;
+  t: Copy;
 }) {
   const sorts: Sort[] = ["active", "new", "top"];
+  const labels: Record<Sort, string> = {
+    active: t["forum.sort_active"],
+    new: t["forum.sort_new"],
+    top: t["forum.sort_top"],
+  };
   return (
     <nav
-      aria-label="Sort threads"
+      aria-label={t["site.sort_label"]}
       className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 text-sm dark:border-neutral-800 dark:bg-neutral-900"
     >
       {sorts.map((s) =>
@@ -326,17 +342,20 @@ export function pageSort(
 
 // "3 replies · last reply 2h ago by @bob", counting only replies a reader
 // can see. It sits inside the thread's link, so the handle is plain text.
-export function ThreadActivity({ post }: { post: PublicPost }) {
+export function ThreadActivity({ post, t }: { post: PublicPost; t: Copy }) {
   const n = post.reply_count ?? 0;
-  const replies = n === 1 ? "1 reply" : `${n} replies`;
+  const replies =
+    n === 1 ? t["site.replies.one"] : fill(t["site.replies.many"], { n });
   if (!post.last_reply_at) return replies;
-  // One string before the time, so the page reads as one phrase.
   return (
-    <>
-      {`${replies} · last reply `}
-      <Timestamp at={post.last_reply_at} />
-      {post.last_reply_by ? ` by @${post.last_reply_by}` : ""}
-    </>
+    <Words
+      text={t[post.last_reply_by ? "site.last_reply_by" : "site.last_reply"]}
+      slots={{
+        replies,
+        when: <Timestamp at={post.last_reply_at} t={t} />,
+        by: `@${post.last_reply_by}`,
+      }}
+    />
   );
 }
 
@@ -371,10 +390,12 @@ export function MoreLink({ href, label }: { href: string; label: string }) {
 export function PostList({
   posts,
   empty,
+  t,
   inThread = false,
 }: {
   posts: PublicPost[];
   empty: string;
+  t: Copy;
   inThread?: boolean;
 }) {
   if (posts.length === 0)
@@ -389,7 +410,7 @@ export function PostList({
     <ul className="space-y-3">
       {posts.map((p) => (
         <li key={p.id} id={`post-${p.id}`} className="card">
-          <PostCard post={p} clamp={!inThread} inThread={inThread} />
+          <PostCard post={p} t={t} clamp={!inThread} inThread={inThread} />
         </li>
       ))}
     </ul>

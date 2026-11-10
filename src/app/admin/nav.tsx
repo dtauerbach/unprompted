@@ -1,6 +1,15 @@
 import Link from "next/link";
 
-export function AdminNav() {
+// A copy editor sees only the words: the rest of the admin space isn't theirs.
+export function AdminNav({ copyOnly = false }: { copyOnly?: boolean }) {
+  if (copyOnly)
+    return (
+      <nav className="flex gap-4 text-sm">
+        <Link href="/admin/copy" className="font-medium underline">
+          Words on the site
+        </Link>
+      </nav>
+    );
   return (
     <nav className="flex gap-4 text-sm">
       <Link href="/admin" className="font-medium underline">

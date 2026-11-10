@@ -34,7 +34,7 @@ try {
     key,
     body: words === "--original" ? null : words,
     after: (await latestVersions(sql)).get(key)?.id ?? 0,
-    humanId,
+    editor: { humanId, role: "admin", keyId: null },
     ipHash: null,
   });
   console.log(r.changed ? `saved ${r.version}` : "unchanged");

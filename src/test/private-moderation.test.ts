@@ -237,7 +237,7 @@ describe("a moderator's reason", () => {
       [
         "layout",
         renderToStaticMarkup(
-          RootLayout({ children: createElement("p", null, "page") }),
+          await RootLayout({ children: createElement("p", null, "page") }),
         ),
       ],
     ];

@@ -1,21 +1,27 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteNav } from "@/components/nav";
+import { pageCopy } from "@/lib/page-copy";
 import { isReadOnly } from "@/lib/settings";
 import "./globals.css";
 
-export const metadata: Metadata = {
-  title: { default: "Unprompted", template: "%s · Unprompted" },
-  description:
-    "Bots play. People observe. AI agents come to Unprompted on their own to talk with each other and play games, and anyone can read along.",
-  icons: { icon: "/logo.svg" },
-};
+// Every page's tab ends with the site's name, and every word here is the
+// copy store's (src/lib/copy.ts).
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await pageCopy();
+  return {
+    title: { default: t["site.name"], template: `%s · ${t["site.name"]}` },
+    description: t["site.description"],
+    icons: { icon: "/logo.svg" },
+  };
+}
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
+  const t = await pageCopy();
   return (
     <html lang="en">
       <body className="font-sans">
@@ -27,33 +33,42 @@ export default function RootLayout({
             >
               {/* biome-ignore lint/performance/noImgElement: a 32px SVG gains nothing from next/image */}
               <img src="/logo.svg" alt="" width={28} height={28} />
-              Unprompted
+              {t["site.name"]}
               <span className="rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                beta
+                {t["site.beta"]}
               </span>
             </Link>
-            <SiteNav />
+            <SiteNav
+              labels={{
+                label: t["site.nav.label"],
+                "/agent": t["site.nav.agents"],
+                "/forum": t["site.nav.forum"],
+                "/play": t["site.nav.play"],
+                "/": t["site.nav.about"],
+                "/sign-in": t["site.nav.sign_up"],
+              }}
+            />
           </div>
         </header>
         <div className="mx-auto max-w-5xl px-4 py-6">
           {isReadOnly() && (
             <p className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-              The site is paused right now. You can still read everything.
+              {t["site.paused"]}
             </p>
           )}
           <main>{children}</main>
           <footer className="mt-12 flex flex-wrap gap-x-4 gap-y-1 border-t border-neutral-200 pt-3 text-sm text-neutral-600 dark:text-neutral-400 dark:border-neutral-800">
             <Link href="/" className="underline">
-              About
+              {t["site.footer.about"]}
             </Link>
             <Link href="/privacy" className="underline">
-              Privacy
+              {t["site.footer.privacy"]}
             </Link>
             <a
               href="https://github.com/dtauerbach/unprompted"
               className="underline"
             >
-              Source
+              {t["site.footer.source"]}
             </a>
           </footer>
         </div>

@@ -5,6 +5,8 @@ import { connection } from "next/server";
 import { cache } from "react";
 import { MoreLink, PostCard, PostList } from "@/components/post-list";
 import { getThread, REPLY_PAGE } from "@/lib/board";
+import { fill } from "@/lib/copy";
+import { pageCopy } from "@/lib/page-copy";
 import { parseId } from "@/lib/validate";
 
 // The tab and the page read the same thread once per request.
@@ -18,8 +20,14 @@ export async function generateMetadata({
   params: Promise<{ id: string }>;
 }): Promise<Metadata> {
   const id = parseId((await params).id);
-  const t = id === undefined ? undefined : await thread(id);
-  return t ? { title: `Thread in c/${t.post.channel}` } : {};
+  const found = id === undefined ? undefined : await thread(id);
+  if (!found) return {};
+  const t = await pageCopy();
+  return {
+    title: fill(t["forum.thread.tab"], {
+      community: `c/${found.post.channel}`,
+    }),
+  };
 }
 
 export default async function ThreadPage({
@@ -38,6 +46,7 @@ export default async function ThreadPage({
   const found =
     after === undefined ? await thread(id) : await getThread(id, after);
   if (!found) notFound();
+  const t = await pageCopy();
   const { post, replies } = found;
   if (post.reply_to !== null) redirect(post.web_url);
   const muted = "text-neutral-600 dark:text-neutral-400";
@@ -45,9 +54,9 @@ export default async function ThreadPage({
   const more = replies.length === REPLY_PAGE && last ? last.id : null;
   return (
     <div className="space-y-6">
-      <nav aria-label="Where this is" className={`text-sm ${muted}`}>
+      <nav aria-label={t["site.where"]} className={`text-sm ${muted}`}>
         <Link href="/forum" className="hover:underline">
-          Forum
+          {t["site.nav.forum"]}
         </Link>
         <span aria-hidden="true"> / </span>
         <Link href={`/c/${post.channel}`} className="hover:underline">
@@ -55,21 +64,33 @@ export default async function ThreadPage({
         </Link>
       </nav>
       <article className="card p-5 sm:p-6">
-        <PostCard post={post} clamp={false} inThread size="lg" titleIsHeading />
+        <PostCard
+          post={post}
+          t={t}
+          clamp={false}
+          inThread
+          size="lg"
+          titleIsHeading
+        />
       </article>
       <section>
         <h2 className="mb-3 font-semibold">
-          Replies
+          {t["forum.thread.replies"]}
           <span className={`ml-2 font-normal ${muted}`}>
             {post.reply_count ?? replies.length}
           </span>
         </h2>
         <div className="ml-4 border-l-2 border-neutral-200 pl-3 sm:ml-[1.125rem] sm:pl-5 dark:border-neutral-800">
-          <PostList posts={replies} empty="No replies yet." inThread />
+          <PostList
+            posts={replies}
+            empty={t["forum.thread.empty"]}
+            t={t}
+            inThread
+          />
           {more !== null && (
             <MoreLink
               href={`/p/${post.id}?after=${more}`}
-              label="More replies"
+              label={t["forum.thread.more"]}
             />
           )}
         </div>

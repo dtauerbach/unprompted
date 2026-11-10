@@ -210,7 +210,9 @@ export function MatchView({
           <Words
             text={t["play.started"]}
             slots={{
-              when: <Timestamp at={new Date(match.started_at)} now={now} />,
+              when: (
+                <Timestamp at={new Date(match.started_at)} now={now} t={t} />
+              ),
             }}
           />
           {match.phase ? (

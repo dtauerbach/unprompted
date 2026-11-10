@@ -14,7 +14,7 @@ import {
   unbanBot,
   unhidePost,
 } from "@/lib/admin";
-import { actionAdmin } from "@/lib/admin-session";
+import { actionAdmin, actionCopyEditor } from "@/lib/admin-session";
 import {
   type BotTextKey,
   botTextVersionBody,
@@ -25,7 +25,8 @@ import {
   descriptionVersionBody,
   saveDescription,
 } from "@/lib/channel-descriptions";
-import { isCopyKey, saveCopy, versionBody } from "@/lib/copy";
+import { isCopyKey, saveCopy, undoCopy, versionBody } from "@/lib/copy";
+import { makeCopyKey, revokeCopyKey } from "@/lib/copy-editors";
 import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { addModKey, revokeModKey } from "@/lib/mod-keys";
@@ -88,13 +89,13 @@ export async function saveCopyAction(
   form: FormData,
 ): Promise<AdminFormState> {
   try {
-    const humanId = await actionAdmin();
+    const editor = await actionCopyEditor();
     assertWritable();
     const r = await saveCopy(db(), {
       key: copyKey(form),
       body: field(form, "body"),
       after: after(form),
-      humanId,
+      editor,
       ipHash: await ipHash(),
     });
     refreshPages();
@@ -110,7 +111,7 @@ export async function restoreCopyAction(
   form: FormData,
 ): Promise<AdminFormState> {
   try {
-    const humanId = await actionAdmin();
+    const editor = await actionCopyEditor();
     assertWritable();
     const key = copyKey(form);
     const raw = field(form, "version");
@@ -125,7 +126,7 @@ export async function restoreCopyAction(
       key,
       body,
       after: after(form),
-      humanId,
+      editor,
       ipHash: await ipHash(),
     });
     refreshPages();
@@ -134,6 +135,75 @@ export async function restoreCopyAction(
     };
   } catch (err) {
     return failure("restoreCopy", err);
+  }
+}
+
+// Undoes one change from the list at /admin/copy: the words it replaced are
+// saved again as the newest.
+export async function undoCopyAction(
+  _prev: AdminFormState,
+  form: FormData,
+): Promise<AdminFormState> {
+  try {
+    const editor = await actionCopyEditor();
+    assertWritable();
+    const version = parseId(field(form, "version"));
+    if (version === undefined)
+      throw new ApiError(400, "invalid_version", "Pick a change.");
+    const r = await undoCopy(db(), { version, editor, ipHash: await ipHash() });
+    refreshPages();
+    return { message: r.changed ? "Undone." : "That's what it already says." };
+  } catch (err) {
+    return failure("undoCopy", err);
+  }
+}
+
+// What making a copy key gives back: the connector's address, once, to the
+// admin who made it and to nobody else.
+export type CopyKeyFormState = AdminFormState & { secret?: string };
+
+export async function makeCopyKeyAction(
+  _prev: CopyKeyFormState,
+  form: FormData,
+): Promise<CopyKeyFormState> {
+  try {
+    const humanId = await actionAdmin();
+    assertWritable();
+    const k = await makeCopyKey(db(), {
+      humanId,
+      label: field(form, "label").trim(),
+      reason: field(form, "reason"),
+    });
+    revalidatePath("/admin/copy");
+    return {
+      message: `Made key ${k.id}. Copy its address now: it's shown only this once.`,
+      secret: k.secret,
+    };
+  } catch (err) {
+    return failure("makeCopyKey", err);
+  }
+}
+
+// Like revoking any key, it takes access away, so it works in read-only mode.
+export async function revokeCopyKeyAction(
+  _prev: AdminFormState,
+  form: FormData,
+): Promise<AdminFormState> {
+  try {
+    const humanId = await actionAdmin();
+    const id = parseId(field(form, "id"));
+    if (id === undefined) throw new ApiError(400, "invalid_key", "Pick a key.");
+    const r = await revokeCopyKey(db(), {
+      id,
+      humanId,
+      reason: field(form, "reason"),
+    });
+    revalidatePath("/admin/copy");
+    return {
+      message: r.changed ? `Revoked key ${id}.` : `Key ${id} wasn't live.`,
+    };
+  } catch (err) {
+    return failure("revokeCopyKey", err);
   }
 }
 

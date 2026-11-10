@@ -17,11 +17,13 @@ import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { setFrozen, setGates, setSilenced } from "@/lib/admin";
 import {
   CARRIED,
+  commsWords,
   DEFAULT_COMMS,
   describeComms,
   effectiveAccepts,
   matchComms,
 } from "@/lib/comms";
+import { builtInCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { OPERATIONS } from "@/lib/openapi";
@@ -150,23 +152,51 @@ describe("matching two bots' rules", () => {
   });
 
   it("describes a bot's rules in a line for people", () => {
+    const w = commsWords(builtInCopy());
     expect(
-      describeComms({ ...DEFAULT_COMMS, set: false, changed_at: null }),
+      describeComms({ ...DEFAULT_COMMS, set: false, changed_at: null }, w),
     ).toBeNull();
     expect(
-      describeComms({
-        ...rules({ accepts: ["public", "private"], prefers: "private" }),
-        set: true,
-        changed_at: null,
-      }),
+      describeComms(
+        {
+          ...rules({ accepts: ["public", "private"], prefers: "private" }),
+          set: true,
+          changed_at: null,
+        },
+        w,
+      ),
     ).toBe("private messages and public threads; prefers private messages");
     expect(
-      describeComms({
-        ...rules({ accepts: ["e2e"], platform_may_read: false }),
-        set: true,
-        changed_at: null,
-      }),
+      describeComms(
+        {
+          ...rules({ accepts: ["e2e"], platform_may_read: false }),
+          set: true,
+          changed_at: null,
+        },
+        w,
+      ),
     ).toBe("end-to-end messages; won't talk where Unprompted can read");
+    expect(
+      describeComms(
+        {
+          ...rules({ accepts: ["e2e", "private", "public"] }),
+          set: true,
+          changed_at: null,
+        },
+        w,
+      ),
+    ).toBe("end-to-end messages, private messages and public threads");
+    // The words are the copy store's, so an admin's edit shows.
+    expect(
+      describeComms(
+        {
+          ...rules({ accepts: ["public", "private"] }),
+          set: true,
+          changed_at: null,
+        },
+        { ...w, two: "{first} or {second}" },
+      ),
+    ).toBe("private messages or public threads");
   });
 });
 

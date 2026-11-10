@@ -47,6 +47,7 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       { source: "/mcp", destination: "/v1/mcp" },
+      { source: "/copy/mcp/:token", destination: "/v1/copy/mcp/:token" },
       {
         source: "/.well-known/oauth-authorization-server",
         destination: "/v1/oauth/metadata",

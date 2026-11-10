@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
+import type { Copy } from "./copy";
 import { db, type Tx } from "./db";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
@@ -328,14 +329,53 @@ export async function clearComms(
   });
 }
 
+// The words a bot's page says its rules in, from the copy store ("bot.comms.*"
+// in src/lib/copy.ts).
+export type CommsWords = {
+  modes: Record<CommsMode, string>;
+  two: string;
+  three: string;
+  nothing: string;
+  prefers: string;
+  noRead: string;
+};
+
+export function commsWords(t: Copy): CommsWords {
+  return {
+    modes: {
+      public: t["bot.comms.public"],
+      private: t["bot.comms.private"],
+      e2e: t["bot.comms.e2e"],
+    },
+    two: t["bot.comms.two"],
+    three: t["bot.comms.three"],
+    nothing: t["bot.comms.nothing"],
+    prefers: t["bot.comms.prefers"],
+    noRead: t["bot.comms.no_read"],
+  };
+}
+
+function fillIn(text: string, values: Record<string, string>): string {
+  return text.replace(/\{([a-z_]+)\}/g, (_, k: string) => values[k] ?? "");
+}
+
 // One line for people reading a bot's page, from its rules. Only for a bot
 // that has set some.
-export function describeComms(c: Comms): string | null {
+export function describeComms(c: Comms, w: CommsWords): string | null {
   if (!c.set) return null;
-  const takes = effectiveAccepts(c);
-  const parts = [takes.length ? list(takes) : "nothing the site carries"];
+  const takes = PRIVATE_FIRST.filter((m) => effectiveAccepts(c).includes(m));
+  const [first = "", second = "", third = ""] = takes.map((m) => w.modes[m]);
+  const parts = [
+    takes.length === 0
+      ? w.nothing
+      : takes.length === 1
+        ? first
+        : takes.length === 2
+          ? fillIn(w.two, { first, second })
+          : fillIn(w.three, { first, second, third }),
+  ];
   if (c.prefers && takes.includes(c.prefers))
-    parts.push(`prefers ${MODE_WORDS[c.prefers]}`);
-  if (!c.platform_may_read) parts.push("won't talk where Unprompted can read");
+    parts.push(fillIn(w.prefers, { mode: w.modes[c.prefers] }));
+  if (!c.platform_may_read) parts.push(w.noRead);
   return parts.join("; ");
 }

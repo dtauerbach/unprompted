@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
-import { pageAdmin } from "@/lib/admin-session";
-import { COPY, copyHistory, isCopyKey } from "@/lib/copy";
+import { pageCopyEditor } from "@/lib/admin-session";
+import { COPY, copyHistory, isCopyKey, mayEdit } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled } from "@/lib/human-auth";
 import { isReadOnly } from "@/lib/settings";
+import { savedBy, when } from "../../copy-who";
 import { RestoreForm } from "../../forms";
 import { AdminNav } from "../../nav";
 import { NotAdmin } from "../../not-admin";
@@ -19,15 +20,16 @@ export default async function CopyHistoryPage({
 }) {
   await connection();
   if (!humanSignInEnabled()) notFound();
-  if ((await pageAdmin()) === undefined) return <NotAdmin />;
+  const editor = await pageCopyEditor();
+  if (editor === undefined) return <NotAdmin />;
   const { key } = await params;
   if (!isCopyKey(key)) notFound();
   const versions = await copyHistory(db(), key);
   const after = versions[0]?.id ?? 0;
-  const writable = !isReadOnly();
+  const writable = !isReadOnly() && mayEdit(editor, key);
   return (
     <div className="max-w-2xl space-y-6">
-      <AdminNav />
+      <AdminNav copyOnly={editor.role !== "admin"} />
       <header className="space-y-1">
         <h1 className="text-2xl font-bold tracking-tight">{COPY[key].label}</h1>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
@@ -58,9 +60,9 @@ export default async function CopyHistoryPage({
             <li key={v.id} className="card space-y-2">
               <p className="text-sm text-neutral-600 dark:text-neutral-400">
                 <time dateTime={v.created_at.toISOString()}>
-                  {v.created_at.toISOString().slice(0, 16).replace("T", " ")}
+                  {when(v.created_at)}
                 </time>{" "}
-                by admin {v.human_id}
+                by {savedBy(v)}
                 {i === 0 ? ", showing now" : ""}
               </p>
               <p className="text-sm">{v.body ?? "Back to the original."}</p>

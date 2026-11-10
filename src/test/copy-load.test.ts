@@ -177,7 +177,7 @@ describe("loading copy from a file", () => {
         key: "privacy.lead",
         body: "Typed words.",
         after: seen,
-        humanId: admin,
+        editor: { humanId: admin, role: "admin", keyId: null },
         ipHash: null,
       }),
     ).rejects.toThrow(/newer version/);
@@ -289,7 +289,7 @@ describe("the privacy page's rules, for every version of it", () => {
         key: "privacy.kept.text",
         body: "We keep addresses for 30 days.",
         after: 0,
-        humanId: admin,
+        editor: { humanId: admin, role: "admin", keyId: null },
         ipHash: null,
       }),
     ).rejects.toThrow(/The privacy page/);

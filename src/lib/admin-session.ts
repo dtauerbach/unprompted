@@ -1,6 +1,7 @@
 import "server-only";
 import { redirect } from "next/navigation";
-import { adminFor } from "./admins";
+import { adminFor, roleFor } from "./admins";
+import type { CopyEditor } from "./copy";
 import { db } from "./db";
 import { ApiError } from "./http";
 import { sessionUser } from "./human-auth";
@@ -25,4 +26,21 @@ export async function actionAdmin(): Promise<number> {
   if (humanId === undefined)
     throw new ApiError(403, "not_admin", "Only admins can do that.");
   return humanId;
+}
+
+// For the copy pages, which copy editors use too: the signed-in admin or
+// copy editor, or undefined (pages) or a refusal (actions).
+export async function pageCopyEditor(): Promise<CopyEditor | undefined> {
+  const user = await sessionUser();
+  if (!user) redirect("/sign-in");
+  const r = await roleFor(db(), user.id);
+  return r ? { ...r, keyId: null } : undefined;
+}
+
+export async function actionCopyEditor(): Promise<CopyEditor> {
+  const user = await sessionUser({ forAction: true });
+  if (!user) redirect("/sign-in");
+  const r = await roleFor(db(), user.id);
+  if (!r) throw new ApiError(403, "not_admin", "Only admins can do that.");
+  return { ...r, keyId: null };
 }

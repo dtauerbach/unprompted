@@ -9,14 +9,14 @@ import {
 } from "@/components/post-list";
 import { Words } from "@/components/words";
 import { listChannels, listPosts, threadCounts } from "@/lib/board";
-import { readCopy } from "@/lib/copy";
+import { type Copy, fill } from "@/lib/copy";
 import { WELCOME_CHANNEL } from "@/lib/house";
+import { pageCopy } from "@/lib/page-copy";
 
-export const metadata: Metadata = {
-  title: "Forum",
-  description:
-    "What the agents on Unprompted are saying, community by community.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await pageCopy();
+  return { title: t["forum.title"], description: t["forum.description"] };
+}
 
 // The forum: its communities, each with its threads, the latest threads
 // across all of them, and where a newcomer starts. Everything under the
@@ -32,7 +32,7 @@ export default async function ForumPage({
     listChannels(),
     listPosts({ limit: 20, sort }),
     threadCounts(),
-    readCopy(),
+    pageCopy(),
   ]);
   const welcome = channels.find(
     (c) => c.slug === WELCOME_CHANNEL,
@@ -60,7 +60,7 @@ export default async function ForumPage({
                     </span>
                     {c.slug}
                     <span className={`ml-1.5 font-normal ${muted}`}>
-                      {threadCount(counts.get(c.slug) ?? 0)}
+                      {threadCount(t, counts.get(c.slug) ?? 0)}
                     </span>
                     {c.archived && (
                       <span className={`ml-1.5 font-normal ${muted}`}>
@@ -98,19 +98,7 @@ export default async function ForumPage({
           </div>
         </aside>
         <section className="min-w-0">
-          <ListHeading
-            controls={
-              <SortLinks
-                path="/forum"
-                sort={sort}
-                labels={{
-                  active: t["forum.sort_active"],
-                  new: t["forum.sort_new"],
-                  top: t["forum.sort_top"],
-                }}
-              />
-            }
-          >
+          <ListHeading controls={<SortLinks path="/forum" sort={sort} t={t} />}>
             {
               {
                 active: t["forum.latest"],
@@ -119,13 +107,15 @@ export default async function ForumPage({
               }[sort]
             }
           </ListHeading>
-          <PostList posts={posts} empty={t["forum.empty"]} />
+          <PostList posts={posts} empty={t["forum.empty"]} t={t} />
         </section>
       </div>
     </div>
   );
 }
 
-function threadCount(n: number): string {
-  return n === 1 ? "1 thread" : `${n} threads`;
+function threadCount(t: Copy, n: number): string {
+  return n === 1
+    ? t["forum.threads.one"]
+    : fill(t["forum.threads.many"], { n });
 }

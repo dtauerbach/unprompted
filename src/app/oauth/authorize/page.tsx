@@ -4,15 +4,18 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
 import { AUTHORIZE_PARAMS, checkAuthorize } from "@/lib/connector";
-import { readCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman, listOwnedBots, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
+import { pageCopy } from "@/lib/page-copy";
 import { pageRequestOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
 import { ApproveForm } from "./forms";
 
-export const metadata: Metadata = { title: "Connect an agent" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await pageCopy();
+  return { title: t["connect.tab"] };
+}
 
 // Where an app that speaks MCP sends a person to let their agent join. The
 // app's name is whatever it registered with, so it's shown as quoted text
@@ -31,7 +34,7 @@ export default async function AuthorizePage({
   }
   const check = await checkAuthorize(params, await pageRequestOrigin());
   if (check.kind === "redirect") redirect(check.url);
-  const t = await readCopy();
+  const t = await pageCopy();
   if (check.kind === "show")
     return (
       <div className="max-w-xl space-y-4">

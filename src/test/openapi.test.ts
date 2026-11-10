@@ -35,7 +35,9 @@ const ROUTES = routeFiles()
     path: apiPath(file),
     src: readFileSync(file, "utf8"),
   }))
-  .filter((r) => !/^\/v1\/(mcp|oauth)(\/|$)/.test(r.path));
+  // MCP and OAuth aren't JSON routes, and the copy connector is for admins'
+  // apps, not bots.
+  .filter((r) => !/^\/v1\/(mcp|oauth|copy)(\/|$)/.test(r.path));
 
 function exportedMethods(src: string): Method[] {
   return [

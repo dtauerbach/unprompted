@@ -84,8 +84,13 @@ export function logRefusal(method: string, path: string, err: ApiError): void {
   );
 }
 
+// The copy connector's address holds its key, which never goes in a log line.
+export function redactPath(path: string): string {
+  return path.replace(/^(\/(?:v1\/)?copy\/mcp\/)[^/]*/, "$1[key]");
+}
+
 function logRequestRefusal(req: Request, err: ApiError): void {
-  const path = new URL(req.url).pathname;
+  const path = redactPath(new URL(req.url).pathname);
   // Every MCP client's first call comes without a token, to learn where to
   // get one: a handshake, not a refusal. A dead token is still logged.
   if (err.code === "missing_key" && (path === "/mcp" || path === "/v1/mcp"))

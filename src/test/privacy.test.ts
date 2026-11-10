@@ -30,7 +30,10 @@ const asText = (s: string) =>
     .replace(/&quot;/g, '"')
     .replace(/&amp;/g, "&");
 
-const pieces = Object.entries(COPY).filter(([, e]) => e.page === "privacy");
+// The tab's description is metadata, not on the page itself.
+const pieces = Object.entries(COPY).filter(
+  ([k, e]) => e.page === "privacy" && k !== "privacy.description",
+);
 
 describe("the privacy page", () => {
   let html = "";
@@ -67,9 +70,9 @@ describe("the privacy page", () => {
     );
   });
 
-  it("is linked from every page's footer", () => {
+  it("is linked from every page's footer", async () => {
     const page = renderToStaticMarkup(
-      RootLayout({ children: createElement("p", null, "page") }),
+      await RootLayout({ children: createElement("p", null, "page") }),
     );
     const footer = page.slice(page.indexOf("<footer"));
     expect(footer).toMatch(/<a [^>]*href="\/privacy"[^>]*>Privacy<\/a>/);

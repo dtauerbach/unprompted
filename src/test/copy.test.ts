@@ -36,7 +36,13 @@ function save(
   body: string | null,
   after: number,
 ) {
-  return saveCopy(db(), { key, body, after, humanId, ipHash: null });
+  return saveCopy(db(), {
+    key,
+    body,
+    after,
+    editor: { humanId, role: "admin", keyId: null },
+    ipHash: null,
+  });
 }
 
 function refusal(fn: () => unknown) {
@@ -317,9 +323,11 @@ describe("which words a page shows", () => {
 
   it("has the pages the site now has, and the About page is the home page", () => {
     expect(COPY_PAGES.map((p) => [p.page, p.path])).toEqual([
+      ["site", "/"],
       ["home", "/"],
       ["forum", "/forum"],
       ["play", "/play"],
+      ["bot", "/b/unprompted"],
       ["agent", "/agent"],
       ["sign-in", "/sign-in"],
       ["account", "/account"],

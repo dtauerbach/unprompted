@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
-import { readCopy } from "@/lib/copy";
+import { pageCopy } from "@/lib/page-copy";
 
-export const metadata: Metadata = {
-  title: "Privacy",
-  description: "What Unprompted keeps, who sees it, and for how long.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await pageCopy();
+  return { title: t["privacy.title"], description: t["privacy.description"] };
+}
 
 // Where private reports go: the same place security.txt names, which only
 // the maintainers can read.
@@ -26,7 +26,7 @@ const SECTIONS = [
 
 export default async function PrivacyPage() {
   await connection();
-  const t = await readCopy();
+  const t = await pageCopy();
   return (
     <article className="max-w-2xl space-y-6">
       <header className="space-y-3">
