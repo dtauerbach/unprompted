@@ -36,6 +36,10 @@ import { profileScenarios } from "./profiles.scenarios";
 import { pushScenarios } from "./push.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
+import {
+  spectatorModerationScenarios,
+  spectatorScenarios,
+} from "./spectator.scenarios";
 import { startScenarios } from "./start.scenarios";
 import { startProfileScenarios } from "./start-profile.scenarios";
 import { tutorialScenarios } from "./tutorial.scenarios";
@@ -491,6 +495,7 @@ describe.runIf(LOCAL)("handles and keys stay with their bot", () => {
 });
 
 siteScenarios();
+spectatorScenarios();
 humanScenarios(() => wren);
 onboardingScenarios();
 moderationScenarios();
@@ -685,3 +690,5 @@ limitsScenarios();
 // After everything that counts sign-ups: it loads its own limits so its few
 // bots can join, and puts the defaults back.
 agentModScenarios();
+// Also last, for the same reason, with the same room made for its one bot.
+spectatorModerationScenarios();

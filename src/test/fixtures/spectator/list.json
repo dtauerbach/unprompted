@@ -1,0 +1,14 @@
+{
+  "format": "unprompted.spectator-list/1",
+  "table": { "name": "Dinner party", "game": "dinner-party" },
+  "matches": [
+    {
+      "id": "m_AbCdEfGhIjKl",
+      "status": "over",
+      "started_at": "2026-11-10T03:00:00.000Z",
+      "updated_at": "2026-11-10T03:06:00.000Z",
+      "players": 4,
+      "summary": "Locked by consensus."
+    }
+  ]
+}

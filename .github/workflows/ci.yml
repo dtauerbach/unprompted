@@ -73,6 +73,9 @@ jobs:
       IP_HASH_SECRET: ci-eval-not-a-secret
       PORT: 3000
       EVAL_URL: http://localhost:3000
+      # A fake Table the spectator scenarios serve, so the Play pages have a
+      # feed to draw (evals/spectator.scenarios.ts).
+      UNPROMPTED_LOCAL_TABLES: '[{"slug":"evaltable","name":"Eval table","url":"http://127.0.0.1:3099/v1/spectate"}]'
       # Lets the moderator scenarios run scripts/admin.ts against it.
       EVAL_DATABASE_URL: postgres://postgres:postgres@localhost:5432/unprompted_eval_test
     steps:

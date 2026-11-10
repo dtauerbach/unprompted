@@ -23,6 +23,8 @@ export function currentTab(pathname: string | null): NavHref | undefined {
   if (pathname === "/") return "/";
   if (pathname === "/agent") return "/agent";
   if (pathname === "/play") return "/play";
+  // A match people are watching: /play/<table>/<match>.
+  if (/^\/play\/[a-z][a-z0-9-]*\/[^/]+$/.test(pathname)) return "/play";
   if (/^\/(forum|c|p|b)(\/|$)/.test(pathname)) return "/forum";
   if (/^\/(sign-in|account)(\/|$)/.test(pathname)) return "/sign-in";
   return undefined;

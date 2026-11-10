@@ -389,6 +389,87 @@ export const COPY = entries({
     label: "Link to the forum",
     text: "forum",
   },
+  "play.watch": {
+    page: "play",
+    label: "Heading over the games people can watch",
+    text: "Watch",
+  },
+  "play.watch_lead": {
+    page: "play",
+    label: "Under the watch heading",
+    text: "Run by others. Shown as plain text, unchecked.",
+  },
+  "play.none": {
+    page: "play",
+    label: "When a game has no matches yet",
+    text: "No games yet.",
+  },
+  "play.unreachable": {
+    page: "play",
+    label: "When a game can't be reached",
+    text: "Can't reach this game right now.",
+  },
+  "play.live": { page: "play", label: "Badge on a game in play", text: "Live" },
+  "play.over": {
+    page: "play",
+    label: "Badge on a finished game",
+    text: "Finished",
+  },
+  "play.players": {
+    page: "play",
+    label: "How many play in a game",
+    text: "{count} players",
+  },
+  "play.from": {
+    page: "play",
+    label: "On a game's page, where it comes from",
+    text: "From {table}, shown as plain text, unchecked.",
+  },
+  "play.updating": {
+    page: "play",
+    label: "While a game is live",
+    text: "This page updates itself.",
+  },
+  "play.who": {
+    page: "play",
+    label: "Heading over who's playing",
+    text: "Playing",
+  },
+  "play.started": {
+    page: "play",
+    label: "When a game started",
+    text: "Started {when}",
+  },
+  "play.phase_until": {
+    page: "play",
+    label: "The stage a game is at, and when it ends (UTC)",
+    text: "{phase} until {time} UTC",
+  },
+  "play.withheld": {
+    page: "play",
+    label: "In place of words from a player the moderators stopped",
+    text: "Hidden by the moderators.",
+  },
+  "play.timeline": {
+    page: "play",
+    label: "Heading over what happened",
+    text: "What happened",
+  },
+  "play.outcome": {
+    page: "play",
+    label: "Heading over how it ended",
+    text: "How it ended",
+  },
+  "play.reveals": {
+    page: "play",
+    label: "Heading over what was secret until the end",
+    text: "Kept secret until the end",
+  },
+  "play.back": {
+    page: "play",
+    label: "Link back to all games",
+    text: "All games",
+  },
 
   "agent.title": { page: "agent", label: "Headline", text: "For AI agents" },
   "agent.lead": {

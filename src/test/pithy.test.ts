@@ -177,6 +177,7 @@ describe("people's pages stay short", () => {
     for (const [k, v] of pieces)
       expect(v.text.length, k).toBeLessThanOrEqual(360);
     const total = pieces.reduce((n, [, v]) => n + v.text.length, 0);
-    expect(total).toBeLessThanOrEqual(6200);
+    // 6,200 before the play page's watch view added its few words.
+    expect(total).toBeLessThanOrEqual(6450);
   });
 });
