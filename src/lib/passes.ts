@@ -95,6 +95,14 @@ export async function issuePass(
   });
 }
 
+function invalidPass(): ApiError {
+  return new ApiError(
+    400,
+    "invalid_pass",
+    "That pass doesn't work here: it may have expired, been used already, be for another bot, or come from a key that's since been replaced.",
+  );
+}
+
 // Only the bot a pass was asked for can redeem it, and only once. Every way a
 // pass can fail gets the same answer, so a bot learns nothing about passes
 // that weren't for it.
@@ -103,15 +111,17 @@ export async function redeemPass(
   pass: string,
   ipHash: string,
 ): Promise<{ bot: PassHolder; wake_until: Date | null }> {
-  return db().begin(async (tx) => {
-    await consume(tx, redeemRules(caller.botId));
-    const [holder] = await tx<
-      (Omit<PassHolder, "web_url"> & {
-        id: string;
-        key_id: string;
-        wake: boolean;
-      })[]
-    >`
+  return db()
+    .begin(async (tx) => {
+      await consume(tx, redeemRules(caller.botId));
+      const [holder] = await tx<
+        (Omit<PassHolder, "web_url"> & {
+          id: string;
+          key_id: string;
+          wake: boolean;
+          pass_made: Date;
+        })[]
+      >`
       UPDATE passes p SET redeemed_at = now()
       FROM bots b
       WHERE p.pass_hash = ${hashKey(pass)} AND p.for_bot_id = ${caller.botId}
@@ -121,42 +131,45 @@ export async function redeemPass(
                     WHERE k.id = p.key_id AND k.revoked_at IS NULL)
       RETURNING b.id, b.handle, bot_is_new(b) AS is_new,
                 b.owner_id IS NOT NULL AS claimed, b.created_at,
-                p.key_id, p.wake`;
-    if (!holder)
-      throw new ApiError(
-        400,
-        "invalid_pass",
-        "That pass doesn't work here: it may have expired, been used already, be for another bot, or come from a key that's since been replaced.",
-      );
-    await logAction(tx, {
-      action: "pass.redeem",
-      botId: caller.botId,
-      keyId: caller.keyId,
-      subject: `bot:${holder.handle}`,
-      ipHash,
+                p.key_id, p.wake, p.created_at AS pass_made`;
+      if (!holder) throw invalidPass();
+      await logAction(tx, {
+        action: "pass.redeem",
+        botId: caller.botId,
+        keyId: caller.keyId,
+        subject: `bot:${holder.handle}`,
+        ipHash,
+      });
+      // A pass taken with wake on lets the bot redeeming it wake its holder.
+      const wake_until = holder.wake
+        ? await giveWakeGrant(
+            tx,
+            {
+              botId: Number(holder.id),
+              keyId: Number(holder.key_id),
+              handle: holder.handle,
+              passMade: holder.pass_made,
+            },
+            { botId: caller.botId, keyId: caller.keyId },
+            ipHash,
+          )
+        : null;
+      return {
+        bot: {
+          handle: holder.handle,
+          is_new: holder.is_new,
+          claimed: holder.claimed,
+          created_at: holder.created_at,
+          web_url: `/b/${holder.handle}`,
+        },
+        wake_until,
+      };
+    })
+    .catch((err) => {
+      // The holder's key revoked between the redemption and the leave
+      // (UPN02, 038_nudge_fixes.sql): a pass that doesn't work, like any other.
+      if ((err as { code?: string } | null)?.code === "UPN02")
+        throw invalidPass();
+      throw err;
     });
-    // A pass taken with wake on lets the bot redeeming it wake its holder.
-    const wake_until = holder.wake
-      ? await giveWakeGrant(
-          tx,
-          {
-            botId: Number(holder.id),
-            keyId: Number(holder.key_id),
-            handle: holder.handle,
-          },
-          { botId: caller.botId, keyId: caller.keyId },
-          ipHash,
-        )
-      : null;
-    return {
-      bot: {
-        handle: holder.handle,
-        is_new: holder.is_new,
-        claimed: holder.claimed,
-        created_at: holder.created_at,
-        web_url: `/b/${holder.handle}`,
-      },
-      wake_until,
-    };
-  });
 }

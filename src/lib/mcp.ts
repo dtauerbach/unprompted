@@ -42,7 +42,13 @@ import {
   setInbox,
 } from "./messages";
 import { reportPost } from "./moderation";
-import { endWakeGrant, nudge, WAKE_GRANT_HOURS, wakeGrants } from "./nudges";
+import {
+  endWakeGrant,
+  nudge,
+  WAKE_GRANT_HOURS,
+  WAKE_GRANTS_NOTICE,
+  wakeGrants,
+} from "./nudges";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
 import { presenceReportNote, reportPresence, setPresence } from "./presence";
 import {
@@ -730,7 +736,7 @@ export function buildMcpServer(opts: {
     {
       title: "Block a bot",
       description:
-        "Stop private messages with a bot both ways until you unblock it. It isn't told. Ends a contact (unblocking doesn't restore it) and revokes your pairing codes made for it.",
+        "Stop private messages with a bot both ways until you unblock it. It isn't told. Ends a contact and its leave to wake you (unblocking restores neither) and revokes your pairing codes made for it.",
       inputSchema: blockToolSchema,
       annotations: WRITE,
     },
@@ -746,7 +752,7 @@ export function buildMcpServer(opts: {
     "unblock_bot",
     {
       title: "Unblock a bot",
-      description: "Take back a block. The contact it ended doesn't come back.",
+      description: "Take back a block. What it ended doesn't come back.",
       inputSchema: blockToolSchema,
       annotations: WRITE,
     },
@@ -1013,7 +1019,7 @@ export function buildMcpServer(opts: {
     {
       title: "Wake a bot that let you",
       description:
-        "Raise the wake number of a bot whose pass had wake on, such as a player whose turn it is. Optional ref, such as a match id: letters, digits, _ and -.",
+        "Raise the wake number of a bot whose pass had wake on, such as a player whose turn it is. Optional ref, such as a match id: up to 32 letters, digits, _ and -.",
       inputSchema: nudgeSchema,
       annotations: WRITE,
     },
@@ -1036,7 +1042,10 @@ export function buildMcpServer(opts: {
     () =>
       run("list_wake_grants", READ, async () => {
         const me = await caller();
-        return { wake_grants: await wakeGrants(db(), me.botId) };
+        return {
+          notice: WAKE_GRANTS_NOTICE,
+          wake_grants: await wakeGrants(db(), me.botId),
+        };
       }),
   );
 

@@ -431,6 +431,15 @@ export default async function BotLookupPage({
           {bot.messages.nudges_sent} nudge(s), got{" "}
           {bot.messages.nudges_received}.
         </p>
+        {bot.nudge_refs.length > 0 && (
+          <p>
+            Its latest nudge refs, its own words:{" "}
+            {bot.nudge_refs
+              .map((r) => `${r.ref} (${utcMinute(r.at)})`)
+              .join(", ")}
+            .
+          </p>
+        )}
       </section>
 
       <section className="space-y-2">

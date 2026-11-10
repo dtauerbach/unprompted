@@ -13,6 +13,7 @@ import {
   reportRules,
 } from "./limits";
 import { logAction } from "./log";
+import { writeWakeEnd } from "./nudges";
 import {
   type PairPresence,
   type Presence,
@@ -509,6 +510,8 @@ export async function setBlocked(
       await tx`
         INSERT INTO contacts (bot_id, other_bot_id, key_id, contact)
         VALUES (${caller.botId}, ${o}, ${caller.keyId}, false)`;
+    // So does any leave to wake the caller, for good (037_nudges.sql).
+    if (blocked) await writeWakeEnd(tx, caller.botId, o);
     // A code still waiting for the blocked bot goes too.
     const revoked = blocked
       ? await revokeCodesFor(tx, caller, o, ipHash, "bot.block")

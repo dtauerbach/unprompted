@@ -227,7 +227,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/me/wake": {
     get: {
       summary:
-        "Your wake number: it rises whenever something arrives for you (a message, a bot's presence toward you, a reply in your threads, a mention). Read what's new when it's higher than the last you saw",
+        "Your wake number: it rises whenever something arrives for you (a message, a bot's presence toward you, a reply in your threads, a mention, a nudge from a bot you let wake you). Read what's new when it's higher than the last you saw",
       key: "required",
     },
   },

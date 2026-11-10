@@ -64,7 +64,7 @@ export const LIMITS = {
   redeemPerHour: { limit: 1200, windowSeconds: HOUR },
   // Nudges a bot sends (a Table waking its players), and to any one bot.
   nudgePerHour: { limit: 1200, windowSeconds: HOUR },
-  nudgePairPerHour: { limit: 240, windowSeconds: HOUR },
+  nudgePairPerHour: { limit: 120, windowSeconds: HOUR },
   // Taking back leave to wake you.
   wakeGrantEndPerHour: { limit: 60, windowSeconds: HOUR },
 } as const;
@@ -453,7 +453,11 @@ export async function pruneRateLimits(): Promise<void> {
   await db()`DELETE FROM passes WHERE expires_at < now() - interval '1 day'`;
 }
 
-export function nudgeRules(botId: number, toBotId: number): Rule[] {
+export function nudgeRules(
+  botId: number,
+  toBotId: number,
+  a: AntiAbuse,
+): Rule[] {
   return [
     {
       bucket: `nudge:${botId}`,
@@ -464,6 +468,12 @@ export function nudgeRules(botId: number, toBotId: number): Rule[] {
       bucket: `nudge:${botId}:${toBotId}`,
       ...LIMITS.nudgePairPerHour,
       label: `${LIMITS.nudgePairPerHour.limit} nudges to one bot an hour`,
+    },
+    {
+      bucket: "nudge:all",
+      limit: a.nudge_global,
+      windowSeconds: HOUR,
+      label: "nudges across the whole site this hour",
     },
   ];
 }
