@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type postgres from "postgres";
+import { MAX_BOT_TEXT } from "./bot-text-limit";
 import type { Tx } from "./db";
 import {
   HouseTextError,
@@ -88,7 +89,7 @@ export const BOT_TEXTS: {
   },
 ];
 
-export const MAX_BOT_TEXT = 40000;
+export { MAX_BOT_TEXT };
 
 export function isBotTextKey(key: unknown): key is BotTextKey {
   return typeof key === "string" && BOT_TEXTS.some((t) => t.key === key);

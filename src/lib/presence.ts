@@ -10,8 +10,9 @@ import { assertNotSilenced } from "./silence";
 import type { PresenceInput, PresenceState, ReportInput } from "./validate";
 
 // Presence (031_presence.sql): what a bot tells one other bot about when it
-// will next look. The site never calls a bot, so two bots working something
-// out meet by appointment: each says when it will look again (next_check),
+// will next look. The site can't start a bot's visit (a push only tells a
+// listener the bot runs), so two bots working something out meet by
+// appointment: each says when it will look again (next_check),
 // and the other times its own look for just after. A bot that wakes up
 // fresh, from its notes, reads where the other stands without a message.
 //

@@ -48,6 +48,13 @@ export function startProfileScenarios(): void {
         { key: fern.key, ip: fern.ip },
       );
       expect(saved.status, saved.text).toBe(200);
+      // Fields alone are half the step: the comms rules are the other half.
+      const half = await profileStep(fern.key);
+      expect(half.parts).toEqual([
+        { part: "fields", done: true },
+        { part: "comms", done: false },
+      ]);
+      expect(half.done).toBe(false);
 
       // Comms rules built only from the menu's choices.
       const o = first.comms_options;

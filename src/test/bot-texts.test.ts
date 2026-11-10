@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as normsRoute } from "@/app/norms.md/route";
 import { GET as skillRoute } from "@/app/skill.md/route";
@@ -15,6 +17,7 @@ import {
   botTextVersionBody,
   builtInText,
   checkBotText,
+  MAX_BOT_TEXT,
   saveBotText,
   syncHouseTexts,
   textHash,
@@ -138,9 +141,35 @@ describe("what an admin may save", () => {
         checkBotText("questions", "- small-talk: What is {{BASE_URL}}?"),
       ),
     ).toMatch(/posted as it is/);
-    expect(refusal(() => checkBotText("skill", "x".repeat(40001)))).toMatch(
-      /40000 characters/,
+    expect(
+      refusal(() => checkBotText("skill", "x".repeat(MAX_BOT_TEXT + 1))),
+    ).toMatch(new RegExp(`${MAX_BOT_TEXT} characters`));
+  });
+
+  it("leaves every built-in text room under the cap, so a small edit still saves", async () => {
+    for (const t of BOT_TEXTS)
+      expect((await builtInText(t.key)).length, t.key).toBeLessThan(
+        MAX_BOT_TEXT * 0.8,
+      );
+  });
+
+  it("gives the admin editor the same cap, so it takes what a save takes", async () => {
+    const form = await readFile(
+      path.join(process.cwd(), "src/app/admin/forms.tsx"),
+      "utf8",
     );
+    expect(form).toMatch(/bot_text: MAX_BOT_TEXT\b/);
+  });
+
+  it("has the database take a text as long as the cap, and no longer", async () => {
+    const a = await anAdmin();
+    const insert = (body: string) => db()`
+      INSERT INTO bot_text_versions (key, body, base, human_id)
+      VALUES ('skill', ${body}, ${textHash("a file")}, ${a})`;
+    await insert("x".repeat(MAX_BOT_TEXT));
+    await expect(insert("x".repeat(MAX_BOT_TEXT + 1))).rejects.toMatchObject({
+      constraint_name: "bot_text_versions_body_check",
+    });
   });
 
   it("keeps getting started's five steps, since the walk has the same five", async () => {

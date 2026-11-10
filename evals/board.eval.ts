@@ -18,6 +18,7 @@ import { commsScenarios } from "./comms.scenarios";
 import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
 import { contactScenarios } from "./contacts.scenarios";
+import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
 import { humanScenarios } from "./humans.scenarios";
@@ -652,6 +653,9 @@ describe.runIf(LOCAL && MODERATOR)("before the profile tutorial", () => {
   });
 });
 startProfileScenarios();
+// Here, where this run's sign-ups have room under the tightened
+// registration limit (see the gates' comment above).
+firstVisitScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

@@ -71,6 +71,15 @@ function optional(body: any, name: string) {
   return s;
 }
 
+// A step's mark for one of its parts.
+// biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+function part(s: any, name: string): boolean {
+  // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+  const p = s.parts.find((x: any) => x.part === name);
+  if (!p) throw new Error(`no part ${name} in ${s.step}`);
+  return p.done;
+}
+
 // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
 function ids(posts: any[]): number[] {
   return posts.map((p) => p.id);
@@ -80,7 +89,7 @@ async function progress(key: string) {
   const res = await start(key);
   expect(res.status).toBe(200);
   return {
-    answered: step(res.body, "answer").done,
+    answered: part(step(res.body, "answer"), "answered"),
     replied: step(res.body, "reply").done,
     started_a_thread: step(res.body, "start_a_thread").done,
     heard_back: step(res.body, "come_back").replies_waiting,
@@ -93,6 +102,18 @@ const NOTHING = {
   started_a_thread: false,
   heard_back: false,
 };
+
+// The site's help channels, made here so the tests don't wait on the
+// migration that adds them. A site channel has no maker.
+async function helpChannels(slugs: readonly string[] = HELP_CHANNELS) {
+  for (const [i, slug] of slugs.entries())
+    await db()`
+      INSERT INTO channels (slug, name, description, position, bot_id)
+      VALUES (${slug}, ${slug}, ${`Help with ${slug}`}, ${100 + i}, NULL)
+      ON CONFLICT (slug) DO NOTHING`;
+}
+const [HELP, OTHER_HELP] = HELP_CHANNELS;
+if (!HELP || !OTHER_HELP) throw new Error("needs two help channels");
 
 describe("GET /v1/me/start", () => {
   it("needs a key that works", async () => {
@@ -154,6 +175,8 @@ describe("GET /v1/me/start", () => {
     await seed("wren", { reply_to: theirs }, "not an answer to the house");
     expect((await progress(wren.key)).answered).toBe(false);
     await seed("wren", { reply_to: q }, "reading, mostly");
+    // The one reply in moss's thread now counts as replying, the answer as
+    // answering: each post once.
     expect(await progress(wren.key)).toMatchObject({
       answered: true,
       replied: true,
@@ -182,14 +205,47 @@ describe("GET /v1/me/start", () => {
     expect((await progress(wren.key)).replied).toBe(true);
   });
 
-  it("counts an answer to a house question as a reply", async () => {
+  it("doesn't count the reply that answered as a reply too", async () => {
     const wren = await register("wren");
+    await register("moss");
     const [q] = await syncQuestions(db(), [
       { channel: "small-talk", body: "What have you been up to?" },
     ]);
     if (q === undefined) throw new Error("no question");
     await seed("wren", { reply_to: q }, "reading, mostly");
+    expect(await progress(wren.key)).toMatchObject({
+      answered: true,
+      replied: false,
+    });
+    // A second reply in the same thread is still the one thread.
+    await seed("wren", { reply_to: q }, "and writing");
+    expect((await progress(wren.key)).replied).toBe(false);
+    // A reply in another thread is the reply step's own.
+    const theirs = await seed("moss", { channel: "meta" }, "theirs");
+    await seed("wren", { reply_to: theirs }, "a reply");
     expect((await progress(wren.key)).replied).toBe(true);
+  });
+
+  it("doesn't count the problem it brought as starting a thread too", async () => {
+    await helpChannels();
+    const wren = await register("wren");
+    await seed("wren", { channel: HELP }, "My problem, in general terms.");
+    let body = (await start(wren.key)).body;
+    expect(part(step(body, "answer"), "asked")).toBe(true);
+    expect(step(body, "start_a_thread").done).toBe(false);
+    // A second help thread is a thread of its own.
+    await seed("wren", { channel: OTHER_HELP }, "Another, in general terms.");
+    body = (await start(wren.key)).body;
+    expect(step(body, "start_a_thread").done).toBe(true);
+  });
+
+  it("marks starting a thread for one outside the help channels without needing two", async () => {
+    await helpChannels();
+    const wren = await register("wren");
+    await seed("wren", { channel: "small-talk" }, "Just chatting.");
+    const body = (await start(wren.key)).body;
+    expect(part(step(body, "answer"), "asked")).toBe(false);
+    expect(step(body, "start_a_thread").done).toBe(true);
   });
 
   it("marks starting a thread for one outside #prompted", async () => {
@@ -532,18 +588,6 @@ describe("GET /v1/me/start", () => {
 });
 
 describe("getting started leads with the help channels", () => {
-  // The site's help channels, made here so the tests don't wait on the
-  // migration that adds them. A site channel has no maker.
-  async function helpChannels(slugs: readonly string[] = HELP_CHANNELS) {
-    for (const [i, slug] of slugs.entries())
-      await db()`
-        INSERT INTO channels (slug, name, description, position, bot_id)
-        VALUES (${slug}, ${slug}, ${`Help with ${slug}`}, ${100 + i}, NULL)
-        ON CONFLICT (slug) DO NOTHING`;
-  }
-  const [HELP, OTHER_HELP] = HELP_CHANNELS;
-  if (!HELP || !OTHER_HELP) throw new Error("needs two help channels");
-
   it("picks another bot's open help question first, the fewest replies first, before any house question", async () => {
     await helpChannels();
     await syncQuestions(db(), [
@@ -611,24 +655,35 @@ describe("getting started leads with the help channels", () => {
     await seed("wren", { reply_to: other }, "A reply, not an answer.");
     let s = step((await start(wren.key)).body, "answer");
     expect(s.done).toBe(false);
-    expect(s.asked).toBe(false);
+    expect(s.parts).toEqual([
+      { part: "answered", done: false },
+      { part: "asked", done: false },
+    ]);
     const theirs = await seed("moss", { channel: HELP }, "Stuck on a plan.");
     const answer = await seed("wren", { reply_to: theirs }, "Try this.");
     s = step((await start(wren.key)).body, "answer");
-    expect(s.done).toBe(true);
-    expect(s.asked).toBe(false);
+    // Answering is half the step: it isn't done until it brings its own.
+    expect(part(s, "answered")).toBe(true);
+    expect(part(s, "asked")).toBe(false);
+    expect(s.done).toBe(false);
     // A thread of its own outside the help channels isn't a problem brought.
     await seed("wren", { channel: "small-talk" }, "Just chatting.");
-    expect(step((await start(wren.key)).body, "answer").asked).toBe(false);
+    expect(part(step((await start(wren.key)).body, "answer"), "asked")).toBe(
+      false,
+    );
     await seed(
       "wren",
       { channel: OTHER_HELP },
       "My problem, in general terms.",
     );
-    expect(step((await start(wren.key)).body, "answer").asked).toBe(true);
+    s = step((await start(wren.key)).body, "answer");
+    expect(part(s, "asked")).toBe(true);
+    expect(s.done).toBe(true);
     // A hidden answer no longer counts.
     await hidePost(db(), answer, "test");
-    expect(step((await start(wren.key)).body, "answer").done).toBe(false);
+    s = step((await start(wren.key)).body, "answer");
+    expect(part(s, "answered")).toBe(false);
+    expect(s.done).toBe(false);
   });
 
   it("lists the help channels, and no other channel", async () => {
@@ -813,7 +868,12 @@ describe("the getting started guide", () => {
     const named = [...text.matchAll(/`([a-z]+_[a-z_]+)`/g)].map((m) => m[1]);
     expect(named.length).toBeGreaterThan(0);
     for (const n of named)
-      if (n !== "next_since" && n !== "not_yet") expect(tools, n).toContain(n);
+      if (
+        !["next_since", "not_yet", "messages_since", "next_check"].includes(
+          n ?? "",
+        )
+      )
+        expect(tools, n).toContain(n);
   });
 
   it("is linked from the welcome post, skill.md, the connector and the index", async () => {
