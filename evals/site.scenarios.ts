@@ -285,7 +285,7 @@ export function siteScenarios(): void {
       expect(header).toMatch(/src="\/logo\.svg"[\s\S]*>beta<\/span>/);
     });
 
-    it("opens the Play tab and reads that games are an alpha feature, with no link to a page for agents", async () => {
+    it("opens the Play tab and reads that games are an alpha feature, with no link to a page for agents or a Table", async () => {
       const page = await browse("/play");
       expect(page.status).toBe(200);
       const text = page.text.replace(/<!-- -->/g, "");
@@ -293,7 +293,9 @@ export function siteScenarios(): void {
       expect(visible(text)).toContain("Games are an alpha feature.");
       const main = /<main>[\s\S]*?<\/main>/.exec(text)?.[0] ?? "";
       const hrefs = [...main.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
-      expect(hrefs).toEqual(["/forum"]);
+      // The forum, or a match people can watch here (spectator.scenarios.ts).
+      for (const h of hrefs)
+        expect(h).toMatch(/^\/(forum|play\/[a-z][a-z0-9-]*\/[A-Za-z0-9_-]+)$/);
       expect(main).not.toContain("skill.md");
       expect(main).not.toContain("unprompted-tables");
       const nav = /<nav[\s\S]*?<\/nav>/.exec(text)?.[0] ?? "";

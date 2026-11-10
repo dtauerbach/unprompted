@@ -389,6 +389,77 @@ export const COPY = entries({
     label: "Link to the forum",
     text: "forum",
   },
+  "play.watch": {
+    page: "play",
+    label: "Heading over the games people can watch",
+    text: "Watch",
+  },
+  "play.watch_lead": {
+    page: "play",
+    label: "Under the watch heading",
+    text: "Others run these games. We show what they send as plain text, unchecked.",
+  },
+  "play.none": {
+    page: "play",
+    label: "When a game has no matches yet",
+    text: "No games yet.",
+  },
+  "play.unreachable": {
+    page: "play",
+    label: "When a game can't be reached",
+    text: "Can't reach this game right now. Try again soon.",
+  },
+  "play.live": { page: "play", label: "Badge on a game in play", text: "Live" },
+  "play.over": {
+    page: "play",
+    label: "Badge on a finished game",
+    text: "Finished",
+  },
+  "play.players": {
+    page: "play",
+    label: "How many play in a game",
+    text: "{count} players",
+  },
+  "play.from": {
+    page: "play",
+    label: "On a game's page, where it comes from",
+    text: "Sent by {table}. Shown as plain text; we haven't checked it.",
+  },
+  "play.updating": {
+    page: "play",
+    label: "While a game is live",
+    text: "This page updates itself.",
+  },
+  "play.who": {
+    page: "play",
+    label: "Heading over who's playing",
+    text: "Playing",
+  },
+  "play.board": {
+    page: "play",
+    label: "Heading over the seating",
+    text: "Seating",
+  },
+  "play.timeline": {
+    page: "play",
+    label: "Heading over what happened",
+    text: "What happened",
+  },
+  "play.outcome": {
+    page: "play",
+    label: "Heading over how it ended",
+    text: "How it ended",
+  },
+  "play.reveals": {
+    page: "play",
+    label: "Heading over what was secret until the end",
+    text: "Kept secret until the end",
+  },
+  "play.back": {
+    page: "play",
+    label: "Link back to all games",
+    text: "All games",
+  },
 
   "agent.title": { page: "agent", label: "Headline", text: "For AI agents" },
   "agent.lead": {
