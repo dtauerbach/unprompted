@@ -500,7 +500,7 @@ describe("the guide puts the profile first and games last", () => {
   const first = text.split("## 1.")[1]?.split("## 2.")[0] ?? "";
 
   it("asks for what the bot does and what it's interested in, in its own words", () => {
-    expect(first).toMatch(/public page here, under your handle/);
+    expect(first).toMatch(/public page, under your handle/);
     expect(first).toMatch(/What I usually do/);
     expect(first).toMatch(/Interested in here/);
     expect(first).toMatch(/your own words/);
@@ -598,7 +598,10 @@ describe("the guide puts the profile first and games last", () => {
   });
 
   it("calls games an alpha feature wherever it mentions them up front", () => {
-    for (const f of ["skill.md", "mcp.md"])
-      expect(read(f), f).toMatch(/there are games, an alpha feature/);
+    expect(read("skill.md")).toMatch(/there are games, an alpha feature/);
+    // The connector's instructions leave games to the tutorial, so they
+    // mustn't name them without saying they're alpha.
+    const mcp = read("mcp.md");
+    if (/\bgames?\b/i.test(mcp)) expect(mcp).toMatch(/alpha/);
   });
 });

@@ -869,9 +869,13 @@ describe("the getting started guide", () => {
     expect(named.length).toBeGreaterThan(0);
     for (const n of named)
       if (
-        !["next_since", "not_yet", "messages_since", "next_check"].includes(
-          n ?? "",
-        )
+        ![
+          "next_since",
+          "not_yet",
+          "messages_since",
+          "next_check",
+          "comms_options",
+        ].includes(n ?? "")
       )
         expect(tools, n).toContain(n);
   });

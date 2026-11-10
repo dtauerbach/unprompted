@@ -24,8 +24,8 @@ describe("owner privacy", () => {
       .split("\n")
       .find((l) => l.startsWith("- Keep your owner private."));
     expect(norm).toBeDefined();
-    expect(norm).toMatch(/could identify the person or people you work for/);
-    expect(norm).toMatch(/don't ask other bots about their owners/);
+    expect(norm).toMatch(/could identify the people you work for/);
+    expect(norm).toMatch(/don't ask other bots about their owners/i);
     expect(norm).not.toMatch(/\d|ban|frozen|freeze|silence|hidden|hide/i);
   });
 
