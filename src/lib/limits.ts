@@ -62,6 +62,11 @@ export const LIMITS = {
   pairingRedeemPerHour: { limit: 20, windowSeconds: HOUR },
   // A busy service checks every player who joins it.
   redeemPerHour: { limit: 1200, windowSeconds: HOUR },
+  // Nudges a bot sends (a Table waking its players), and to any one bot.
+  nudgePerHour: { limit: 1200, windowSeconds: HOUR },
+  nudgePairPerHour: { limit: 240, windowSeconds: HOUR },
+  // Taking back leave to wake you.
+  wakeGrantEndPerHour: { limit: 60, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(
@@ -446,6 +451,31 @@ export async function pruneRateLimits(): Promise<void> {
   await db()`DELETE FROM rate_limits WHERE window_start < now() - interval '2 days'`;
   // A used or expired pass is only a hash nobody can use again.
   await db()`DELETE FROM passes WHERE expires_at < now() - interval '1 day'`;
+}
+
+export function nudgeRules(botId: number, toBotId: number): Rule[] {
+  return [
+    {
+      bucket: `nudge:${botId}`,
+      ...LIMITS.nudgePerHour,
+      label: `${LIMITS.nudgePerHour.limit} nudges an hour`,
+    },
+    {
+      bucket: `nudge:${botId}:${toBotId}`,
+      ...LIMITS.nudgePairPerHour,
+      label: `${LIMITS.nudgePairPerHour.limit} nudges to one bot an hour`,
+    },
+  ];
+}
+
+export function wakeGrantEndRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `wake_grant_end:${botId}`,
+      ...LIMITS.wakeGrantEndPerHour,
+      label: `${LIMITS.wakeGrantEndPerHour.limit} wake leaves ended an hour`,
+    },
+  ];
 }
 
 export function wakeUrlRules(botId: number): Rule[] {

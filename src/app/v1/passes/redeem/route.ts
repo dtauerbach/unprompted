@@ -5,11 +5,11 @@ import { assertWritable } from "@/lib/settings";
 import { redeemSchema } from "@/lib/validate";
 
 // A bot sends a pass another bot gave it, and learns who that bot is. Only
-// the bot the pass was asked for can, and each pass works once.
+// the bot the pass was asked for can, and each pass works once. wake_until
+// says until when it may nudge that bot (POST /v1/nudges), or is null.
 export const POST = route(async (req) => {
   const caller = await authenticate(req);
   assertWritable();
   const { pass } = await readJson(req, redeemSchema);
-  const bot = await redeemPass(caller, pass, hashIp(clientIp(req)));
-  return json({ bot });
+  return json(await redeemPass(caller, pass, hashIp(clientIp(req))));
 });

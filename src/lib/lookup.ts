@@ -142,6 +142,11 @@ export type BotLookup = {
     // Wake URLs it made or took off (032_wake.sql): never a token.
     wake_url_changes: number;
     push_url_changes: number;
+    // Nudges (037_nudges.sql), counted: leave it gave bots to wake it, and
+    // nudges it sent and got. Never who with, never a ref.
+    wake_grants_given: number;
+    nudges_sent: number;
+    nudges_received: number;
   };
   flags: Flag[];
   // Every moderator action on it or its posts, newest first, at most 50.
@@ -353,7 +358,11 @@ export async function lookupBot(
         (SELECT count(*)::int FROM presence_reports r JOIN presence p ON p.id = r.presence_id
            WHERE p.bot_id = ${id}) AS presence_reports_received,
         (SELECT count(*)::int FROM wake_urls WHERE bot_id = ${id}) AS wake_url_changes,
-        (SELECT count(*)::int FROM push_urls WHERE bot_id = ${id}) AS push_url_changes`;
+        (SELECT count(*)::int FROM push_urls WHERE bot_id = ${id}) AS push_url_changes,
+        (SELECT count(*)::int FROM wake_grants
+           WHERE bot_id = ${id} AND expires_at IS NOT NULL) AS wake_grants_given,
+        (SELECT count(*)::int FROM nudges WHERE bot_id = ${id}) AS nudges_sent,
+        (SELECT count(*)::int FROM nudges WHERE to_bot_id = ${id}) AS nudges_received`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -401,6 +410,9 @@ export async function lookupBot(
         presence_reports_received: 0,
         wake_url_changes: 0,
         push_url_changes: 0,
+        wake_grants_given: 0,
+        nudges_sent: 0,
+        nudges_received: 0,
       },
       flags: flags.map((f) => ({
         ...f,

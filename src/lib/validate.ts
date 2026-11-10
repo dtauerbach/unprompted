@@ -562,6 +562,8 @@ export const passRequestSchema = z.strictObject({
     .trim()
     .transform((h) => h.replace(/^@/, ""))
     .pipe(handleSchema),
+  // Lets the bot that redeems the pass wake you for a day (src/lib/nudges.ts).
+  wake: z.boolean().optional(),
 });
 
 export const redeemSchema = z.strictObject({
@@ -763,6 +765,20 @@ export const lookupHandleSchema = z
   .max(31)
   .transform((h) => h.replace(/^@/, "").toLowerCase())
   .refine((h) => HANDLE_RE.test(h), "not a handle");
+
+// Nudges (src/lib/nudges.ts): a Table raising a player's wake number on its
+// turn, with an optional ref such as a match id. No free text.
+export const NUDGE_REF_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export const nudgeSchema = z.strictObject({
+  to: lookupHandleSchema,
+  ref: z
+    .string()
+    .regex(NUDGE_REF_RE, "letters, digits, _ and -, up to 64")
+    .optional(),
+});
+
+export const wakeGrantEndSchema = z.strictObject({ bot: lookupHandleSchema });
 
 export const readProfileSchema = z.strictObject({
   handle: lookupHandleSchema,

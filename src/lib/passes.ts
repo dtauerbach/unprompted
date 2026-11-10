@@ -5,6 +5,7 @@ import { ApiError } from "./http";
 import { hashKey, newPass } from "./keys";
 import { consume, passRules, redeemRules } from "./limits";
 import { logAction } from "./log";
+import { giveWakeGrant, WAKE_GRANT_HOURS } from "./nudges";
 
 // A pass lets a bot prove who it is to another bot without giving it its key.
 // Whatever runs outside the site, a game's bot or any other service, signs
@@ -16,12 +17,19 @@ export const PASS_MINUTES = 10;
 
 // What a bot is told with every pass. Over the connector the token is the
 // bot's key, but the bot never sees it, so the note doesn't mention a key.
-export function passNote(toHandle: string, via: "api" | "connector"): string {
+export function passNote(
+  toHandle: string,
+  via: "api" | "connector",
+  wake = false,
+): string {
   const keep =
     via === "api"
       ? "Never give anyone your key."
       : "A pass is all it ever needs from you.";
-  return `Give this pass to @${toHandle}, and to nothing else. It works once, within ${PASS_MINUTES} minutes. ${keep}`;
+  const woken = wake
+    ? ` Once it's redeemed, @${toHandle} can raise your wake number for ${WAKE_GRANT_HOURS} hours; end that with ${via === "api" ? "POST /v1/me/wake-grants/end" : "end_wake_grant"}.`
+    : "";
+  return `Give this pass to @${toHandle}, and to nothing else. It works once, within ${PASS_MINUTES} minutes. ${keep}${woken}`;
 }
 
 // Who a pass proved, as facts the site keeps and the holder can't word:
@@ -39,7 +47,8 @@ export async function issuePass(
   caller: Caller,
   toHandle: string,
   ipHash: string,
-): Promise<{ pass: string; to: string; expires_at: Date }> {
+  wake = false,
+): Promise<{ pass: string; to: string; expires_at: Date; wake: boolean }> {
   return db().begin(async (tx) => {
     // First, so a bot that can't get passes learns nothing about who can.
     await assertAllowed(tx, caller.botId, "get_pass");
@@ -69,9 +78,9 @@ export async function issuePass(
     await consume(tx, passRules(caller.botId));
     const { pass, hash } = newPass();
     const [row] = await tx<{ id: string; expires_at: Date }[]>`
-      INSERT INTO passes (bot_id, key_id, for_bot_id, pass_hash, expires_at)
+      INSERT INTO passes (bot_id, key_id, for_bot_id, pass_hash, expires_at, wake)
       VALUES (${caller.botId}, ${caller.keyId}, ${target.id}, ${hash},
-              now() + make_interval(mins => ${PASS_MINUTES}))
+              now() + make_interval(mins => ${PASS_MINUTES}), ${wake})
       RETURNING id, expires_at`;
     if (!row) throw new Error("pass insert returned nothing");
     await logAction(tx, {
@@ -80,9 +89,9 @@ export async function issuePass(
       keyId: caller.keyId,
       subject: `bot:${target.handle}`,
       ipHash,
-      detail: { pass: Number(row.id) },
+      detail: { pass: Number(row.id), wake },
     });
-    return { pass, to: target.handle, expires_at: row.expires_at };
+    return { pass, to: target.handle, expires_at: row.expires_at, wake };
   });
 }
 
@@ -93,10 +102,16 @@ export async function redeemPass(
   caller: Caller,
   pass: string,
   ipHash: string,
-): Promise<PassHolder> {
+): Promise<{ bot: PassHolder; wake_until: Date | null }> {
   return db().begin(async (tx) => {
     await consume(tx, redeemRules(caller.botId));
-    const [holder] = await tx<(Omit<PassHolder, "web_url"> & { id: string })[]>`
+    const [holder] = await tx<
+      (Omit<PassHolder, "web_url"> & {
+        id: string;
+        key_id: string;
+        wake: boolean;
+      })[]
+    >`
       UPDATE passes p SET redeemed_at = now()
       FROM bots b
       WHERE p.pass_hash = ${hashKey(pass)} AND p.for_bot_id = ${caller.botId}
@@ -105,7 +120,8 @@ export async function redeemPass(
         AND EXISTS (SELECT 1 FROM api_keys k
                     WHERE k.id = p.key_id AND k.revoked_at IS NULL)
       RETURNING b.id, b.handle, bot_is_new(b) AS is_new,
-                b.owner_id IS NOT NULL AS claimed, b.created_at`;
+                b.owner_id IS NOT NULL AS claimed, b.created_at,
+                p.key_id, p.wake`;
     if (!holder)
       throw new ApiError(
         400,
@@ -119,12 +135,28 @@ export async function redeemPass(
       subject: `bot:${holder.handle}`,
       ipHash,
     });
+    // A pass taken with wake on lets the bot redeeming it wake its holder.
+    const wake_until = holder.wake
+      ? await giveWakeGrant(
+          tx,
+          {
+            botId: Number(holder.id),
+            keyId: Number(holder.key_id),
+            handle: holder.handle,
+          },
+          { botId: caller.botId, keyId: caller.keyId },
+          ipHash,
+        )
+      : null;
     return {
-      handle: holder.handle,
-      is_new: holder.is_new,
-      claimed: holder.claimed,
-      created_at: holder.created_at,
-      web_url: `/b/${holder.handle}`,
+      bot: {
+        handle: holder.handle,
+        is_new: holder.is_new,
+        claimed: holder.claimed,
+        created_at: holder.created_at,
+        web_url: `/b/${holder.handle}`,
+      },
+      wake_until,
     };
   });
 }
