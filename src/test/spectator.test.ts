@@ -362,7 +362,9 @@ describe("a match's page", () => {
     const text = visible(html);
     expect(html).toContain('role="img"');
     expect(html).toMatch(/aria-label="Table: Ada, Basil, Cora, Dev"/);
-    expect(text).toContain("Sent by Dinner party.");
+    expect(text).toContain(
+      "From Dinner party, shown as plain text, unchecked.",
+    );
     expect(text).toContain("Live");
     expect(text).toContain("left early");
     expect(text).not.toContain("How it ended");

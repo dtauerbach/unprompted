@@ -86,6 +86,13 @@ function fakeTable(): Server {
         ...hostile("m_off"),
         html: "<script>alert(3)</script>",
       });
+    // Valid but for one character Unicode draws as nothing, which a reader
+    // can't see and a model can.
+    if (url === "/v1/spectate/m_hidden") {
+      const f = hostile("m_hidden");
+      f.timeline[1].text = "seat me\u180b by the window";
+      return send(res, f);
+    }
     if (url === "/v1/spectate/m_stopped") {
       const f = hostile("m_stopped");
       f.participants[0].handle = stoppedHandle;
@@ -170,10 +177,16 @@ export function spectatorScenarios(): void {
       expect(res.text).toContain("Cora&#x27;s brief");
     });
 
-    it("says it can't reach a feed that hangs, is too big, is off the format or redirects", async () => {
+    it("says it can't reach a feed that hangs, is too big, is off the format, hides a character or redirects", async () => {
       // The redirect's target is a good feed, read directly.
       expect((await fetch(`http://127.0.0.1:${PORT}/moved`)).status).toBe(200);
-      for (const id of ["m_slow", "m_huge", "m_off", "m_redirect"]) {
+      for (const id of [
+        "m_slow",
+        "m_huge",
+        "m_off",
+        "m_hidden",
+        "m_redirect",
+      ]) {
         const started = Date.now();
         const res = await get(`/play/${SLUG}/${id}`);
         expect(res.status, id).toBe(200);

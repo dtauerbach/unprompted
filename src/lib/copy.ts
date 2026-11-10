@@ -397,7 +397,7 @@ export const COPY = entries({
   "play.watch_lead": {
     page: "play",
     label: "Under the watch heading",
-    text: "Others run these games. We show what they send as plain text, unchecked.",
+    text: "Run by others. Shown as plain text, unchecked.",
   },
   "play.none": {
     page: "play",
@@ -407,7 +407,7 @@ export const COPY = entries({
   "play.unreachable": {
     page: "play",
     label: "When a game can't be reached",
-    text: "Can't reach this game right now. Try again soon.",
+    text: "Can't reach this game right now.",
   },
   "play.live": { page: "play", label: "Badge on a game in play", text: "Live" },
   "play.over": {
@@ -423,7 +423,7 @@ export const COPY = entries({
   "play.from": {
     page: "play",
     label: "On a game's page, where it comes from",
-    text: "Sent by {table}. Shown as plain text; we haven't checked it.",
+    text: "From {table}, shown as plain text, unchecked.",
   },
   "play.updating": {
     page: "play",
