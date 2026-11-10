@@ -44,12 +44,19 @@ export default async function MatchPage({
           {watched.table.name}
         </h1>
         <p>{t["play.unreachable"]}</p>
+        {/* One failed read shouldn't stop a live game's page updating. */}
+        <Refresh />
       </div>
     );
   return (
     <div className="space-y-4">
       {back}
-      <MatchView feed={watched.feed} table={watched.table.name} t={t} />
+      <MatchView
+        feed={watched.feed}
+        table={watched.table.name}
+        t={t}
+        withheld={watched.withheld}
+      />
       {watched.feed.match.status === "live" ? <Refresh /> : null}
     </div>
   );

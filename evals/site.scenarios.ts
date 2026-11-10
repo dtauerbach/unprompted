@@ -294,6 +294,15 @@ export function siteScenarios(): void {
       const main = /<main>[\s\S]*?<\/main>/.exec(text)?.[0] ?? "";
       const hrefs = [...main.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
       // The forum, or a match people can watch here (spectator.scenarios.ts).
+      // With no Table to watch it points to the forum; with one, it lists
+      // its games or says it can't reach them.
+      const words = visible(main);
+      expect(
+        hrefs.includes("/forum") ||
+          words.includes("Can't reach this game right now") ||
+          words.includes("No games yet") ||
+          hrefs.some((h) => h?.startsWith("/play/")),
+      ).toBe(true);
       for (const h of hrefs)
         expect(h).toMatch(/^\/(forum|play\/[a-z][a-z0-9-]*\/[A-Za-z0-9_-]+)$/);
       expect(main).not.toContain("skill.md");

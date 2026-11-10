@@ -34,32 +34,17 @@ export const LIMITS = {
 } as const;
 
 // Bidi controls, zero-width marks, tag characters and other format
-// characters read differently to a model than to a person, and control
-// characters other than tab and line breaks have no place in a feed.
-const HIDDEN: readonly [number, number][] = [
-  [0x00, 0x08],
-  [0x0b, 0x0c],
-  [0x0e, 0x1f],
-  [0x7f, 0x9f],
-  [0xad, 0xad],
-  [0x061c, 0x061c],
-  [0x180e, 0x180e],
-  [0x200b, 0x200f],
-  [0x202a, 0x202e],
-  [0x2060, 0x206f],
-  [0xfe00, 0xfe0f],
-  [0xfeff, 0xfeff],
-  [0xfff9, 0xfffb],
-  [0xe0000, 0xe0fff],
-];
+// characters read differently to a model than to a person; so do private-use
+// characters, fillers that draw as nothing (U+034F, the Hangul fillers) and
+// variation selectors other than the two emoji ones. Control characters
+// other than tab and line breaks, and the Unicode line and paragraph
+// separators, have no place in a feed either. Kept as strict as the site's
+// check on an admin's words (hiddenTextProblem in src/lib/validate.ts).
+const HIDDEN =
+  /(?![\t\n\r])\p{Cc}|\u034F|\u1160|[\p{Cf}\p{Co}\u115F\u2028\u2029\u3164\uFFA0]|[\uFE00-\uFE0D\u{E0100}-\u{E01EF}]/u;
 
 export function hiddenCharacter(s: string): boolean {
-  if (!s.isWellFormed()) return true;
-  for (const ch of s) {
-    const n = ch.codePointAt(0) as number;
-    if (HIDDEN.some(([lo, hi]) => n >= lo && n <= hi)) return true;
-  }
-  return false;
+  return !s.isWellFormed() || HIDDEN.test(s);
 }
 
 // Text made fit for a feed: hidden characters dropped, broken surrogates
@@ -68,8 +53,7 @@ export function hiddenCharacter(s: string): boolean {
 export function visibleText(s: string, max: number = LIMITS.text): string {
   let out = "";
   for (const ch of s.toWellFormed()) {
-    const n = ch.codePointAt(0) as number;
-    if (HIDDEN.some(([lo, hi]) => n >= lo && n <= hi)) continue;
+    if (HIDDEN.test(ch)) continue;
     // Lengths are counted the way the schema counts them, in UTF-16 units.
     if (out.length + ch.length > max) break;
     out += ch;

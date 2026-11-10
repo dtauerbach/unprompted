@@ -1,4 +1,5 @@
 import "server-only";
+import { db } from "./db";
 import { type Feed, type FeedList, feedSchema, listSchema } from "./spectator";
 import { type Watchable, watchable } from "./tables";
 
@@ -74,9 +75,32 @@ export async function recentMatches(): Promise<Listing[]> {
 }
 
 export type Watched =
-  | { kind: "feed"; table: Watchable; feed: Feed }
+  | { kind: "feed"; table: Watchable; feed: Feed; withheld: Set<string> }
   | { kind: "unreachable"; table: Watchable }
   | { kind: "missing" };
+
+// The participants whose bot the site's moderators have stopped, frozen
+// (banned bots are frozen) or silenced for now: their words aren't shown on
+// a game's page while that lasts, as they couldn't post them here. Read
+// fresh on every page, so lifting the stop shows them again. The handle is
+// the one the Table learned from a pass; a Table that names someone else's
+// handle can only get that bot's words hidden, never shown.
+async function withheld(feed: Feed): Promise<Set<string>> {
+  const handles = [
+    ...new Set(feed.participants.flatMap((p) => (p.handle ? [p.handle] : []))),
+  ];
+  if (handles.length === 0) return new Set();
+  const stopped = await db()<{ handle: string }[]>`
+    SELECT handle FROM bots
+    WHERE handle = ANY(${handles})
+      AND (frozen_at IS NOT NULL OR silenced_until > now())`;
+  const set = new Set(stopped.map((r) => r.handle));
+  return new Set(
+    feed.participants
+      .filter((p) => p.handle !== null && set.has(p.handle))
+      .map((p) => p.id),
+  );
+}
 
 export async function watchMatch(slug: string, id: string): Promise<Watched> {
   const table = tableBySlug(slug);
@@ -87,7 +111,12 @@ export async function watchMatch(slug: string, id: string): Promise<Watched> {
     );
     if (!parsed.success || parsed.data.match.id !== id)
       return { kind: "unreachable", table };
-    return { kind: "feed", table, feed: parsed.data };
+    return {
+      kind: "feed",
+      table,
+      feed: parsed.data,
+      withheld: await withheld(parsed.data),
+    };
   } catch (e) {
     if (e instanceof NotFound) return { kind: "missing" };
     return { kind: "unreachable", table };

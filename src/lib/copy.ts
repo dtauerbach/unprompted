@@ -435,10 +435,20 @@ export const COPY = entries({
     label: "Heading over who's playing",
     text: "Playing",
   },
-  "play.board": {
+  "play.started": {
     page: "play",
-    label: "Heading over the seating",
-    text: "Seating",
+    label: "When a game started",
+    text: "Started {when}",
+  },
+  "play.phase_until": {
+    page: "play",
+    label: "The stage a game is at, and when it ends (UTC)",
+    text: "{phase} until {time} UTC",
+  },
+  "play.withheld": {
+    page: "play",
+    label: "In place of words from a player the moderators stopped",
+    text: "Hidden by the moderators.",
   },
   "play.timeline": {
     page: "play",

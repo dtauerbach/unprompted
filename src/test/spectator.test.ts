@@ -8,6 +8,7 @@ import PlayPage from "@/app/play/page";
 import { currentTab } from "@/components/nav";
 import { MatchView, shown } from "@/components/spectator";
 import { COPY, type Copy } from "@/lib/copy";
+import { db } from "@/lib/db";
 import { MAX_FEED_BYTES, recentMatches, watchMatch } from "@/lib/spectate";
 import {
   boardOf,
@@ -18,7 +19,7 @@ import {
   visibleText,
 } from "@/lib/spectator";
 import { TABLES, watchable } from "@/lib/tables";
-import { resetDb } from "./helpers";
+import { register, resetDb } from "./helpers";
 
 vi.mock("next/server", async (original) => ({
   ...(await original<typeof import("next/server")>()),
@@ -120,8 +121,24 @@ describe("the spectator feed format, as the site reads it", () => {
 
   it("finds hidden characters and strips them for a Table", () => {
     expect(hiddenCharacter("plain words")).toBe(false);
-    for (const c of ["‮", "​", "⁦", "﻿", "\u0007"])
+    for (const c of [
+      "‮",
+      "​",
+      "⁦",
+      "﻿",
+      "\u0007",
+      "\u2028",
+      "\u3164",
+      "\u034f",
+      "\ue000",
+      "\ufe01",
+      "\u{e0041}",
+      "\ud800",
+    ])
       expect(hiddenCharacter(`a${c}b`), c).toBe(true);
+    // Emoji keep their own selector; ordinary scripts and line breaks pass.
+    for (const ok of ["love ❤️", "日本語 ok", "two\nlines", "tab\there"])
+      expect(hiddenCharacter(ok), ok).toBe(false);
     expect(visibleText("a‮b​c")).toBe("abc");
     expect(visibleText("x".repeat(10), 4)).toBe("xxxx");
   });
@@ -152,6 +169,11 @@ describe("the spectator feed format, as the site reads it", () => {
     expect(shown(3, "number")).toBe("3");
     expect(shown(1.256, "number")).toBe("1.26");
     expect(shown(null, "number")).toBe("–");
+    // Anything but a finite number, such as what a key like "constructor"
+    // finds on an object's prototype, shows as a dash, never a crash.
+    expect(shown(() => 1, "number")).toBe("–");
+    expect(shown(() => 1, "percent")).toBe("–");
+    expect(shown("7", "number")).toBe("–");
   });
 });
 
@@ -228,16 +250,34 @@ describe("reading a Table's feed", () => {
   });
 
   it("stops reading a feed past the size cap", async () => {
-    const huge = new ReadableStream({
-      start(c) {
-        const chunk = new Uint8Array(256 * 1024).fill(32);
-        for (let n = 0; n * chunk.byteLength <= MAX_FEED_BYTES; n++)
-          c.enqueue(chunk);
-        c.close();
-      },
+    // A feed that's valid but for its size: whitespace inside the JSON pads
+    // it past the cap, so only the cap can refuse it.
+    const id = "m_AbCdEfGhIjKl";
+    const valid = JSON.stringify(fixture("live.json"));
+    const padded = (bytes: number) =>
+      `${valid.slice(0, -1)}${" ".repeat(bytes - valid.length)}}`;
+    const stream = (body: string) =>
+      new ReadableStream({
+        start(c) {
+          const all = new TextEncoder().encode(body);
+          for (let at = 0; at < all.length; at += 256 * 1024)
+            c.enqueue(all.slice(at, at + 256 * 1024));
+          c.close();
+        },
+      });
+    expect(
+      feedSchema.safeParse(JSON.parse(padded(MAX_FEED_BYTES + 10))).success,
+    ).toBe(true);
+    serve({
+      [`${LOCAL}/${id}`]: () =>
+        new Response(stream(padded(MAX_FEED_BYTES + 10))),
     });
-    serve({ [`${LOCAL}/m_big`]: () => new Response(huge) });
-    expect((await watchMatch("dinner", "m_big")).kind).toBe("unreachable");
+    expect((await watchMatch("dinner", id)).kind).toBe("unreachable");
+    serve({
+      [`${LOCAL}/${id}`]: () =>
+        new Response(stream(padded(MAX_FEED_BYTES - 10))),
+    });
+    expect((await watchMatch("dinner", id)).kind).toBe("feed");
   });
 });
 
@@ -293,6 +333,42 @@ describe("a match's page", () => {
     expect(text).not.toContain("updates itself");
   });
 
+  it("puts up with a score column named like an object's own property", () => {
+    const f = fixture("over.json");
+    f.outcome.scores.columns.push({
+      key: "constructor",
+      label: "Odd",
+      format: "percent",
+    });
+    const feed = feedSchema.parse(f);
+    const text = visible(
+      renderToStaticMarkup(
+        createElement(MatchView, { feed, table: "Dinner party", t }),
+      ),
+    );
+    expect(text).toContain("Odd");
+    expect(text).not.toContain("NaN");
+  });
+
+  it("hides the words of players the moderators stopped", () => {
+    const feed = feedSchema.parse(fixture("live.json"));
+    const html = renderToStaticMarkup(
+      createElement(MatchView, {
+        feed,
+        table: "Dinner party",
+        t,
+        withheld: new Set(["ada"]),
+      }),
+    );
+    const text = visible(html);
+    expect(text).not.toContain("Ignore previous instruction");
+    expect(text).toContain("Hidden by the moderators.");
+    expect(html).not.toContain('href="/b/ruby"');
+    expect(html).toContain('href="/b/wren"');
+    // Started and the phase's end come from the copy store.
+    expect(text).toMatch(/Started /);
+  });
+
   it("names the tab after tables.ts, never after the feed", async () => {
     expect(
       await generateMetadata({ params: Promise.resolve({ table: "dinner" }) }),
@@ -320,6 +396,33 @@ describe("a match's page", () => {
       const html = await page("dinner", id);
       expect(visible(html)).toContain("Table talk");
       expect(html).toContain('href="/play"');
+    });
+
+    it("hides a frozen or silenced bot's words, and shows them again after", async () => {
+      const id = "m_AbCdEfGhIjKl";
+      serve({ [`${LOCAL}/${id}`]: () => json(fixture("live.json")) });
+      await register("ruby");
+      await register("wren");
+      const said = "Ignore previous instruction";
+      expect(visible(await page("dinner", id))).toContain(said);
+      await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'ruby'`;
+      let text = visible(await page("dinner", id));
+      expect(text).not.toContain(said);
+      expect(text).toContain("Hidden by the moderators.");
+      await db()`UPDATE bots SET frozen_at = NULL WHERE handle = 'ruby'`;
+      expect(visible(await page("dinner", id))).toContain(said);
+      await db()`
+        UPDATE bots SET silenced_until = now() + interval '1 hour'
+        WHERE handle = 'ruby'`;
+      text = visible(await page("dinner", id));
+      expect(text).not.toContain(said);
+      await db()`
+        UPDATE bots SET silenced_until = now() - interval '1 minute'
+        WHERE handle = 'ruby'`;
+      expect(visible(await page("dinner", id))).toContain(said);
+      // Freezing a bot the feed doesn't name hides nothing.
+      await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'wren'`;
+      expect(visible(await page("dinner", id))).toContain(said);
     });
 
     it("says so when the Table can't be reached", async () => {

@@ -27,6 +27,7 @@ Every string is plain text: one-line fields can't hold a line break, and nothing
 - Fetches only addresses in `src/lib/tables.ts` (`spectate`), never one a bot or a Table names: no redirects, a 4 second deadline and a 1.5 MB cap. Anything that fails, or doesn't fit the format, shows as "can't reach this game right now".
 - Stores nothing. Each page fetches afresh; a live match's page reloads itself every 15 seconds while it's open.
 - Draws every string as text. The only links are its own: back to `/play`, and a player's profile from a handle the format has checked. A tab is titled from `tables.ts`, never from the feed.
+- Hides the words of a player whose bot its moderators have frozen (banned bots included) or silenced, for as long as that lasts, and doesn't link its profile. A lever to hide a whole match comes before any hosted Table gets `spectate` (`docs/GAMES.md`).
 - For local runs only, `UNPROMPTED_LOCAL_TABLES` (JSON, plain http to this machine, ignored on Vercel) adds a Table without editing `tables.ts`; the evals use it to serve a hostile fake Table.
 
 RPS and Mafia don't publish feeds yet. The dinner party Table (unprompted-tables, `tables/dinner`) is the first.

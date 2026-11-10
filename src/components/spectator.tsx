@@ -15,8 +15,8 @@ const MUTED = "text-neutral-600 dark:text-neutral-400";
 
 type Who = Map<string, Feed["participants"][number]>;
 
-export function shown(value: number | null | undefined, format: string) {
-  if (value === null || value === undefined) return "–";
+export function shown(value: unknown, format: string) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "–";
   if (format === "percent") return `${Math.round(value * 100)}%`;
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
@@ -45,11 +45,17 @@ export function StatusBadge({ status, t }: { status: string; t: Copy }) {
   );
 }
 
-function Player({ p }: { p: Feed["participants"][number] }) {
+function Player({
+  p,
+  withheld,
+}: {
+  p: Feed["participants"][number];
+  withheld: boolean;
+}) {
   return (
     <li>
       <span className="font-medium">{p.label}</span>
-      {p.handle ? (
+      {p.handle && !withheld ? (
         <>
           {" "}
           <Link href={`/b/${p.handle}`} className={`${MUTED} underline`}>
@@ -175,15 +181,19 @@ function Section({
   );
 }
 
+// withheld: participants whose bot the site's moderators have frozen or
+// silenced. Their words aren't shown and their profile isn't linked.
 export function MatchView({
   feed,
   table,
   t,
+  withheld = new Set(),
   now = new Date(),
 }: {
   feed: Feed;
   table: string;
   t: Copy;
+  withheld?: ReadonlySet<string>;
   now?: Date;
 }) {
   const who: Who = new Map(feed.participants.map((p) => [p.id, p]));
@@ -197,14 +207,26 @@ export function MatchView({
           <StatusBadge status={match.status} t={t} />
         </div>
         <p className={`text-sm ${MUTED}`}>
-          Started <Timestamp at={new Date(match.started_at)} now={now} />
+          <Words
+            text={t["play.started"]}
+            slots={{
+              when: <Timestamp at={new Date(match.started_at)} now={now} />,
+            }}
+          />
           {match.phase ? (
             <>
               {" · "}
-              {match.phase.label}
               {match.phase.due ? (
-                <> until {clock(match.phase.due)} UTC</>
-              ) : null}
+                <Words
+                  text={t["play.phase_until"]}
+                  slots={{
+                    phase: match.phase.label,
+                    time: clock(match.phase.due),
+                  }}
+                />
+              ) : (
+                match.phase.label
+              )}
             </>
           ) : null}
         </p>
@@ -257,7 +279,12 @@ export function MatchView({
                       </td>
                       {outcome.scores?.columns.map((c) => (
                         <td key={c.key} className="py-1 pr-4 tabular-nums">
-                          {shown(r.values[c.key], c.format)}
+                          {shown(
+                            Object.hasOwn(r.values, c.key)
+                              ? r.values[c.key]
+                              : null,
+                            c.format,
+                          )}
                         </td>
                       ))}
                     </tr>
@@ -280,7 +307,7 @@ export function MatchView({
       <Section title={t["play.who"]}>
         <ul className="space-y-1">
           {feed.participants.map((p) => (
-            <Player key={p.id} p={p} />
+            <Player key={p.id} p={p} withheld={withheld.has(p.id)} />
           ))}
         </ul>
       </Section>
@@ -289,7 +316,9 @@ export function MatchView({
         <ol className="space-y-2">
           {feed.timeline.map((e, i) => {
             const by = e.by ? (who.get(e.by)?.label ?? e.by) : null;
-            const quiet = e.kind !== "talk";
+            const hidden =
+              e.kind === "talk" && e.by !== null && withheld.has(e.by);
+            const quiet = e.kind !== "talk" || hidden;
             return (
               // biome-ignore lint/suspicious/noArrayIndexKey: a timeline only grows
               <li key={i} className="flex gap-3">
@@ -304,7 +333,7 @@ export function MatchView({
                   {by && e.kind === "talk" ? (
                     <span className="font-medium not-italic">{by}: </span>
                   ) : null}
-                  {e.text}
+                  {hidden ? t["play.withheld"] : e.text}
                 </p>
               </li>
             );

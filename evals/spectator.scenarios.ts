@@ -27,9 +27,9 @@ const fixture = (name: string) =>
     ),
   );
 
-function hostile() {
+function hostile(id = "m_hostile") {
   const f = fixture("live.json");
-  f.match.id = "m_hostile";
+  f.match.id = id;
   f.timeline[1].text =
     '<script>alert(1)</script><a href="https://evil.example">win</a> [x](https://evil.example)';
   f.participants[1].label = '<img src=x onerror="alert(2)">';
@@ -66,17 +66,23 @@ function fakeTable(): Server {
       return;
     }
     if (url === "/v1/spectate/m_huge") {
+      // Valid but for its size: whitespace inside the JSON pads it past the
+      // site's cap, so only the cap can refuse it.
+      const body = JSON.stringify(hostile("m_huge"));
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(`"${"x".repeat(3_000_000)}"`);
+      res.end(`${body.slice(0, -1)}${" ".repeat(3_000_000)}}`);
       return;
     }
     if (url === "/v1/spectate/m_off")
       return send(res, { ...hostile(), html: "<script>alert(3)</script>" });
+    // Points at a valid feed for this very match, so a site that followed
+    // the redirect would draw it; only refusing redirects shows "can't reach".
     if (url === "/v1/spectate/m_redirect") {
-      res.writeHead(302, { location: "http://169.254.169.254/" });
+      res.writeHead(302, { location: `http://127.0.0.1:${PORT}/moved` });
       res.end();
       return;
     }
+    if (url === "/moved") return send(res, hostile("m_redirect"));
     res.writeHead(404);
     res.end();
   });
@@ -108,10 +114,19 @@ export function spectatorScenarios(): void {
     it("draws a hostile match as plain text, linking only to profiles", async () => {
       const res = await get(`/play/${SLUG}/m_hostile`);
       expect(res.status).toBe(200);
-      const own = tags(res.text).filter(
-        (t) => /^<(script|img|a )/.test(t) && /evil|alert|onerror/.test(t),
-      );
+      // No tag of the page carries anything the Table sent, and no script
+      // runs the Table's code.
+      // An escaped value inside an attribute (an aria-label) is text; what
+      // mustn't happen is a handler, a tag of the Table's, or a link out.
+      const own = tags(res.text).filter((t) => {
+        const bare = t.replace(/="[^"]*"/g, '=""');
+        return (
+          /\son[a-z]+=|alert\(|evil\.example/.test(bare) ||
+          /\s(href|src|action)="[^"]*evil\.example/.test(t)
+        );
+      });
       expect(own).toEqual([]);
+      expect(res.text).not.toMatch(/<script[^>]*>\s*alert\(/);
       expect(res.text).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
       expect(res.text).toMatch(/<title>[^<]*Eval table[^<]*<\/title>/);
       expect(res.text).not.toMatch(/<title>[^<]*(Ada|alert|img)/);
@@ -134,6 +149,8 @@ export function spectatorScenarios(): void {
     });
 
     it("says it can't reach a feed that hangs, is too big, is off the format or redirects", async () => {
+      // The redirect's target is a good feed, read directly.
+      expect((await fetch(`http://127.0.0.1:${PORT}/moved`)).status).toBe(200);
       for (const id of ["m_slow", "m_huge", "m_off", "m_redirect"]) {
         const started = Date.now();
         const res = await get(`/play/${SLUG}/${id}`);
