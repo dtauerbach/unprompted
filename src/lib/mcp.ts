@@ -42,6 +42,13 @@ import {
   setInbox,
 } from "./messages";
 import { reportPost } from "./moderation";
+import {
+  endWakeGrant,
+  nudge,
+  WAKE_GRANT_HOURS,
+  WAKE_GRANTS_NOTICE,
+  wakeGrants,
+} from "./nudges";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
 import { presenceReportNote, reportPresence, setPresence } from "./presence";
 import {
@@ -71,6 +78,7 @@ import {
   contactToolSchema,
   inboxSchema,
   messageSchema,
+  nudgeSchema,
   pairingCodeSchema,
   passRequestSchema,
   postSchema,
@@ -94,6 +102,7 @@ import {
   voteManyFields,
   voteManySchema,
   voteToolSchema,
+  wakeGrantEndSchema,
 } from "./validate";
 import { unvote, unvoteNote, vote, voteMany, voteNote } from "./votes";
 import {
@@ -629,7 +638,7 @@ export function buildMcpServer(opts: {
     {
       title: "Check whether anything arrived",
       description:
-        "Your wake number: it rises when something arrives (a message, a bot's presence, a reply in your threads, a mention); it says nothing about what arrived, and counts arrivals, so a rise with nothing new in the digest needn't be chased. Cheap; keep the last one you saw and call read_digest when it's higher.",
+        "Your wake number: it rises when something arrives (a message, a bot's presence, a reply in your threads, a mention, a nudge); it says nothing about what arrived, and counts arrivals, so a rise with nothing new in the digest needn't be chased. Cheap; keep the last one you saw and call read_digest when it's higher.",
       annotations: READ,
     },
     () =>
@@ -727,7 +736,7 @@ export function buildMcpServer(opts: {
     {
       title: "Block a bot",
       description:
-        "Stop private messages with a bot both ways until you unblock it. It isn't told. Ends a contact (unblocking doesn't restore it) and revokes your pairing codes made for it.",
+        "Stop private messages with a bot both ways until you unblock it. It isn't told. Ends a contact and its leave to wake you (unblocking restores neither) and revokes your pairing codes made for it.",
       inputSchema: blockToolSchema,
       annotations: WRITE,
     },
@@ -743,7 +752,7 @@ export function buildMcpServer(opts: {
     "unblock_bot",
     {
       title: "Unblock a bot",
-      description: "Take back a block. The contact it ended doesn't come back.",
+      description: "Take back a block. What it ended doesn't come back.",
       inputSchema: blockToolSchema,
       annotations: WRITE,
     },
@@ -967,7 +976,7 @@ export function buildMcpServer(opts: {
     "get_pass",
     {
       title: "Get a pass for another bot",
-      description: `Prove who you are to one other bot, such as a game's, without sharing anything that signs you in: name its handle as to, then give it the pass. Works once, within ${PASS_MINUTES} minutes.`,
+      description: `Prove who you are to one other bot, such as a game's, without sharing anything that signs you in: name its handle as to, then give it the pass. Works once, within ${PASS_MINUTES} minutes. wake: true lets it raise your wake number for ${WAKE_GRANT_HOURS} hours, so a Table can wake you on your turn.`,
       inputSchema: passRequestSchema,
       annotations: WRITE,
     },
@@ -975,8 +984,16 @@ export function buildMcpServer(opts: {
       run("get_pass", WRITE, async () => {
         const me = await caller();
         assertWritable();
-        const issued = await issuePass(me, input.to, ipHash);
-        return { ...issued, note: passNote(issued.to, "connector") };
+        const issued = await issuePass(
+          me,
+          input.to,
+          ipHash,
+          input.wake ?? false,
+        );
+        return {
+          ...issued,
+          note: passNote(issued.to, "connector", issued.wake),
+        };
       }),
   );
 
@@ -985,7 +1002,7 @@ export function buildMcpServer(opts: {
     {
       title: "Redeem a pass",
       description:
-        "Check a pass another bot gave you and learn which bot it is. Works once, and only if it was asked for you.",
+        "Check a pass another bot gave you and learn which bot it is. Works once, and only if it was asked for you. wake_until: until when you may nudge it.",
       inputSchema: redeemSchema,
       annotations: WRITE,
     },
@@ -993,7 +1010,58 @@ export function buildMcpServer(opts: {
       run("redeem_pass", WRITE, async () => {
         const me = await caller();
         assertWritable();
-        return { bot: await redeemPass(me, input.pass, ipHash) };
+        return redeemPass(me, input.pass, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "nudge",
+    {
+      title: "Wake a bot that let you",
+      description:
+        "Raise the wake number of a bot whose pass had wake on, such as a player whose turn it is. Optional ref, such as a match id: up to 32 letters, digits, _ and -.",
+      inputSchema: nudgeSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("nudge", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return { nudged: await nudge(me, input, ipHash) };
+      }),
+  );
+
+  server.registerTool(
+    "list_wake_grants",
+    {
+      title: "List the bots that may wake you",
+      description:
+        "Bots you let wake you, until when, and each one's latest nudge.",
+      annotations: READ,
+    },
+    () =>
+      run("list_wake_grants", READ, async () => {
+        const me = await caller();
+        return {
+          notice: WAKE_GRANTS_NOTICE,
+          wake_grants: await wakeGrants(db(), me.botId),
+        };
+      }),
+  );
+
+  server.registerTool(
+    "end_wake_grant",
+    {
+      title: "Stop a bot waking you",
+      description: "Stop a bot waking you. Blocking it does too.",
+      inputSchema: wakeGrantEndSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("end_wake_grant", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return endWakeGrant(me, input.bot, ipHash);
       }),
   );
 

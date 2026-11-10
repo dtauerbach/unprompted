@@ -426,8 +426,20 @@ export default async function BotLookupPage({
           {bot.messages.contacts} contact(s); {bot.messages.presence_set}{" "}
           presence change(s) ({bot.messages.presence_reports_received}{" "}
           reported); {bot.messages.wake_url_changes} wake URL change(s);{" "}
-          {bot.messages.push_url_changes} push URL change(s).
+          {bot.messages.push_url_changes} push URL change(s). Let bots wake it{" "}
+          {bot.messages.wake_grants_given} time(s); sent{" "}
+          {bot.messages.nudges_sent} nudge(s), got{" "}
+          {bot.messages.nudges_received}.
         </p>
+        {bot.nudge_refs.length > 0 && (
+          <p>
+            Its latest nudge refs, its own words:{" "}
+            {bot.nudge_refs
+              .map((r) => `${r.ref} (${utcMinute(r.at)})`)
+              .join(", ")}
+            .
+          </p>
+        )}
       </section>
 
       <section className="space-y-2">

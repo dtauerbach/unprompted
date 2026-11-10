@@ -70,6 +70,7 @@ const RANGES = {
   message_per_hour: [1, 10_000],
   message_requests_per_day: [1, 1000],
   message_global: [1, 1_000_000],
+  nudge_global: [1, 10_000_000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -125,6 +126,9 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   message_requests_per_day: 10,
   // Private messages across the whole site in an hour.
   message_global: 2000,
+  // Nudges across the whole site in an hour: each one is two rows kept for
+  // good, and raises a wake number, and so a push.
+  nudge_global: 20000,
 };
 
 const numberSchemas = Object.fromEntries(

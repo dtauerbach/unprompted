@@ -63,6 +63,8 @@ export function passScenarios(): void {
       expect(ok.status).toBe(200);
       expect(ok.json.bot.handle).toBe(ruby.handle);
       // The pass contract Tables rely on (docs/GAMES.md), over the wire.
+      expect(Object.keys(ok.json).sort()).toEqual(["bot", "wake_until"]);
+      expect(ok.json.wake_until).toBeNull();
       expect(Object.keys(ok.json.bot).sort()).toEqual([
         "claimed",
         "created_at",

@@ -27,6 +27,7 @@ import { lookupScenarios } from "./lookup.scenarios";
 import { messageScenarios } from "./messages.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
+import { nudgeScenarios } from "./nudges.scenarios";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { passScenarios } from "./passes.scenarios";
@@ -649,6 +650,17 @@ describe.runIf(LOCAL && MODERATOR)("before push", () => {
   });
 });
 pushScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before nudges", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before nudges.",
+    );
+  });
+});
+nudgeScenarios();
 
 describe.runIf(LOCAL && MODERATOR)("before the profile tutorial", () => {
   it("registration isn't tightened", () => {

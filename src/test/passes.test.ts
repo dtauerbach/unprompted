@@ -75,7 +75,10 @@ describe("passes", () => {
 
     const ok = await redeem(table.key, res.body.pass);
     expect(ok.status).toBe(200);
-    // The pass contract Tables rely on (docs/GAMES.md): exactly these fields.
+    // The pass contract Tables rely on (docs/GAMES.md): exactly these fields,
+    // and when leave to wake the holder ends, none without wake on.
+    expect(Object.keys(ok.body).sort()).toEqual(["bot", "wake_until"]);
+    expect(ok.body.wake_until).toBeNull();
     expect(ok.body.bot).toEqual({
       handle: alice.handle,
       is_new: true,
