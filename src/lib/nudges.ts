@@ -23,9 +23,10 @@ import { assertNotSilenced } from "./silence";
 
 export const WAKE_GRANT_HOURS = 24;
 
-// The digest lists a nudge for this long: a turn is news for a while, not
-// for the whole day the leave lasts.
-export const DIGEST_NUDGE_MINUTES = 60;
+// What's new lists each bot's latest nudge for the day the leave lasts, so
+// a bot that looks hourly or less still sees why its number rose. Only one
+// from the last hour counts as waiting for it.
+export const WAITING_NUDGE_MINUTES = 60;
 
 // One answer for every reason a nudge can't go, so a bot learns nothing
 // about another's blocks, keys or moderation.
@@ -164,10 +165,14 @@ export async function wakeGrants(
     ) g
     JOIN bots b ON b.id = g.by_bot_id
     LEFT JOIN LATERAL (
-      SELECT ref, created_at FROM nudges
-      WHERE bot_id = g.by_bot_id AND to_bot_id = ${me}
-        AND created_at > now() - make_interval(hours => ${WAKE_GRANT_HOURS})
-      ORDER BY id DESC LIMIT 1
+      -- The newest by id, then its age, so a pair with a long history and
+      -- no recent nudge reads one row.
+      SELECT ref, created_at FROM (
+        SELECT ref, created_at FROM nudges
+        WHERE bot_id = g.by_bot_id AND to_bot_id = ${me}
+        ORDER BY id DESC LIMIT 1
+      ) newest
+      WHERE created_at > now() - make_interval(hours => ${WAKE_GRANT_HOURS})
     ) n ON true
     WHERE g.expires_at IS NOT NULL AND may_wake(g.by_bot_id, ${me})
     ORDER BY g.id DESC`;
@@ -198,9 +203,14 @@ export async function endWakeGrant(
         SELECT expires_at IS NOT NULL AND expires_at > now()
         FROM wake_grants WHERE bot_id = ${caller.botId} AND by_bot_id = ${other.id}
         ORDER BY id DESC LIMIT 1), false)
-        OR EXISTS (SELECT 1 FROM passes
-                   WHERE bot_id = ${caller.botId} AND for_bot_id = ${other.id}
-                     AND wake AND redeemed_at IS NULL AND expires_at > now()) AS live`;
+        OR EXISTS (SELECT 1 FROM passes p
+                   WHERE p.bot_id = ${caller.botId} AND p.for_bot_id = ${other.id}
+                     AND p.wake AND p.redeemed_at IS NULL AND p.expires_at > now()
+                     -- A pass an end already covers is no leave to end again.
+                     AND NOT EXISTS (
+                       SELECT 1 FROM wake_grants e
+                       WHERE e.bot_id = ${caller.botId} AND e.by_bot_id = ${other.id}
+                         AND e.key_id IS NULL AND e.created_at >= p.created_at)) AS live`;
     if (!live?.live) return { bot: other.handle, ended: true as const };
     await consume(tx, wakeGrantEndRules(caller.botId));
     await tx`
@@ -242,19 +252,19 @@ export type DigestNudge = {
   at: Date;
 };
 
-// For what's new: the latest nudge in the last hour from each bot that may
+// For what's new: the latest nudge in the last day from each bot that may
 // still wake you, newest first, so a wake number that rose with nothing else
 // new says why.
 export async function digestNudges(
   sql: postgres.Sql | Tx,
   me: number,
 ): Promise<DigestNudge[]> {
-  const fresh = Date.now() - DIGEST_NUDGE_MINUTES * 60_000;
   return (await wakeGrants(sql, me))
-    .flatMap((g) =>
-      g.last_nudge && g.last_nudge.at.getTime() > fresh
-        ? [{ from: g.bot, ...g.last_nudge }]
-        : [],
-    )
+    .flatMap((g) => (g.last_nudge ? [{ from: g.bot, ...g.last_nudge }] : []))
     .sort((a, b) => b.at.getTime() - a.at.getTime());
+}
+
+// Whether a nudge in what's new is recent enough to count as waiting.
+export function nudgeIsWaiting(n: DigestNudge, at = Date.now()): boolean {
+  return at - n.at.getTime() < WAITING_NUDGE_MINUTES * 60_000;
 }

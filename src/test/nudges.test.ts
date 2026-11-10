@@ -425,6 +425,22 @@ describe("taking leave back", () => {
       SELECT count(*)::int AS n FROM action_log WHERE action = 'wake_grant.end'`;
     expect(log?.n).toBe(1);
   });
+
+  it("writes once for a pass still waiting, however often it's repeated", async () => {
+    const table = await register("dinner-table");
+    const alice = await register("alice");
+    await askPass(alice, table.handle, true);
+    for (let i = 0; i < 3; i++)
+      expect((await end(alice, table.handle)).body.ended).toBe(true);
+    expect(await count("wake_grants")).toBe(1);
+    const [log] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM action_log WHERE action = 'wake_grant.end'`;
+    expect(log?.n).toBe(1);
+    // A pass asked for after the end is leave to end again.
+    await askPass(alice, table.handle, true);
+    await end(alice, table.handle);
+    expect(await count("wake_grants")).toBe(2);
+  });
 });
 
 describe("what's new", () => {
@@ -597,6 +613,47 @@ describe("a pass in flight", () => {
     expect((await grants(alice)).body.wake_grants).toEqual([]);
   });
 
+  it("gives no leave if the player blocked and unblocked the table before it was redeemed", async () => {
+    const table = await register("dinner-table");
+    const alice = await register("alice");
+    const p = await askPass(alice, table.handle, true);
+    await block(alice, table.handle);
+    await unblock(alice, table.handle);
+    await redeem(table, p.body.pass);
+    expect((await nudge(table, alice.handle)).body.error.code).toBe(
+      "cant_wake",
+    );
+  });
+
+  it("gives no leave from a pass asked for while the player blocks the table", async () => {
+    const table = await register("dinner-table");
+    const alice = await register("alice");
+    await block(alice, table.handle);
+    const p = await askPass(alice, table.handle, true);
+    expect(p.status).toBe(201);
+    await redeem(table, p.body.pass);
+    expect(await count("wake_grants")).toBe(0);
+  });
+
+  it("answers the same time whether it gives leave or not", async () => {
+    const table = await register("dinner-table");
+    const alice = await register("alice");
+    const bob = await register("bob");
+    const given = await askPass(alice, table.handle, true);
+    const withheld = await askPass(bob, table.handle, true);
+    await block(bob, table.handle);
+    const day = WAKE_GRANT_HOURS * 3_600_000;
+    for (const p of [given, withheld]) {
+      const asked = Date.now();
+      const r = await redeem(table, p.body.pass);
+      const until = new Date(r.body.wake_until).getTime();
+      expect(until).toBeGreaterThanOrEqual(asked + day - 1000);
+      expect(until).toBeLessThanOrEqual(Date.now() + day + 1000);
+      expect(Object.keys(r.body).sort()).toEqual(["bot", "wake_until"]);
+    }
+    expect(await count("wake_grants")).toBe(1);
+  });
+
   it("gives no leave if the player ended it first", async () => {
     const table = await register("dinner-table");
     const alice = await register("alice");
@@ -731,6 +788,13 @@ describe("a silenced bot", () => {
     await setSilenced(db(), table.handle, null, "Test.");
     expect((await nudge(table, alice.handle)).status).toBe(200);
   });
+
+  it("hears that it's silenced before it hears it can't wake a bot", async () => {
+    const table = await register("dinner-table");
+    const alice = await register("alice");
+    await setSilenced(db(), table.handle, 6, "Test.");
+    expect((await nudge(table, alice.handle)).body.error.code).toBe("silenced");
+  });
 });
 
 describe("limits on nudging and ending", () => {
@@ -772,23 +836,32 @@ describe("what's new over time", () => {
     });
   }
 
-  it("lists a nudge for an hour, while the list of leave keeps it", async () => {
+  it("lists a nudge for the day, counting it as waiting only for an hour", async () => {
     const table = await register("dinner-table");
     const alice = await register("alice");
     await letWake(alice, table);
     await nudge(table, alice.handle, "m_1");
-    await backdate(61);
-    const d = await call(digestRoute, {
-      key: alice.key,
-      path: "/v1/me/digest",
-    });
+    const digest = () =>
+      call(digestRoute, { key: alice.key, path: "/v1/me/digest" });
+    const listed = [
+      { from: table.handle, untrusted_ref: "m_1", at: expect.any(String) },
+    ];
+    await backdate(59);
+    let d = await digest();
+    expect(d.body.nudges).toEqual(listed);
+    expect(d.body.start).toBeUndefined();
+    // An hour on, a bot that looks hourly still sees why its number rose,
+    // but nothing is waiting for it.
+    await backdate(2);
+    d = await digest();
+    expect(d.body.nudges).toEqual(listed);
+    expect(d.body.nudges_note).toEqual(expect.any(String));
+    expect(d.body.start).toEqual(expect.any(String));
+    await backdate(23 * 60);
+    d = await digest();
     expect(d.body.nudges).toEqual([]);
     expect(d.body.nudges_note).toBeUndefined();
-    expect(d.body.start).toEqual(expect.any(String));
-    expect((await grants(alice)).body.wake_grants[0].last_nudge).toEqual({
-      untrusted_ref: "m_1",
-      at: expect.any(String),
-    });
+    expect((await grants(alice)).body.wake_grants[0].last_nudge).toBe(null);
   });
 
   it("keeps a table's latest nudge when the player gives it leave again", async () => {
