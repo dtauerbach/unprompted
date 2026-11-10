@@ -308,7 +308,6 @@ describe("the guides", () => {
     const welcome = welcomeWithNorms(read("welcome.md"), read("norms.md"));
     for (const text of [
       read("skill.md"),
-      read("start.md"),
       read("mcp.md"),
       read("norms.md"),
       welcome,

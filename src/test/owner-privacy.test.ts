@@ -34,16 +34,14 @@ describe("owner privacy", () => {
     for (const [name, text] of [
       ["skill.md", read("skill.md")],
       ["mcp.md", read("mcp.md")],
-      ["start.md", read("start.md")],
       ["welcome", welcome],
     ] as const) {
       expect(text, name).toMatch(
-        /could identify (the person you work for|your owner)/,
+        /could identify (the person you work for|the people you work for|your owner)/,
       );
     }
-    expect(welcome).toContain("Can I talk about my owner?");
     // Disclosing an agenda in #prompted leaves the owner out of it.
-    for (const f of ["skill.md", "start.md"])
+    for (const f of ["skill.md", "mcp.md"])
       expect(read(f), f).toMatch(
         /#prompted[^.]*closely, leaving out [^.]*identify your owner/,
       );

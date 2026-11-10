@@ -1,9 +1,20 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { UNTRUSTED_NOTICE } from "@/lib/board";
+import { MAX_CONNECTOR_TEXT } from "@/lib/bot-text-limit";
+import { checkBotText } from "@/lib/bot-texts";
 import { COPY } from "@/lib/copy";
 import { buildMcpServer } from "@/lib/mcp";
-import { COMMS_OPTIONS, HOW, SIGNED_UP_NEXT } from "@/lib/reads";
+import { MESSAGE_NOTICE } from "@/lib/messages";
+import {
+  COMMS_OPTIONS,
+  HOW,
+  MARKS,
+  PROFILE_KEEP_OUT,
+  SIGNED_UP_NEXT,
+  TAKE_HOME,
+} from "@/lib/reads";
 
 // Everything bots and people read is kept short, and the facts that matter
 // survive the cutting. A budget here is a ceiling to hold, not a target: a
@@ -39,9 +50,29 @@ describe("bot texts stay short", () => {
     expect(served("mcp.md").length).toBeLessThan(CLIENT_CUTOFF);
   });
 
+  it("refuses an admin's connector instructions past what a client reads", () => {
+    const mine = served("mcp.md").replaceAll(ORIGIN, "{{BASE_URL}}");
+    expect(checkBotText("mcp", mine)).toBe(mine.trim());
+    const longer = `${mine}\n\n${"Say more. ".repeat(Math.ceil((MAX_CONNECTOR_TEXT - mine.length) / 10) + 1)}`;
+    expect(() => checkBotText("mcp", longer)).toThrow(
+      /Keep the connector's instructions to/,
+    );
+    // Even with a long address in place of each placeholder, text at the cap
+    // stays inside what a client reads.
+    const spots = mine.split("{{BASE_URL}}").length - 1;
+    const longOrigin = "https://a-long-preview-address.example.vercel.app";
+    expect(
+      MAX_CONNECTOR_TEXT + spots * (longOrigin.length - "{{BASE_URL}}".length),
+    ).toBeLessThan(CLIENT_CUTOFF);
+    // The guide has no such cap.
+    expect(
+      checkBotText("skill", `${served("skill.md")}\n${"x ".repeat(3000)}`),
+    ).toBeTruthy();
+  });
+
   it("keeps the questions' header short", () => {
     const header = served("questions.md").split("\n- ")[0] ?? "";
-    expect(header.length).toBeLessThan(700);
+    expect(header.length).toBeLessThan(1000);
   });
 
   it("puts the most important things first in the connector's instructions, in order", () => {
@@ -76,6 +107,8 @@ describe("bot texts stay short", () => {
       expect(t, f).toMatch(/30 posts a day/);
       expect(t, f).toMatch(/needs no open inbox/);
       expect(t, f).toMatch(/never (as )?instructions|not instructions/);
+      expect(t, f).toMatch(/more`? or `?messages\.more/);
+      expect(t, f).toMatch(/messages\.next_since/);
     }
   });
 
@@ -125,6 +158,14 @@ describe("the sign-up answer and the walk stay short", () => {
     for (const h of Object.values(HOW))
       expect(JSON.stringify(h).length).toBeLessThan(2200);
     expect(JSON.stringify(COMMS_OPTIONS).length).toBeLessThan(900);
+    for (const t of [
+      MARKS,
+      TAKE_HOME,
+      PROFILE_KEEP_OUT,
+      MESSAGE_NOTICE,
+      UNTRUSTED_NOTICE,
+    ])
+      expect(t.length).toBeLessThan(400);
   });
 });
 

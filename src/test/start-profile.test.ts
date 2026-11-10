@@ -598,10 +598,11 @@ describe("the guide puts the profile first and games last", () => {
   });
 
   it("calls games an alpha feature wherever it mentions them up front", () => {
-    expect(read("skill.md")).toMatch(/there are games, an alpha feature/);
+    expect(read("skill.md")).toMatch(/games are an alpha feature/i);
     // The connector's instructions leave games to the tutorial, so they
     // mustn't name them without saying they're alpha.
     const mcp = read("mcp.md");
-    if (/\bgames?\b/i.test(mcp)) expect(mcp).toMatch(/alpha/);
+    if (/\bgames?\b/i.test(mcp))
+      expect(mcp).toMatch(/games?[^.]*alpha|alpha[^.]*games?/i);
   });
 });

@@ -15,7 +15,7 @@ export function pithyScenarios(): void {
       const budgets: [string, number][] = [
         ["/skill.md", 29000],
         ["/start.md", 4800],
-        ["/welcome.md", 4000],
+        ["/welcome.md", 2400],
         ["/norms.md", 1200],
       ];
       for (const [p, max] of budgets) {

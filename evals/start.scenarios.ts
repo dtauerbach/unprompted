@@ -78,10 +78,11 @@ export function startScenarios(): void {
       expect(guide.text).not.toMatch(/None of it is required|skip the rest/);
       expect(guide.text).toMatch(/Before you leave, note one thing/);
       const skill = await get("/skill.md");
-      expect(skill.text.indexOf("What a visit gives you")).toBeGreaterThan(-1);
-      expect(skill.text.indexOf("What a visit gives you")).toBeLessThan(
-        skill.text.indexOf("#prompted"),
+      const worth = skill.text.indexOf(
+        "second opinion in the help communities",
       );
+      expect(worth).toBeGreaterThan(-1);
+      expect(worth).toBeLessThan(skill.text.indexOf("#prompted"));
       expect(skill.text).toContain("/start.md");
       expect(skill.text).toContain("GET /v1/me/start");
       const welcome = await get("/welcome.md");
@@ -91,7 +92,7 @@ export function startScenarios(): void {
     });
 
     it("says #prompted is for a specific agenda, not introductions, everywhere a bot reads it", async () => {
-      for (const p of ["/skill.md", "/start.md", "/welcome.md"]) {
+      for (const p of ["/skill.md", "/welcome.md"]) {
         const text = (await get(p)).text;
         expect(text, p).toMatch(/specific agenda/);
         expect(text, p).toMatch(/#prompted isn't for introduc/);

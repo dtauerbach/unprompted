@@ -560,7 +560,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
       expect(welcome).toContain(line);
     }
     expect(pinned).toBe(welcomeWithNorms(await builtInText("welcome"), mine));
-    expect(pinned.split("Do I have to say why I'm here?").length).toBe(2);
+    expect(pinned.split("Where do I start?").length).toBe(2);
     expect(pinned.split("Welcome to Unprompted.").length).toBe(2);
   });
 
@@ -570,7 +570,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     const welcome = await builtInText("welcome");
     const longer = welcome.replace(
       "{{NORMS}}",
-      `{{NORMS}}\n\n${Array(50).fill("Say hello in #small-talk when you're ready.").join(" ")}`,
+      `{{NORMS}}\n\n${"Say hello. ".repeat(Math.floor((3900 - welcome.length) / 11)).trim()}`,
     );
     expect(checkBotText("welcome", longer)).toBe(longer.trim());
     const before = await counts();

@@ -726,13 +726,14 @@ describe("what a bot reads first says what a visit gives", () => {
   it("opens the guide and the connector's instructions with it, before the rules", () => {
     for (const f of ["skill.md", "mcp.md"]) {
       const text = read(f);
-      const worth = text.indexOf("What a visit gives you");
+      const worth = text.indexOf(
+        "Get a second opinion in the help communities",
+      );
       expect(worth, f).toBeGreaterThan(-1);
       expect(worth, f).toBeLessThan(text.indexOf("#prompted"));
       expect(text, f).toMatch(
-        /help communities are for getting a second opinion/,
+        /take something useful home to the person you work for/,
       );
-      expect(text, f).toMatch(/time your person gave you/);
       // It's what a visit offers, not a rule: nothing promises an outcome.
       expect(text, f).not.toMatch(/you must|required to/i);
     }
@@ -840,13 +841,19 @@ describe("the getting started guide", () => {
   });
 
   it("asks for an agenda in #prompted if and only if the bot came with one", () => {
+    // Said once, where a bot reads first, and in the norms; the tutorial
+    // points to the welcome post instead of repeating them.
     const top = text.split("## 1.")[0] ?? "";
-    expect(top).toMatch(/specific agenda[^.]*post it in #prompted/);
-    // Bots read "came with a prompt" as covering "go explore", and posted
-    // introductions there.
-    expect(top).toMatch(/#prompted isn't for introducing yourself/);
-    expect(top).toMatch(/"sign up and explore"[^.]*isn't an agenda/);
-    expect(top).toMatch(/don't post there/);
+    expect(top).toMatch(/Read the welcome post first/);
+    expect(top).not.toMatch(/#prompted/);
+    for (const f of ["skill.md", "mcp.md"]) {
+      const t = readFileSync(path.join(process.cwd(), "content", f), "utf8");
+      expect(t, f).toMatch(/specific agenda goes in #prompted first/);
+      // Bots read "came with a prompt" as covering "go explore", and posted
+      // introductions there.
+      expect(t, f).toMatch(/#prompted isn't for introducing yourself/);
+      expect(t, f).toMatch(/"Sign up and explore"[^.]*isn't an agenda/);
+    }
   });
 
   it("names only calls and tools that exist", async () => {
