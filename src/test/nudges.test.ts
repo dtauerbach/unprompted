@@ -436,10 +436,27 @@ describe("taking leave back", () => {
     const [log] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM action_log WHERE action = 'wake_grant.end'`;
     expect(log?.n).toBe(1);
+    // An end covers only its own pair: alice's newer end for another
+    // table, or bob's for this one, doesn't cover alice's pass here.
+    const other = await register("other-table");
+    const bob = await register("bob");
+    const waiting = await askPass(alice, table.handle, true);
+    await askPass(alice, other.handle, true);
+    await end(alice, other.handle);
+    await askPass(bob, table.handle, true);
+    await end(bob, table.handle);
+    const before = await count("wake_grants");
+    await end(alice, table.handle);
+    expect(await count("wake_grants")).toBe(before + 1);
+    await redeem(table, waiting.body.pass);
+    expect((await nudge(table, alice.handle)).body.error.code).toBe(
+      "cant_wake",
+    );
     // A pass asked for after the end is leave to end again.
     await askPass(alice, table.handle, true);
+    const rows = await count("wake_grants");
     await end(alice, table.handle);
-    expect(await count("wake_grants")).toBe(2);
+    expect(await count("wake_grants")).toBe(rows + 1);
   });
 });
 
@@ -836,7 +853,7 @@ describe("what's new over time", () => {
     });
   }
 
-  it("lists a nudge for the day, counting it as waiting only for an hour", async () => {
+  it("lists a nudge for the day, so a bot that looks hourly sees its turn", async () => {
     const table = await register("dinner-table");
     const alice = await register("alice");
     await letWake(alice, table);
@@ -846,22 +863,32 @@ describe("what's new over time", () => {
     const listed = [
       { from: table.handle, untrusted_ref: "m_1", at: expect.any(String) },
     ];
-    await backdate(59);
-    let d = await digest();
-    expect(d.body.nudges).toEqual(listed);
-    expect(d.body.start).toBeUndefined();
-    // An hour on, a bot that looks hourly still sees why its number rose,
-    // but nothing is waiting for it.
-    await backdate(2);
-    d = await digest();
-    expect(d.body.nudges).toEqual(listed);
-    expect(d.body.nudges_note).toEqual(expect.any(String));
-    expect(d.body.start).toEqual(expect.any(String));
-    await backdate(23 * 60);
-    d = await digest();
+    for (const minutes of [61, 23 * 60]) {
+      await backdate(minutes === 61 ? 61 : minutes - 61);
+      const d = await digest();
+      expect(d.body.nudges, `${minutes}`).toEqual(listed);
+      expect(d.body.nudges_note).toEqual(expect.any(String));
+      // A listed nudge is something waiting, never "nothing is waiting".
+      expect(d.body.start).toBeUndefined();
+    }
+    await backdate(61);
+    const d = await digest();
     expect(d.body.nudges).toEqual([]);
     expect(d.body.nudges_note).toBeUndefined();
+    expect(d.body.start).toEqual(expect.any(String));
     expect((await grants(alice)).body.wake_grants[0].last_nudge).toBe(null);
+  });
+
+  it("lists only nudges to the bot reading", async () => {
+    const table = await register("dinner-table");
+    const alice = await register("alice");
+    const bob = await register("bob");
+    await letWake(alice, table);
+    await letWake(bob, table);
+    await nudge(table, alice.handle, "m_alice");
+    const d = await call(digestRoute, { key: bob.key, path: "/v1/me/digest" });
+    expect(d.body.nudges).toEqual([]);
+    expect((await grants(bob)).body.wake_grants[0].last_nudge).toBe(null);
   });
 
   it("keeps a table's latest nudge when the player gives it leave again", async () => {

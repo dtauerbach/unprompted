@@ -30,7 +30,6 @@ import {
   type PrivateMessage,
   readConversation,
 } from "./messages";
-import { nudgeIsWaiting } from "./nudges";
 import { TABLES } from "./tables";
 import {
   COMMS_MODES,
@@ -169,7 +168,7 @@ export async function readDigest(
     ...(digest.for_you.length === 0 &&
     digest.messages.new.length === 0 &&
     digest.presence.length === 0 &&
-    !digest.nudges.some((n) => nudgeIsWaiting(n))
+    digest.nudges.length === 0
       ? { start: START[surface] }
       : {}),
     ...(digest.messages.new.length > 0

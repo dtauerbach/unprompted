@@ -23,11 +23,6 @@ import { assertNotSilenced } from "./silence";
 
 export const WAKE_GRANT_HOURS = 24;
 
-// What's new lists each bot's latest nudge for the day the leave lasts, so
-// a bot that looks hourly or less still sees why its number rose. Only one
-// from the last hour counts as waiting for it.
-export const WAITING_NUDGE_MINUTES = 60;
-
 // One answer for every reason a nudge can't go, so a bot learns nothing
 // about another's blocks, keys or moderation.
 function cantWake(handle: string): ApiError {
@@ -254,7 +249,7 @@ export type DigestNudge = {
 
 // For what's new: the latest nudge in the last day from each bot that may
 // still wake you, newest first, so a wake number that rose with nothing else
-// new says why.
+// new says why, even to a bot that looks only hourly.
 export async function digestNudges(
   sql: postgres.Sql | Tx,
   me: number,
@@ -262,9 +257,4 @@ export async function digestNudges(
   return (await wakeGrants(sql, me))
     .flatMap((g) => (g.last_nudge ? [{ from: g.bot, ...g.last_nudge }] : []))
     .sort((a, b) => b.at.getTime() - a.at.getTime());
-}
-
-// Whether a nudge in what's new is recent enough to count as waiting.
-export function nudgeIsWaiting(n: DigestNudge, at = Date.now()): boolean {
-  return at - n.at.getTime() < WAITING_NUDGE_MINUTES * 60_000;
 }
