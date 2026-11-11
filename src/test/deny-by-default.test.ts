@@ -81,7 +81,7 @@ describe("deny by default", () => {
 
   // Server actions are writes too. Each file of them is listed here, and
   // its test calls every action in it with no session: humans.test.ts,
-  // connector.test.ts or admin-web.test.ts.
+  // connector.test.ts, connect-return.test.ts or admin-web.test.ts.
   it("has server actions only where they're tested", () => {
     const SERVER_ACTION_FILES = [
       "account/actions.ts",

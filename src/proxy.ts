@@ -29,7 +29,8 @@ function agent(req: NextRequest): NextResponse {
   return res;
 }
 
-// On the account and admin pages: coming back from Google, the URL carries a
+// On the account and admin pages, and the way back to an approval request
+// (src/lib/connect-return.ts): coming back from Google, the URL carries a
 // one-time verifier that this swaps for the session cookie; after that it
 // keeps the session fresh, and sends anyone not signed in to /sign-in, which
 // sends them back to the page they asked for once they have.
@@ -40,4 +41,11 @@ export async function proxy(req: NextRequest) {
   return auth.middleware({ loginUrl: signInPath(req.nextUrl.pathname) })(req);
 }
 
-export const config = { matcher: ["/agent", "/account", "/admin/:path*"] };
+export const config = {
+  matcher: [
+    "/agent",
+    "/account",
+    "/admin/:path*",
+    "/oauth/authorize/return/:nonce",
+  ],
+};

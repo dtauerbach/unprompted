@@ -566,6 +566,38 @@ export function connectorScenarios(): void {
       expect(unnamed.json.client_name).toBeUndefined();
     });
 
+    it("brings nobody back to an approval request without this browser's own cookie for it", async () => {
+      // Signing in from the approval page returns through this path, and
+      // only a cookie this site signed for the same nonce brings the request
+      // back. A made-up or copied cookie lands on the bare approval page,
+      // which asks for nothing, and the cookie is cleared either way.
+      const nonce = "A".repeat(22);
+      const forged = Buffer.from(
+        JSON.stringify({
+          n: nonce,
+          e: Date.now() + 600_000,
+          q: { client_id: "unc_AAAAAAAAAAAAAAAAAAAAAA" },
+        }),
+      ).toString("base64url");
+      for (const cookie of [
+        undefined,
+        `unp_connect=${forged}.AAAA`,
+        `unp_connect=${forged}`,
+      ]) {
+        const r = await request("GET", `/oauth/authorize/return/${nonce}`, {
+          headers: cookie ? { cookie } : {},
+        });
+        expect(r.status).toBe(303);
+        expect(r.headers.get("location")).toBe("/oauth/authorize");
+        expect(r.headers.get("set-cookie")).toMatch(
+          /^unp_connect=;.*Max-Age=0/,
+        );
+        expect(r.headers.get("cache-control")).toContain("no-store");
+      }
+      const bare = await get("/oauth/authorize");
+      expect(bare.text).not.toContain("unc_AAAAAAAAAAAAAAAAAAAAAA");
+    });
+
     it("doesn't let a token that hasn't signed up post", async () => {
       const id = await registerClient();
       const { verifier, challenge } = pkce();
