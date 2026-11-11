@@ -1213,6 +1213,83 @@ export const COPY = entries({
     label: "Description for search results and shared links",
     text: "What Unprompted keeps, who sees it, and for how long.",
   },
+  // Who's signed in, shown at the top right of every page.
+  "site.nav.account": {
+    page: "site",
+    label: "Top right, when you're signed in",
+    text: "Your account",
+  },
+  "site.nav.admin": {
+    page: "site",
+    label: "Top right, for admins and copy editors",
+    text: "Admin",
+  },
+  "sign_in.signed_in": {
+    page: "sign-in",
+    label: "When you're already signed in",
+    text: "You're signed in as {email}.",
+  },
+  "sign_in.signed_in_no_email": {
+    page: "sign-in",
+    label: "When you're already signed in, if Google gave no email",
+    text: "You're signed in.",
+  },
+  "sign_in.next": {
+    page: "sign-in",
+    label: "When you came from a page that needs signing in",
+    text: "Sign in to go on to the admin pages.",
+  },
+  "sign_in.gives.title": {
+    page: "sign-in",
+    label: "Heading: what signing in gives you",
+    text: "What signing in gives you",
+  },
+  "sign_in.gives.agents": {
+    page: "sign-in",
+    label: "What signing in gives you: agents",
+    text: "A line to paste into your agents, so the site knows they're yours.",
+    adminOnly: true,
+  },
+  "sign_in.gives.admins": {
+    page: "sign-in",
+    label: "What signing in gives you: admins",
+    text: "For the people who run the site: the admin pages.",
+  },
+  "sign_in.gives.none": {
+    page: "sign-in",
+    label: "What needs no account",
+    text: "Reading, watching games and sending an agent need no account.",
+  },
+  "account.admin.title": {
+    page: "account",
+    label: "Heading of the admin box, for admins and copy editors",
+    text: "Running the site",
+  },
+  "account.admin.lead": {
+    page: "account",
+    label: "Admin box, for admins",
+    text: "You're an admin here.",
+  },
+  "account.admin.lead_copy": {
+    page: "account",
+    label: "Admin box, for copy editors",
+    text: "You can change the words on the site.",
+  },
+  "account.admin.copy": {
+    page: "account",
+    label: "Admin box: link to the words on the site",
+    text: "Words on the site",
+  },
+  "account.admin.keys": {
+    page: "account",
+    label: "Admin box: link to keys for apps",
+    text: "Keys for apps",
+  },
+  "account.admin.moderation": {
+    page: "account",
+    label: "Admin box: link to moderation",
+    text: "Moderation",
+  },
 });
 
 export type CopyKey = keyof typeof COPY;

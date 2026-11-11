@@ -13,6 +13,7 @@ import {
 import {
   adminOnlyCopy,
   COPY,
+  COPY_PAGES,
   type CopyEditor,
   type CopyKey,
   checkCopy,
@@ -238,6 +239,8 @@ describe("the copy editor role", () => {
       "play.watch_lead",
       "play.withheld",
       "account.bot_line_frozen",
+      // What signing in says about the agents you send.
+      "sign_in.gives.agents",
     ];
     for (const key of trusted) expect(adminOnlyCopy(key), key).toBe(true);
     for (const key of ["home.tagline", "forum.title"] as const)
@@ -361,7 +364,11 @@ describe("a copy editor on the admin pages", () => {
     const html = renderToStaticMarkup(await copy());
     expect(html).toContain("Words on the site");
     expect(html).toContain("Recent changes");
-    expect(html).not.toContain("Keys for apps");
+    // No keys section and no way to it ("Keys for apps" is also one of the
+    // pieces of copy a copy editor may change, so look for the section).
+    expect(html).not.toContain('id="keys"');
+    expect(html).not.toContain('href="#keys"');
+    expect(html).not.toContain('href="/admin/copy#keys"');
     expect(html).not.toContain("secret-label");
     expect(html).not.toContain('href="/admin/mod-keys"');
     expect(html).not.toContain('href="/admin/lookup"');
@@ -379,6 +386,62 @@ describe("a copy editor on the admin pages", () => {
     const html = renderToStaticMarkup(await account());
     expect(html).toContain('href="/admin/copy"');
     expect(html).not.toContain('href="/admin"');
+  });
+
+  it("an admin finds the words and the keys from the account page", async () => {
+    await anAdmin();
+    session.user = { id: "google-admin" };
+    const account = (await import("@/app/account/page")).default;
+    const html = renderToStaticMarkup(await account());
+    const box = (
+      /<section id="admin"[\s\S]*?<\/section>/.exec(html)?.[0] ?? ""
+    ).replaceAll("&#x27;", "'");
+    expect(box).toContain(COPY["account.admin.title"].text);
+    expect(box).toContain(COPY["account.admin.lead"].text);
+    expect(box).toContain('href="/admin/copy"');
+    expect(box).toContain('href="/admin/copy#keys"');
+    expect(box).toContain('href="/admin"');
+  });
+
+  it("a copy editor's account page says what it may do, with no keys", async () => {
+    await aCopyEditor();
+    session.user = { id: "google-editor" };
+    const account = (await import("@/app/account/page")).default;
+    const html = renderToStaticMarkup(await account());
+    const box = (
+      /<section id="admin"[\s\S]*?<\/section>/.exec(html)?.[0] ?? ""
+    ).replaceAll("&#x27;", "'");
+    expect(box).toContain(COPY["account.admin.lead_copy"].text);
+    expect(box).toContain('href="/admin/copy"');
+    expect(box).not.toContain("#keys");
+  });
+
+  it("someone who isn't an admin gets no admin box", async () => {
+    session.user = { id: "google-nobody" };
+    const account = (await import("@/app/account/page")).default;
+    const html = renderToStaticMarkup(await account());
+    expect(html).not.toContain('id="admin"');
+    expect(html).not.toMatch(/href="\/admin/);
+  });
+
+  it("an admin can jump to the keys and to each page's words", async () => {
+    await anAdmin();
+    session.user = { id: "google-admin" };
+    const copy = (await import("@/app/admin/copy/page")).default;
+    const html = renderToStaticMarkup(await copy());
+    expect(html).toContain('id="keys"');
+    expect(html).toContain('href="#keys"');
+    expect(html).toContain('href="/admin/copy#keys"');
+    for (const p of COPY_PAGES) {
+      expect(html).toContain(`id="page-${p.page}"`);
+      expect(html).toContain(`href="#page-${p.page}"`);
+    }
+    session.user = null;
+    await aCopyEditor();
+    session.user = { id: "google-editor" };
+    const editor = renderToStaticMarkup(await copy());
+    expect(editor).not.toContain('href="#keys"');
+    expect(editor).not.toContain('id="keys"');
   });
 
   it("an admin sees the keys and every box", async () => {

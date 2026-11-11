@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { neonAuth } from "@/lib/human-auth";
+import { signInPath } from "@/lib/sign-in-next";
 
 // /agent is the address people paste into their agents. An agent's fetch
 // (curl, most agent tools: anything that doesn't ask for HTML) gets the guide
@@ -30,12 +31,13 @@ function agent(req: NextRequest): NextResponse {
 
 // On the account and admin pages: coming back from Google, the URL carries a
 // one-time verifier that this swaps for the session cookie; after that it
-// keeps the session fresh, and sends anyone not signed in to /sign-in.
+// keeps the session fresh, and sends anyone not signed in to /sign-in, which
+// sends them back to the page they asked for once they have.
 export async function proxy(req: NextRequest) {
   if (req.nextUrl.pathname === AGENT_PATH) return agent(req);
   const auth = neonAuth();
   if (!auth) return NextResponse.next();
-  return auth.middleware({ loginUrl: "/sign-in" })(req);
+  return auth.middleware({ loginUrl: signInPath(req.nextUrl.pathname) })(req);
 }
 
 export const config = { matcher: ["/agent", "/account", "/admin/:path*"] };

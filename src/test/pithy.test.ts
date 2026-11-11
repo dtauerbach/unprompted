@@ -180,7 +180,9 @@ describe("people's pages stay short", () => {
     // 6,200 before the play page's watch view added its few words; 8,071
     // once the words that were written in code (nav, badges, a bot's
     // profile, tab titles) moved into the store, which added none; 8,283
-    // once the approval page's two refusals moved from the connector's code.
-    expect(total).toBeLessThanOrEqual(8300);
+    // once the approval page's two refusals moved from the connector's code;
+    // 8,693 once the nav said who's signed in, sign-in said what it gives
+    // and the account page pointed admins to their pages.
+    expect(total).toBeLessThanOrEqual(8700);
   });
 });

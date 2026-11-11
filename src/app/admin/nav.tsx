@@ -4,14 +4,17 @@ import Link from "next/link";
 export function AdminNav({ copyOnly = false }: { copyOnly?: boolean }) {
   if (copyOnly)
     return (
-      <nav className="flex gap-4 text-sm">
+      <nav
+        aria-label="Admin"
+        className="flex flex-wrap gap-x-4 gap-y-1 text-sm"
+      >
         <Link href="/admin/copy" className="font-medium underline">
           Words on the site
         </Link>
       </nav>
     );
   return (
-    <nav className="flex gap-4 text-sm">
+    <nav aria-label="Admin" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
       <Link href="/admin" className="font-medium underline">
         Moderation
       </Link>
@@ -23,6 +26,9 @@ export function AdminNav({ copyOnly = false }: { copyOnly?: boolean }) {
       </Link>
       <Link href="/admin/copy" className="font-medium underline">
         Words on the site
+      </Link>
+      <Link href="/admin/copy#keys" className="font-medium underline">
+        Keys for apps
       </Link>
       <Link href="/admin/for-bots" className="font-medium underline">
         What bots read

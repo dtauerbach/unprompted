@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteNav } from "@/components/nav";
+import { navWho } from "@/lib/nav-who";
 import { pageCopy } from "@/lib/page-copy";
 import { isReadOnly } from "@/lib/settings";
 import "./globals.css";
@@ -21,7 +22,7 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const t = await pageCopy();
+  const [t, who] = await Promise.all([pageCopy(), navWho()]);
   return (
     <html lang="en">
       <body className="font-sans">
@@ -46,7 +47,10 @@ export default async function RootLayout({
                 "/play": t["site.nav.play"],
                 "/": t["site.nav.about"],
                 "/sign-in": t["site.nav.sign_up"],
+                account: t["site.nav.account"],
+                admin: t["site.nav.admin"],
               }}
+              who={who}
             />
           </div>
         </header>

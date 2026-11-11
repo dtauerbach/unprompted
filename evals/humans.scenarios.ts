@@ -27,8 +27,11 @@ export function humanScenarios(bot: () => Bot): void {
     it("finds the sign-in page from the menu", async () => {
       const home = await get("/");
       expect(home.text).toMatch(
-        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span class="sr-only">Sign up \(for humans\)<\/span>/,
+        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span>Sign up \(for humans\)<\/span>/,
       );
+      // Nobody is signed in, so nothing says anyone is.
+      expect(home.text).not.toContain('href="/account"');
+      expect(home.text).not.toMatch(/href="\/admin/);
       expect(home.text).not.toContain(">Your bots<");
       const page = await get("/sign-in");
       expect(page.status).toBe(200);
@@ -65,6 +68,79 @@ export function humanScenarios(bot: () => Bot): void {
       expect(res.text).not.toContain("Send a bot");
       expect(res.text).not.toContain("Sign out");
       expect(res.text).not.toContain("own_");
+      // Nor does the menu on any page take the made-up cookies for a session.
+      const home = await request("GET", "/", {
+        headers: {
+          cookie: "__Secure-neon-auth.session_token=forged",
+        },
+      });
+      expect(home.status).toBe(200);
+      expect(home.text).toMatch(/href="\/sign-in"/);
+      expect(home.text).not.toContain('href="/account"');
+      expect(home.text).not.toMatch(/href="\/admin/);
+    });
+
+    // An admin page sends someone signed out to sign in, and sign-in sends
+    // them back to it, but never to anywhere else.
+    it("is sent to sign in from an admin page, and back to it", async () => {
+      const res = await get("/admin/copy");
+      if (res.status === 307) {
+        const to = new URL(res.headers.get("location") ?? "", "http://x");
+        expect(to.pathname).toBe("/sign-in");
+        expect(to.searchParams.get("next")).toBe("/admin/copy");
+        const page = (await get(`${to.pathname}${to.search}`)).text.replace(
+          /<!-- -->/g,
+          "",
+        );
+        expect(page).toContain("Sign in to go on to the admin pages.");
+        expect(page).toMatch(/name="next" value="\/admin\/copy"/);
+      } else {
+        // No sign-in set up here: the admin pages aren't there at all.
+        expect(res.status).toBe(404);
+      }
+      expect(res.text).not.toContain("Words on the site");
+    });
+
+    it("can't be sent anywhere but the site's own pages after signing in", async () => {
+      for (const next of [
+        "//evil.example/admin",
+        "https://evil.example/",
+        "/admin/../forum",
+        "/admin/%2e%2e/x",
+        "/forum",
+        "/admin\\evil",
+        "javascript:alert(1)",
+      ]) {
+        const page = (
+          await get(`/sign-in?next=${encodeURIComponent(next)}`)
+        ).text.replace(/<!-- -->/g, "");
+        expect(page, next).not.toContain('name="next"');
+        expect(page, next).not.toContain("Sign in to go on to");
+        // Next's own page data repeats the address asked for inside a
+        // script; what's drawn, and every link and form, must not.
+        const drawn = page.replace(/<script[\s\S]*?<\/script>/g, "");
+        expect(drawn, next).not.toContain("evil.example");
+      }
+    });
+
+    it("never shows a page address it was handed as if the site said it", async () => {
+      const page = (
+        await get(
+          `/sign-in?next=${encodeURIComponent("/admin/Account-locked.-Call-us")}`,
+        )
+      ).text.replace(/<!-- -->/g, "");
+      const drawn = page
+        .replace(/<script[\s\S]*?<\/script>/g, "")
+        .replace(/<input[^>]*>/g, "");
+      expect(drawn).not.toContain("Account-locked");
+    });
+
+    it("is told what signing in gives them, and what needs no account", async () => {
+      const page = (await get("/sign-in")).text.replace(/<!-- -->/g, "");
+      expect(page).toContain("What signing in gives you");
+      expect(page).toContain(
+        "Reading, watching games and sending an agent need no account.",
+      );
     });
   });
 

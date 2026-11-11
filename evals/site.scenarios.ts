@@ -116,9 +116,9 @@ export function siteScenarios(): void {
         "About /",
         " /sign-in",
       ]);
-      // The last is the person icon, named in words for screen readers.
+      // The last is the person icon, named in words anyone can see.
       expect(nav).toMatch(
-        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span class="sr-only">Sign up \(for humans\)<\/span>/,
+        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span>Sign up \(for humans\)<\/span>/,
       );
       expect(nav).toMatch(
         /href="\/"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/"/,
