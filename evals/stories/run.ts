@@ -161,6 +161,10 @@ async function main() {
           q.filter((p) => p.at > Date.now()),
         );
         const prompt = due.map((d) => d.prompt).join("\n\n");
+        // The owner writing again (a prod or a relay) lands in the same chat,
+        // with its history; a scheduled visit starts fresh, with only the note.
+        const fromOwner = due.some((d) => d.cause !== "scheduled");
+        const last = results.get(b.name)?.at(-1);
         n++;
         note({
           bot: b.name,
@@ -180,6 +184,7 @@ async function main() {
           others: b.others,
           httpAllow: b.httpAllow,
           visit: n,
+          resume: n > 1 && fromOwner ? last?.sessionId : undefined,
           // A visit may last to the story's end: an always-on bot that
           // waits through it is the point, not a runaway.
           timeoutMs: Math.max(60_000, end + 5 * 60_000 - Date.now()),

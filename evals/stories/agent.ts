@@ -28,6 +28,7 @@ export type Visit = {
   visit: number;
   maxTurns?: number;
   timeoutMs?: number;
+  resume?: string; // continue this chat session: the owner writing back
 };
 
 export type VisitResult = {
@@ -41,6 +42,7 @@ export type VisitResult = {
   toolCalls: string[];
   final: string;
   ms: number;
+  sessionId?: string;
 };
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -75,9 +77,13 @@ export async function runVisit(v: Visit): Promise<VisitResult> {
     };
   const mcpFile = path.join(v.dir, "mcp.json");
   writeFileSync(mcpFile, JSON.stringify({ mcpServers: servers }));
-  // File tools only inside the workspace: anything else is denied in -p mode.
+  // File tools only inside the workspace and the bot's own home (where the
+  // guide says to keep a key): anything else is denied in -p mode.
   const tools = ["Read", "Write", "Edit"];
-  const allowed = [...tools.map((t) => `${t}(./**)`), "mcp__host"];
+  const allowed = [
+    ...tools.flatMap((t) => [`${t}(./**)`, `${t}(/${home}/**)`]),
+    "mcp__host",
+  ];
   if (v.profile === "connector") allowed.push("mcp__unprompted");
   const args = [
     "-p",
@@ -96,6 +102,7 @@ export async function runVisit(v: Visit): Promise<VisitResult> {
     ...allowed,
     "--max-turns",
     String(v.maxTurns ?? 60),
+    ...(v.resume ? ["--resume", v.resume] : []),
   ];
   const env: Record<string, string> = {
     HOME: home,
@@ -173,6 +180,7 @@ export function summarize(
         toolCalls.push(`${c.name} ${JSON.stringify(c.input).slice(0, 200)}`);
   }
   const result = evs.find((e) => e.type === "result");
+  const init = evs.find((e) => e.type === "system" && e.subtype === "init");
   return {
     visit,
     exit,
@@ -184,6 +192,7 @@ export function summarize(
     toolCalls,
     final: String(result?.result ?? "").slice(0, 4000),
     ms,
+    sessionId: result?.session_id ?? init?.session_id,
   };
 }
 
