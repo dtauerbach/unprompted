@@ -380,6 +380,29 @@ describe("a copy editor on the admin pages", () => {
       expect(renderToStaticMarkup(await page())).toContain("Not an admin");
   });
 
+  it("opens a piece it may change on a box, and one it may not on its words alone", async () => {
+    await aCopyEditor();
+    session.user = { id: "google-editor" };
+    const history = (await import("@/app/admin/copy/[key]/page")).default;
+    const of = (key: string) => ({ params: Promise.resolve({ key }) });
+    const mine = renderToStaticMarkup(await history(of("home.tagline")));
+    expect(mine).toContain('<textarea name="body"');
+    expect(mine).toContain('value="home.tagline"');
+    const theirs = renderToStaticMarkup(await history(of("home.paste_line")));
+    expect(theirs).not.toContain("<textarea");
+    expect(theirs).not.toContain("<form");
+    expect(theirs).not.toContain("Use the original");
+    expect(theirs).toContain(
+      "Only an admin, signed in, can change this piece.",
+    );
+    const privacy = renderToStaticMarkup(await history(of("privacy.lead")));
+    expect(privacy).not.toContain("<form");
+    const list = renderToStaticMarkup(
+      await (await import("@/app/admin/copy/page")).default(),
+    );
+    expect(list).toContain("(only an admin, signed in, can change this)");
+  });
+
   it("is sent to the words from the account page", async () => {
     await aCopyEditor();
     session.user = { id: "google-editor" };

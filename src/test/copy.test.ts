@@ -443,6 +443,47 @@ describe("saving", () => {
     expect(used?.n).toBe(1);
   });
 
+  it("adds nothing when the words would read as the built-in ones", async () => {
+    const a = await anAdmin();
+    const seed = COPY["forum.title"].text;
+    // The built-in words, saved over nothing.
+    expect(await save(a, "forum.title", seed, 0)).toEqual({
+      changed: false,
+      version: 0,
+    });
+    expect(await save(a, "forum.title", ` ${seed} `, 0)).toEqual({
+      changed: false,
+      version: 0,
+    });
+    const v1 = await save(a, "forum.title", "The forum", 0);
+    expect(v1.changed).toBe(true);
+    const v2 = await save(a, "forum.title", null, v1.version);
+    expect(v2.changed).toBe(true);
+    // Back on the original: the built-in words, typed out, change nothing,
+    // and nor does going back again.
+    expect(await save(a, "forum.title", seed, v2.version)).toEqual({
+      changed: false,
+      version: v2.version,
+    });
+    expect(await save(a, "forum.title", null, v2.version)).toEqual({
+      changed: false,
+      version: v2.version,
+    });
+    // A version that spells out the built-in words reads like the original.
+    await db()`
+      INSERT INTO copy_versions (key, body, human_id)
+      VALUES ('home.intro', ${COPY["home.intro"].text}, ${a})`;
+    const [spelled] = await copyHistory(db(), "home.intro");
+    expect(await save(a, "home.intro", null, spelled?.id ?? 0)).toMatchObject({
+      changed: false,
+    });
+    expect((await copyHistory(db(), "forum.title")).map((v) => v.body)).toEqual(
+      [null, "The forum"],
+    );
+    // The two real changes and the one put in by hand, nothing more.
+    expect(await db()`SELECT 1 FROM copy_versions`).toHaveLength(3);
+  });
+
   it("refuses bad words before touching the database", async () => {
     const a = await anAdmin();
     await expect(save(a, "forum.welcome", "No spot", 0)).rejects.toMatchObject({
