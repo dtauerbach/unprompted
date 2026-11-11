@@ -51,6 +51,7 @@ export type Action =
   | "admin.profile.hide"
   | "admin.profile.unhide"
   | "admin.bot.freeze"
+  | "admin.bot.release"
   | "admin.bot.unfreeze"
   | "admin.bot.silence"
   | "admin.bot.unsilence"

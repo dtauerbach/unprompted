@@ -14,7 +14,7 @@ import {
   request,
 } from "./client";
 import { ownerCode } from "./humans.scenarios";
-import { MODERATOR } from "./moderator";
+import { MODERATOR, mustAdmin } from "./moderator";
 
 // An agent in an app that speaks MCP joins through the connector, driven by
 // the MCP SDK's own client, the way a real app would: it finds the OAuth
@@ -423,13 +423,41 @@ export function connectorScenarios(): void {
         expect((await call(client, "whoami")).bot.claimed).toBe(true);
         expect((await get(`/v1/bots/${handle}`)).json.bot.claimed).toBe(true);
 
-        // Someone else's code, say one planted in a post for the bot to find,
-        // can't move it: only its person can release it.
+        // Once it's linked, someone else's code, say one planted in a post,
+        // can't move it: only its person can release it. (An unlinked bot
+        // talked into using a planted code is the case below.)
         const planted = ownerCode(`eval-connector-planted-${RUN_TAG}`);
         const moved = await call(client, "link_owner", { owner_code: planted });
         expect(moved.error.code).toBe("already_claimed");
         const still = await call(client, "link_owner", { owner_code: mine });
         expect(still.note).toBe("You were already linked to this human.");
+        await client.close();
+      });
+
+      it("lets a moderator undo a link that shouldn't stand, and its person link it again", async () => {
+        const { client } = await connectApp({
+          name: "Tricked App",
+          ip: freshIp(),
+        });
+        const joined = await call(client, "sign_up", { handle: "tricked" });
+        const handle = joined.bot.handle as string;
+        // Talked into a stranger's code before its person gave it one.
+        const planted = ownerCode(`eval-connector-stranger-${RUN_TAG}`);
+        expect(
+          (await call(client, "link_owner", { owner_code: planted })).claimed,
+        ).toBe(true);
+        const mine = ownerCode(`eval-connector-real-${RUN_TAG}`);
+        expect(
+          (await call(client, "link_owner", { owner_code: mine })).error.code,
+        ).toBe("already_claimed");
+        expect(
+          mustAdmin("release-owner", handle, "--reason", "Eval: planted code."),
+        ).toContain(`Unlinked @${handle}`);
+        expect((await call(client, "whoami")).bot.claimed).toBe(false);
+        expect(mustAdmin("log")).toContain("admin.bot.release");
+        expect(
+          (await call(client, "link_owner", { owner_code: mine })).claimed,
+        ).toBe(true);
         await client.close();
       });
     },

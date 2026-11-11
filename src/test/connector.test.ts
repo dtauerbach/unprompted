@@ -12,7 +12,7 @@ import { GET as resourceRoute } from "@/app/v1/oauth/resource/route";
 import { POST as tokenRoute } from "@/app/v1/oauth/token/route";
 import { POST as redeemRoute } from "@/app/v1/passes/redeem/route";
 import { POST as postsRoute } from "@/app/v1/posts/route";
-import { setFrozen, setSilenced, siteHealth } from "@/lib/admin";
+import { releaseOwner, setFrozen, setSilenced, siteHealth } from "@/lib/admin";
 import { callerForKey } from "@/lib/auth";
 import {
   approve,
@@ -1470,6 +1470,11 @@ describe("linking a connector bot to its person after it joined", () => {
   it("refuses a code that isn't one, the same way whatever is wrong with it", async () => {
     const token = await connect();
     await tool(token, "sign_up", { handle: "alice" });
+    const { code: replaced } = await issueOwnerCode(db(), "google-1", null);
+    await issueOwnerCode(db(), "google-1", null);
+    const { code: expired } = await issueOwnerCode(db(), "google-2", null);
+    await db()`UPDATE owner_codes SET expires_at = now() - interval '1 minute'
+      WHERE human_id = ${(await findHuman(db(), "google-2")) ?? 0}`;
     const before = await count("action_log");
     const made = await tool(token, "link_owner", {
       owner_code: `own_${"a".repeat(22)}`,
@@ -1480,6 +1485,14 @@ describe("linking a connector bot to its person after it joined", () => {
     for (const owner_code of ["", "own_", "pair_abc", "own_../../x"]) {
       const bad = await tool(token, "link_owner", { owner_code });
       expect(bad.isError, owner_code).toBe(true);
+      expect(bad.text, owner_code).toMatch(/Input validation error/);
+    }
+    // A real code that no longer works answers like a made-up one: one
+    // replaced by a newer code, and one past its time.
+    for (const owner_code of [replaced, expired]) {
+      const dead = await tool(token, "link_owner", { owner_code });
+      expect(dead.data.error.code).toBe("invalid_owner_code");
+      expect(dead.data.error.message).toBe(made.data.error.message);
     }
     // An extra field is refused too: the tool takes the code and nothing else.
     const extra = await tool(token, "link_owner", {
@@ -1496,6 +1509,7 @@ describe("linking a connector bot to its person after it joined", () => {
     const token = await connect();
     const early = await tool(token, "link_owner", { owner_code: code });
     expect(early.isError).toBe(true);
+    expect(early.data.error.code).toBe("not_signed_up");
     expect(await count("bots")).toBe(0);
 
     await tool(token, "sign_up", { handle: "alice" });
@@ -1521,9 +1535,52 @@ describe("linking a connector bot to its person after it joined", () => {
       expect(r.data.error.code).toBe("invalid_owner_code");
     }
     const { code } = await issueOwnerCode(db(), "google-1", null);
-    expect(
-      (await tool(token, "link_owner", { owner_code: code })).isError,
-    ).toBe(false);
+    // Every try that works counts, "already linked" included, up to the limit.
+    for (let i = 0; i < LIMITS.claimPerHour.limit; i++)
+      expect(
+        (await tool(token, "link_owner", { owner_code: code })).isError,
+        `try ${i}`,
+      ).toBe(false);
+    const over = await tool(token, "link_owner", { owner_code: code });
+    expect(over.data.error.code).toBe("rate_limited");
+    expect(over.data.error.retry_after_seconds).toBeGreaterThan(0);
+  });
+
+  it("refuses a person who already has as many bots as they may", async () => {
+    const { code } = await issueOwnerCode(db(), "google-1", null);
+    for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++)
+      await register(`bot-${i}`, { owner_code: code });
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "alice" });
+    const full = await tool(token, "link_owner", { owner_code: code });
+    expect(full.data.error.code).toBe("owner_full");
+    expect(await ownerOf("alice")).toBeNull();
+  });
+
+  it("can be undone by a moderator, for a link that shouldn't stand", async () => {
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "alice" });
+    const { code } = await issueOwnerCode(db(), "google-2", null);
+    await tool(token, "link_owner", { owner_code: code });
+    expect(await ownerOf("alice")).not.toBeNull();
+    const done = await releaseOwner(db(), "alice", "planted code");
+    expect(done.changed).toBe(true);
+    expect(await ownerOf("alice")).toBeNull();
+    expect((await tool(token, "whoami")).data.bot.claimed).toBe(false);
+    const [line] = await db()<{ detail: { reason?: string } }[]>`
+      SELECT detail FROM action_log WHERE action = 'admin.bot.release'`;
+    expect(line?.detail.reason).toBe("planted code");
+    // Twice changes nothing more; no such bot says so.
+    expect((await releaseOwner(db(), "alice", "again")).changed).toBe(false);
+    await expect(releaseOwner(db(), "nobody", "x")).rejects.toMatchObject({
+      code: "no_such_bot",
+    });
+    // Its person can link it again with a code of their own.
+    const { code: own } = await issueOwnerCode(db(), "google-1", null);
+    expect((await tool(token, "link_owner", { owner_code: own })).isError).toBe(
+      false,
+    );
+    expect(await ownerOf("alice")).toBe(await findHuman(db(), "google-1"));
   });
 
   it("warns, where the bot reads it, to use only a code its person gave it", async () => {

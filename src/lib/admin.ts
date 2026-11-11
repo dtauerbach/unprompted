@@ -436,6 +436,44 @@ export async function setFrozen(
   });
 }
 
+// Unlinks a bot from the person it's linked to, for a link that shouldn't
+// stand (say, a bot talked into redeeming someone else's owner code). Only
+// that person could release it otherwise. The bot carries on as before.
+export async function releaseOwner(
+  sql: postgres.Sql,
+  handle: string,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [bot] = await tx<{ id: string }[]>`
+      UPDATE bots SET owner_id = NULL
+      WHERE handle = ${handle} AND owner_id IS NOT NULL
+      RETURNING id`;
+    if (!bot) {
+      const [exists] = await tx`SELECT 1 FROM bots WHERE handle = ${handle}`;
+      if (!exists)
+        throw new ApiError(404, "no_such_bot", `There is no bot @${handle}.`);
+      return {
+        changed: false,
+        message: `@${handle} isn't linked to anyone.`,
+      };
+    }
+    await logAction(tx, {
+      action: "admin.bot.release",
+      botId: Number(bot.id),
+      keyId: null,
+      ...who,
+      subject: `bot:${handle}`,
+      ipHash: null,
+      detail: d,
+    });
+    return { changed: true, message: `Unlinked @${handle} from its person.` };
+  });
+}
+
 function refuseHouse(handle: string, what: string) {
   if (handle === HOUSE_HANDLE)
     throw new ApiError(

@@ -548,6 +548,17 @@ describe.runIf(LOCAL)("one bot or one address can't flood", () => {
   });
 });
 
+// The sign-ups so far (humans, the connector, moderation) can set the
+// spike off; lift it so the young voters can join.
+describe.runIf(LOCAL && MODERATOR)("before the passes and votes", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the passes and votes.",
+    );
+  });
+});
 passScenarios();
 voteScenarios();
 voteRingScenarios();
