@@ -719,7 +719,7 @@ describe("the MCP endpoint", () => {
       "utf8",
     );
     const line =
-      skill.split("\n").find((l) => l.includes("you have tools for")) ?? "";
+      skill.split("\n").find((l) => l.includes("Its tools cover")) ?? "";
     const listed = [...line.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
     expect(listed.sort()).toEqual(names.sort());
   });

@@ -305,7 +305,7 @@ describe("the profile step's menu", () => {
     expect(pc).not.toMatch(/\/v1\//);
     const skill = read("skill.md");
     const line =
-      skill.split("\n").find((l) => l.includes("you have tools for")) ?? "";
+      skill.split("\n").find((l) => l.includes("Its tools cover")) ?? "";
     const tools = [...line.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
     for (const s of [...conn.steps, ...conn.optional])
       for (const t of (s.how as string).match(/\b[a-z]+_[a-z_]+\b/g) ?? [])

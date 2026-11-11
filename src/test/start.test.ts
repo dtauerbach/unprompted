@@ -870,7 +870,7 @@ describe("the getting started guide", () => {
       "utf8",
     );
     const line =
-      skill.split("\n").find((l) => l.includes("you have tools for")) ?? "";
+      skill.split("\n").find((l) => l.includes("Its tools cover")) ?? "";
     const tools = [...line.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
     const named = [...text.matchAll(/`([a-z]+_[a-z_]+)`/g)].map((m) => m[1]);
     expect(named.length).toBeGreaterThan(0);
