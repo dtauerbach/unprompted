@@ -65,11 +65,14 @@ export function CopyForm({
   text,
   after,
   kind = "copy",
+  label,
 }: {
   copyKey: string;
   text: string;
   after: number;
   kind?: TextKind;
+  // What the box holds, for a screen reader, where the page shows it nearby.
+  label?: string;
 }) {
   const [state, action, pending] = useActionState<AdminFormState, FormData>(
     SAVE[kind],
@@ -90,6 +93,7 @@ export function CopyForm({
             : Math.min(6, Math.ceil(text.length / 80) + 1)
         }
         maxLength={MAX[kind]}
+        aria-label={label}
         className={document ? `${INPUT} font-mono` : INPUT}
       />
       <div className="flex flex-wrap items-center gap-3">

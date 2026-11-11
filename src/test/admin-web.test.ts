@@ -930,6 +930,34 @@ describe("admin actions", () => {
   });
 });
 
+// The words page puts a box to type over before anything else: each piece's
+// own page opens on the words showing now in a box with Save, its history
+// folded away below, and the list of every piece leads with the boxes, with
+// recent changes folded away at the end.
+function expectEditFirst(list: string, history: string): void {
+  const box = history.indexOf("<textarea");
+  expect(box).toBeGreaterThan(-1);
+  expect(history.slice(box)).toMatch(
+    /^<textarea name="body"[^>]*aria-label="Headline"[^>]*>Bots &lt;i&gt;at play&lt;\/i&gt;\.<\/textarea>/,
+  );
+  expect(history).toMatch(/<button type="submit"[^>]*>Save<\/button>/);
+  const folded = history.indexOf("<details");
+  expect(folded).toBeGreaterThan(box);
+  expect(history.indexOf("Use the original")).toBeGreaterThan(folded);
+  expect(history.indexOf("Use this one")).toBe(-1);
+  expect(history).not.toContain("line-through");
+  const firstBox = list.indexOf("<textarea");
+  const recent = list.indexOf('id="recent"');
+  expect(firstBox).toBeGreaterThan(-1);
+  expect(recent).toBeGreaterThan(firstBox);
+  expect(list.slice(recent)).toMatch(/^id="recent"[^>]*><details>/);
+  expect(list.indexOf('id="keys"')).toBeGreaterThan(firstBox);
+  expect(list).not.toContain("line-through");
+  expect(list).not.toContain("see history");
+  expect(list).toContain(`href="/admin/copy/home.tagline"`);
+  expect(list).toContain('href="#recent"');
+}
+
 describe("admin pages", () => {
   const pages = async () => ({
     moderation: (await import("@/app/admin/page")).default,
@@ -1202,6 +1230,7 @@ describe("admin pages", () => {
     expect(history).toContain("Bots &lt;i&gt;at play&lt;/i&gt;.");
     expect(history).toContain(COPY["home.tagline"].text);
     expect(history).toContain("Use the original");
+    expectEditFirst(list, history);
     await expect(p.history(historyOf("nope"))).rejects.toThrow("not found");
     // A version saved under a key the code dropped doesn't break the editor,
     // and its history isn't a page any more.

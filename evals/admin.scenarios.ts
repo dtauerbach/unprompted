@@ -360,6 +360,23 @@ export function adminScenarios(): void {
       );
     });
 
+    it("saves nothing when the words would read the same", async () => {
+      const id = `eval-copy-${RUN_TAG}`;
+      const shown = JSON.parse(mustAdmin("copy", "show", "forum"));
+      const key = "forum.title";
+      const words = shown[key];
+      expect(typeof words).toBe("string");
+      // The words showing now, saved again, or the built-in words, gone back
+      // to: no new version, so the history only holds real changes.
+      expect(editCopy(id, key, words).out).toBe("unchanged");
+      expect(editCopy(id, key, ` ${words} `).out).toBe("unchanged");
+      const changed = editCopy(id, key, `${words} ${RUN_TAG}`);
+      expect(changed.out).toMatch(/^saved \d+$/);
+      expect(editCopy(id, key, "--original").out).toMatch(/^saved \d+$/);
+      expect(editCopy(id, key, "--original").out).toBe("unchanged");
+      expect(editCopy(id, key, words).out).toBe("unchanged");
+    });
+
     it("can't drop what the page fills in", async () => {
       const id = `eval-copy-${RUN_TAG}`;
       const refused = editCopy(id, "forum.welcome", "Start with the post");

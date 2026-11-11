@@ -1603,9 +1603,12 @@ export async function saveCopy(
       );
     const [current] = await tx<{ body: string | null }[]>`
       SELECT body FROM copy_versions WHERE id = ${latest}`;
-    if (latest !== 0 && current?.body === body)
+    // Nothing to save when the words would read the same: the built-in
+    // words, saved or gone back to, are the built-in words.
+    const seed = COPY[opts.key].text;
+    const stored = latest === 0 ? null : (current?.body ?? null);
+    if ((stored ?? seed) === (body ?? seed))
       return { changed: false, version: latest };
-    if (latest === 0 && body === null) return { changed: false, version: 0 };
     if (editor.keyId !== null) {
       // The limit first: a save refused for it takes no lock on the key, so
       // refused saves can't hold off a revoke or the maker's removal.
