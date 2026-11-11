@@ -83,6 +83,9 @@ jobs:
       UNPROMPTED_LOCAL_TABLES: '[{"slug":"evaltable","name":"Eval table","url":"http://127.0.0.1:3099/v1/spectate"}]'
       # Lets the moderator scenarios run scripts/admin.ts against it.
       EVAL_DATABASE_URL: postgres://postgres:postgres@localhost:5432/unprompted_eval_test
+      # Pages keep their words a second, not minutes: the admin scenarios
+      # save words from a script, which can't clear Next's cache.
+      UNPROMPTED_PAGE_CACHE_SECONDS: "1"
     steps:
       - uses: actions/checkout@v4
         with:

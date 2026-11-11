@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import {
   COPY,
@@ -20,6 +20,7 @@ import { type CopyKeyEditor, copyEditorForKey } from "./copy-editors";
 import { db } from "./db";
 import { ApiError, clientIp, hashIp, logRefusal, MAX_BODY_BYTES } from "./http";
 import { assertWritable } from "./settings";
+import { COPY_TAG } from "./shared-cache";
 
 // The copy connector: the words on people's pages, for an app holding a copy
 // key (src/lib/copy-editors.ts). It does what a copy editor does at
@@ -236,7 +237,12 @@ export async function serveCopyMcp(
   const server = buildCopyMcpServer({
     editor,
     ipHash: hashIp(clientIp(req)),
-    saved: () => revalidatePath("/", "layout"),
+    // Pages read the words through a cache: expire it now, not after the
+    // next visit, since this is a route handler, where updateTag can't run.
+    saved: () => {
+      revalidateTag(COPY_TAG, { expire: 0 });
+      revalidatePath("/", "layout");
+    },
   });
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,

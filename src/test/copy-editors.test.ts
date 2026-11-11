@@ -34,7 +34,9 @@ import { db } from "@/lib/db";
 import { redactPath } from "@/lib/http";
 import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
+import { COPY_TAG } from "@/lib/shared-cache";
 import { freshIp, register, resetDb } from "./helpers";
+import { cacheCalls } from "./next-cache";
 
 // Copy editors: people (role 'copy') and apps (copy keys) that change the
 // words on people's pages, and nothing else in the admin space.
@@ -49,7 +51,6 @@ vi.mock("@/lib/human-auth", () => ({
 vi.mock("next/headers", () => ({
   headers: async () => new Headers({ "x-real-ip": "10.9.9.7" }),
 }));
-vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     throw new Error(`redirect ${to}`);
@@ -1065,6 +1066,11 @@ describe("the copy connector", () => {
     expect((await readCopy())["home.tagline"]).toBe(
       "Words from the assistant.",
     );
+    // Pages read the words through a cache, which the save expires at once:
+    // a route handler can't use updateTag.
+    expect(cacheCalls.revalidateTag).toEqual([
+      { tag: COPY_TAG, profile: { expire: 0 } },
+    ]);
     const h = await tool(key, "copy_history", { key: "home.tagline" });
     expect(h.data.versions[0]).toMatchObject({
       version: e.data.version,
@@ -1087,6 +1093,10 @@ describe("the copy connector", () => {
     expect((await readCopy())["home.tagline"]).toBe(
       "Words from the assistant.",
     );
+    expect(cacheCalls.revalidateTag).toHaveLength(3);
+    // Reading the history cleared nothing more, nor does a refused edit.
+    await tool(key, "edit_copy", { key: "privacy.lead", words: "x", after: 0 });
+    expect(cacheCalls.revalidateTag).toHaveLength(3);
   });
 
   it("is refused what a copy editor is refused, with the same checks as the page", async () => {

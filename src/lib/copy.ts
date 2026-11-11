@@ -1451,15 +1451,21 @@ export function builtInCopy(): Copy {
 // built-in text. If the database can't be read, the page still shows, with
 // the built-in words.
 export async function readCopy(sql?: postgres.Sql): Promise<Copy> {
-  const out = builtInCopy();
-  let latest: Awaited<ReturnType<typeof latestVersions>>;
   try {
-    latest = await latestVersions(sql ?? db());
+    return await copyInForce(sql ?? db());
   } catch (err) {
     console.error("couldn't read copy; using the built-in words", err);
-    return out;
+    return builtInCopy();
   }
-  for (const [key, v] of latest)
+}
+
+// The same, failing when the database can't be read, for a cache that
+// mustn't keep the built-in words as if they were the saved ones. Only
+// versions that still fit their piece count, so what a cache keeps has
+// already passed checkCopy's rules.
+export async function copyInForce(sql: postgres.Sql): Promise<Copy> {
+  const out = builtInCopy();
+  for (const [key, v] of await latestVersions(sql))
     if (v.body !== null && fitsPiece(key, v.body)) out[key] = v.body;
   return out;
 }

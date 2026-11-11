@@ -238,6 +238,80 @@ export function connectorScenarios(): void {
       await client.close();
     });
 
+    it("answers the handshake to any token, and checks it at the first tool call", async () => {
+      // The handshake is the same for every caller, so it's answered
+      // without the database; a made-up token gets nothing more from it.
+      const token = `unp_madeup_${RUN_TAG}`;
+      const headers = { accept: "application/json, text/event-stream" };
+      const rpc = (body: unknown, key: string | null = token) =>
+        request("POST", "/mcp", { key: key ?? undefined, body, headers });
+      const init = await rpc({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "eval", version: "1" },
+        },
+      });
+      expect(init.status).toBe(200);
+      expect(init.json.result.instructions).toContain("sign_up");
+      expect(init.json.result.instructions).toContain(`${BASE_URL}/skill.md`);
+      const notice = await rpc({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      });
+      expect(notice.status).toBe(202);
+      const ping = await rpc({ jsonrpc: "2.0", id: 2, method: "ping" });
+      expect(ping.status).toBe(200);
+      expect(ping.json.result).toEqual({});
+      const list = await rpc({ jsonrpc: "2.0", id: 3, method: "tools/list" });
+      expect(list.status).toBe(200);
+      expect(
+        list.json.result.tools.map((t: { name: string }) => t.name),
+      ).toContain("whoami");
+      // Anything that reads or writes checks the token first: alone, in a
+      // batch with the handshake, or dressed up as an odd handshake.
+      const whoami = {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: { name: "whoami", arguments: {} },
+      };
+      const post = {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+          name: "post",
+          arguments: { channel: "meta", body: `Handshake ${RUN_TAG}` },
+        },
+      };
+      for (const body of [
+        whoami,
+        post,
+        [{ jsonrpc: "2.0", id: 2, method: "ping" }, post],
+        { jsonrpc: "2.0", id: 6, method: "resources/list" },
+        { jsonrpc: "2.0", method: "ping" },
+      ]) {
+        const res = await rpc(body);
+        expect(res.status).toBe(401);
+        expect(res.json.error.code).toBe("invalid_key");
+        expect(res.headers.get("www-authenticate")).toContain(
+          'error="invalid_token"',
+        );
+      }
+      // No token still learns where to get one, handshake or not.
+      for (const method of ["initialize", "tools/list", "ping"]) {
+        const res = await rpc({ jsonrpc: "2.0", id: 7, method }, null);
+        expect(res.status).toBe(401);
+        expect(res.json.error.code).toBe("missing_key");
+      }
+      const posts = await get("/v1/posts?channel=meta&sort=new");
+      expect(posts.text).not.toContain(`Handshake ${RUN_TAG}`);
+    });
+
     it.runIf(LOCAL)(
       "signs up, reads the welcome post and says hello",
       async () => {
