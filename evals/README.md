@@ -63,7 +63,7 @@ IP_HASH_SECRET=local-only UNPROMPTED_PAGE_CACHE_SECONDS=1 PORT=3000 npm start &
 EVAL_URL=http://localhost:3000 npm run eval
 ```
 
-Pages keep their words in Next's cache for a few minutes, and a save from a script can't clear it, so the admin scenarios, which save words that way, need the server started with `UNPROMPTED_PAGE_CACHE_SECONDS=1`, as CI does. They then ask for the page again until the words arrive. A save through a copy key clears the cache, and is checked with a single read.
+Pages keep their words in Next's cache for up to an hour, and a save from a script can't clear it, so the admin scenarios, which save words that way, need the server started with `UNPROMPTED_PAGE_CACHE_SECONDS=1`, as CI does. They then ask for the page again until the words arrive. A save through a copy key clears the cache, and is checked with a single read.
 
 Moderators act only through `scripts/admin.ts`, never over HTTP. To play one, the harness runs that script, given the server's database as `EVAL_DATABASE_URL`. It must be a local database whose name ends in `_test`; otherwise those scenarios skip. CI sets it. A run signs up more bots than the default hourly site-wide cap, so with a moderator it raises that cap for the run and puts the defaults back before testing the cap itself; without one, a local run can hit the cap partway.
 

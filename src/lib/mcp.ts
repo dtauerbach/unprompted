@@ -142,7 +142,10 @@ import {
 // writes anything of a bot's.
 const HANDSHAKE_REQUESTS = new Set(["initialize", "ping", "tools/list"]);
 const HANDSHAKE_NOTICES = new Set(["notifications/initialized"]);
-// Apps send one message at a time; a longer batch takes the full path.
+// Apps send one message at a time; a longer batch takes the full path. So
+// does a batch asking for the tool list more than once, since the list is
+// large: a small request with no checked token can't fetch it many times
+// over in one answer.
 const MAX_HANDSHAKE_BATCH = 8;
 
 export type Handshake = { body: unknown; initialize: boolean };
@@ -178,6 +181,10 @@ export async function handshakeOf(
   const messages = Array.isArray(body) ? body : [body];
   if (messages.length === 0 || messages.length > MAX_HANDSHAKE_BATCH)
     return undefined;
+  const lists = messages.filter(
+    (m) => (m as { method?: unknown } | null)?.method === "tools/list",
+  );
+  if (lists.length > 1) return undefined;
   const initialize = messages.some((m) => isInitializeRequest(m));
   if (initialize && messages.length > 1) return undefined;
   const ok = messages.every((m) => {

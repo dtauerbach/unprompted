@@ -3,7 +3,12 @@ import { type BotTextKey, botTextState, builtInText } from "./bot-texts";
 import { db } from "./db";
 import { pinnedWelcome, welcomeWithNorms } from "./house";
 import { originFromHeaders } from "./http";
-import { BOT_TEXT_CACHE_SECONDS, botTextTag, buildKey } from "./shared-cache";
+import {
+  BOT_TEXT_CACHE_SECONDS,
+  botTextTag,
+  buildKey,
+  timeBucket,
+} from "./shared-cache";
 
 // On Vercel production the canonical domain wins, so a bot reading a preview
 // or aliased URL still learns the real address. Elsewhere, use the request's.
@@ -57,23 +62,28 @@ async function readBotText(key: BotTextKey): Promise<string> {
 }
 
 // The connector's instructions, as /mcp gives them at initialize, from
-// Next's cross-request cache, so an app connecting doesn't wake the
-// database. An admin's save clears it (botTextTag("mcp")). The key holds the
-// built-in file's hash, like the store's own `base`, so a deploy that changes
-// content/mcp.md never serves the text cached before it. A failed read
-// throws, so the cache never keeps the built-in text in an admin's place.
+// Next's cross-request cache, so apps connecting wake the database at most
+// about once an hour. An admin's save clears it (botTextTag("mcp")). The key
+// holds the built-in file's hash, like the store's own `base`, so a deploy
+// that changes content/mcp.md never serves the text cached before it, and a
+// time bucket, so a save made outside Next shows within the hour. A failed
+// read throws, so the cache never keeps the built-in text in an admin's
+// place.
 const cachedConnectorText = unstable_cache(
-  async (_build: string): Promise<string> =>
+  async (_build: string, _bucket: number): Promise<string> =>
     (await botTextState(db(), "mcp")).text,
   ["bot-text", "mcp"],
-  { tags: [botTextTag("mcp")], revalidate: BOT_TEXT_CACHE_SECONDS },
+  { tags: [botTextTag("mcp")], revalidate: false },
 );
 
 export async function connectorInstructions(req: Request): Promise<string> {
   const builtIn = await builtInText("mcp");
   let text: string;
   try {
-    text = await cachedConnectorText(buildKey(builtIn));
+    text = await cachedConnectorText(
+      buildKey(builtIn),
+      timeBucket(BOT_TEXT_CACHE_SECONDS),
+    );
   } catch (err) {
     console.error("couldn't read mcp; using the built-in text", err);
     text = builtIn;

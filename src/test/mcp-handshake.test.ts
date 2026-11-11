@@ -15,9 +15,13 @@ import { builtInText, saveBotText } from "@/lib/bot-texts";
 import { closeDb, db } from "@/lib/db";
 import { MAX_BODY_BYTES } from "@/lib/http";
 import { kickPushes } from "@/lib/push-kick";
-import { botTextTag } from "@/lib/shared-cache";
+import {
+  BOT_TEXT_CACHE_SECONDS,
+  botTextTag,
+  cacheClock,
+} from "@/lib/shared-cache";
 import { call, freshIp, register, resetDb } from "./helpers";
-import { cacheClock, cachedKeys, updateTag } from "./next-cache";
+import { cachedKeys, settleNextCache, updateTag } from "./next-cache";
 
 // The connector's handshake (initialize, ping, tools/list and the initialized
 // notice) is answered without the database: no token lookup, instructions
@@ -252,10 +256,8 @@ describe("everything else on /mcp", () => {
       },
       { name: "bad initialize", body: { ...INIT, params: {} } },
       { name: "another method", body: { ...PING, method: "resources/list" } },
-      {
-        name: "too big",
-        raw: JSON.stringify({ ...PING, pad: "x".repeat(MAX_BODY_BYTES) }),
-      },
+      { name: "too big", raw: JSON.stringify(paddedPing(MAX_BODY_BYTES + 1)) },
+      { name: "two tool lists", body: [LIST, { ...LIST, id: 8 }] },
       {
         name: "accepts only JSON",
         body: PING,
@@ -284,18 +286,55 @@ describe("everything else on /mcp", () => {
     const bot = await register("carol");
     expect((await send(bot.key, undefined, { raw: "{nope" })).status).toBe(400);
     const big = await send(bot.key, undefined, {
-      raw: JSON.stringify({ ...PING, pad: "x".repeat(MAX_BODY_BYTES) }),
+      raw: JSON.stringify(paddedPing(MAX_BODY_BYTES + 1)),
     });
     expect(big.status).toBe(413);
     expect((await send(bot.key, [INIT, PING])).status).toBe(400);
+    const lists = await send(bot.key, [LIST, { ...LIST, id: 8 }]);
+    expect(lists.status).toBe(200);
+    expect(lists.body).toHaveLength(2);
+  });
+
+  it("reads at most MAX_BODY_BYTES of a body before checking the token", async () => {
+    // The same ping, padded inside its params: within the limit it's the
+    // handshake; over it, it takes the full path and the token is checked.
+    const small = await send(MADE_UP, undefined, {
+      raw: JSON.stringify(paddedPing(MAX_BODY_BYTES - 200)),
+    });
+    expect(small.status).toBe(200);
+    expect(small.body.result).toEqual({});
+    const over = await send(MADE_UP, undefined, {
+      raw: JSON.stringify(paddedPing(MAX_BODY_BYTES + 1)),
+    });
+    expect(over.status).toBe(401);
+    expect(over.body.error.code).toBe("invalid_key");
+  });
+
+  it("lists the tools at most once per batch without a checked token", async () => {
+    // The list is large: two in one batch from a small request would
+    // multiply what an unchecked caller can pull.
+    const one = await send(MADE_UP, [LIST, PING]);
+    expect(one.status).toBe(200);
+    const raw = JSON.stringify([LIST, { ...LIST, id: 8 }, { ...LIST, id: 9 }]);
+    expect(raw.length).toBeLessThan(200);
+    const many = await send(MADE_UP, undefined, { raw });
+    expect(many.status).toBe(401);
+    expect(many.body.error.code).toBe("invalid_key");
   });
 
   it("pushes after a tool call, as before", async () => {
     const bot = await register("dave");
+    vi.mocked(kickPushes).mockClear();
     await send(bot.key, WHOAMI);
-    expect(kickPushes).toHaveBeenCalled();
+    expect(kickPushes).toHaveBeenCalledTimes(1);
   });
 });
+
+// A ping whose JSON is `bytes` long, padded inside its params.
+function paddedPing(bytes: number) {
+  const base = JSON.stringify({ ...PING, params: { pad: "" } }).length;
+  return { ...PING, params: { pad: "x".repeat(bytes - base) } };
+}
 
 async function saveMcp(body: string | null) {
   const [row] = await db()<{ id: string }[]>`
@@ -333,14 +372,25 @@ describe("the connector's instructions in the cache", () => {
     );
   });
 
-  it("reads them again after the time limit", async () => {
+  it("reads them again when the hour's bucket turns over, on the first read after it", async () => {
+    const size = BOT_TEXT_CACHE_SECONDS * 1000;
+    const start = (Math.floor(Date.now() / size) + 1) * size;
+    let now = start + 1000;
+    vi.spyOn(cacheClock, "now").mockImplementation(() => now);
     await send(MADE_UP, INIT);
     await saveMcp("Words for later.");
+    // Late in the same bucket, still the cached text, and nothing refreshes
+    // it in the background...
+    now = start + size - 1000;
     expect((await send(MADE_UP, INIT)).body.result.instructions).not.toBe(
       "Words for later.",
     );
-    const now = Date.now();
-    vi.spyOn(cacheClock, "now").mockReturnValue(now + 61 * 60 * 1000);
+    await settleNextCache();
+    expect((await send(MADE_UP, INIT)).body.result.instructions).not.toBe(
+      "Words for later.",
+    );
+    // ...and the first read in the next one is fresh.
+    now = start + size + 1;
     expect((await send(MADE_UP, INIT)).body.result.instructions).toBe(
       "Words for later.",
     );

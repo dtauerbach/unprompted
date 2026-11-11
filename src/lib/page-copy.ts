@@ -4,25 +4,32 @@ import { connection } from "next/server";
 import { cache } from "react";
 import { builtInCopy, type Copy, copyInForce } from "./copy";
 import { db } from "./db";
-import { buildKey, COPY_TAG, pageCacheSeconds } from "./shared-cache";
+import {
+  buildKey,
+  COPY_TAG,
+  pageCacheSeconds,
+  timeBucket,
+} from "./shared-cache";
 
-// The words in force, from Next's cross-request cache, so drawing a page
-// doesn't wake the database. A save through an admin page or a copy key
-// clears it (COPY_TAG); a load from the command line shows within
-// pageCacheSeconds(). The key is the seeds and the deployment, so a deploy
-// that adds a piece never draws with an older deploy's words. What's kept is
-// what copyInForce returns, after the copy rules, never raw rows. A failed
-// read throws, so the cache never keeps the built-in words in their place.
+// The words in force, from Next's cross-request cache, so drawing pages
+// wakes the database at most about once per time limit. A save at
+// /admin/copy or through a copy key clears it at once (COPY_TAG); a load
+// from the command line shows when the time bucket turns over, within
+// pageCacheSeconds(). The key holds the seeds and the deployment
+// (buildKey()), so a deploy that adds a piece never draws with an older
+// deploy's words. What's kept is what copyInForce returns, after the copy
+// rules, never raw rows. A failed read throws, so the cache never keeps the
+// built-in words in their place.
 const cachedCopy = unstable_cache(
-  async (_build: string): Promise<Copy> => copyInForce(db()),
+  async (_build: string, _bucket: number): Promise<Copy> => copyInForce(db()),
   ["page-copy"],
-  { tags: [COPY_TAG], revalidate: pageCacheSeconds() },
+  { tags: [COPY_TAG], revalidate: false },
 );
 
 let seeds: string | undefined;
-function copyBuild(): string {
-  seeds ??= buildKey(JSON.stringify(builtInCopy()));
-  return seeds;
+function copyKey(): [string, number] {
+  seeds ??= JSON.stringify(builtInCopy());
+  return [buildKey(seeds), timeBucket(pageCacheSeconds())];
 }
 
 // The words for the page being drawn, read once per request however many
@@ -35,7 +42,7 @@ function copyBuild(): string {
 export const pageCopy: () => Promise<Copy> = cache(async () => {
   await connection();
   try {
-    return await cachedCopy(copyBuild());
+    return await cachedCopy(...copyKey());
   } catch (err) {
     console.error("couldn't read copy; using the built-in words", err);
     return builtInCopy();

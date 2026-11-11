@@ -17,12 +17,13 @@ import { connectorInstructions, requestOrigin, siteOrigin } from "@/lib/skill";
 // a fresh server, and the token says who is calling. A request with no token,
 // or one that is nobody's, is told where to get one.
 //
-// The handshake (initialize, ping, tools/list, and the initialized notice) is
-// the same for every caller, so with a token it's answered without looking
-// the token up, with the instructions from a cache: an app connecting
-// doesn't wake the database. The cost is that a revoked or made-up token
-// learns it's dead at its first tool call, not at connect. Every other
-// message, and a batch with one in it, checks the token first, as before.
+// The handshake (initialize, ping, tools/list at most once, and the
+// initialized notice) is the same for every caller, so with a token it's
+// answered without looking the token up, with the instructions from a
+// cache: apps connecting wake the database at most about once an hour, to
+// read the instructions. The cost is that a revoked or made-up token learns
+// it's dead at its first tool call, not at connect. Every other message,
+// and a batch with one in it, checks the token first, as before.
 export const POST = route(async (req) => {
   const token = bearerToken(req);
   if (!token) refuse(req, undefined);

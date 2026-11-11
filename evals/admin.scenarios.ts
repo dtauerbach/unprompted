@@ -279,7 +279,9 @@ export function adminScenarios(): void {
           ).ok,
         ).toBe(false);
         const saved = set(file("ok.json", { "privacy.lead": lead }));
-        expect(saved.out).toBe("Saved 1 piece(s): privacy.lead.");
+        expect(saved.out).toBe(
+          "Saved 1 piece(s): privacy.lead. Pages show them within an hour, or at once after any save at /admin/copy.",
+        );
         expect(
           await pageOnceItShows("/privacy", (t) => t.includes(lead)),
         ).toContain(lead);
