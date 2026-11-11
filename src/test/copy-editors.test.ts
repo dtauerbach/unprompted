@@ -1071,6 +1071,9 @@ describe("the copy connector", () => {
     expect(cacheCalls.revalidateTag).toEqual([
       { tag: COPY_TAG, profile: { expire: 0 } },
     ]);
+    // And every page's reads, the home page's counts among them, which
+    // nothing else clears.
+    expect(cacheCalls.revalidatePath).toEqual([{ path: "/", type: "layout" }]);
     const h = await tool(key, "copy_history", { key: "home.tagline" });
     expect(h.data.versions[0]).toMatchObject({
       version: e.data.version,

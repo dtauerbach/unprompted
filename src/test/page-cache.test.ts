@@ -12,15 +12,16 @@ import { pageCopy } from "@/lib/page-copy";
 import {
   buildKey,
   COPY_TAG,
-  cacheClock,
   pageCacheSeconds,
   timeBucket,
 } from "@/lib/shared-cache";
 import { call, register, resetDb } from "./helpers";
 import {
   cachedKeys,
+  PINNED_CLOCK,
   revalidatePath,
   revalidateTag,
+  setCacheClock,
   settleNextCache,
   unstable_cache,
   updateTag,
@@ -76,16 +77,15 @@ async function save(humanId: number, key: "home.tagline", body: string) {
   });
 }
 
-// The clock the cache buckets follow, set to `ms` into a bucket of the
-// page time limit, and moved on with `to`.
+// The clock the cache buckets follow (pinned by setup.ts), set to `ms` into
+// the next bucket of the page time limit, and moved on with `to`.
 function clockAt(ms: number) {
   const size = pageCacheSeconds() * 1000;
-  const start = (Math.floor(Date.now() / size) + 1) * size;
-  let now = start + ms;
-  vi.spyOn(cacheClock, "now").mockImplementation(() => now);
+  const start = (Math.floor(PINNED_CLOCK / size) + 1) * size;
+  setCacheClock(start + ms);
   return {
     to(at: number) {
-      now = start + at;
+      setCacheClock(start + at);
     },
     size,
   };
@@ -212,12 +212,13 @@ describe("the home page's counts", () => {
     await register("bob");
     await aPost(a.key);
     expect(await trips(homeStats)).toBe(0);
+    // Late in the bucket, still the first count, and nothing refreshes it in
+    // the background.
     clock.to(clock.size - 1000);
-    expect(await homeStats()).toEqual({
-      bots: 1,
-      posts: 0,
-      posts_this_week: 0,
-    });
+    const first = { bots: 1, posts: 0, posts_this_week: 0 };
+    expect(await homeStats()).toEqual(first);
+    await settleNextCache();
+    expect(await homeStats()).toEqual(first);
     clock.to(clock.size + 1);
     expect(await homeStats()).toEqual({
       bots: 2,

@@ -15,13 +15,15 @@ import { builtInText, saveBotText } from "@/lib/bot-texts";
 import { closeDb, db } from "@/lib/db";
 import { MAX_BODY_BYTES } from "@/lib/http";
 import { kickPushes } from "@/lib/push-kick";
-import {
-  BOT_TEXT_CACHE_SECONDS,
-  botTextTag,
-  cacheClock,
-} from "@/lib/shared-cache";
+import { BOT_TEXT_CACHE_SECONDS, botTextTag } from "@/lib/shared-cache";
 import { call, freshIp, register, resetDb } from "./helpers";
-import { cachedKeys, settleNextCache, updateTag } from "./next-cache";
+import {
+  cachedKeys,
+  PINNED_CLOCK,
+  setCacheClock,
+  settleNextCache,
+  updateTag,
+} from "./next-cache";
 
 // The connector's handshake (initialize, ping, tools/list and the initialized
 // notice) is answered without the database: no token lookup, instructions
@@ -322,6 +324,17 @@ describe("everything else on /mcp", () => {
     expect(many.body.error.code).toBe("invalid_key");
   });
 
+  it("takes a batch of up to eight handshake messages without a checked token", async () => {
+    const pings = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...PING, id: 100 + i }));
+    const eight = await send(MADE_UP, pings(8));
+    expect(eight.status).toBe(200);
+    expect(eight.body).toHaveLength(8);
+    const nine = await send(MADE_UP, pings(9));
+    expect(nine.status).toBe(401);
+    expect(nine.body.error.code).toBe("invalid_key");
+  });
+
   it("pushes after a tool call, as before", async () => {
     const bot = await register("dave");
     vi.mocked(kickPushes).mockClear();
@@ -374,14 +387,13 @@ describe("the connector's instructions in the cache", () => {
 
   it("reads them again when the hour's bucket turns over, on the first read after it", async () => {
     const size = BOT_TEXT_CACHE_SECONDS * 1000;
-    const start = (Math.floor(Date.now() / size) + 1) * size;
-    let now = start + 1000;
-    vi.spyOn(cacheClock, "now").mockImplementation(() => now);
+    const start = (Math.floor(PINNED_CLOCK / size) + 1) * size;
+    setCacheClock(start + 1000);
     await send(MADE_UP, INIT);
     await saveMcp("Words for later.");
     // Late in the same bucket, still the cached text, and nothing refreshes
     // it in the background...
-    now = start + size - 1000;
+    setCacheClock(start + size - 1000);
     expect((await send(MADE_UP, INIT)).body.result.instructions).not.toBe(
       "Words for later.",
     );
@@ -390,7 +402,7 @@ describe("the connector's instructions in the cache", () => {
       "Words for later.",
     );
     // ...and the first read in the next one is fresh.
-    now = start + size + 1;
+    setCacheClock(start + size + 1);
     expect((await send(MADE_UP, INIT)).body.result.instructions).toBe(
       "Words for later.",
     );

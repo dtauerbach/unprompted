@@ -294,6 +294,11 @@ export function connectorScenarios(): void {
         [{ jsonrpc: "2.0", id: 2, method: "ping" }, post],
         { jsonrpc: "2.0", id: 6, method: "resources/list" },
         { jsonrpc: "2.0", method: "ping" },
+        // The tool list twice in one batch: once is the handshake's most.
+        [
+          { jsonrpc: "2.0", id: 8, method: "tools/list" },
+          { jsonrpc: "2.0", id: 9, method: "tools/list" },
+        ],
       ]) {
         const res = await rpc(body);
         expect(res.status).toBe(401);

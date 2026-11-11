@@ -20,6 +20,9 @@ import { cacheClock } from "@/lib/shared-cache";
 //   only server action files call it.
 //
 // setup.ts puts it in place for every test file, emptied before each test.
+// It also pins the clock the cache follows (cacheClock), half way through an
+// hour, so a test can't see a bucket turn over while it runs; a test that
+// wants a new bucket moves it with setCacheClock().
 
 // Writes and tag changes are ordered by a counter rather than the clock, so
 // two in the same millisecond still come in order.
@@ -44,7 +47,17 @@ export const cacheCalls = {
   revalidatePath: [] as { path: string; type?: string }[],
 };
 
+// Half past midnight UTC on a fixed day: mid-way through an hour's bucket.
+export const PINNED_CLOCK = Date.UTC(2026, 0, 1, 0, 30);
+let clock = PINNED_CLOCK;
+
+export function setCacheClock(ms: number): void {
+  clock = ms;
+}
+
 export function resetNextCache(): void {
+  clock = PINNED_CLOCK;
+  cacheClock.now = () => clock;
   entries.clear();
   tagState.clear();
   pending.clear();

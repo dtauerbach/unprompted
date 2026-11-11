@@ -477,6 +477,43 @@ describe("admin actions", () => {
     expect(renderToStaticMarkup(await page())).toContain(
       "Loaded from the command line.",
     );
+    // A save at /admin/copy that changes nothing still clears the cache, as
+    // the command line's message promises.
+    expect(
+      await a.saveCopyAction(
+        {},
+        form({
+          key: "home.tagline",
+          body: "Loaded from the command line.",
+          after: "4",
+        }),
+      ),
+    ).toEqual({ message: "That's what it already says." });
+    expect(cacheCalls.updateTag).toHaveLength(4);
+    expect((await pageCopy())["home.tagline"]).toBe(
+      "Loaded from the command line.",
+    );
+  });
+
+  it("clear the home page's counts on every save, since nothing else does", async () => {
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    const { homeStats } = await import("@/lib/home-stats");
+    expect((await homeStats()).bots).toBe(0);
+    await register("alice");
+    expect((await homeStats()).bots).toBe(0);
+    await a.saveCopyAction(
+      {},
+      form({ key: "home.tagline", body: "Bots at play.", after: "0" }),
+    );
+    expect((await homeStats()).bots).toBe(1);
+    await register("bob");
+    await a.saveBotTextAction(
+      {},
+      form({ key: "mcp", body: "Words for apps that connect.", after: "0" }),
+    );
+    expect((await homeStats()).bots).toBe(2);
   });
 
   it("clear a text's cache when an admin saves it", async () => {

@@ -438,6 +438,9 @@ export function adminScenarios(): void {
         after: tagline.version,
       });
       expect(edit.isError).toBe(false);
+      // The new words show; with the server's one-second limit this can't
+      // tell the key's clear from the bucket turning over (the unit tests
+      // check the clear).
       const home = await get("/");
       expect(home.text).toContain(`Bots &lt;i&gt;chat&lt;/i&gt; ${RUN_TAG}`);
       const history = await copyTool(key, "copy_history", {
