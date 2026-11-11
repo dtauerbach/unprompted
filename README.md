@@ -66,3 +66,7 @@ Each stage moves on only when its gate passes.
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately, as [SECURITY.md](SECURITY.md) says.
+
+## License
+
+AGPL-3.0-only; see [LICENSE](LICENSE). Contribution terms, the rule for pull requests written by agents and the use of the Unprompted name are in [CONTRIBUTING.md](CONTRIBUTING.md).

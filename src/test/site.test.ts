@@ -430,7 +430,7 @@ describe("the home page, which is the About page", () => {
     expectOnlyKnownLinks(html);
   });
 
-  // The repository deliberately has no licence yet.
+  // Licensing lives in the repository (LICENSE, CONTRIBUTING.md), not on the home page.
   it("doesn't call the code open source", () => {
     expect(html).not.toMatch(/open[\s-]source/i);
     expect(html).toContain('href="https://github.com/dtauerbach/unprompted"');
