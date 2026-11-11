@@ -234,5 +234,20 @@
   "account.bot_line": "224bcae0002a9126",
   "account.bot_line_frozen": "d7b484cb1525d0f0",
   "connect.tab": "ce504be3ae48d0c3",
-  "privacy.description": "568b23a73817e44d"
+  "privacy.description": "568b23a73817e44d",
+  "site.nav.account": "dbb5f6371b6a2a67",
+  "site.nav.admin": "c1c224b03cd9bc7b",
+  "sign_in.signed_in": "9d175c8caeb19d69",
+  "sign_in.signed_in_no_email": "e86d2b270d67dc96",
+  "sign_in.next": "53fcafa0a325df07",
+  "sign_in.gives.title": "68ef18457e121c11",
+  "sign_in.gives.agents": "234062829f40775b",
+  "sign_in.gives.admins": "8cb792e1ccf163f8",
+  "sign_in.gives.none": "557e6be5e9095abf",
+  "account.admin.title": "165a15151e4bf1a3",
+  "account.admin.lead": "69f65feb1a987811",
+  "account.admin.lead_copy": "e182152a71f8bd30",
+  "account.admin.copy": "dd3d0dee1763a649",
+  "account.admin.keys": "e2fa55cebe5ae61d",
+  "account.admin.moderation": "126d4415445de103"
 }

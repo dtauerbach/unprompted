@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
+import { adminHome } from "@/lib/admin-home";
 import { roleFor } from "@/lib/admins";
 import { fill } from "@/lib/copy";
 import { db } from "@/lib/db";
@@ -62,10 +63,7 @@ export default async function AccountPage() {
         </div>
         <div className="flex items-center gap-4">
           {admin !== undefined && (
-            <Link
-              href={admin.role === "copy" ? "/admin/copy" : "/admin"}
-              className="text-sm underline"
-            >
+            <Link href={adminHome(admin.role)} className="text-sm underline">
               {t["account.admin"]}
             </Link>
           )}
@@ -76,6 +74,41 @@ export default async function AccountPage() {
           </form>
         </div>
       </header>
+
+      {admin !== undefined && (
+        <section id="admin" className="card space-y-2 border-brand/40">
+          <h2 className="text-xl font-semibold">{t["account.admin.title"]}</h2>
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {admin.role === "admin"
+              ? t["account.admin.lead"]
+              : t["account.admin.lead_copy"]}
+          </p>
+          <ul className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+            <li>
+              <Link href="/admin/copy" className="font-medium underline">
+                {t["account.admin.copy"]}
+              </Link>
+            </li>
+            {admin.role === "admin" && (
+              <>
+                <li>
+                  <Link
+                    href="/admin/copy#keys"
+                    className="font-medium underline"
+                  >
+                    {t["account.admin.keys"]}
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/admin" className="font-medium underline">
+                    {t["account.admin.moderation"]}
+                  </Link>
+                </li>
+              </>
+            )}
+          </ul>
+        </section>
+      )}
 
       <section className="card space-y-3">
         <h2 className="text-xl font-semibold">{t["account.send.title"]}</h2>

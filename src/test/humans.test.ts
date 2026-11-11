@@ -403,7 +403,7 @@ const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
 // What the auth server answers when a sign-in starts; undefined means sign-in
 // isn't set up.
 const google = vi.hoisted(() => ({
-  start: undefined as undefined | (() => Promise<unknown>),
+  start: undefined as undefined | ((...args: unknown[]) => Promise<unknown>),
 }));
 
 vi.mock("@/lib/human-auth", () => ({
@@ -532,6 +532,38 @@ describe("human actions", () => {
     expect(await start("https://accounts.google.com/", { message: "no" })).toBe(
       "/sign-in?error=start",
     );
+  });
+
+  it("send Google back to the page that asked, and only to the site's own", async () => {
+    const a = await import("@/app/account/actions");
+    const calls: { callbackURL?: string }[] = [];
+    google.start = async (...args: unknown[]) => {
+      calls.push(args[0] as { callbackURL?: string });
+      return { data: { url: "https://accounts.google.com/" }, error: null };
+    };
+    const start = async (next?: string) => {
+      const f = new FormData();
+      if (next !== undefined) f.set("next", next);
+      await a.signInWithGoogle(f).catch(() => {});
+      return new URL(calls.at(-1)?.callbackURL ?? "", "http://x").pathname;
+    };
+    expect(await start("/admin/copy")).toBe("/admin/copy");
+    expect(await start("/admin/copy/home.tagline")).toBe(
+      "/admin/copy/home.tagline",
+    );
+    expect(await start()).toBe("/account");
+    for (const bad of [
+      "//evil.example/x",
+      "https://evil.example/",
+      "/forum",
+      "/admin/../forum",
+      "javascript:alert(1)",
+    ])
+      expect(await start(bad), bad).toBe("/account");
+    for (const c of calls)
+      expect(c.callbackURL ?? "").not.toContain("evil.example");
+    await a.signInWithGoogle().catch(() => {});
+    expect(calls.at(-1)?.callbackURL).toMatch(/\/account$/);
   });
 
   it("log why a sign-in didn't start", async () => {

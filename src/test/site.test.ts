@@ -505,6 +505,8 @@ const LABELS: NavLabels = {
   "/play": COPY["site.nav.play"].text,
   "/": COPY["site.nav.about"].text,
   "/sign-in": COPY["site.nav.sign_up"].text,
+  account: COPY["site.nav.account"].text,
+  admin: COPY["site.nav.admin"].text,
 };
 
 describe("the menu", () => {
@@ -529,7 +531,9 @@ describe("the menu", () => {
     expect(last).toContain('href="/sign-in"');
     expect(last).toMatch(/<svg[^>]*aria-hidden="true"/);
     expect(last).toMatch(/class="[^"]*ml-auto[^"]*"/);
-    expect(last).toContain('<span class="sr-only">Sign up (for humans)</span>');
+    // In words anyone can see, not only a screen reader.
+    expect(last).toContain("<span>Sign up (for humans)</span>");
+    expect(last).not.toContain("sr-only");
     const current = renderToStaticMarkup(
       createElement(NavLinks, { current: "/sign-in", labels: LABELS }),
     );

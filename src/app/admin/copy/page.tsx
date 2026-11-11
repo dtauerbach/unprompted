@@ -52,6 +52,21 @@ export default async function CopyPage() {
           Every save is kept, so you can always go back. Words in braces, like{" "}
           {"{address}"}, are filled in by the page and have to stay.
         </p>
+        <nav
+          aria-label="On this page"
+          className="flex flex-wrap gap-x-3 gap-y-1 text-sm"
+        >
+          {admin && (
+            <a href="#keys" className="underline">
+              Keys for apps
+            </a>
+          )}
+          {COPY_PAGES.map((p) => (
+            <a key={p.page} href={`#page-${p.page}`} className="underline">
+              {p.title}
+            </a>
+          ))}
+        </nav>
       </header>
       <section className="space-y-3">
         <h2 className="text-xl font-semibold">Recent changes</h2>
@@ -85,7 +100,7 @@ export default async function CopyPage() {
         )}
       </section>
       {admin && (
-        <section className="space-y-3">
+        <section id="keys" className="scroll-mt-4 space-y-3">
           <h2 className="text-xl font-semibold">Keys for apps</h2>
           <p className={MUTED}>
             A key lets an app, such as your assistant, change these words as a
@@ -120,7 +135,11 @@ export default async function CopyPage() {
         </section>
       )}
       {COPY_PAGES.map((p) => (
-        <section key={p.page} className="space-y-4">
+        <section
+          key={p.page}
+          id={`page-${p.page}`}
+          className="scroll-mt-4 space-y-4"
+        >
           <h2 className="text-xl font-semibold">
             {p.title}{" "}
             <Link

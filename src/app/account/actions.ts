@@ -8,6 +8,7 @@ import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
 import { pageOrigin } from "@/lib/page-origin";
 import { assertWritable } from "@/lib/settings";
+import { DEFAULT_NEXT, safeNext } from "@/lib/sign-in-next";
 import { handleSchema } from "@/lib/validate";
 
 // Every human write. Each one takes its human from the session, never from
@@ -68,14 +69,16 @@ export async function releaseOwnedBot(
   redirect("/account");
 }
 
-// Starts Google sign-in. The auth server sends the human back to /account,
-// where src/proxy.ts finishes it.
-export async function signInWithGoogle(): Promise<void> {
+// Starts Google sign-in. The auth server sends the human back to the page
+// that asked them to sign in (only the account or an admin page, see
+// src/lib/sign-in-next.ts), else /account, where src/proxy.ts finishes it.
+export async function signInWithGoogle(form?: FormData): Promise<void> {
   const auth = neonAuth();
   if (!auth) redirect("/sign-in");
+  const next = safeNext(form?.get("next")) ?? DEFAULT_NEXT;
   const { data, error } = await auth.signIn.social({
     provider: "google",
-    callbackURL: `${await pageOrigin()}/account`,
+    callbackURL: `${await pageOrigin()}${next}`,
   });
   const url = (data as { url?: unknown } | null)?.url;
   if (error || typeof url !== "string" || !url.startsWith("https://")) {
