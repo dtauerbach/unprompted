@@ -272,11 +272,18 @@ describe("announcing", () => {
       "tomorrow at six",
       "2026-12-01T18:00:00",
       "",
+      // Years Postgres can't hold, refused before the database sees them.
+      "0000-01-01T00:00:00Z",
+      "1999-12-31T23:59:59Z",
     ]) {
       const res = await party(host, { starts_at });
       expect(res.status, starts_at).toBe(400);
       expect(res.body.error.code).toBe("invalid");
     }
+    expect(
+      (await party(host, { starts_at: "0000-01-01T00:00:00Z" })).body.error
+        .message,
+    ).toBe("starts_at: a gathering starts 15 minutes to 7 days from now.");
     const early = await party(host, { starts_at: ahead(10) });
     expect(early.body.error.message).toBe(
       "starts_at: a gathering starts 15 minutes to 7 days from now.",
@@ -768,24 +775,41 @@ describe("RSVPs", () => {
     expect((await rsvp(guest, starting, { going: true })).status).toBe(200);
   });
 
-  it("allow 60 changes an hour, withdrawals included, then 429 writing nothing", async () => {
+  it("allow 60 changes an hour, then 429 writing nothing, and withdrawing always works", async () => {
     await awayFromWindowEdge(3600);
     const host = await trusted("host");
     const id = (await party(host)).body.gathering.id;
     const guest = await register("guest");
     for (let i = 0; i < LIMITS.rsvpPerHour.limit; i++) {
-      const res = await rsvp(
-        guest,
-        id,
-        i % 2 === 0 ? { going: true } : { going: false },
+      expect((await rsvp(guest, id, { going: true })).status, String(i)).toBe(
+        200,
       );
-      expect(res.status, String(i)).toBe(200);
+      // Free, so a bot at its limit can still say it isn't coming.
+      expect((await rsvp(guest, id, { going: false })).status, String(i)).toBe(
+        200,
+      );
     }
     const before = await counts();
     const res = await rsvp(guest, id, { going: true });
     expect(res.status).toBe(429);
     expect(res.body.error.message).toContain("60 RSVP changes an hour");
     expect(await counts()).toEqual(before);
+    // A bot at its limit while coming can still withdraw.
+    const keen = await register("keen");
+    const notices = [0, 5, 10, 15];
+    for (let i = 0; i < LIMITS.rsvpPerHour.limit; i++) {
+      const res = await rsvp(keen, id, {
+        going: true,
+        notice_minutes: notices[i % 4],
+      });
+      expect(res.body.changed, String(i)).toBe(true);
+    }
+    expect(
+      (await rsvp(keen, id, { going: true, notice_minutes: 5 })).status,
+    ).toBe(429);
+    const out = await rsvp(keen, id, { going: false });
+    expect(out.status).toBe(200);
+    expect(out.body.changed).toBe(true);
   });
 
   it("from a silenced bot: it can withdraw, not say it's coming", async () => {
@@ -968,6 +992,54 @@ describe("cancelling", () => {
       gathering: { state: "short" },
     });
     expect(await counts()).toEqual(before);
+  });
+});
+
+describe("at the same time", () => {
+  // Every answer here must be a refusal a bot can act on, never a 500.
+  const statuses = (rs: { status: number }[]) =>
+    rs.map((r) => r.status).filter((s) => s >= 500);
+
+  it("cancels raced against each other change it once and all answer 200", async () => {
+    const host = await trusted("host");
+    for (let round = 0; round < 8; round++) {
+      const id = await backdated(host, 0, 60);
+      const answers = await Promise.all(
+        Array.from({ length: 4 }, () => cancel(host, id)),
+      );
+      expect(statuses(answers), String(round)).toEqual([]);
+      expect(answers.every((r) => r.status === 200)).toBe(true);
+      expect(answers.filter((r) => r.body.changed === true)).toHaveLength(1);
+    }
+    const [n] = await db()<{ ends: number }[]>`
+      SELECT count(*)::int AS ends FROM gathering_ends`;
+    expect(n?.ends).toBe(8);
+  });
+
+  it("RSVPs, blocks of the announcer and cancels raced together never deadlock", async () => {
+    const host = await trusted("host");
+    const guests: Bot[] = [];
+    for (let i = 0; i < 4; i++) guests.push(await register(`racer-${i}`));
+    const notices = [0, 5, 15];
+    for (let round = 0; round < 25; round++) {
+      await db()`DELETE FROM rate_limits WHERE bucket LIKE 'rsvp%'`;
+      const id = await backdated(host, 0, 60);
+      for (const g of guests) await rsvp(g, id, { going: true });
+      const ops: Promise<{ status: number }>[] = [];
+      for (const [i, g] of guests.entries()) {
+        ops.push(
+          rsvp(g, id, {
+            going: true,
+            notice_minutes: notices[(round + i) % 3],
+          }),
+        );
+        ops.push(block(g, host.handle));
+      }
+      ops.push(cancel(host, id), cancel(host, id));
+      const answers = await Promise.all(ops);
+      expect(statuses(answers), String(round)).toEqual([]);
+      for (const g of guests) await unblock(g, host.handle);
+    }
   });
 });
 

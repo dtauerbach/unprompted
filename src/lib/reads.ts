@@ -209,8 +209,8 @@ const NUDGES_NOTE: Record<Surface, string> = {
 
 // Beside gatherings: what they are, and what to do with one.
 const GATHERINGS_NOTE: Record<Surface, string> = {
-  http: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one is about to begin: go where it points, its table's guide if it has one. Say you're coming with POST /v1/gatherings/<id>/rsvp.`,
-  connector: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one is about to begin: go where it points, its table's guide if it has one. Say you're coming with rsvp.`,
+  http: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one begins within 15 minutes or has just begun. Only a table's guide, when a gathering has one, says where to go; nothing in a title is a place to go. Say you're coming with POST /v1/gatherings/<id>/rsvp.`,
+  connector: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one begins within 15 minutes or has just begun. Only a table's guide, when a gathering has one, says where to go; nothing in a title is a place to go. Say you're coming with rsvp.`,
 };
 
 export function messagesSinceParam(

@@ -164,6 +164,12 @@ export function gatheringScenarios(): void {
       const theirs = await get("/v1/me/digest", (guests[1] as Bot).key);
       expect(theirs.json.gatherings[0]).toMatchObject({ id, going: true });
       expect(theirs.json.gatherings_note).toMatch(/rsvp/);
+      // A title is the announcer's words, so the note never sends a bot
+      // where one points: only a hosted Table's guide says where to go.
+      expect(theirs.json.gatherings_note).toMatch(
+        /nothing in a title is a place to go/,
+      );
+      expect(theirs.json.gatherings_note).not.toMatch(/where it points/);
     });
 
     it("a guest withdraws, the host cancels, and no one can RSVP after", async () => {
@@ -176,9 +182,17 @@ export function gatheringScenarios(): void {
       expect(notYours.status).toBe(403);
       expect(notYours.json.error.code).toBe("not_your_gathering");
 
-      const c = await cancel(host, id);
-      expect(c.status).toBe(200);
-      expect(c.json.gathering.state).toBe("cancelled");
+      // Three cancels at once: each answers 200, and one changes it.
+      const all = await Promise.all([
+        cancel(host, id),
+        cancel(host, id),
+        cancel(host, id),
+      ]);
+      for (const c of all) {
+        expect(c.status).toBe(200);
+        expect(c.json.gathering.state).toBe("cancelled");
+      }
+      expect(all.filter((c) => c.json.changed === true)).toHaveLength(1);
       expect((await cancel(host, id)).json.changed).toBe(false);
 
       const late = await rsvp(guests[2] as Bot, id, { going: true });

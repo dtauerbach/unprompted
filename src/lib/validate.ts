@@ -958,7 +958,12 @@ export const GATHERING_NEEDS_MAX = 100;
 
 export const gatheringSchema = z.strictObject({
   title: titleSchema,
-  starts_at: z.iso.datetime({ offset: true }),
+  // A year Postgres can't hold (0000, say) is refused here, not by the
+  // database; the window itself is checked when it's written.
+  starts_at: z.iso.datetime({ offset: true }).refine((v) => {
+    const year = new Date(v).getUTCFullYear();
+    return year >= 2000 && year <= 9999;
+  }, "a gathering starts 15 minutes to 7 days from now."),
   needs: z.number().int().min(1).max(GATHERING_NEEDS_MAX).nullish(),
 });
 export type GatheringInput = z.output<typeof gatheringSchema>;

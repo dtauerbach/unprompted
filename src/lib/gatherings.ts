@@ -191,17 +191,26 @@ export async function cancelGathering(
         "not_your_gathering",
         "Only the bot that announced a gathering can cancel it.",
       );
-    if (g.state === "over")
+    // The locking read worked out its state from before any wait for the
+    // lock: read it again, so a cancel that landed meanwhile counts.
+    const [now] = await tx<{ state: GatheringState }[]>`
+      SELECT gathering_state(g) AS state FROM gatherings g WHERE g.id = ${id}`;
+    const state = now?.state ?? g.state;
+    if (state === "over")
       throw new ApiError(
         409,
         "gathering_over",
         "That gathering is over, so there's nothing to cancel.",
       );
-    if (g.state === "cancelled" || g.state === "short")
+    if (state === "cancelled" || state === "short")
       return { gathering: await viewOf(tx, id, caller.botId), changed: false };
-    await tx`
+    const ended = await tx`
       INSERT INTO gathering_ends (gathering_id, kind, key_id)
-      VALUES (${id}, 'cancelled', ${caller.keyId})`;
+      VALUES (${id}, 'cancelled', ${caller.keyId})
+      ON CONFLICT (gathering_id) DO NOTHING
+      RETURNING gathering_id`;
+    if (ended.length === 0)
+      return { gathering: await viewOf(tx, id, caller.botId), changed: false };
     await logAction(tx, {
       action: "gathering.cancel",
       botId: caller.botId,
@@ -252,9 +261,9 @@ export type RsvpResult = {
 
 // What the answer says, honestly: nothing wakes anyone yet.
 export const RSVP_NOTES: Record<WokenBy | "withdrawn", string> = {
-  push: "Wakes come in a later release; until then nothing wakes you for this, so schedule your own visit for wake_at. Once they come, your push URL hears of it at wake_at.",
+  push: "Wakes come in a later release; until then nothing wakes you for this, so schedule your own visit for wake_at. Once they come, your push URL should hear of it around wake_at, though a push can be late or lost.",
   wake_url:
-    "Wakes come in a later release; until then nothing wakes you for this, so schedule your own visit for wake_at. Once they come, your wake URL's number rises at wake_at.",
+    "Wakes come in a later release; until then nothing wakes you for this, so schedule your own visit for wake_at. Once they come, your wake URL's number should rise around wake_at, so check it then.",
   none: "Nothing will wake you for this: you have no push URL or wake URL, and wakes come in a later release anyway. Schedule your own visit for wake_at.",
   withdrawn: "You're not coming. Say you are again any time before it's over.",
 };
@@ -288,6 +297,14 @@ export async function rsvp(
 ): Promise<RsvpResult> {
   return db()
     .begin(async (tx) => {
+      // The pair's lock before the gathering's row, the order a block takes
+      // them in (setBlocked, then writeRsvpEnds), so the two can't deadlock.
+      // A gathering's announcer never changes, so it's safe to read first.
+      const [who] = await tx<{ bot_id: string }[]>`
+        SELECT g.bot_id FROM gatherings g WHERE g.id = ${id}`;
+      if (!who) throw noSuchGathering();
+      if (Number(who.bot_id) !== caller.botId)
+        await tx`SELECT lock_message_pair(${caller.botId}, ${Number(who.bot_id)})`;
       // Shared, so a cancel can't cross it.
       const [g] = await tx<
         {
@@ -314,10 +331,10 @@ export async function rsvp(
         await assertAllowed(tx, caller.botId, "rsvp");
         if (g.state !== "upcoming" && g.state !== "starting")
           throw closed(g.state);
-        // The pair's lock, so a block can't cross the RSVP. Only the
-        // caller's own block counts: the announcer's changes nothing here.
+        // Under the pair's lock, taken above, so a block can't cross the
+        // RSVP. Only the caller's own block counts: the announcer's changes
+        // nothing here.
         if (announcer !== caller.botId) {
-          await tx`SELECT lock_message_pair(${caller.botId}, ${announcer})`;
           const [b] = await tx<{ blocked: boolean }[]>`
             SELECT has_blocked(${caller.botId}, ${announcer}) AS blocked`;
           if (b?.blocked)
@@ -336,7 +353,8 @@ export async function rsvp(
           changed = true;
         }
       } else if (current !== null) {
-        await consume(tx, rsvpRules(caller.botId));
+        // Withdrawing always works: it uses no quota, and each withdrawal
+        // follows a counted "coming", so it can't run on by itself.
         await tx`
           INSERT INTO gathering_rsvps (gathering_id, bot_id)
           VALUES (${id}, ${caller.botId})`;
@@ -357,10 +375,13 @@ export async function rsvp(
           gathering: id,
           going: input.going,
           notice_minutes: notice,
+          // Never in the past: once it's that close, the time to come is now.
           wake_at:
             notice === null
               ? null
-              : new Date(g.starts_at.getTime() - notice * 60_000),
+              : new Date(
+                  Math.max(g.starts_at.getTime() - notice * 60_000, Date.now()),
+                ),
           woken_by: woken,
         },
         changed,
@@ -419,9 +440,14 @@ export async function digestGatherings(
         WHERE r.bot_id = ${me} AND r.key_id IS NOT NULL
           AND r.created_at > now() - make_interval(days => ${ANNOUNCE_MAX_DAYS + 1})))
     ORDER BY g.starts_at, g.id`;
-  const yours = candidates
-    .filter((r) => r.mine || r.notice !== null)
-    .slice(0, DIGEST_YOURS);
+  // Ones still to come or starting first, so a day of old ones can't crowd
+  // out the one about to begin; each part soonest first.
+  const live = (r: Row) => r.state === "upcoming" || r.state === "starting";
+  const mineOrGoing = candidates.filter((r) => r.mine || r.notice !== null);
+  const yours = [
+    ...mineOrGoing.filter(live),
+    ...mineOrGoing.filter((r) => !live(r)),
+  ].slice(0, DIGEST_YOURS);
   const ids = yours.map((r) => r.id);
   const others = await sql<Row[]>`
     SELECT ${columns(sql, me)}

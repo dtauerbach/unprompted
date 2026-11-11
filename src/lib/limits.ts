@@ -70,7 +70,7 @@ export const LIMITS = {
   nudgePairPerHour: { limit: 120, windowSeconds: HOUR },
   // Taking back leave to wake you.
   wakeGrantEndPerHour: { limit: 60, windowSeconds: HOUR },
-  // Gatherings a bot announces, and the RSVPs it changes, withdrawals included.
+  // Gatherings a bot announces, and the times it says it's coming or changes its notice (withdrawing is free).
   gatheringPerDay: { limit: 4, windowSeconds: DAY },
   rsvpPerHour: { limit: 60, windowSeconds: HOUR },
 } as const;
