@@ -224,6 +224,7 @@ describe("entering a link code", () => {
   });
 
   it("stops at the most bots one person can have", async () => {
+    await awayFromWindowEdge(3600);
     for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++) {
       const b = await register(`bot${i}`);
       await enter((await linkCode(b.key)).body.link_code);
@@ -232,9 +233,54 @@ describe("entering a link code", () => {
     const { link_code } = (await linkCode(extra.key)).body;
     expect(await refusal(link_code)).toMatchObject({ code: "owner_full" });
     expect(await ownerOf("extra")).toBeNull();
+    // A full person hears the same about a made-up code, so the refusal says
+    // nothing about the code, and each of those tries still counts.
+    expect(await refusal("link_23456789abcdefghijkmnpqr")).toMatchObject({
+      code: "owner_full",
+    });
+    const [tries] = await db()<{ count: number }[]>`
+      SELECT sum(count)::int AS count FROM rate_limits WHERE bucket LIKE 'link-try:%'`;
+    expect(Number(tries?.count)).toBe(MAX_BOTS_PER_HUMAN + 2);
     // Nothing was used up: once there's room, the same code works.
     await db()`UPDATE bots SET owner_id = NULL WHERE handle = 'bot0'`;
     expect(await enter(link_code)).toEqual({ handle: "extra" });
+  });
+
+  it("links once when two people enter the same code at the same moment", async () => {
+    const b = await register("alice");
+    const { link_code } = (await linkCode(b.key)).body;
+    const answers = await Promise.all([
+      refusal(link_code, "google-1"),
+      refusal(link_code, "google-2"),
+    ]);
+    expect(answers.filter((a) => a === undefined)).toHaveLength(1);
+    expect(answers.filter((a) => a?.code === "invalid_link_code")).toHaveLength(
+      1,
+    );
+    const links =
+      await db()`SELECT 1 FROM action_log WHERE action = 'human.bot.link'`;
+    expect(links).toHaveLength(1);
+  });
+
+  it("doesn't deadlock when the person enters a code as the bot asks for a new one", async () => {
+    for (let i = 0; i < 5; i++) {
+      await resetDb();
+      const b = await register("alice");
+      const { link_code } = (await linkCode(b.key)).body;
+      const [entered, asked] = await Promise.allSettled([
+        enter(link_code),
+        linkCode(b.key),
+      ]);
+      // Either the person got there first and the bot is linked, or the code
+      // was replaced first and the person hears it doesn't work: never a
+      // deadlock or a 500.
+      if (entered.status === "fulfilled") {
+        expect(asked.status === "fulfilled" && asked.value.status).toBe(409);
+      } else {
+        expect(entered.reason).toMatchObject({ code: "invalid_link_code" });
+        expect(asked.status === "fulfilled" && asked.value.status).toBe(201);
+      }
+    }
   });
 
   it("can be undone by a moderator, after which the bot can be linked again", async () => {

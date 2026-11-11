@@ -68,7 +68,16 @@ const INVALID = () =>
 
 // The person's side, from their session. Counts every try, a wrong code
 // included, so the hourly limit holds against guessing: a failed try commits
-// its count and its log line, then refuses.
+// its count and its log line, then refuses. A person with no room for another
+// bot is refused before the code is looked at, and that try counts too, so
+// the refusal says nothing about the code.
+//
+// Locks go bot, then code, as in makeLinkCode, then the human, as claiming
+// with an owner code does, so a person entering a code
+// while its bot asks for a new one can't deadlock: the code is found without
+// a lock, its bot is locked, and then the code is locked and every condition
+// checked again in a fresh statement, which also sees a key rotated or a bot
+// frozen while it waited.
 export async function enterLinkCode(
   sql: postgres.Sql,
   authUserId: string,
@@ -79,16 +88,25 @@ export async function enterLinkCode(
   const r = await sql.begin(async (tx) => {
     const humanId = await ensureHuman(tx, authUserId);
     await consume(tx, linkTryRules(humanId));
-    const [c] = LINK_CODE_RE.test(code)
+    const [owned] = await tx<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM bots WHERE owner_id = ${humanId}`;
+    if ((owned?.n ?? 0) >= MAX_BOTS_PER_HUMAN) return "full" as const;
+    const [found] = LINK_CODE_RE.test(code)
+      ? await tx<{ id: string; bot_id: string }[]>`
+          SELECT id, bot_id FROM link_codes WHERE code_hash = ${hashKey(code)}`
+      : [];
+    if (found)
+      await tx`SELECT 1 FROM bots WHERE id = ${found.bot_id} FOR UPDATE`;
+    const [c] = found
       ? await tx<{ id: string; bot_id: string; handle: string }[]>`
           SELECT l.id, l.bot_id, b.handle
           FROM link_codes l JOIN bots b ON b.id = l.bot_id
-          WHERE l.code_hash = ${hashKey(code)}
+          WHERE l.id = ${found.id}
             AND l.used_at IS NULL AND l.revoked_at IS NULL AND l.expires_at > now()
             AND b.frozen_at IS NULL AND b.owner_id IS NULL
             AND EXISTS (SELECT 1 FROM api_keys k
                         WHERE k.id = l.key_id AND k.revoked_at IS NULL)
-          FOR UPDATE OF l, b`
+          FOR UPDATE OF l`
       : [];
     if (!c) {
       await logAction(tx, {
@@ -101,12 +119,9 @@ export async function enterLinkCode(
       });
       return undefined;
     }
-    if (!(await hasRoomForBot(tx, humanId)))
-      throw new ApiError(
-        409,
-        "owner_full",
-        `You already have ${MAX_BOTS_PER_HUMAN} bots linked. Release one first.`,
-      );
+    // Under the human's lock now, after the bot's, as claiming with an owner
+    // code takes them, in case another bot was linked meanwhile.
+    if (!(await hasRoomForBot(tx, humanId))) return "full" as const;
     await tx`
       UPDATE link_codes SET used_at = now(), used_by_human_id = ${humanId}
       WHERE id = ${c.id}`;
@@ -122,6 +137,12 @@ export async function enterLinkCode(
     });
     return { handle: c.handle };
   });
+  if (r === "full")
+    throw new ApiError(
+      409,
+      "owner_full",
+      `You already have ${MAX_BOTS_PER_HUMAN} bots linked. Release one first.`,
+    );
   if (!r) throw INVALID();
   return r;
 }

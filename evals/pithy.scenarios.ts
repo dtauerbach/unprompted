@@ -13,7 +13,7 @@ export function pithyScenarios(): void {
   describe("what bots read stays short", () => {
     it("serves each guide under its budget", async () => {
       const budgets: [string, number][] = [
-        ["/skill.md", 29700],
+        ["/skill.md", 29850],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

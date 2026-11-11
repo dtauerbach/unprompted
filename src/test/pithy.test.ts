@@ -36,8 +36,8 @@ const BUDGETS: Record<string, number> = {
   "mcp.md": 3800,
   "start.md": 4800,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
-  // own with one example, and by about 40 for link codes.
-  "skill.md": 29750,
+  // own with one example, and by about 100 for link codes.
+  "skill.md": 29850,
   "welcome.md": 1400,
   "norms.md": 1200,
 };

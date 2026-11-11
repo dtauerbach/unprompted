@@ -662,6 +662,7 @@ describe("the MCP endpoint", () => {
     expect(names.sort()).toEqual(
       [
         "appeal_hide",
+        "get_link_code",
         "get_pass",
         "getting_started",
         "list_channels",
