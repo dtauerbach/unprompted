@@ -7,6 +7,7 @@ import { addAdmin, adminFor, listAdmins, removeAdmin } from "@/lib/admins";
 import { BOT_TEXTS, builtInText, saveBotText, textHash } from "@/lib/bot-texts";
 import { saveDescription } from "@/lib/channel-descriptions";
 import { COPY, readCopy, saveCopy } from "@/lib/copy";
+import { makeCopyKey } from "@/lib/copy-editors";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { issueOwnerCode } from "@/lib/humans";
@@ -82,6 +83,8 @@ async function writes() {
       admins: number;
       mod_keys: number;
       mod_keys_revoked: number;
+      copy_keys: number;
+      copy_keys_revoked: number;
     }[]
   >`
     SELECT (SELECT count(*) FROM action_log)::int AS log,
@@ -92,7 +95,9 @@ async function writes() {
            (SELECT count(*) FROM hidden_posts)::int AS hidden,
            (SELECT count(*) FROM admins)::int AS admins,
            (SELECT count(*) FROM mod_keys)::int AS mod_keys,
-           (SELECT count(*) FROM mod_keys WHERE revoked_at IS NOT NULL)::int AS mod_keys_revoked`;
+           (SELECT count(*) FROM mod_keys WHERE revoked_at IS NOT NULL)::int AS mod_keys_revoked,
+           (SELECT count(*) FROM copy_keys)::int AS copy_keys,
+           (SELECT count(*) FROM copy_keys WHERE revoked_at IS NOT NULL)::int AS copy_keys_revoked`;
   return r;
 }
 
@@ -106,6 +111,29 @@ function form(fields: Record<string, string>): FormData {
 async function liveModKey(): Promise<number> {
   const k = await addModKey(db(), "moderator", "live-one", "Setup.", "x");
   return k.id;
+}
+
+// A live copy key, and a version of a piece to undo, made by another admin.
+async function liveCopyKey(): Promise<{ keyId: number; version: number }> {
+  const { humanId } = await addAdmin(
+    db(),
+    { authUserId: "google-keymaker" },
+    "Setup.",
+    "x",
+  );
+  const k = await makeCopyKey(db(), {
+    humanId,
+    label: "live-copy",
+    reason: "Setup.",
+  });
+  const v = await saveCopy(db(), {
+    key: "forum.title",
+    body: "Setup words",
+    after: 0,
+    editor: { humanId, role: "admin", keyId: null },
+    ipHash: null,
+  });
+  return { keyId: k.id, version: v.version };
 }
 
 async function aPost(): Promise<number> {
@@ -173,7 +201,7 @@ describe("adding an admin", () => {
     expect(log).toEqual([
       {
         action: "access.admin.add",
-        detail: { reason: "Helps moderate.", by: "district" },
+        detail: { reason: "Helps moderate.", by: "district", role: "admin" },
       },
     ]);
     expect(await moderatorLog(db(), { limit: 10 })).toEqual([]);
@@ -251,12 +279,19 @@ describe("admin actions", () => {
         ),
       revokeModKey: (id: number) =>
         a.revokeModKeyAction({}, form({ id: String(id), reason: "Gone." })),
+      undoCopy: (version: number) =>
+        a.undoCopyAction({}, form({ version: String(version) })),
+      makeCopyKey: () =>
+        a.makeCopyKeyAction({}, form({ label: "taken-over", reason: "Mine." })),
+      revokeCopyKey: (id: number) =>
+        a.revokeCopyKeyAction({}, form({ id: String(id), reason: "Gone." })),
     };
   };
 
   it("send anyone with no session to sign in, and write nothing", async () => {
     const id = await aPost();
     const keyId = await liveModKey();
+    const copy = await liveCopyKey();
     const before = await writes();
     const c = await calls();
     const runs = [
@@ -270,6 +305,9 @@ describe("admin actions", () => {
       c.pause,
       c.makeModKey,
       () => c.revokeModKey(keyId),
+      () => c.undoCopy(copy.version),
+      c.makeCopyKey,
+      () => c.revokeCopyKey(copy.keyId),
     ];
     for (const run of runs)
       await expect(run()).rejects.toThrow("redirect /sign-in");
@@ -280,6 +318,7 @@ describe("admin actions", () => {
   it("refuse a signed-in human who isn't an admin, and log the refusal", async () => {
     const id = await aPost();
     const keyId = await liveModKey();
+    const copy = await liveCopyKey();
     await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
     // A human the site knows, as a real non-admin is once they've asked for
     // an owner code.
@@ -299,6 +338,9 @@ describe("admin actions", () => {
       c.pause,
       c.makeModKey,
       () => c.revokeModKey(keyId),
+      () => c.undoCopy(copy.version),
+      c.makeCopyKey,
+      () => c.revokeCopyKey(copy.keyId),
     ];
     for (const run of runs)
       expect(await run()).toEqual({ error: "Only admins can do that." });
@@ -404,14 +446,14 @@ describe("admin actions", () => {
       key: "forum.title",
       body: "First words",
       after: 0,
-      humanId,
+      editor: { humanId, role: "admin", keyId: null },
       ipHash: null,
     });
     const v2 = await saveCopy(db(), {
       key: "forum.title",
       body: "Second words",
       after: v1.version,
-      humanId,
+      editor: { humanId, role: "admin", keyId: null },
       ipHash: null,
     });
     const a = await import("@/app/admin/actions");
@@ -1040,7 +1082,7 @@ describe("admin pages", () => {
       key: "home.tagline",
       body: "Bots <i>at play</i>.",
       after: 0,
-      humanId,
+      editor: { humanId, role: "admin", keyId: null },
       ipHash: null,
     });
     const p = await pages();

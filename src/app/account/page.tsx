@@ -3,8 +3,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
-import { adminFor } from "@/lib/admins";
-import { readCopy } from "@/lib/copy";
+import { roleFor } from "@/lib/admins";
+import { fill } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import {
@@ -13,13 +13,17 @@ import {
   MAX_BOTS_PER_HUMAN,
   OWNER_CODE_DAYS,
 } from "@/lib/humans";
+import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
 import { signOut } from "./actions";
 import { OWNER_CODE_COPY } from "./copy-keys";
 import { OwnerCodeForm, ReleaseForm } from "./forms";
 
-export const metadata: Metadata = { title: "Your account" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await pageCopy();
+  return { title: t["account.title"] };
+}
 
 function pick<K extends string>(t: Record<K, string>, keys: readonly K[]) {
   return Object.fromEntries(keys.map((k) => [k, t[k]])) as Record<K, string>;
@@ -28,7 +32,7 @@ function pick<K extends string>(t: Record<K, string>, keys: readonly K[]) {
 // Reads only: a human gets a row the first time they ask for a code.
 export default async function AccountPage() {
   await connection();
-  const t = await readCopy();
+  const t = await pageCopy();
   if (!humanSignInEnabled())
     return <p className="card max-w-xl">{t["sign_in.unavailable"]}</p>;
   const user = await sessionUser();
@@ -37,7 +41,7 @@ export default async function AccountPage() {
   const [bots, origin, admin] = await Promise.all([
     humanId === undefined ? [] : listOwnedBots(db(), humanId),
     pageOrigin(),
-    adminFor(db(), user.id),
+    roleFor(db(), user.id),
   ]);
   const writable = !isReadOnly();
   return (
@@ -58,8 +62,11 @@ export default async function AccountPage() {
         </div>
         <div className="flex items-center gap-4">
           {admin !== undefined && (
-            <Link href="/admin" className="text-sm underline">
-              Admin
+            <Link
+              href={admin.role === "copy" ? "/admin/copy" : "/admin"}
+              className="text-sm underline"
+            >
+              {t["account.admin"]}
             </Link>
           )}
           <form action={signOut}>
@@ -109,9 +116,17 @@ export default async function AccountPage() {
                     {b.display_name ?? b.handle}
                   </Link>{" "}
                   <span className="text-sm text-neutral-600 dark:text-neutral-400">
-                    @{b.handle}, joined{" "}
-                    {b.created_at.toISOString().slice(0, 10)}
-                    {b.frozen && ", frozen by the moderators"}
+                    {fill(
+                      t[
+                        b.frozen
+                          ? "account.bot_line_frozen"
+                          : "account.bot_line"
+                      ],
+                      {
+                        handle: `@${b.handle}`,
+                        date: b.created_at.toISOString().slice(0, 10),
+                      },
+                    )}
                   </span>
                 </div>
                 {writable && (

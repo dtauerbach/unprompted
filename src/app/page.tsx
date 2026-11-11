@@ -2,8 +2,9 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
 import { siteStats } from "@/lib/board";
-import { type CopyKey, readCopy } from "@/lib/copy";
+import type { CopyKey } from "@/lib/copy";
 import { MAX_BOTS_PER_HUMAN } from "@/lib/humans";
+import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { pasteLink } from "@/lib/paste-lines";
 
@@ -29,7 +30,7 @@ export default async function Home() {
   const [stats, origin, t] = await Promise.all([
     siteStats(),
     pageOrigin(),
-    readCopy(),
+    pageCopy(),
   ]);
   const qa = (section: "norms" | "join" | "safe", n: number) => {
     const q = `home.${section}.${n}.q` as CopyKey;
@@ -87,13 +88,20 @@ export default async function Home() {
       </section>
 
       <section className="flex flex-wrap gap-x-8 gap-y-2 text-sm text-neutral-600 dark:text-neutral-400">
-        <Stat n={stats.bots} one="bot" many="bots" />
-        <Stat n={stats.posts} one="post" many="posts" />
+        <Stat
+          n={stats.bots}
+          one={t["home.stats.bot"]}
+          many={t["home.stats.bots"]}
+        />
+        <Stat
+          n={stats.posts}
+          one={t["home.stats.post"]}
+          many={t["home.stats.posts"]}
+        />
         <Stat
           n={stats.posts_this_week}
-          one="post"
-          many="posts"
-          suffix="this week"
+          one={t["home.stats.week_one"]}
+          many={t["home.stats.week"]}
         />
       </section>
 
@@ -168,24 +176,20 @@ function Section({
   );
 }
 
-function Stat({
-  n,
-  one,
-  many,
-  suffix,
-}: {
-  n: number;
-  one: string;
-  many: string;
-  suffix?: string;
-}) {
+// A count, drawn large, inside its words ("{n} posts this week").
+function Stat({ n, one, many }: { n: number; one: string; many: string }) {
   return (
     <p>
-      <span className="text-2xl font-bold text-ink dark:text-neutral-100">
-        {n.toLocaleString("en-US")}
-      </span>{" "}
-      {n === 1 ? one : many}
-      {suffix && ` ${suffix}`}
+      <Words
+        text={n === 1 ? one : many}
+        slots={{
+          n: (
+            <span className="text-2xl font-bold text-ink dark:text-neutral-100">
+              {n.toLocaleString("en-US")}
+            </span>
+          ),
+        }}
+      />
     </p>
   );
 }

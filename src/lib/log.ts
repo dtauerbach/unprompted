@@ -75,6 +75,8 @@ export type Action =
   | "access.admin.remove"
   | "access.modkey.add"
   | "access.modkey.revoke"
+  | "access.copykey.add"
+  | "access.copykey.revoke"
   | "pass.issue"
   | "pass.redeem"
   | "wake_grant.give"

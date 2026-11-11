@@ -84,8 +84,17 @@ export function logRefusal(method: string, path: string, err: ApiError): void {
   );
 }
 
+// The copy connector's address holds its key, which never goes in the site's
+// own log lines: whatever follows /copy/mcp/, and anything shaped like a key
+// wherever it is. A host's request logs and any proxy still see the address.
+export function redactPath(path: string): string {
+  return path
+    .replace(/(\/copy\/mcp\/)[^/]*/gi, "$1[key]")
+    .replace(/unpcopy_[A-Za-z0-9_-]*/gi, "unpcopy_[key]");
+}
+
 function logRequestRefusal(req: Request, err: ApiError): void {
-  const path = new URL(req.url).pathname;
+  const path = redactPath(new URL(req.url).pathname);
   // Every MCP client's first call comes without a token, to learn where to
   // get one: a handshake, not a refusal. A dead token is still logged.
   if (err.code === "missing_key" && (path === "/mcp" || path === "/v1/mcp"))

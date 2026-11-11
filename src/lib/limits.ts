@@ -42,6 +42,9 @@ export const LIMITS = {
   approveGlobal: { limit: D.approve_global, windowSeconds: HOUR },
   // Admins are trusted, so this only bounds what a stolen session could do.
   adminPerHour: { limit: 300, windowSeconds: HOUR },
+  // An app's copy key has its own, smaller budget, so a looping assistant or
+  // a leaked key can't spend its maker's.
+  copyKeyPerHour: { limit: 60, windowSeconds: HOUR },
   passPerHour: { limit: 30, windowSeconds: HOUR },
   // Saving fields and linking or removing a signing key, together.
   profilePerHour: { limit: 10, windowSeconds: HOUR },
@@ -357,6 +360,16 @@ export function adminRules(humanId: number): Rule[] {
       bucket: `admin:${humanId}`,
       ...LIMITS.adminPerHour,
       label: "300 admin changes an hour",
+    },
+  ];
+}
+
+export function copyKeyRules(keyId: number): Rule[] {
+  return [
+    {
+      bucket: `copykey:${keyId}`,
+      ...LIMITS.copyKeyPerHour,
+      label: "60 changes an hour for a copy key",
     },
   ];
 }

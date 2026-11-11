@@ -10,6 +10,7 @@ import {
   pageSort,
   SortLinks,
 } from "@/components/post-list";
+import { Words } from "@/components/words";
 import {
   getChannel,
   getPinned,
@@ -17,6 +18,7 @@ import {
   nextBefore,
   pageThreads,
 } from "@/lib/board";
+import { pageCopy } from "@/lib/page-copy";
 import { slugSchema } from "@/lib/validate";
 
 const PAGE = 50;
@@ -55,20 +57,21 @@ export default async function ChannelPage({
   const sort = pageSort(query.sort, query.before);
   const rawBefore = typeof query.before === "string" ? query.before : undefined;
   const page = pageThreads(sort, rawBefore);
-  const [pinned, posts] = await Promise.all([
+  const [pinned, posts, t] = await Promise.all([
     page.before === undefined ? getPinned(channel) : null,
     listPosts({ channel: channel.slug, limit: PAGE, ...page }),
+    pageCopy(),
   ]);
   const next = nextBefore(posts, PAGE, sort);
   return (
     <div className="space-y-6">
       <div>
         <nav
-          aria-label="Where this is"
+          aria-label={t["site.where"]}
           className="text-sm text-neutral-600 dark:text-neutral-400"
         >
           <Link href="/forum" className="hover:underline">
-            Forum
+            {t["site.nav.forum"]}
           </Link>
         </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight">
@@ -79,10 +82,20 @@ export default async function ChannelPage({
           {channel.name}
           {channel.made_by !== null && (
             <>
-              {" · made by "}
-              <Link href={`/b/${channel.made_by}`} className="hover:underline">
-                @{channel.made_by}
-              </Link>
+              {" "}
+              <Words
+                text={t["forum.community.made_by"]}
+                slots={{
+                  maker: (
+                    <Link
+                      href={`/b/${channel.made_by}`}
+                      className="hover:underline"
+                    >
+                      @{channel.made_by}
+                    </Link>
+                  ),
+                }}
+              />
             </>
           )}
         </p>
@@ -91,36 +104,33 @@ export default async function ChannelPage({
         </p>
         {channel.archived && (
           <p className="mt-2 text-sm text-neutral-600 dark:text-neutral-400">
-            Archived: its posts stay up to read, but it takes no new posts or
-            replies.
+            {t["forum.community.archived"]}
           </p>
         )}
       </div>
       {pinned && (
         <section>
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-600 dark:text-neutral-400">
-            Pinned
+            {t["forum.community.pinned"]}
           </h2>
-          <PostList posts={[pinned]} empty="" />
+          <PostList posts={[pinned]} empty="" t={t} />
         </section>
       )}
       <section>
         <ListHeading
-          controls={
-            <SortLinks
-              path={`/c/${channel.slug}`}
-              sort={sort}
-              labels={{ active: "Active", new: "New", top: "Top" }}
-            />
-          }
+          controls={<SortLinks path={`/c/${channel.slug}`} sort={sort} t={t} />}
         >
-          Threads
+          {t["forum.community.threads"]}
         </ListHeading>
-        <PostList posts={posts} empty="No threads here yet." />
+        <PostList posts={posts} empty={t["forum.community.empty"]} t={t} />
         {next !== null && (
           <MoreLink
             href={`/c/${channel.slug}?${sort === "active" ? "" : `sort=${sort}&`}before=${next}`}
-            label={sort === "new" ? "Older" : "More"}
+            label={
+              sort === "new"
+                ? t["forum.community.older"]
+                : t["forum.community.more"]
+            }
           />
         )}
       </section>

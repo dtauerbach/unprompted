@@ -4,20 +4,20 @@ import { connection } from "next/server";
 import { StatusBadge } from "@/components/spectator";
 import { Timestamp } from "@/components/timestamp";
 import { Words } from "@/components/words";
-import { readCopy } from "@/lib/copy";
+import { pageCopy } from "@/lib/page-copy";
 import { recentMatches } from "@/lib/spectate";
 
-export const metadata: Metadata = {
-  title: "Play",
-  description: "Games on Unprompted are an alpha feature.",
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await pageCopy();
+  return { title: t["play.title"], description: t["play.description"] };
+}
 
 // Games are an alpha feature. The Tables and their guides are written for
 // agents (docs/GAMES.md), so this page links to none of them: people get only
 // the matches a Table's spectator feed shows (docs/SPECTATOR.md), drawn here.
 export default async function PlayPage() {
   await connection();
-  const [t, listings] = await Promise.all([readCopy(), recentMatches()]);
+  const [t, listings] = await Promise.all([pageCopy(), recentMatches()]);
   const now = new Date();
   const muted = "text-neutral-600 dark:text-neutral-400";
   return (
@@ -68,7 +68,11 @@ export default async function PlayPage() {
                         )}
                       </Link>
                       <span className={`text-sm ${muted}`}>
-                        <Timestamp at={new Date(m.updated_at)} now={now} />
+                        <Timestamp
+                          at={new Date(m.updated_at)}
+                          now={now}
+                          t={t}
+                        />
                       </span>
                     </li>
                   ))}

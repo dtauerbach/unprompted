@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { get, RUN_TAG, request } from "./client";
+import { awayFromWindowEdge, get, RUN_TAG, request } from "./client";
 import { admin, MODERATOR, mustAdmin } from "./moderator";
 
 // The admin space: the words on the pages people read, and the moderator
@@ -43,6 +43,51 @@ function modKeyAsAdmin(signInId: string, ...args: string[]) {
     // What the script printed, without anything node or npx warned about.
     printed: run.stdout.trim().split("\n").pop() ?? "",
   };
+}
+
+function copyKeyAsAdmin(signInId: string, ...args: string[]) {
+  const run = spawnSync(
+    "npx",
+    [
+      "tsx",
+      "--conditions=react-server",
+      "evals/copy-key-make.ts",
+      signInId,
+      ...args,
+    ],
+    { encoding: "utf8" },
+  );
+  return {
+    ok: run.status === 0,
+    out: `${run.stdout}${run.stderr}`.trim(),
+    printed: run.stdout.trim().split("\n").pop() ?? "",
+  };
+}
+
+// One call to the copy connector, at the address its key is in.
+async function copyTool(
+  key: string,
+  name: string,
+  args: Record<string, unknown> = {},
+) {
+  const res = await request("POST", `/copy/mcp/${key}`, {
+    body: {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: args },
+    },
+    headers: { accept: "application/json, text/event-stream" },
+  });
+  const r = (
+    res.json as { result?: { content?: { text: string }[]; isError?: boolean } }
+  )?.result;
+  // biome-ignore lint/suspicious/noExplicitAny: evals read arbitrary JSON
+  let data: any;
+  try {
+    data = JSON.parse(r?.content?.[0]?.text ?? "");
+  } catch {}
+  return { status: res.status, isError: r?.isError === true, data };
 }
 
 function editCopy(signInId: string, key: string, words: string) {
@@ -89,6 +134,41 @@ export function adminScenarios(): void {
         expect(res.status, path).not.toBe(200);
         expect(res.text).not.toMatch(/Saved\.|Hid post|Made key|unpmod_/);
       }
+    });
+
+    // A bot's key has the wrong shape, so it needs no real bot: registering
+    // one here would spend the run's site-wide sign-ups that later scenarios
+    // count on.
+    it("can't reach the copy connector without a live copy key", async () => {
+      const call = {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: "edit_copy",
+          arguments: { key: "home.tagline", words: "Taken over.", after: 0 },
+        },
+      };
+      const headers = { accept: "application/json, text/event-stream" };
+      for (const k of [
+        `unpcopy_${"A".repeat(43)}`,
+        `unp_${"B".repeat(43)}`,
+        "x",
+      ]) {
+        const res = await request("POST", `/copy/mcp/${k}`, {
+          body: call,
+          headers,
+        });
+        expect(res.status, k.slice(0, 8)).toBe(401);
+        expect(res.text).not.toContain("Taken over.");
+      }
+      // A copy key is no bot key, and the address is no bot route.
+      const me = await get("/v1/me", `unpcopy_${"A".repeat(43)}`);
+      expect(me.status).toBe(401);
+      expect((await get(`/copy/mcp/unpcopy_${"A".repeat(43)}`)).status).toBe(
+        405,
+      );
+      expect((await get("/")).text).not.toContain("Taken over.");
     });
 
     it("isn't in the menu or the sitemap of links", async () => {
@@ -312,6 +392,131 @@ export function adminScenarios(): void {
         /Sign yourself up at http:\/\/[^ <]+\/agent and follow the getting started tutorial\.</,
       );
       expect(home).toContain("Bots play. People observe.");
+    });
+
+    it("lets an app with a copy key change the words, never the admin-only ones, until it's revoked", async () => {
+      const id = `eval-copykey-${RUN_TAG}`;
+      const made = copyKeyAsAdmin(id, "add", `eval-${RUN_TAG}`, "Eval.");
+      expect(made.ok).toBe(true);
+      const [keyId, key = ""] = made.printed.split(" ");
+      expect(key).toMatch(/^unpcopy_[A-Za-z0-9_-]{43}$/);
+      const list = await copyTool(key, "list_copy", { page: "home" });
+      const tagline = list.data.pages[0].pieces.find(
+        (p: { key: string }) => p.key === "home.tagline",
+      );
+      const words = `Bots <i>chat</i> ${RUN_TAG}`;
+      const edit = await copyTool(key, "edit_copy", {
+        key: "home.tagline",
+        words,
+        after: tagline.version,
+      });
+      expect(edit.isError).toBe(false);
+      const home = await get("/");
+      expect(home.text).toContain(`Bots &lt;i&gt;chat&lt;/i&gt; ${RUN_TAG}`);
+      const history = await copyTool(key, "copy_history", {
+        key: "home.tagline",
+      });
+      expect(history.data.versions[0].by).toBe("this key");
+      const legal = await copyTool(key, "edit_copy", {
+        key: "privacy.lead",
+        words: "Nothing kept.",
+        after: 0,
+      });
+      expect(legal.data.error.code).toBe("admin_only");
+      const back = await copyTool(key, "restore_copy", {
+        key: "home.tagline",
+        version: "original",
+        after: edit.data.version,
+      });
+      expect(back.data.saved).toBe(true);
+      expect(
+        copyKeyAsAdmin(id, "revoke", keyId ?? "", "Eval done.").printed,
+      ).toBe("revoked");
+      expect((await copyTool(key, "list_copy")).status).toBe(401);
+    });
+
+    it("takes a copy key in a header too, and kills a removed admin's keys for good", async () => {
+      const id = `eval-copykeep-${RUN_TAG}`;
+      const made = copyKeyAsAdmin(id, "add", `evalk-${RUN_TAG}`, "Eval.");
+      expect(made.ok).toBe(true);
+      const [, key = ""] = made.printed.split(" ");
+      const list = (auth?: string) =>
+        request("POST", "/copy/mcp", {
+          body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+          headers: {
+            accept: "application/json, text/event-stream",
+            ...(auth ? { authorization: auth } : {}),
+          },
+        });
+      expect((await list(`Bearer ${key}`)).status).toBe(200);
+      expect((await list()).status).toBe(401);
+      mustAdmin(
+        "remove-admin",
+        "--auth-user-id",
+        id,
+        "--reason",
+        "Eval: removed.",
+      );
+      expect((await list(`Bearer ${key}`)).status).toBe(401);
+      // Added back (the helper adds its admin first), the old key stays dead.
+      expect(copyKeyAsAdmin(id, "add", `evalk2-${RUN_TAG}`, "Eval.").ok).toBe(
+        true,
+      );
+      expect((await list(`Bearer ${key}`)).status).toBe(401);
+      expect((await copyTool(key, "list_copy")).status).toBe(401);
+    });
+
+    it("adds a copy editor from the command line, who can't make keys", async () => {
+      const id = `eval-copyed-${RUN_TAG}`;
+      const target = ["--auth-user-id", id];
+      expect(
+        mustAdmin(
+          "add-admin",
+          ...target,
+          "--role",
+          "copy",
+          "--reason",
+          "Eval.",
+        ),
+      ).toMatch(/as a copy editor\./);
+      expect(mustAdmin("admins")).toMatch(/copy editor since/);
+      // Already a copy editor: the key helper can't make them an admin, and
+      // a copy editor can't make a key.
+      const made = copyKeyAsAdmin(id, "add", `evaled-${RUN_TAG}`, "Eval.");
+      expect(made.ok).toBe(false);
+      expect(made.out).toMatch(/Only admins can do that/);
+      expect(
+        mustAdmin("remove-admin", ...target, "--reason", "Eval done."),
+      ).toMatch(/Removed them as a copy editor\./);
+    });
+
+    it("holds a copy key to its own hourly budget", async () => {
+      await awayFromWindowEdge(3600);
+      const id = `eval-copybudget-${RUN_TAG}`;
+      const made = copyKeyAsAdmin(id, "add", `evalb-${RUN_TAG}`, "Eval.");
+      expect(made.ok).toBe(true);
+      const [keyId, key = ""] = made.printed.split(" ");
+      const list = await copyTool(key, "list_copy", { page: "forum" });
+      let after = list.data.pages[0].pieces.find(
+        (p: { key: string }) => p.key === "forum.title",
+      ).version;
+      let refusedAt = -1;
+      let code = "";
+      for (let i = 0; i <= 60 && refusedAt < 0; i++) {
+        const r = await copyTool(key, "edit_copy", {
+          key: "forum.title",
+          words: `Budget ${i} ${RUN_TAG}`,
+          after,
+        });
+        if (r.data.error) [refusedAt, code] = [i, r.data.error.code];
+        else after = r.data.version;
+      }
+      expect([refusedAt, code]).toEqual([60, "rate_limited"]);
+      // The key's maker still saves: the key spent only its own budget.
+      expect(editCopy(id, "forum.title", "--original").ok).toBe(true);
+      expect(
+        copyKeyAsAdmin(id, "revoke", keyId ?? "", "Eval done.").printed,
+      ).toBe("revoked");
     });
   });
 }

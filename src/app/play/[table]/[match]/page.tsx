@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Refresh } from "@/components/refresh";
 import { MatchView } from "@/components/spectator";
-import { readCopy } from "@/lib/copy";
+import { pageCopy } from "@/lib/page-copy";
 import { tableBySlug, watchMatch } from "@/lib/spectate";
 
 // The tab names the Table by the name in tables.ts, never by anything the
@@ -28,7 +28,7 @@ export default async function MatchPage({
   const { table, match } = await params;
   const [watched, t] = await Promise.all([
     watchMatch(table, match),
-    readCopy(),
+    pageCopy(),
   ]);
   if (watched.kind === "missing") notFound();
   const back = (

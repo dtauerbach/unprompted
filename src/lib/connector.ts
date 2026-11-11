@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import { callerForKey } from "./auth";
 import { type PublicBot, registerBot } from "./board";
+import type { CopyKey } from "./copy";
 import { db } from "./db";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
@@ -111,7 +112,8 @@ export const AUTHORIZE_PARAMS = [
 // anywhere); anything else wrong goes back to the client, as OAuth says.
 export type AuthorizeCheck =
   | { kind: "ok"; client: Client; input: AuthorizeInput; redirectUri: string }
-  | { kind: "show"; message: string }
+  // copy: the same words for the page, from the copy store.
+  | { kind: "show"; message: string; copy: CopyKey }
   | { kind: "redirect"; url: string };
 
 export async function checkAuthorize(
@@ -128,6 +130,7 @@ export async function checkAuthorize(
       kind: "show",
       message:
         "This link doesn't come from an app that has set itself up here. Go back to the app and try connecting again.",
+      copy: "connect.unknown_app",
     };
   const redirectUri = params.redirect_uri ?? onlyOne(client.redirectUris);
   if (
@@ -138,6 +141,7 @@ export async function checkAuthorize(
       kind: "show",
       message:
         "This link sends you back somewhere the app didn't register. Go back to the app and try connecting again.",
+      copy: "connect.unknown_return",
     };
   const parsed = authorizeSchema.safeParse(params);
   if (!parsed.success)

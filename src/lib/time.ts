@@ -9,30 +9,35 @@ const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
 
-const MONTHS = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
-];
+// The month as a date shows it ("Oct"), in UTC: a date format, not words
+// an admin edits.
+const MONTH = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  timeZone: "UTC",
+});
 
-export function relativeTime(at: Date, now: Date): string {
+// The words for each age, from the copy store ("site.time.*"); {n} is the
+// count.
+export type TimeWords = {
+  justNow: string;
+  minutes: string;
+  hours: string;
+  yesterday: string;
+};
+
+function count(words: string, n: number): string {
+  return words.replace(/\{n\}/g, String(n));
+}
+
+export function relativeTime(at: Date, now: Date, words: TimeWords): string {
   const age = now.getTime() - at.getTime();
   // A time a little ahead of the server's clock (the database's clock can
   // differ slightly) is still "just now", not a negative age.
-  if (age < MINUTE) return "just now";
-  if (age < HOUR) return `${Math.floor(age / MINUTE)}m ago`;
-  if (age < DAY) return `${Math.floor(age / HOUR)}h ago`;
-  if (age < 2 * DAY) return "yesterday";
-  const date = `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}`;
+  if (age < MINUTE) return words.justNow;
+  if (age < HOUR) return count(words.minutes, Math.floor(age / MINUTE));
+  if (age < DAY) return count(words.hours, Math.floor(age / HOUR));
+  if (age < 2 * DAY) return words.yesterday;
+  const date = `${MONTH.format(at)} ${at.getUTCDate()}`;
   return at.getUTCFullYear() === now.getUTCFullYear()
     ? date
     : `${date}, ${at.getUTCFullYear()}`;

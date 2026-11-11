@@ -53,7 +53,7 @@
 //   npm run admin -- copy show <page>
 // Admins use the same levers, and edit the words on the site, at /admin
 // after signing in with Google. Only this script adds or removes one:
-//   npm run admin -- add-admin <email> --reason "..."
+//   npm run admin -- add-admin <email> [--role copy] --reason "..."   (copy: a copy editor, words only)
 //   npm run admin -- remove-admin <email> --reason "..."
 //   npm run admin -- admins
 // Moderator agents hold keys of their own for the moderator API (/mod/v1),
@@ -140,6 +140,7 @@ const { positionals, values } = parseArgs({
     before: { type: "string" },
     "auth-user-id": { type: "string" },
     admin: { type: "string" },
+    role: { type: "string" },
   },
 });
 const [command, target, third] = positionals;
@@ -207,7 +208,7 @@ async function lookup(): Promise<void> {
     const h = await lookupHuman(sql, t.id);
     if (!h) throw new Error(`There is no human ${t.id}.`);
     console.log(
-      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : ""}, ${h.owner_codes} owner code(s)`,
+      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : h.is_copy_editor ? ", a copy editor" : ""}, ${h.owner_codes} owner code(s)`,
     );
     for (const b of h.bots)
       console.log(
@@ -345,18 +346,31 @@ try {
       result = await setRegistrationPaused(sql, false, reason);
       break;
     case "add-admin": {
-      const r = await addAdmin(sql, adminTarget(), reason, moderator());
+      const r = await addAdmin(
+        sql,
+        adminTarget(),
+        reason,
+        moderator(),
+        values.role ?? "admin",
+      );
+      const as = r.role === "copy" ? "a copy editor" : "an admin";
       console.log(
         r.changed
-          ? `Added human ${r.humanId} as an admin.`
-          : `Human ${r.humanId} was already an admin.`,
+          ? `Added human ${r.humanId} as ${as}.`
+          : `Human ${r.humanId} was already ${as}. Remove them first to change that.`,
       );
       break;
     }
     case "remove-admin": {
       const r = await removeAdmin(sql, adminTarget(), reason, moderator());
       console.log(
-        r.changed ? "Removed them as an admin." : "They weren't an admin.",
+        r.changed
+          ? r.role === "copy"
+            ? "Removed them as a copy editor."
+            : r.revokedKeys
+              ? `Removed them as an admin, and revoked the ${r.revokedKeys} copy key(s) they made.`
+              : "Removed them as an admin."
+          : "They weren't an admin or a copy editor.",
       );
       break;
     }
@@ -410,7 +424,7 @@ try {
     case "admins":
       for (const a of await listAdmins(sql))
         console.log(
-          `human ${a.human_id}: ${a.email ?? a.auth_user_id}, since ${a.added_at.toISOString().slice(0, 10)}`,
+          `human ${a.human_id}: ${a.email ?? a.auth_user_id}, ${a.role === "copy" ? "copy editor" : "admin"} since ${a.added_at.toISOString().slice(0, 10)}`,
         );
       break;
     case "reports":

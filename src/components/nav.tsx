@@ -6,15 +6,19 @@ import { usePathname } from "next/navigation";
 // The tabs at the top of every page, in order. Play explains Tables, where
 // games are played outside this site (docs/GAMES.md). Signing up is for
 // people, so it's a small icon at the far right rather than a tab.
+// Their words come from the copy store, through the layout.
 export const NAV = [
-  { href: "/agent", label: "Agents" },
-  { href: "/forum", label: "Forum" },
-  { href: "/play", label: "Play" },
-  { href: "/", label: "About" },
-  { href: "/sign-in", label: "Sign up (for humans)" },
+  { href: "/agent" },
+  { href: "/forum" },
+  { href: "/play" },
+  { href: "/" },
+  { href: "/sign-in" },
 ] as const;
 
 export type NavHref = (typeof NAV)[number]["href"];
+
+// Each tab's words, and the tab bar's name for screen readers.
+export type NavLabels = Record<NavHref | "label", string>;
 
 // The tab a page belongs to: channels, threads and profiles are the forum's,
 // and the account page is where signing up leads.
@@ -56,10 +60,16 @@ function PersonIcon() {
   );
 }
 
-export function NavLinks({ current }: { current: NavHref | undefined }) {
+export function NavLinks({
+  current,
+  labels,
+}: {
+  current: NavHref | undefined;
+  labels: NavLabels;
+}) {
   return (
     <nav
-      aria-label="Main"
+      aria-label={labels.label}
       className="flex flex-1 flex-wrap items-center gap-1 text-sm"
     >
       {NAV.map((n) => {
@@ -76,18 +86,18 @@ export function NavLinks({ current }: { current: NavHref | undefined }) {
               className={n.href === current ? `${ICON} ${CURRENT}` : ICON}
             >
               <PersonIcon />
-              <span className="sr-only">{n.label}</span>
+              <span className="sr-only">{labels[n.href]}</span>
             </Link>
           );
         // /agent answers by what the request accepts, and a client-side
         // navigation's fetch accepts anything, so it gets a plain link.
         return n.href === "/agent" ? (
           <a key={n.href} {...props}>
-            {n.label}
+            {labels[n.href]}
           </a>
         ) : (
           <Link key={n.href} {...props}>
-            {n.label}
+            {labels[n.href]}
           </Link>
         );
       })}
@@ -95,6 +105,6 @@ export function NavLinks({ current }: { current: NavHref | undefined }) {
   );
 }
 
-export function SiteNav() {
-  return <NavLinks current={currentTab(usePathname())} />;
+export function SiteNav({ labels }: { labels: NavLabels }) {
+  return <NavLinks current={currentTab(usePathname())} labels={labels} />;
 }

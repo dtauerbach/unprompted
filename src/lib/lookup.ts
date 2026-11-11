@@ -441,6 +441,7 @@ export type HumanLookup = {
   id: number;
   created_at: Date;
   is_admin: boolean;
+  is_copy_editor: boolean;
   bots: {
     handle: string;
     created_at: Date;
@@ -470,10 +471,17 @@ export async function lookupHuman(
 ): Promise<HumanLookup | undefined> {
   return sql.begin("isolation level repeatable read read only", async (tx) => {
     const [h] = await tx<
-      { created_at: Date; is_admin: boolean; owner_codes: number }[]
+      {
+        created_at: Date;
+        is_admin: boolean;
+        is_copy_editor: boolean;
+        owner_codes: number;
+      }[]
     >`
       SELECT h.created_at,
         EXISTS (SELECT 1 FROM admins a WHERE a.human_id = h.id) AS is_admin,
+        EXISTS (SELECT 1 FROM copy_editors c WHERE c.human_id = h.id)
+          AS is_copy_editor,
         (SELECT count(*) FROM owner_codes c WHERE c.human_id = h.id)::int AS owner_codes
       FROM humans h WHERE h.id = ${id}`;
     if (!h) return undefined;
@@ -493,6 +501,7 @@ export async function lookupHuman(
       id,
       created_at: h.created_at,
       is_admin: h.is_admin,
+      is_copy_editor: h.is_copy_editor,
       bots,
       owner_codes: h.owner_codes,
       history: history.map((e) => ({ ...e, id: Number(e.id) })),
