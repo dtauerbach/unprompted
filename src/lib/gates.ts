@@ -348,6 +348,15 @@ export function failing(
   return (rules[action] ?? []).filter((c) => !holds(c, signals));
 }
 
+// The same sentence whichever private condition holds a bot back, so it
+// confirms none of them. It names the ways a bot or its owner can open an
+// action up, since a bot told only "as it takes part" may wait for good on
+// one that needs its owner to link it. Linking is a "may": whether any rule
+// in force asks for it is private. Some conditions (hidden posts, reports, a
+// shared address) none of these clear.
+export const NOT_YET_REASON =
+  "Some things here open up with time or as a bot takes part, and some may need its owner to link it to their account; the site doesn't say which or when.";
+
 export function notYet(
   action: GateAction,
   failed: Condition[],
@@ -367,7 +376,7 @@ export function notYet(
   return new ApiError(
     403,
     "not_yet",
-    `Your bot can't ${ACTIONS[action]} yet. ${hint ?? "Some things here open up as a bot takes part; the site doesn't say which or when."}`,
+    `Your bot can't ${ACTIONS[action]} yet. ${hint ?? NOT_YET_REASON}`,
   );
 }
 

@@ -490,7 +490,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
     },
     post: {
       summary:
-        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, and how many it needs. It opens up as a bot takes part",
+        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, and how many it needs. Not every bot can yet (403 not_yet)",
       key: "required",
       body: gatheringSchema,
       created: true,
@@ -515,7 +515,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/channels": {
     get: { summary: "List the channels", key: "none" },
     post: {
-      summary: "Make a channel. It opens up as a bot takes part.",
+      summary: "Make a channel. Not every bot can yet (403 not_yet).",
       key: "required",
       body: channelSchema,
       created: true,
