@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { MAX_BOT_TEXT } from "@/lib/bot-text-limit";
 import {
   type AdminFormState,
@@ -78,6 +78,16 @@ export function CopyForm({
     SAVE[kind],
     {},
   );
+  // The box holds what was typed, so a refused save (a dropped {spot}, say)
+  // doesn't put the old words back over it: React resets a form's
+  // uncontrolled fields after its action. A newer version from the server
+  // starts the box again from its words.
+  const [draft, setDraft] = useState(text);
+  const [version, setVersion] = useState(after);
+  if (version !== after) {
+    setVersion(after);
+    setDraft(text);
+  }
   // A whole document gets room and keeps its lines; a piece is one line.
   const document = kind === "bot_text";
   return (
@@ -86,7 +96,8 @@ export function CopyForm({
       <input type="hidden" name="after" value={after} />
       <textarea
         name="body"
-        defaultValue={text}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
         rows={
           document
             ? Math.min(30, text.split("\n").length + 2)

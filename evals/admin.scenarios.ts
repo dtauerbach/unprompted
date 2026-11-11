@@ -362,8 +362,10 @@ export function adminScenarios(): void {
 
     it("saves nothing when the words would read the same", async () => {
       const id = `eval-copy-${RUN_TAG}`;
-      const shown = JSON.parse(mustAdmin("copy", "show", "forum"));
       const key = "forum.title";
+      // Start from the built-in words, whatever an earlier run left.
+      editCopy(id, key, "--original");
+      const shown = JSON.parse(mustAdmin("copy", "show", "forum"));
       const words = shown[key];
       expect(typeof words).toBe("string");
       // The words showing now, saved again, or the built-in words, gone back

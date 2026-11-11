@@ -1253,6 +1253,56 @@ describe("admin pages", () => {
       "not found",
     );
   });
+  it("show a piece's words in a box even when its newest save no longer fits, and no box while read-only", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    // Saved before its spot was required, say: the page shows the original.
+    await db()`
+      INSERT INTO copy_versions (key, body, human_id)
+      VALUES ('forum.welcome', 'Read the rules first.', ${humanId})`;
+    const p = await pages();
+    const page = renderToStaticMarkup(
+      await p.history(historyOf("forum.welcome")),
+    );
+    const seed = COPY["forum.welcome"].text;
+    expect(page).toMatch(
+      new RegExp(
+        `<textarea name="body"[^>]*>${seed.replace(/[.?{}]/g, "\\$&")}</textarea>`,
+      ),
+    );
+    expect(page).toContain("no longer fits the page, so the original shows");
+    expect(page).toContain("no longer fits, so not showing");
+    expect(page).not.toContain(", showing now");
+    const list = renderToStaticMarkup(await p.copy());
+    expect(list).toContain("no longer fits the page, so the original shows");
+    expect(list).toMatch(
+      new RegExp(
+        `<textarea name="body"[^>]*aria-label="Pointer to the welcome post"[^>]*>${seed.replace(/[.?{}]/g, "\\$&")}</textarea>`,
+      ),
+    );
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const before = await writes();
+    const quiet = renderToStaticMarkup(
+      await p.history(historyOf("home.tagline")),
+    );
+    expect(quiet).not.toContain("<textarea");
+    expect(quiet).not.toContain("<form");
+    expect(quiet).toContain(
+      "The site is in read-only mode, so nothing can be saved right now.",
+    );
+    expect(quiet).toContain(COPY["home.tagline"].text);
+    const quietList = renderToStaticMarkup(await p.copy());
+    expect(quietList).not.toContain("<textarea");
+    expect(quietList).toContain(
+      "The site is in read-only mode, so nothing can be saved right now.",
+    );
+    expect(await writes()).toEqual(before);
+  });
 });
 
 describe("the lookup screen", () => {

@@ -53,8 +53,14 @@ export default async function CopyPage() {
           Type the words you want in any box below and press Save. Words in
           braces, like {"{address}"}, are filled in by the page and have to
           stay. Every save is kept: each piece's History link shows the older
-          words if you ever want one back.
+          words if you ever want one back, and Recent changes, at the bottom,
+          can undo the newest change to a piece.
         </p>
+        {!writable && (
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            The site is in read-only mode, so nothing can be saved right now.
+          </p>
+        )}
         <nav
           aria-label="On this page"
           className="flex flex-wrap gap-x-3 gap-y-1 text-sm"
@@ -122,7 +128,14 @@ export default async function CopyPage() {
                       label={COPY[k].label}
                     />
                   ) : (
-                    <p className="text-sm">{text}</p>
+                    <p className="text-sm">
+                      {text}{" "}
+                      <span className="text-neutral-600 dark:text-neutral-400">
+                        {writable
+                          ? "(only an admin, signed in, can change this)"
+                          : ""}
+                      </span>
+                    </p>
                   )}
                 </div>
               );

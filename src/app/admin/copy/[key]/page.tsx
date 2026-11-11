@@ -64,7 +64,14 @@ export default async function CopyHistoryPage({
             />
           </>
         ) : (
-          <p className="text-sm">{text}</p>
+          <>
+            <p className="text-sm">{text}</p>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {isReadOnly()
+                ? "The site is in read-only mode, so nothing can be saved right now."
+                : "Only an admin, signed in, can change this piece."}
+            </p>
+          </>
         )}
       </section>
       <details className="space-y-3">
@@ -99,7 +106,11 @@ export default async function CopyHistoryPage({
                       {when(v.created_at)}
                     </time>{" "}
                     by {savedBy(v, editor.role === "admin")}
-                    {i === 0 ? ", showing now" : ""}
+                    {i === 0
+                      ? fits || v.body === null
+                        ? ", showing now"
+                        : ", no longer fits, so not showing"
+                      : ""}
                   </p>
                   <p className="text-sm">{v.body ?? "Back to the original."}</p>
                   {writable && i > 0 && v.body !== null && (
