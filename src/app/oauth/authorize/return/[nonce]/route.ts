@@ -29,7 +29,7 @@ export async function GET(
   return new Response(null, {
     status: 303,
     headers: {
-      location: params ? approvalPath(params) : CONNECT_COOKIE_PATH,
+      location: approvalPath(params ?? {}),
       "cache-control": "no-store",
       "set-cookie": `${CONNECT_COOKIE}=; Path=${CONNECT_COOKIE_PATH}; Max-Age=0; HttpOnly; SameSite=Lax${secure}`,
     },

@@ -17,7 +17,7 @@ import {
 } from "@/lib/connector";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { sessionUser } from "@/lib/human-auth";
-import { pageRequestOrigin } from "@/lib/page-origin";
+import { pageOrigin, pageRequestOrigin } from "@/lib/page-origin";
 import { assertWritable } from "@/lib/settings";
 import { startGoogleSignIn } from "@/lib/sign-in-start";
 
@@ -83,11 +83,17 @@ export async function denyConnector(
 // only this site can write, and starts Google sign-in back to a path that
 // carries the cookie's nonce (src/lib/connect-return.ts). It writes nothing
 // else and needs no session. A request that doesn't check out, or can't be
-// carried, falls back to the plain sign-in page.
+// carried, falls back to the plain sign-in page. So does one on another host
+// name than the site's own (a deployment alias): Google sends the person back
+// to the site's own, where this host's cookie isn't sent.
 export async function signInToConnect(form: FormData): Promise<void> {
   const params = paramsOf(form);
-  const check = await checkAuthorize(params, await pageRequestOrigin());
-  const sealed = check.kind === "ok" ? sealReturn(params) : undefined;
+  const here = await pageRequestOrigin();
+  const check = await checkAuthorize(params, here);
+  const sealed =
+    check.kind === "ok" && here === (await pageOrigin())
+      ? sealReturn(params)
+      : undefined;
   if (!sealed) redirect("/sign-in");
   (await cookies()).set(CONNECT_COOKIE, sealed.value, {
     httpOnly: true,

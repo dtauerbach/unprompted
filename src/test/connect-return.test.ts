@@ -25,6 +25,7 @@ const auth = vi.hoisted(() => ({
   secret: "s".repeat(64) as string | undefined,
   calls: [] as { callbackURL?: string }[],
 }));
+const origin = vi.hoisted(() => ({ site: "https://unprompted.test" }));
 const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
 const jar = vi.hoisted(() => ({
   set: [] as { name: string; value: string; opts: Record<string, unknown> }[],
@@ -58,7 +59,7 @@ vi.mock("next/headers", () => ({
   }),
 }));
 vi.mock("@/lib/page-origin", () => ({
-  pageOrigin: async () => "https://unprompted.test",
+  pageOrigin: async () => origin.site,
   pageRequestOrigin: async () => "https://unprompted.test",
 }));
 vi.mock("next/server", async (original) => ({
@@ -76,6 +77,7 @@ beforeEach(async () => {
   await resetDb();
   auth.secret = "s".repeat(64);
   auth.calls = [];
+  origin.site = "https://unprompted.test";
   nav.redirects = [];
   jar.set = [];
 });
@@ -227,7 +229,7 @@ describe("signing in from the approval page", () => {
       httpOnly: true,
       secure: false,
       sameSite: "lax",
-      path: "/oauth/authorize",
+      path: "/oauth/authorize/return",
       maxAge: CONNECT_RETURN_MINUTES * 60,
     });
     const callback = new URL(auth.calls[0]?.callbackURL ?? "");
@@ -258,18 +260,63 @@ describe("signing in from the approval page", () => {
     expect(auth.calls).toHaveLength(0);
   });
 
-  it("falls back to the plain sign-in page when sign-in can't be carried", async () => {
+  it("falls back to the plain sign-in page with no sign-in set up", async () => {
     const a = await import("@/app/oauth/authorize/actions");
-    const fields = await request({
-      state: "x".repeat(500),
-      scope: "y".repeat(500),
-      resource: "z".repeat(500),
-    });
+    const fields = await request();
     auth.secret = undefined;
     await expect(a.signInToConnect(formOf(fields))).rejects.toThrow(
       "redirect /sign-in",
     );
     expect(jar.set).toHaveLength(0);
+  });
+
+  it("falls back to the plain sign-in page for a request too big to carry", async () => {
+    const a = await import("@/app/oauth/authorize/actions");
+    // Each field passes its 500-character check, but three bytes a character
+    // is more than a cookie holds.
+    const fields = await request({
+      state: "€".repeat(500),
+      scope: "€".repeat(500),
+      resource: "€".repeat(500),
+    });
+    const { checkAuthorize } = await import("@/lib/connector");
+    expect((await checkAuthorize(fields, "https://unprompted.test")).kind).toBe(
+      "ok",
+    );
+    await expect(a.signInToConnect(formOf(fields))).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    expect(jar.set).toHaveLength(0);
+    expect(auth.calls).toHaveLength(0);
+  });
+
+  it("falls back to the plain sign-in page on a host name that isn't the site's own", async () => {
+    const a = await import("@/app/oauth/authorize/actions");
+    const fields = await request();
+    origin.site = "https://unprompted.example";
+    await expect(a.signInToConnect(formOf(fields))).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    expect(jar.set).toHaveLength(0);
+    expect(auth.calls).toHaveLength(0);
+  });
+
+  it("marks the cookie Secure in production, setting it and clearing it", async () => {
+    const fields = await request();
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      const a = await import("@/app/oauth/authorize/actions");
+      await expect(a.signInToConnect(formOf(fields))).rejects.toThrow(
+        "redirect https://accounts.google.com/x",
+      );
+      expect(jar.set[0]?.opts.secure).toBe(true);
+      const s = sealReturn(fields);
+      if (!s) throw new Error("no seal");
+      const r = await back(s.nonce, s.value);
+      expect(r.setCookie).toMatch(/; HttpOnly; SameSite=Lax; Secure$/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 
@@ -284,7 +331,7 @@ describe("coming back from Google", () => {
     expect(r.cache).toBe("no-store");
     expect(r.setCookie).toMatch(
       new RegExp(
-        `^${CONNECT_COOKIE}=; Path=/oauth/authorize; Max-Age=0; HttpOnly; SameSite=Lax`,
+        `^${CONNECT_COOKIE}=; Path=/oauth/authorize/return; Max-Age=0; HttpOnly; SameSite=Lax$`,
       ),
     );
     // The page itself checks the request again, from the address alone.

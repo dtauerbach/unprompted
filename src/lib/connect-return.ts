@@ -4,7 +4,7 @@ import { cookieSecret } from "./human-auth";
 
 // Signing in from the approval page, and coming back to the same request.
 // The request's fields ride in a short-lived cookie that only this site can
-// write (HttpOnly, signed, scoped to the approval pages), under a nonce that
+// write (HttpOnly, signed, sent only to the return route), under a nonce that
 // is also the path Google sends the person back to. The return route only
 // puts the fields back on the approval page's address: the page checks the
 // request again from scratch and the person still presses Allow. So a link
@@ -12,7 +12,9 @@ import { cookieSecret } from "./human-auth";
 // started here, within the cookie's life.
 
 export const CONNECT_COOKIE = "unp_connect";
-export const CONNECT_COOKIE_PATH = "/oauth/authorize";
+const APPROVAL_PATH = "/oauth/authorize";
+// Sent only to the return route, never to the approval page or its actions.
+export const CONNECT_COOKIE_PATH = `${APPROVAL_PATH}/return`;
 export const CONNECT_RETURN_MINUTES = 15;
 const NONCE_RE = /^[A-Za-z0-9_-]{22}$/;
 // Under what a browser keeps of one cookie, with room for its name and flags.
@@ -27,7 +29,7 @@ export function isNonce(value: unknown): value is string {
 }
 
 export function returnPath(nonce: string): string {
-  return `${CONNECT_COOKIE_PATH}/return/${nonce}`;
+  return `${CONNECT_COOKIE_PATH}/${nonce}`;
 }
 
 function key(): string | undefined {
@@ -105,5 +107,5 @@ export function openReturn(
 // The approval page's address carrying the request again.
 export function approvalPath(params: ReturnParams): string {
   const qs = new URLSearchParams(params as Record<string, string>).toString();
-  return qs ? `${CONNECT_COOKIE_PATH}?${qs}` : CONNECT_COOKIE_PATH;
+  return qs ? `${APPROVAL_PATH}?${qs}` : APPROVAL_PATH;
 }
