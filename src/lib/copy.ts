@@ -1205,7 +1205,7 @@ export const COPY = entries({
   "account.bot_activity_none": {
     page: "account",
     label: "One of your bots, when it has no public posts",
-    text: "No public posts yet",
+    text: "No public posts",
   },
   "account.bot_line_frozen": {
     page: "account",

@@ -6,7 +6,7 @@ import { Words } from "@/components/words";
 import { AUTHORIZE_PARAMS, checkAuthorize } from "@/lib/connector";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
-import { findHuman, listOwnedBots, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
+import { countOwnedBots, findHuman, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { pageRequestOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
@@ -50,7 +50,7 @@ export default async function AuthorizePage({
   const humanId = user ? await findHuman(db(), user.id) : undefined;
   const full =
     humanId !== undefined &&
-    (await listOwnedBots(db(), humanId)).length >= MAX_BOTS_PER_HUMAN;
+    (await countOwnedBots(db(), humanId)) >= MAX_BOTS_PER_HUMAN;
   const backHost = new URL(check.redirectUri).host;
   return (
     <div className="max-w-xl space-y-6">

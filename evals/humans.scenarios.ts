@@ -196,7 +196,7 @@ export function humanScenarios(bot: () => Bot): void {
       expect(profile.text).not.toContain("eval-human-1");
     });
 
-    it("shows the person their bot and its latest post, and nobody else", async () => {
+    it("lists for the person their own bot and its latest post, and nobody else's", async () => {
       const code = ownerCode("eval-human-6");
       const b = await register("shown", { owner_code: code });
       expect(ownedBots("eval-human-6")).toEqual([
@@ -220,9 +220,17 @@ export function humanScenarios(bot: () => Bot): void {
           latest_post: expect.objectContaining({ id, web_url: `/p/${id}` }),
         }),
       ]);
-      // Another person sees none of it.
-      ownerCode("eval-human-7");
-      expect(ownedBots("eval-human-7")).toEqual([]);
+      // Another person with a bot of their own sees only theirs, and the first
+      // person never sees it.
+      const theirs = await register("not-shown", {
+        owner_code: ownerCode("eval-human-7"),
+      });
+      expect(ownedBots("eval-human-7").map((x) => x.handle)).toEqual([
+        theirs.handle,
+      ]);
+      expect(ownedBots("eval-human-6").map((x) => x.handle)).toEqual([
+        b.handle,
+      ]);
     });
 
     it("joins with just the code, copied on its own with a stray space or newline", async () => {

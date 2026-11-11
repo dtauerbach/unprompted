@@ -116,6 +116,15 @@ export async function hasRoomForBot(tx: Tx, humanId: number): Promise<boolean> {
   return (n?.count ?? 0) < MAX_BOTS_PER_HUMAN;
 }
 
+export async function countOwnedBots(
+  sql: postgres.Sql,
+  humanId: number,
+): Promise<number> {
+  const [n] = await sql<{ count: number }[]>`
+    SELECT count(*)::int AS count FROM bots WHERE owner_id = ${humanId}`;
+  return n?.count ?? 0;
+}
+
 export async function listOwnedBots(
   sql: postgres.Sql,
   humanId: number,
@@ -128,23 +137,35 @@ export async function listOwnedBots(
       created_at: Date;
       posts: number;
       latest_id: string | null;
+      latest_reply_to: string | null;
       latest_at: Date | null;
     }[]
   >`
     SELECT b.handle, b.display_name, b.frozen_at IS NOT NULL AS frozen, b.created_at,
-           count(p.id)::int AS posts, max(p.id) AS latest_id, max(p.created_at) AS latest_at
+           (SELECT count(*)::int FROM posts p
+            WHERE p.bot_id = b.id AND post_is_visible(p)) AS posts,
+           l.id AS latest_id, l.parent_id AS latest_reply_to, l.created_at AS latest_at
     FROM bots b
-    LEFT JOIN posts p ON p.bot_id = b.id AND post_is_visible(p)
+    LEFT JOIN LATERAL (
+      SELECT p.id, p.parent_id, p.created_at FROM posts p
+      WHERE p.bot_id = b.id AND post_is_visible(p)
+      ORDER BY p.id DESC LIMIT 1) l ON true
     WHERE b.owner_id = ${humanId}
-    GROUP BY b.id
     ORDER BY b.created_at, b.id`;
-  return rows.map(({ latest_id, latest_at, ...r }) => ({
+  return rows.map(({ latest_id, latest_reply_to, latest_at, ...r }) => ({
     ...r,
     web_url: `/b/${r.handle}`,
     latest_post:
       latest_id === null || latest_at === null
         ? null
-        : { id: Number(latest_id), at: latest_at, web_url: `/p/${latest_id}` },
+        : {
+            id: Number(latest_id),
+            at: latest_at,
+            web_url:
+              latest_reply_to === null
+                ? `/p/${latest_id}`
+                : `/p/${latest_reply_to}#post-${latest_id}`,
+          },
   }));
 }
 

@@ -376,6 +376,7 @@ describe("a human's bots", () => {
         RETURNING id`;
       return Number(r?.id);
     };
+    await call(registerRoute, { body: { handle: "carol", owner_code: c } });
     const first = await say("alice", "first");
     const seen = await say("alice", "a reply", first);
     const hidden = await say("alice", "hidden later");
@@ -386,19 +387,40 @@ describe("a human's bots", () => {
     await db()`INSERT INTO hidden_posts (post_id) VALUES (${other})`;
     expect(inHidden).toBeGreaterThan(seen);
     expect(b.status).toBe(201);
+    // Carol's posts are all hidden: one by itself, one in a hidden channel.
+    const gone = await say("carol", "hidden");
+    await db()`INSERT INTO hidden_posts (post_id) VALUES (${gone})`;
+    const [ch] = await db()<{ id: string }[]>`
+      INSERT INTO channels (slug, name, description, position, bot_id)
+      SELECT 'carols', 'Carols', 'A channel.', 100, id FROM bots WHERE handle = 'carol'
+      RETURNING id`;
+    await db()`
+      INSERT INTO posts (channel_id, bot_id, key_id, body)
+      SELECT ${ch?.id ?? null}, b.id, k.id, 'in a hidden channel'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'carol'`;
+    await db()`INSERT INTO hidden_channels (channel_id) VALUES (${ch?.id ?? null})`;
+    // A freeze alone hides nothing, so a frozen bot's posts still count, as
+    // on its public profile.
+    await say("bob", "before the freeze");
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'bob'`;
 
     const id = await findHuman(db(), "google-1");
     const bots = await listOwnedBots(db(), id ?? 0);
     expect(bots.map((x) => [x.handle, x.posts])).toEqual([
       ["alice", 2],
-      ["bob", 0],
+      ["bob", 1],
+      ["carol", 0],
     ]);
+    // The latest is a reply, so its link goes to its place in the thread.
     expect(bots[0]?.latest_post).toMatchObject({
       id: seen,
-      web_url: `/p/${seen}`,
+      web_url: `/p/${first}#post-${seen}`,
     });
-    expect(bots[0]?.latest_post?.at).toBeInstanceOf(Date);
-    expect(bots[1]?.latest_post).toBeNull();
+    const [row] = await db()<{ created_at: Date }[]>`
+      SELECT created_at FROM posts WHERE id = ${seen}`;
+    expect(bots[0]?.latest_post?.at).toEqual(row?.created_at);
+    expect(bots[1]?.frozen).toBe(true);
+    expect(bots[2]?.latest_post).toBeNull();
   });
 
   it("can be released by that human only", async () => {
