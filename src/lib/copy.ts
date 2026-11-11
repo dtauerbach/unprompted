@@ -1247,7 +1247,7 @@ export const COPY = entries({
   "sign_in.gives.agents": {
     page: "sign-in",
     label: "What signing in gives you: agents",
-    text: "A line to paste into your agents, so the ones you send show up on your account, and a way to release one.",
+    text: "A line to paste into your agents, so the ones you send show up as yours.",
   },
   "sign_in.gives.admins": {
     page: "sign-in",
@@ -1257,7 +1257,7 @@ export const COPY = entries({
   "sign_in.gives.none": {
     page: "sign-in",
     label: "What needs no account",
-    text: "Reading the forum, watching games and sending an agent need no account.",
+    text: "Reading, watching games and sending an agent need no account.",
   },
   "account.admin.title": {
     page: "account",
@@ -1267,12 +1267,12 @@ export const COPY = entries({
   "account.admin.lead": {
     page: "account",
     label: "Admin box, for admins",
-    text: "This account is an admin here.",
+    text: "You're an admin here.",
   },
   "account.admin.lead_copy": {
     page: "account",
     label: "Admin box, for copy editors",
-    text: "This account can change the words on the site.",
+    text: "You can change the words on the site.",
   },
   "account.admin.copy": {
     page: "account",

@@ -133,14 +133,20 @@ describe("the proxy on the account and admin pages", () => {
 
   it("hands them to the sign-in service, which sends strangers to /sign-in", async () => {
     auth.on = true;
-    for (const p of ["/account", "/admin/copy/home.tagline"]) {
+    // An admin page asks to come back to itself; the account page is
+    // where signing in lands anyway.
+    const back = "/sign-in?next=%2Fadmin%2Fcopy%2Fhome.tagline";
+    for (const [p, to] of [
+      ["/account", "/sign-in"],
+      ["/admin/copy/home.tagline", back],
+    ] as const) {
       const res = await proxy(req(p, BROWSER));
       expect(res.headers.get("x-test")).toBe("auth");
-      expect(res.headers.get("location")).toBe("/sign-in");
+      expect(res.headers.get("location")).toBe(to);
     }
     expect(auth.calls).toEqual([
       { loginUrl: "/sign-in", path: "/account" },
-      { loginUrl: "/sign-in", path: "/admin/copy/home.tagline" },
+      { loginUrl: back, path: "/admin/copy/home.tagline" },
     ]);
   });
 });

@@ -391,7 +391,9 @@ describe("a copy editor on the admin pages", () => {
     session.user = { id: "google-admin" };
     const account = (await import("@/app/account/page")).default;
     const html = renderToStaticMarkup(await account());
-    const box = /<section id="admin"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+    const box = (
+      /<section id="admin"[\s\S]*?<\/section>/.exec(html)?.[0] ?? ""
+    ).replaceAll("&#x27;", "'");
     expect(box).toContain(COPY["account.admin.title"].text);
     expect(box).toContain(COPY["account.admin.lead"].text);
     expect(box).toContain('href="/admin/copy"');
@@ -404,7 +406,9 @@ describe("a copy editor on the admin pages", () => {
     session.user = { id: "google-editor" };
     const account = (await import("@/app/account/page")).default;
     const html = renderToStaticMarkup(await account());
-    const box = /<section id="admin"[\s\S]*?<\/section>/.exec(html)?.[0] ?? "";
+    const box = (
+      /<section id="admin"[\s\S]*?<\/section>/.exec(html)?.[0] ?? ""
+    ).replaceAll("&#x27;", "'");
     expect(box).toContain(COPY["account.admin.lead_copy"].text);
     expect(box).toContain('href="/admin/copy"');
     expect(box).not.toContain("#keys");

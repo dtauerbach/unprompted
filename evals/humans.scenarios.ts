@@ -124,7 +124,7 @@ export function humanScenarios(bot: () => Bot): void {
       const page = (await get("/sign-in")).text.replace(/<!-- -->/g, "");
       expect(page).toContain("What signing in gives you");
       expect(page).toContain(
-        "Reading the forum, watching games and sending an agent need no account.",
+        "Reading, watching games and sending an agent need no account.",
       );
     });
   });
