@@ -21,6 +21,7 @@ const auth = vi.hoisted(() => ({
   user: null as null | { id: string; email: string | null },
   role: undefined as undefined | "admin" | "copy",
   fails: false,
+  hangs: false,
   middleware: [] as string[],
 }));
 const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
@@ -29,6 +30,7 @@ vi.mock("@/lib/human-auth", () => ({
   humanSignInEnabled: () => auth.enabled,
   sessionUser: async () => {
     if (auth.fails) throw new Error("auth server down");
+    if (auth.hangs) return new Promise(() => {});
     return auth.user;
   },
   neonAuth: () =>
@@ -73,6 +75,7 @@ beforeEach(() => {
   auth.user = null;
   auth.role = undefined;
   auth.fails = false;
+  auth.hangs = false;
   auth.middleware = [];
   nav.redirects = [];
 });
@@ -224,7 +227,8 @@ describe("the far right of every page", () => {
     expect(navCurrent("/admin")).toBe("admin");
     expect(navCurrent("/admin/copy/home.tagline")).toBe("admin");
     expect(navCurrent("/adminx")).toBeUndefined();
-    expect(navCurrent("/account")).toBe("/sign-in");
+    expect(navCurrent("/account")).toBe("account");
+    expect(navCurrent("/sign-in")).toBe("/sign-in");
     expect(navCurrent("/forum")).toBe("/forum");
     const html = renderToStaticMarkup(
       createElement(NavLinks, {
@@ -237,6 +241,50 @@ describe("the far right of every page", () => {
     expect(/<a [^>]*aria-current="page"[^>]*>/.exec(html)?.[0]).toContain(
       'href="/admin"',
     );
+  });
+
+  it("marks your account link on the account page, not on sign-in", () => {
+    const at = (current: "account" | "/sign-in") =>
+      renderToStaticMarkup(
+        createElement(NavLinks, {
+          current,
+          labels: LABELS,
+          who: { signedIn: true, admin: null },
+        }),
+      );
+    expect(
+      /<a [^>]*aria-current="page"[^>]*>/.exec(at("account"))?.[0],
+    ).toContain('href="/account"');
+    expect(at("/sign-in")).not.toContain('aria-current="page"');
+    // Signed out, both pages mark the sign-up link.
+    for (const current of ["account", "/sign-in"] as const)
+      expect(
+        /<a [^>]*aria-current="page"[^>]*>/.exec(
+          renderToStaticMarkup(
+            createElement(NavLinks, { current, labels: LABELS }),
+          ),
+        )?.[0],
+      ).toContain('href="/sign-in"');
+  });
+
+  it("doesn't wait on a sign-in service that hangs", async () => {
+    const { navWho } = await import("@/lib/nav-who");
+    auth.user = { id: "g-1", email: null };
+    auth.hangs = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const started = Date.now();
+    expect(await navWho(50)).toEqual(SIGNED_OUT);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(warn).toHaveBeenCalledWith("reading who's signed in took too long");
+    // A quick answer still wins, and leaves no timer behind to warn later.
+    auth.hangs = false;
+    warn.mockClear();
+    expect(await navWho(50)).toEqual({ signedIn: true, admin: null });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+    const { NAV_WHO_TIMEOUT_MS } = await import("@/lib/nav-who");
+    expect(NAV_WHO_TIMEOUT_MS).toBeLessThanOrEqual(2000);
   });
 
   it("reads who's here from the session, and shows signed out if it can't", async () => {
@@ -296,7 +344,7 @@ describe("the sign-in page", () => {
 
   it("says where you'll go on to, and carries it through Google", async () => {
     const html = await signInPage({ next: "/admin/copy" });
-    expect(html).toContain("Sign in to go on to /admin/copy.");
+    expect(html).toContain("Sign in to go on to the admin pages.");
     expect(html).toMatch(
       /<input type="hidden" name="next" value="\/admin\/copy"\/>/,
     );
@@ -309,6 +357,10 @@ describe("the sign-in page", () => {
       expect(html, next).not.toContain("go on to");
       expect(html, next).not.toContain("evil.example");
     }
+    // A path that reads like a message is carried but never shown.
+    const odd = await signInPage({ next: "/admin/Account-locked.-Call-us" });
+    expect(odd).toContain("Sign in to go on to the admin pages.");
+    expect(odd.replace(/<input[^>]*>/g, "")).not.toContain("Account-locked");
     // The account page is where it sends you anyway.
     const account = await signInPage({ next: "/account" });
     expect(account).not.toContain("go on to");
@@ -335,13 +387,17 @@ describe("the sign-in page", () => {
     expect(await signInPage()).toMatch(/href="\/admin\/copy"[^>]*>Admin</);
   });
 
-  it("sends someone already signed in straight on to the page they came from", async () => {
+  // Someone signed in only lands here with a next when the admin page just
+  // thought they weren't; sending them straight back could bounce between
+  // the two, so the page shows them where they are instead.
+  it("shows someone already signed in where to go, rather than bouncing them back", async () => {
     auth.user = { id: "g-1", email: null };
-    await expect(signInPage({ next: "/admin/copy" })).rejects.toThrow(
-      "redirect /admin/copy",
-    );
-    await signInPage({ next: "//evil.example" });
-    expect(nav.redirects).toEqual(["/admin/copy"]);
+    auth.role = "admin";
+    const html = await signInPage({ next: "/admin/copy" });
+    expect(nav.redirects).toEqual([]);
+    expect(html).toContain("You're signed in.");
+    expect(html).toMatch(/href="\/admin"[^>]*>Admin</);
+    expect(html).not.toContain("Sign in with Google");
   });
 
   it("shows as signed out when the session can't be read", async () => {

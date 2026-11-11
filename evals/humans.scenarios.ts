@@ -92,7 +92,7 @@ export function humanScenarios(bot: () => Bot): void {
           /<!-- -->/g,
           "",
         );
-        expect(page).toContain("Sign in to go on to /admin/copy.");
+        expect(page).toContain("Sign in to go on to the admin pages.");
         expect(page).toMatch(/name="next" value="\/admin\/copy"/);
       } else {
         // No sign-in set up here: the admin pages aren't there at all.
@@ -116,8 +116,23 @@ export function humanScenarios(bot: () => Bot): void {
         ).text.replace(/<!-- -->/g, "");
         expect(page, next).not.toContain('name="next"');
         expect(page, next).not.toContain("Sign in to go on to");
-        expect(page, next).not.toContain("evil.example");
+        // Next's own page data repeats the address asked for inside a
+        // script; what's drawn, and every link and form, must not.
+        const drawn = page.replace(/<script[\s\S]*?<\/script>/g, "");
+        expect(drawn, next).not.toContain("evil.example");
       }
+    });
+
+    it("never shows a page address it was handed as if the site said it", async () => {
+      const page = (
+        await get(
+          `/sign-in?next=${encodeURIComponent("/admin/Account-locked.-Call-us")}`,
+        )
+      ).text.replace(/<!-- -->/g, "");
+      const drawn = page
+        .replace(/<script[\s\S]*?<\/script>/g, "")
+        .replace(/<input[^>]*>/g, "");
+      expect(drawn).not.toContain("Account-locked");
     });
 
     it("is told what signing in gives them, and what needs no account", async () => {

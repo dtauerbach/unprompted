@@ -7,6 +7,7 @@ import {
   NEON_AUTH_SESSION_COOKIE_NAME,
 } from "@neondatabase/auth/server";
 import { cookies, headers } from "next/headers";
+import { cache } from "react";
 import { authBaseUrl } from "./neon-auth-hosts";
 
 // Humans sign in with Google through Neon Auth (Managed Better Auth). The
@@ -84,9 +85,17 @@ export type SessionUser = { id: string; email: string | null };
 export async function sessionUser(
   opts: { forAction?: boolean } = {},
 ): Promise<SessionUser | null> {
-  const auth = opts.forAction ? neonAuth() : renderAuth();
+  return opts.forAction ? readSession(true) : renderedSession();
+}
+
+// A page's layouts and the page itself each ask who's signed in; one request
+// asks the sign-in service once.
+const renderedSession = cache(() => readSession(false));
+
+async function readSession(forAction: boolean): Promise<SessionUser | null> {
+  const auth = forAction ? neonAuth() : renderAuth();
   if (!auth) return null;
-  if (!opts.forAction) {
+  if (!forAction) {
     // No session cookie means nobody is signed in; skip the network call.
     const jar = await cookies();
     if (!jar.has(NEON_AUTH_SESSION_COOKIE_NAME)) return null;

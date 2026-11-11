@@ -239,6 +239,8 @@ describe("the copy editor role", () => {
       "play.watch_lead",
       "play.withheld",
       "account.bot_line_frozen",
+      // What signing in says about the agents you send.
+      "sign_in.gives.agents",
     ];
     for (const key of trusted) expect(adminOnlyCopy(key), key).toBe(true);
     for (const key of ["home.tagline", "forum.title"] as const)

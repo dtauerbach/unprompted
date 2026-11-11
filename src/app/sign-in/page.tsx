@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { signInWithGoogle, signOut } from "@/app/account/actions";
 import { Words } from "@/components/words";
@@ -112,8 +111,6 @@ export default async function SignInPage({
   const user = humanSignInEnabled()
     ? await sessionUser().catch(() => null)
     : null;
-  // Sent here from a page that needs signing in, but already signed in: go on.
-  if (user && next) redirect(next);
   if (user) {
     const role = (await roleFor(db(), user.id))?.role;
     return (
@@ -140,9 +137,7 @@ export default async function SignInPage({
       {humanSignInEnabled() ? (
         <div className="card space-y-3">
           {next && next !== DEFAULT_NEXT && (
-            <p className="text-sm font-medium">
-              <Words text={t["sign_in.next"]} slots={{ path: next }} />
-            </p>
+            <p className="text-sm font-medium">{t["sign_in.next"]}</p>
           )}
           {failed && (
             <p className="text-sm text-amber-700 dark:text-amber-300">

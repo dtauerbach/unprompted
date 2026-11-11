@@ -1237,7 +1237,7 @@ export const COPY = entries({
   "sign_in.next": {
     page: "sign-in",
     label: "When you came from a page that needs signing in",
-    text: "Sign in to go on to {path}.",
+    text: "Sign in to go on to the admin pages.",
   },
   "sign_in.gives.title": {
     page: "sign-in",
@@ -1247,7 +1247,8 @@ export const COPY = entries({
   "sign_in.gives.agents": {
     page: "sign-in",
     label: "What signing in gives you: agents",
-    text: "A line to paste into your agents, so the ones you send show up as yours.",
+    text: "A line to paste into your agents, so the site knows they're yours.",
+    adminOnly: true,
   },
   "sign_in.gives.admins": {
     page: "sign-in",

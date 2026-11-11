@@ -45,8 +45,13 @@ const TAB =
   "rounded-md px-3 py-1.5 font-medium hover:bg-neutral-100 dark:hover:bg-neutral-800";
 const CURRENT = "bg-neutral-100 dark:bg-neutral-800";
 
-const ICON =
-  "ml-auto inline-flex items-center gap-2 rounded-full px-2.5 py-1.5 font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100";
+const PILL =
+  "inline-flex items-center gap-2 rounded-full px-2.5 py-1.5 font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100";
+const ICON = `ml-auto ${PILL}`;
+
+// What the nav marks as the page you're on: a tab, the admin link, or (when
+// signed in) the account link, which isn't marked on /sign-in.
+export type NavCurrent = NavHref | "admin" | "account" | undefined;
 
 // A filled dot on the icon says someone is signed in, beside the words.
 function PersonIcon({ signedIn = false }: { signedIn?: boolean }) {
@@ -83,10 +88,10 @@ function Who({
   labels,
 }: {
   who: NavWho;
-  current: NavHref | "admin" | undefined;
+  current: NavCurrent;
   labels: NavLabels;
 }) {
-  const mine = current === "/sign-in";
+  const mine = current === "/sign-in" || current === "account";
   const cls = mine ? `${ICON} ${CURRENT}` : ICON;
   if (!who.signedIn)
     return (
@@ -112,8 +117,8 @@ function Who({
       )}
       <Link
         href="/account"
-        className={cls.replace("ml-auto ", "")}
-        aria-current={mine ? "page" : undefined}
+        className={current === "account" ? `${PILL} ${CURRENT}` : PILL}
+        aria-current={current === "account" ? "page" : undefined}
       >
         <PersonIcon signedIn />
         <span>{labels.account}</span>
@@ -127,7 +132,7 @@ export function NavLinks({
   labels,
   who = SIGNED_OUT,
 }: {
-  current: NavHref | "admin" | undefined;
+  current: NavCurrent;
   labels: NavLabels;
   who?: NavWho;
 }) {
@@ -162,11 +167,11 @@ export function NavLinks({
   );
 }
 
-// The admin pages aren't a tab, but their link is marked while you're on one.
-export function navCurrent(
-  pathname: string | null,
-): NavHref | "admin" | undefined {
+// The admin pages and the account page aren't tabs, but their links are
+// marked while you're on one.
+export function navCurrent(pathname: string | null): NavCurrent {
   if (pathname !== null && /^\/admin(\/|$)/.test(pathname)) return "admin";
+  if (pathname !== null && /^\/account(\/|$)/.test(pathname)) return "account";
   return currentTab(pathname);
 }
 
