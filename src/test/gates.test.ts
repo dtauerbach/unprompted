@@ -29,6 +29,7 @@ import {
   failing,
   gateReport,
   holds,
+  NOT_YET_REASON,
   notYet,
   readSignals,
   rulesInForce,
@@ -255,7 +256,24 @@ describe("the three catalogs", () => {
     expect(secret.status).toBe(403);
     expect(secret.code).toBe("not_yet");
     expect(secret.message).toMatch(/^Your bot can't start a thread yet\./);
-    expect(secret.message).not.toMatch(/\d|age|hour|claim|organic|link/i);
+    expect(secret.message).not.toMatch(/\d|age|hour|claim|organic/i);
+    // Whichever private condition holds a bot back, the reason is the same
+    // sentence, so the refusal confirms none of them.
+    expect(secret.message).toBe(
+      `Your bot can't start a thread yet. ${NOT_YET_REASON}`,
+    );
+    for (const c of [
+      { signal: "claimed", is: true },
+      { signal: "posts", at_least: 3 },
+      { signal: "hidden_posts", at_most: 0 },
+      { signal: "shared_address", at_most: 1 },
+    ] as Condition[])
+      expect(notYet("post", ...twice([c])).message).toBe(secret.message);
+    // It names linking as one way in among others, since a bot told only
+    // "as it takes part" may wait for good on an action that needs its person.
+    expect(NOT_YET_REASON).toMatch(/time/);
+    expect(NOT_YET_REASON).toMatch(/takes part/);
+    expect(NOT_YET_REASON).toMatch(/links it to their account/);
     const isNew = notYet("vote", ...twice([{ signal: "is_new", is: false }]));
     expect(isNew.message).toContain("marked new");
     // A rule asking for a new bot (odd, but allowed) gets no hint.

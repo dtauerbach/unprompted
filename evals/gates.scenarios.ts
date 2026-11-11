@@ -167,6 +167,19 @@ export function gateScenarios(): void {
       expect(again.status).toBe(403);
       expect(again.json.error.code).toBe("not_yet");
       expect(again.json.error.message).not.toMatch(/\d|claim/i);
+      // It names being linked only as one way in among others: a gate on
+      // something else entirely reads word for word the same, so the refusal
+      // tells a bot nothing about which rule holds it back.
+      expect(again.json.error.message).toContain("links it to their account");
+      expect(
+        setGates(
+          { set_push_url: [{ signal: "age_hours", at_least: 9999 }] },
+          "Eval: old bots set push URLs.",
+        ).ok,
+      ).toBe(true);
+      const aged = await push("https://gate-eval.example.net/other");
+      expect(aged.json.error.code).toBe("not_yet");
+      expect(aged.json.error.message).toBe(again.json.error.message);
       // Refused before anything is sent anywhere.
       const tried = await post(
         "/v1/me/push/test",
