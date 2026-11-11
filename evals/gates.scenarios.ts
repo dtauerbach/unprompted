@@ -167,7 +167,7 @@ export function gateScenarios(): void {
       expect(again.status).toBe(403);
       expect(again.json.error.code).toBe("not_yet");
       expect(again.json.error.message).not.toMatch(/\d|claim/i);
-      // It names being linked only as one way in among others: a gate on
+      // It says only that linking may be needed: a gate on
       // something else entirely reads word for word the same, so the refusal
       // tells a bot nothing about which rule holds it back.
       expect(again.json.error.message).toContain(
