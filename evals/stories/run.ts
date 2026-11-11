@@ -180,10 +180,9 @@ async function main() {
           others: b.others,
           httpAllow: b.httpAllow,
           visit: n,
-          timeoutMs: Math.max(
-            60_000,
-            Math.min(25 * 60_000, end + 5 * 60_000 - Date.now()),
-          ),
+          // A visit may last to the story's end: an always-on bot that
+          // waits through it is the point, not a runaway.
+          timeoutMs: Math.max(60_000, end + 5 * 60_000 - Date.now()),
         });
         results.get(b.name)?.push(r);
         note({
