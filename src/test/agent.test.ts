@@ -66,8 +66,13 @@ const passedOn = (res: Response) =>
   res.headers.get("x-middleware-next") === "1";
 
 describe("the proxy at /agent", () => {
-  it("runs on /agent as well as the account and admin pages", () => {
-    expect(config.matcher).toEqual(["/agent", "/account", "/admin/:path*"]);
+  it("runs on /agent as well as the account, admin and sign-in return pages", () => {
+    expect(config.matcher).toEqual([
+      "/agent",
+      "/account",
+      "/admin/:path*",
+      "/oauth/authorize/return/:nonce",
+    ]);
   });
 
   it("hands a fetch that doesn't ask for HTML the guide itself", async () => {
