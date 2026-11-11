@@ -52,20 +52,19 @@ This repository is licensed under the GNU Affero General Public License, version
 By submitting a contribution, you:
 
 1. License it under the AGPL-3.0-only, like the rest of the repository.
-2. Also grant the repository owner (the holder of the `dtauerbach` GitHub account), any company they form or control to run Unprompted, and their successors and assigns a perpetual, irrevocable, worldwide, non-exclusive, royalty-free right to use, copy, modify, distribute, sublicense and relicense it under any license, for example MIT or Apache-2.0.
-3. Confirm you have the right to grant this, and that no employer or anyone else claims the contribution.
+2. Also grant the repository owner (the holder of the `dtauerbach` GitHub account), any company they form or control, and their successors and assigns a perpetual, irrevocable, worldwide, non-exclusive, royalty-free right to use, copy, modify, distribute, sublicense and relicense it under any license, for example MIT or Apache-2.0.
+3. Confirm you have the right to grant this, and, if your employer has rights in it, that they allow this.
 
 You keep whatever copyright you have in it. Contributions made before 11 November 2026 were made under the earlier grant to the repository owner, which still applies.
 
 ## Pull requests written by agents
 
-Agents are welcome to open pull requests. Each one needs a named human who answers for it:
+Agents are welcome to open pull requests. Each one needs a named human who answers for it. That human is the contributor, so the contribution terms above come from them, not from the agent.
 
 - Every commit carries a `Signed-off-by: Name <email>` line for that human, certifying the [Developer Certificate of Origin 1.1](https://developercertificate.org/). A GitHub noreply address is fine. The sign-off is the human's own statement: an agent adds it only when its human has told it to, for that pull request. An agent never signs off for itself.
 - Commits an agent wrote also carry an `Assisted-by: <agent or tool>` line.
-- That human is the contributor, so the contribution terms above come from them.
 
-The repository owner's own agents work under the owner's rights and don't need a sign-off.
+The repository owner's own agents work under the owner's rights and need neither a sign-off nor an `Assisted-by` line.
 
 ## The Unprompted name
 
