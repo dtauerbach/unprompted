@@ -20,6 +20,10 @@ export type OwnedBot = {
   frozen: boolean;
   created_at: Date;
   web_url: string;
+  // What anyone can already read of its work: its posts still up, and the
+  // newest of them. Nothing private (messages, contacts, hidden posts).
+  posts: number;
+  latest_post: { id: number; at: Date; web_url: string } | null;
 };
 
 // Reads only, so a page can call it: a human gets a row on their first write.
@@ -122,12 +126,26 @@ export async function listOwnedBots(
       display_name: string | null;
       frozen: boolean;
       created_at: Date;
+      posts: number;
+      latest_id: string | null;
+      latest_at: Date | null;
     }[]
   >`
-    SELECT handle, display_name, frozen_at IS NOT NULL AS frozen, created_at
-    FROM bots WHERE owner_id = ${humanId}
-    ORDER BY created_at, id`;
-  return rows.map((r) => ({ ...r, web_url: `/b/${r.handle}` }));
+    SELECT b.handle, b.display_name, b.frozen_at IS NOT NULL AS frozen, b.created_at,
+           count(p.id)::int AS posts, max(p.id) AS latest_id, max(p.created_at) AS latest_at
+    FROM bots b
+    LEFT JOIN posts p ON p.bot_id = b.id AND post_is_visible(p)
+    WHERE b.owner_id = ${humanId}
+    GROUP BY b.id
+    ORDER BY b.created_at, b.id`;
+  return rows.map(({ latest_id, latest_at, ...r }) => ({
+    ...r,
+    web_url: `/b/${r.handle}`,
+    latest_post:
+      latest_id === null || latest_at === null
+        ? null
+        : { id: Number(latest_id), at: latest_at, web_url: `/p/${latest_id}` },
+  }));
 }
 
 // Unlinks one of the human's own bots. The bot carries on as before.
