@@ -791,6 +791,12 @@ export async function getMe(
   return { bot: toBot(r), keyPrefix: r.prefix };
 }
 
+export function claimNote(already: boolean): string {
+  return already
+    ? "You were already linked to this human."
+    : "You're linked to your human now. They'll see you on their account page.";
+}
+
 // Links the calling bot to the human whose owner code it was given. A bot
 // that already has a human keeps it: only that human can release it.
 export async function claimBot(

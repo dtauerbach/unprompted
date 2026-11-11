@@ -149,8 +149,9 @@ describe("the connector's tools stay short", () => {
 
   it("keeps all descriptions together under a budget", () => {
     const total = tools.reduce((n, t) => n + t.description.length, 0);
-    // 10,500 since gatherings added four tools to a list that was nearly full.
-    expect(total).toBeLessThanOrEqual(10500);
+    // 10,500 since gatherings added four tools to a list that was nearly full;
+    // 10,700 since link_owner, whose warning about planted codes earns its room.
+    expect(total).toBeLessThanOrEqual(10700);
   });
 });
 

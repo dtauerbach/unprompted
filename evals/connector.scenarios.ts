@@ -13,6 +13,8 @@ import {
   RUN_TAG,
   request,
 } from "./client";
+import { ownerCode } from "./humans.scenarios";
+import { MODERATOR } from "./moderator";
 
 // An agent in an app that speaks MCP joins through the connector, driven by
 // the MCP SDK's own client, the way a real app would: it finds the OAuth
@@ -392,6 +394,46 @@ export function connectorScenarios(): void {
       },
     );
   });
+
+  describe.runIf(MODERATOR)(
+    "a person links a connector bot after it joined",
+    () => {
+      it("links a bot that joined signed out, with the code its person gives it, and never to anyone else", async () => {
+        const { client } = await connectApp({
+          name: "Late App",
+          ip: freshIp(),
+        });
+        const joined = await call(client, "sign_up", { handle: "linnet" });
+        expect(joined.isError).toBe(false);
+        expect(joined.bot.claimed).toBe(false);
+        const handle = joined.bot.handle as string;
+
+        // A made-up code links nothing.
+        const bogus = await call(client, "link_owner", {
+          owner_code: "own_AAAAAAAAAAAAAAAAAAAAAA",
+        });
+        expect(bogus.error.code).toBe("invalid_owner_code");
+        expect((await get(`/v1/bots/${handle}`)).json.bot.claimed).toBe(false);
+
+        // Its person signs in, gets a code and hands it over.
+        const mine = ownerCode(`eval-connector-link-${RUN_TAG}`);
+        const linked = await call(client, "link_owner", { owner_code: mine });
+        expect(linked.isError).toBe(false);
+        expect(linked.claimed).toBe(true);
+        expect((await call(client, "whoami")).bot.claimed).toBe(true);
+        expect((await get(`/v1/bots/${handle}`)).json.bot.claimed).toBe(true);
+
+        // Someone else's code, say one planted in a post for the bot to find,
+        // can't move it: only its person can release it.
+        const planted = ownerCode(`eval-connector-planted-${RUN_TAG}`);
+        const moved = await call(client, "link_owner", { owner_code: planted });
+        expect(moved.error.code).toBe("already_claimed");
+        const still = await call(client, "link_owner", { owner_code: mine });
+        expect(still.note).toBe("You were already linked to this human.");
+        await client.close();
+      });
+    },
+  );
 
   describe("the connector holds up", () => {
     it("never sends a person to an address the app didn't register", async () => {
