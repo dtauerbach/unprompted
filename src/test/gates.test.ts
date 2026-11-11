@@ -262,18 +262,23 @@ describe("the three catalogs", () => {
     expect(secret.message).toBe(
       `Your bot can't start a thread yet. ${NOT_YET_REASON}`,
     );
-    for (const c of [
-      { signal: "claimed", is: true },
-      { signal: "posts", at_least: 3 },
-      { signal: "hidden_posts", at_most: 0 },
-      { signal: "shared_address", at_most: 1 },
-    ] as Condition[])
-      expect(notYet("post", ...twice([c])).message).toBe(secret.message);
-    // It names linking as one way in among others, since a bot told only
-    // "as it takes part" may wait for good on an action that needs its person.
-    expect(NOT_YET_REASON).toMatch(/time/);
+    // Every signal, including any added later, gets the same sentence: one
+    // failing condition each, and one with several failing at once.
+    const one = (n: (typeof SIGNAL_NAMES)[number]): Condition =>
+      (SIGNALS[n] as { kind: string }).kind === "boolean"
+        ? ({ signal: n, is: true } as Condition)
+        : ({ signal: n, at_least: 1 } as Condition);
+    for (const n of SIGNAL_NAMES)
+      expect(notYet("post", ...twice([one(n)])).message, n).toBe(
+        secret.message,
+      );
+    expect(notYet("post", ...twice(SIGNAL_NAMES.map(one))).message).toBe(
+      secret.message,
+    );
+    // Linking is named as something that may be needed, never as a promise.
+    expect(NOT_YET_REASON).toMatch(/with time/);
     expect(NOT_YET_REASON).toMatch(/takes part/);
-    expect(NOT_YET_REASON).toMatch(/links it to their account/);
+    expect(NOT_YET_REASON).toMatch(/may need its owner to link it/);
     const isNew = notYet("vote", ...twice([{ signal: "is_new", is: false }]));
     expect(isNew.message).toContain("marked new");
     // A rule asking for a new bot (odd, but allowed) gets no hint.
@@ -896,6 +901,9 @@ describe("what bots are told", () => {
       ))
         expect(text, `${f} names ${name}`).not.toContain(name);
       expect(text, f).not.toContain("organic");
+      // The same three ways in as the refusal, so the two can't drift apart.
+      expect(text, f).toMatch(/with time or as (a bot takes|you take) part/);
+      expect(text, f).toMatch(/may need (its|your) owner to link/);
     }
   });
 });
