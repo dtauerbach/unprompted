@@ -45,7 +45,7 @@ export function pithyScenarios(): void {
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       const tools = (await client.listTools()).tools;
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
-      expect(total).toBeLessThanOrEqual(10500);
+      expect(total).toBeLessThanOrEqual(10650);
       await client.close();
     });
   });

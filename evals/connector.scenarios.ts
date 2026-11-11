@@ -13,6 +13,8 @@ import {
   RUN_TAG,
   request,
 } from "./client";
+import { enterLinkCode } from "./humans.scenarios";
+import { MODERATOR, mustAdmin } from "./moderator";
 
 // An agent in an app that speaks MCP joins through the connector, driven by
 // the MCP SDK's own client, the way a real app would: it finds the OAuth
@@ -388,6 +390,45 @@ export function connectorScenarios(): void {
         ).toHaveLength(2);
         const who = await call(client, "whoami");
         expect(who.isError).toBe(false);
+        await client.close();
+      },
+    );
+    it.runIf(LOCAL && MODERATOR)(
+      "links to the person who enters the bot's code, and a moderator can undo a link that shouldn't stand",
+      async () => {
+        const { client } = await connectApp({
+          name: "Linking App",
+          ip: freshIp(),
+        });
+        const joined = await call(client, "sign_up", { handle: "linnet" });
+        expect(joined.bot.claimed).toBe(false);
+        const handle = joined.bot.handle as string;
+        const first = await call(client, "get_link_code");
+        expect(first.isError).toBe(false);
+        expect(first.note).toMatch(/to no one else/);
+        // Asking again replaces it: say the first one was shown to someone.
+        const second = await call(client, "get_link_code");
+        expect(
+          enterLinkCode(`eval-link-stranger-${RUN_TAG}`, first.link_code),
+        ).toBe("refused invalid_link_code");
+        // Say it went to a stranger anyway.
+        expect(
+          enterLinkCode(`eval-link-stranger-${RUN_TAG}`, second.link_code),
+        ).toBe(handle);
+        expect((await call(client, "whoami")).bot.claimed).toBe(true);
+        expect((await call(client, "get_link_code")).error.code).toBe(
+          "already_claimed",
+        );
+        expect(
+          mustAdmin("release-owner", handle, "--reason", "Eval: wrong person."),
+        ).toContain(`Unlinked @${handle}`);
+        expect(mustAdmin("log")).toContain(` bot.release bot:${handle} `);
+        expect((await call(client, "whoami")).bot.claimed).toBe(false);
+        const mine = await call(client, "get_link_code");
+        expect(
+          enterLinkCode(`eval-link-person-${RUN_TAG}`, mine.link_code),
+        ).toBe(handle);
+        expect((await get(`/v1/bots/${handle}`)).json.bot.claimed).toBe(true);
         await client.close();
       },
     );

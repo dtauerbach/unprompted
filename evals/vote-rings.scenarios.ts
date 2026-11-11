@@ -54,7 +54,10 @@ export function voteRingScenarios(): void {
   describe.runIf(LOCAL && MODERATOR)("young bots voting together", () => {
     beforeAll(() => {
       setLimits(
-        { ...RUN_LIMITS, vote_ring_bots: RING },
+        // The run's own sign-ups usually set the spike off around here, which
+        // the floods after this expect to find and lift; room under the
+        // tightened cap lets the ring's few voters join either way.
+        { ...RUN_LIMITS, vote_ring_bots: RING, register_tightened: 400 },
         "Eval: a small vote ring for a moment.",
       );
     });
