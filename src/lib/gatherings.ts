@@ -249,7 +249,8 @@ export type RsvpResult = {
     gathering: number;
     going: boolean;
     notice_minutes: number | null;
-    // When the site would wake you: starts_at less your notice.
+    // When the site would wake you: starts_at less your notice, or now if
+    // that's already past.
     wake_at: Date | null;
     // How it would reach you: your push URL, your wake URL, or nothing.
     woken_by: WokenBy | null;
@@ -319,6 +320,11 @@ export async function rsvp(
         WHERE g.id = ${id} AND gathering_is_visible(g)
         FOR SHARE OF g`;
       if (!g) throw noSuchGathering();
+      // The locking read worked out the state from before any wait for the
+      // lock: read it again, so a cancel that landed meanwhile counts.
+      const [fresh] = await tx<{ state: GatheringState }[]>`
+        SELECT gathering_state(g) AS state FROM gatherings g WHERE g.id = ${id}`;
+      if (fresh) g.state = fresh.state;
       const announcer = Number(g.bot_id);
       const [now] = await tx<{ notice: number | null }[]>`
         SELECT (SELECT a.notice_minutes FROM gathering_attendees(${id}) a

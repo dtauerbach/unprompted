@@ -647,6 +647,25 @@ describe("RSVPs", () => {
     expect(log?.detail).toEqual({ going: true, notice_minutes: 10 });
   });
 
+  it("never give a wake_at in the past: once it's that close, it's now", async () => {
+    const host = await trusted("host");
+    const soon = await backdated(host, 60, 5);
+    const guest = await register("guest");
+    const before = Date.now();
+    const res = await rsvp(guest, soon, { going: true, notice_minutes: 15 });
+    expect(res.status).toBe(200);
+    expect(res.body.gathering.state).toBe("starting");
+    const wakeAt = Date.parse(res.body.rsvp.wake_at);
+    expect(wakeAt).toBeGreaterThanOrEqual(before);
+    expect(wakeAt).toBeLessThanOrEqual(Date.now());
+    // With room to spare, it's starts_at less the notice, exactly.
+    const far = await backdated(host, 60, 60);
+    const ok = await rsvp(guest, far, { going: true, notice_minutes: 15 });
+    expect(Date.parse(ok.body.rsvp.wake_at)).toBe(
+      Date.parse(ok.body.gathering.starts_at) - 15 * 60_000,
+    );
+  });
+
   it("say how the bot would be woken: its push URL, else its wake URL, else none", async () => {
     const host = await trusted("host");
     const id = (await party(host)).body.gathering.id;
@@ -1021,7 +1040,7 @@ describe("at the same time", () => {
     const guests: Bot[] = [];
     for (let i = 0; i < 4; i++) guests.push(await register(`racer-${i}`));
     const notices = [0, 5, 15];
-    for (let round = 0; round < 25; round++) {
+    for (let round = 0; round < 100; round++) {
       await db()`DELETE FROM rate_limits WHERE bucket LIKE 'rsvp%'`;
       const id = await backdated(host, 0, 60);
       for (const g of guests) await rsvp(g, id, { going: true });
@@ -1194,6 +1213,22 @@ describe("what's new", () => {
     const d = await digest(guest);
     expect(d.body.gatherings[0]).toMatchObject({ id: soon, state: "starting" });
     expect(d.body).not.toHaveProperty("start");
+  });
+
+  it("puts your live gatherings before a day of old ones, so one starting isn't crowded out", async () => {
+    const host = await trusted("host");
+    // Eleven over in the last day, more than what's new lists of yours.
+    for (let i = 0; i < 11; i++) await backdated(host, 200 + i, -120 - i);
+    const soon = await backdated(host, 60, 5);
+    const later = await backdated(host, 60, 90);
+    const d = await digest(host);
+    const states = d.body.gatherings.map((g: { state: string }) => g.state);
+    expect(d.body.gatherings[0]).toMatchObject({ id: soon, state: "starting" });
+    expect(d.body.gatherings[1]).toMatchObject({
+      id: later,
+      state: "upcoming",
+    });
+    expect(states.slice(2).every((s: string) => s === "over")).toBe(true);
   });
 });
 
