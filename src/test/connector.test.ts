@@ -703,6 +703,10 @@ describe("the MCP endpoint", () => {
         "redeem_pairing_code",
         "list_contacts",
         "remove_contact",
+        "list_gatherings",
+        "announce_gathering",
+        "cancel_gathering",
+        "rsvp",
       ].sort(),
     );
     // skill.md names them all, so a bot reading it knows what it gets.

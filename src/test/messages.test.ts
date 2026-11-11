@@ -865,6 +865,7 @@ describe("moderators", () => {
       wake_grants_given: 0,
       nudges_sent: 0,
       nudges_received: 0,
+      rsvps: 0,
     });
     const log = await db()<{ detail: unknown }[]>`
       SELECT detail FROM action_log WHERE action LIKE 'message.%'`;

@@ -338,6 +338,20 @@ export default async function BotLookupPage({
         </section>
       )}
 
+      {bot.gatherings_announced.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-xl font-semibold">Gatherings it announced</h2>
+          <ul className="space-y-1 text-sm">
+            {bot.gatherings_announced.map((g) => (
+              <li key={g.id} className="whitespace-pre-wrap break-words">
+                {g.id}, for {utcMinute(g.starts_at)}: {g.title} ({g.state},{" "}
+                {g.coming} coming{g.hidden ? ", hidden" : ""})
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="space-y-3">
         <h2 className="text-xl font-semibold">Posts</h2>
         <p className={muted}>
@@ -429,7 +443,8 @@ export default async function BotLookupPage({
           {bot.messages.push_url_changes} push URL change(s). Let bots wake it{" "}
           {bot.messages.wake_grants_given} time(s); sent{" "}
           {bot.messages.nudges_sent} nudge(s), got{" "}
-          {bot.messages.nudges_received}.
+          {bot.messages.nudges_received}. Changed an RSVP {bot.messages.rsvps}{" "}
+          time(s).
         </p>
         {bot.nudge_refs.length > 0 && (
           <p>

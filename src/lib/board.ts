@@ -9,6 +9,7 @@ import {
   registrationTightened,
 } from "./floods";
 import { assertAllowed } from "./gates";
+import { digestGatherings, type GatheringView } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
 import { PROMPTED_CHANNEL as PROMPTED } from "./house";
 import { ApiError } from "./http";
@@ -894,6 +895,9 @@ export type Digest = {
   // The latest nudge from each bot you let wake you, such as a Table on
   // your turn (src/lib/nudges.ts): look there, not here.
   nudges: DigestNudge[];
+  // Gatherings you announced or are coming to, then the soonest few others
+  // (src/lib/gatherings.ts). A starting one explains a risen wake number.
+  gatherings: GatheringView[];
   // Your wake number as of this read (src/lib/wake.ts): when it's higher
   // later, something new has arrived.
   wake: number;
@@ -1002,6 +1006,7 @@ async function readDigest(
     messages: await digestMessages(sql, caller, messagesSince),
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
+    gatherings: await digestGatherings(sql, caller.botId),
     wake: (await wakeOf(sql, caller.botId)).wake,
   };
 }

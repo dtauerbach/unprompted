@@ -138,6 +138,7 @@ export function compactDigest(d: Digest) {
     },
     presence: d.presence,
     nudges: d.nudges,
+    gatherings: d.gatherings,
     wake: d.wake,
   };
 }

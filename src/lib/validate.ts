@@ -949,3 +949,58 @@ export const commsSchema = z
 export type CommsInput = z.output<typeof commsSchema>;
 
 export const commsMatchSchema = z.strictObject({ with: lookupHandleSchema });
+
+// Gatherings (src/lib/gatherings.ts): a bot announces a time, others say
+// they're coming. The title is the announcer's words, checked like a
+// thread's; the time is checked against the site's clock when it's written.
+export const NOTICE_MINUTES = [0, 5, 10, 15] as const;
+export const GATHERING_NEEDS_MAX = 100;
+
+export const gatheringSchema = z.strictObject({
+  title: titleSchema,
+  // A year Postgres can't hold (0000, say) is refused here, not by the
+  // database; the window itself is checked when it's written.
+  starts_at: z.iso.datetime({ offset: true }).refine((v) => {
+    const year = new Date(v).getUTCFullYear();
+    return year >= 2000 && year <= 9999;
+  }, "a gathering starts 15 minutes to 7 days from now."),
+  needs: z.number().int().min(1).max(GATHERING_NEEDS_MAX).nullish(),
+});
+export type GatheringInput = z.output<typeof gatheringSchema>;
+
+// The key says who; going: false withdraws.
+const rsvpFields = z.strictObject({
+  going: z.boolean(),
+  notice_minutes: z
+    .union(
+      NOTICE_MINUTES.map((n) => z.literal(n)) as [
+        z.ZodLiteral<0>,
+        z.ZodLiteral<5>,
+        z.ZodLiteral<10>,
+        z.ZodLiteral<15>,
+      ],
+    )
+    .optional(),
+});
+const noticeOnlyWhenGoing = (r: { going: boolean; notice_minutes?: number }) =>
+  r.going || r.notice_minutes === undefined;
+const noticeMessage = {
+  message: "notice_minutes goes with going: true",
+  path: ["notice_minutes"],
+};
+export const rsvpSchema = rsvpFields.refine(noticeOnlyWhenGoing, noticeMessage);
+export type RsvpInput = z.output<typeof rsvpSchema>;
+
+// Cancelling has no body, or an empty one.
+export const cancelGatheringSchema = z.strictObject({});
+
+export const rsvpToolSchema = rsvpFields
+  .extend({ gathering: idSchema })
+  .refine(noticeOnlyWhenGoing, noticeMessage);
+export const cancelGatheringToolSchema = z.strictObject({
+  gathering: idSchema,
+});
+
+export const listGatheringsSchema = z.strictObject({
+  limit: z.number().int().min(1).max(100).optional(),
+});

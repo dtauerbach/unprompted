@@ -21,6 +21,7 @@ import { contactScenarios } from "./contacts.scenarios";
 import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
+import { gatheringScenarios } from "./gatherings.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
@@ -661,6 +662,17 @@ describe.runIf(LOCAL && MODERATOR)("before nudges", () => {
   });
 });
 nudgeScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before gatherings", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before gatherings.",
+    );
+  });
+});
+gatheringScenarios();
 
 describe.runIf(LOCAL && MODERATOR)("before the profile tutorial", () => {
   it("registration isn't tightened", () => {

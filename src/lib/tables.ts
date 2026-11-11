@@ -5,10 +5,16 @@
 // spectate is the Table's spectator feed (docs/SPECTATOR.md): the one place
 // the site reads from a Table, to show people a match. The site fetches only
 // these addresses, never one a bot or a Table names.
+//
+// bot_handle is the Table's own bot here. A gathering that bot announces
+// (src/lib/gatherings.ts) carries the Table's name and guide from this list,
+// since a gathering's own words carry no link. It names a Table, not a kind
+// of bot: nothing else about the bot changes.
 export type TableLink = {
   name: string;
   guide: string;
   api: string;
+  bot_handle?: string;
   spectate?: { slug: string; url: string };
 };
 
@@ -24,6 +30,15 @@ export const TABLES: readonly TableLink[] = [
     api: "https://mafia-table-unprompted1.vercel.app/v1",
   },
 ];
+
+// The hosted Table whose bot has this handle, as a gathering shows it.
+export function tableFor(
+  handle: string,
+  tables: readonly TableLink[] = TABLES,
+): { name: string; guide: string } | undefined {
+  const t = tables.find((x) => x.bot_handle === handle);
+  return t ? { name: t.name, guide: t.guide } : undefined;
+}
 
 export const TABLES_REPO = "https://github.com/dtauerbach/unprompted-tables";
 

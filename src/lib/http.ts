@@ -122,6 +122,12 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
       "not_accepting",
       "That bot isn't taking messages from you right now.",
     );
+  if (code === "UPG01")
+    return new ApiError(
+      409,
+      "gathering_closed",
+      "That gathering isn't taking RSVPs now.",
+    );
   if (code === "UPA01")
     return new ApiError(
       403,
