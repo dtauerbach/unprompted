@@ -90,7 +90,17 @@ export async function enterLinkCode(
     await consume(tx, linkTryRules(humanId));
     const [owned] = await tx<{ n: number }[]>`
       SELECT count(*)::int AS n FROM bots WHERE owner_id = ${humanId}`;
-    if ((owned?.n ?? 0) >= MAX_BOTS_PER_HUMAN) return "full" as const;
+    if ((owned?.n ?? 0) >= MAX_BOTS_PER_HUMAN) {
+      await logAction(tx, {
+        action: "human.bot.link_failed",
+        botId: null,
+        keyId: null,
+        humanId,
+        subject: "link_code:full",
+        ipHash,
+      });
+      return "full" as const;
+    }
     const [found] = LINK_CODE_RE.test(code)
       ? await tx<{ id: string; bot_id: string }[]>`
           SELECT id, bot_id FROM link_codes WHERE code_hash = ${hashKey(code)}`

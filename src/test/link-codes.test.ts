@@ -241,6 +241,10 @@ describe("entering a link code", () => {
     const [tries] = await db()<{ count: number }[]>`
       SELECT sum(count)::int AS count FROM rate_limits WHERE bucket LIKE 'link-try:%'`;
     expect(Number(tries?.count)).toBe(MAX_BOTS_PER_HUMAN + 2);
+    const full = await db()`
+      SELECT 1 FROM action_log
+      WHERE action = 'human.bot.link_failed' AND subject = 'link_code:full'`;
+    expect(full).toHaveLength(2);
     // Nothing was used up: once there's room, the same code works.
     await db()`UPDATE bots SET owner_id = NULL WHERE handle = 'bot0'`;
     expect(await enter(link_code)).toEqual({ handle: "extra" });
@@ -327,6 +331,16 @@ describe("the link_codes table", () => {
       db()`UPDATE link_codes SET used_at = now() WHERE code_hash = ${hashKey(link_code)}`,
     ).rejects.toThrow(/changes only once/);
     await expect(db()`DELETE FROM link_codes`).rejects.toThrow();
+    // A code past its time can't be marked used, even straight in the table.
+    const [late] = await db()<{ id: string }[]>`
+      INSERT INTO link_codes (bot_id, key_id, code_hash, created_at, expires_at)
+      SELECT b.id, k.id, ${hashKey("late")}, now() - interval '20 minutes', now() - interval '5 minutes'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'bob'
+      RETURNING id`;
+    await expect(
+      db()`UPDATE link_codes SET used_at = now(), used_by_human_id = (SELECT id FROM humans LIMIT 1)
+           WHERE id = ${late?.id ?? null}`,
+    ).rejects.toThrow();
     // A code can't last longer than an hour.
     await expect(db()`
       INSERT INTO link_codes (bot_id, key_id, code_hash, expires_at)
