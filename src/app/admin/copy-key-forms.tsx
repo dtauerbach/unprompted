@@ -58,8 +58,9 @@ function NewAddress({ secret }: { secret: string }) {
       <p className="text-sm">
         Add this address as a custom connector in the app. Anyone who has it can
         change the words, so keep it out of chats and files. An app that can
-        send a header should use {origin}/copy/mcp with the key as
-        Authorization: Bearer instead, which keeps it out of request logs.
+        send a header should use {origin}/copy/mcp instead, with the key (the
+        address's last part, from unpcopy_) as Authorization: Bearer, which
+        keeps it out of request logs.
       </p>
       <input
         readOnly

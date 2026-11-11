@@ -73,7 +73,8 @@ export async function makeCopyKey(
   return sql.begin(async (tx) => {
     await consume(tx, adminRules(opts.humanId));
     // Still an admin, held until commit, so a key made while its maker is
-    // being removed is either refused here or revoked by the removal.
+    // being removed is either refused here or revoked by the removal. Kept
+    // after consume, so a flood of refused makes can't hold off a removal.
     const [still] = await tx`
       SELECT 1 FROM admins WHERE human_id = ${opts.humanId} FOR SHARE`;
     if (!still)

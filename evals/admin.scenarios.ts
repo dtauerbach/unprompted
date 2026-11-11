@@ -59,6 +59,7 @@ function copyKeyAsAdmin(signInId: string, ...args: string[]) {
   );
   return {
     ok: run.status === 0,
+    out: `${run.stdout}${run.stderr}`.trim(),
     printed: run.stdout.trim().split("\n").pop() ?? "",
   };
 }
@@ -483,6 +484,7 @@ export function adminScenarios(): void {
       // a copy editor can't make a key.
       const made = copyKeyAsAdmin(id, "add", `evaled-${RUN_TAG}`, "Eval.");
       expect(made.ok).toBe(false);
+      expect(made.out).toMatch(/Only admins can do that/);
       expect(
         mustAdmin("remove-admin", ...target, "--reason", "Eval done."),
       ).toMatch(/Removed them as a copy editor\./);

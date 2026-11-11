@@ -49,7 +49,8 @@ export const COPY_PAGES: { page: CopyPage; title: string; path: string }[] = [
 ];
 
 // adminOnly: words a person trusts the site for (what it vouches for, what
-// it says about owners, the line pasted into agents), changed only by an
+// it says about owners, what the moderators did to a bot, where a game's
+// words come from, the line pasted into agents), changed only by an
 // admin signed in, never a copy editor or an app's key. The connect and
 // privacy pages are admin-only as a whole (adminOnlyCopy below).
 type Entry = { page: CopyPage; label: string; text: string; adminOnly?: true };

@@ -658,6 +658,40 @@ describe("copy keys", () => {
     expect(await listCopyKeys(db())).toHaveLength(0);
   });
 
+  it("wait for a removal under way, then are refused", async () => {
+    const admin = await anAdmin();
+    let release = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked = () => {};
+    const held = new Promise<void>((r) => {
+      locked = r;
+    });
+    const removing = db().begin(async (tx) => {
+      await tx`DELETE FROM admins WHERE human_id = ${admin}`;
+      locked();
+      await gate;
+    });
+    await held;
+    let settled = "waiting";
+    const making = aKey(admin).then(
+      () => {
+        settled = "made";
+      },
+      (e: { code?: string }) => {
+        settled = `refused ${e.code}`;
+      },
+    );
+    await new Promise((r) => setTimeout(r, 500));
+    expect(settled).toBe("waiting");
+    release();
+    await removing;
+    await making;
+    expect(settled).toBe("refused not_an_admin");
+    expect(await listCopyKeys(db())).toHaveLength(0);
+  });
+
   it("check their budget before taking a lock, so refused saves can't hold off a revoke", async () => {
     const admin = await anAdmin();
     const k = await aKey(admin);
