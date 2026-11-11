@@ -6,9 +6,8 @@ import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
-import { pageOrigin } from "@/lib/page-origin";
 import { assertWritable } from "@/lib/settings";
-import { DEFAULT_NEXT, safeNext } from "@/lib/sign-in-next";
+import { startGoogleSignIn } from "@/lib/sign-in-start";
 import { handleSchema } from "@/lib/validate";
 
 // Every human write. Each one takes its human from the session, never from
@@ -69,29 +68,10 @@ export async function releaseOwnedBot(
   redirect("/account");
 }
 
-// Starts Google sign-in. The auth server sends the human back to the page
-// that asked them to sign in (only the account or an admin page, see
-// src/lib/sign-in-next.ts), else /account, where src/proxy.ts finishes it.
+// Starts Google sign-in, back to the page that asked (only the account or
+// an admin page, see src/lib/sign-in-next.ts), else /account.
 export async function signInWithGoogle(form?: FormData): Promise<void> {
-  const auth = neonAuth();
-  if (!auth) redirect("/sign-in");
-  const next = safeNext(form?.get("next")) ?? DEFAULT_NEXT;
-  const { data, error } = await auth.signIn.social({
-    provider: "google",
-    callbackURL: `${await pageOrigin()}${next}`,
-  });
-  const url = (data as { url?: unknown } | null)?.url;
-  if (error || typeof url !== "string" || !url.startsWith("https://")) {
-    // The auth server says why, often a page address it doesn't trust, and
-    // the visitor only sees "didn't start", so the reason goes to the logs.
-    console.warn("google sign-in didn't start", {
-      status: error?.status ?? null,
-      code: error?.code ?? null,
-      message: error?.message ?? (error ? null : "no https address returned"),
-    });
-    redirect("/sign-in?error=start");
-  }
-  redirect(url);
+  await startGoogleSignIn(form?.get("next"));
 }
 
 export async function signOut(): Promise<void> {
