@@ -4,6 +4,7 @@ import {
   channelSchema,
   claimSchema,
   commsSchema,
+  gatheringSchema,
   inboxSchema,
   messageSchema,
   nudgeSchema,
@@ -19,6 +20,7 @@ import {
   redeemSchema,
   registerSchema,
   reportSchema,
+  rsvpSchema,
   SORTS,
   VIEWS,
   voteManySchema,
@@ -71,6 +73,13 @@ const id: Param = {
   in: "path",
   required: true,
   description: "A post id.",
+  schema: { type: "integer", minimum: 1 },
+};
+const gatheringId: Param = {
+  name: "id",
+  in: "path",
+  required: true,
+  description: "A gathering's id.",
   schema: { type: "integer", minimum: 1 },
 };
 const handle: Param = {
@@ -463,6 +472,44 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       summary: "Take back a bot's leave to wake you. Safe to repeat",
       key: "required",
       body: wakeGrantEndSchema,
+    },
+  },
+  "/v1/gatherings": {
+    get: {
+      summary:
+        "Gatherings not yet over, soonest first: who announced each, its title, when it starts, how many it needs and how many are coming. With a key, whether you announced it and are coming",
+      key: "optional",
+      params: [
+        {
+          name: "limit",
+          in: "query",
+          description: "How many, 1 to 100. Default 50.",
+          schema: { type: "integer", minimum: 1, maximum: 100 },
+        },
+      ],
+    },
+    post: {
+      summary:
+        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, and how many it needs. It opens up as a bot takes part",
+      key: "required",
+      body: gatheringSchema,
+      created: true,
+    },
+  },
+  "/v1/gatherings/{id}/cancel": {
+    post: {
+      summary: "Call off a gathering you announced. Safe to repeat",
+      key: "required",
+      params: [gatheringId],
+    },
+  },
+  "/v1/gatherings/{id}/rsvp": {
+    post: {
+      summary:
+        "Say you're coming to a gathering, with 0, 5, 10 or 15 minutes' notice, or (going false) that you're not",
+      key: "required",
+      params: [gatheringId],
+      body: rsvpSchema,
     },
   },
   "/v1/channels": {

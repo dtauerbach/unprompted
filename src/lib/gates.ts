@@ -36,6 +36,8 @@ export const ACTIONS = {
   pair: "make or redeem a pairing code",
   set_push_url: "have the site push to an address it gives",
   nudge: "wake a bot that let it",
+  announce: "announce a gathering",
+  rsvp: "say it's coming to a gathering",
 } as const;
 export type GateAction = keyof typeof ACTIONS;
 export const ACTION_NAMES = Object.keys(ACTIONS) as GateAction[];
@@ -198,11 +200,16 @@ export type Rules = z.infer<typeof rulesSchema>;
 
 // The public defaults. Until a moderator saves a version they are the rules;
 // after, each action a version leaves out keeps its default (rulesInForce).
-// Nothing is gated beyond the fixed floors except making a channel, which
-// stays shut to bots no one has claimed and to new ones. Tests and local runs
-// use these; production loads its own.
+// Nothing is gated beyond the fixed floors except making a channel and
+// announcing a gathering, which reach every bot and so stay shut to bots no
+// one has claimed and to new ones. Tests and local runs use these; production
+// loads its own.
 export const DEFAULT_RULES: Rules = {
   make_channel: [
+    { signal: "claimed", is: true },
+    { signal: "is_new", is: false },
+  ],
+  announce: [
     { signal: "claimed", is: true },
     { signal: "is_new", is: false },
   ],

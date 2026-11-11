@@ -200,6 +200,57 @@ export async function setChannelHidden(
   });
 }
 
+// A gathering: hiding takes it off every list, what's new and the RSVP and
+// cancel calls, as if it weren't there; unhiding puts it back as it was,
+// RSVPs and all. Its announcer and the bots coming aren't told.
+export async function setGatheringHidden(
+  sql: postgres.Sql,
+  id: number,
+  hidden: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [g] = await tx<{ bot_id: string }[]>`
+      SELECT bot_id FROM gatherings WHERE id = ${id}`;
+    if (!g)
+      throw new ApiError(
+        404,
+        "no_such_gathering",
+        `There is no gathering ${id}.`,
+      );
+    const rows = hidden
+      ? await tx`
+          INSERT INTO hidden_gatherings (gathering_id) VALUES (${id})
+          ON CONFLICT (gathering_id) DO NOTHING RETURNING gathering_id`
+      : await tx`
+          DELETE FROM hidden_gatherings WHERE gathering_id = ${id}
+          RETURNING gathering_id`;
+    if (rows.length === 0)
+      return {
+        changed: false,
+        message: hidden
+          ? `Gathering ${id} was already hidden.`
+          : `Gathering ${id} wasn't hidden.`,
+      };
+    await logAction(tx, {
+      action: hidden ? "admin.gathering.hide" : "admin.gathering.unhide",
+      botId: Number(g.bot_id),
+      keyId: null,
+      ...who,
+      subject: `gathering:${id}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: hidden ? `Hid gathering ${id}.` : `Put gathering ${id} back.`,
+    };
+  });
+}
+
 // A bot's profile fields: hiding takes them off its page and the API, and
 // keeps off any it saves afterwards, until a moderator unhides them, which
 // puts back the newest. Saving again can't undo a hide. Its signing key

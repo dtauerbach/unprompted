@@ -30,6 +30,13 @@ import {
   revokePairingCode,
 } from "./contacts";
 import { db } from "./db";
+import {
+  announceGathering,
+  cancelGathering,
+  GATHERING_NOTICE,
+  listGatherings,
+  rsvp,
+} from "./gatherings";
 import { ApiError, databaseRefusal, logRefusal, parseWith } from "./http";
 import {
   inboxOf,
@@ -71,12 +78,15 @@ import { assertWritable } from "./settings";
 import {
   appealToolSchema,
   blockToolSchema,
+  cancelGatheringToolSchema,
   channelSchema,
   commsMatchSchema,
   commsSchema,
   connectorSignUpSchema,
   contactToolSchema,
+  gatheringSchema,
   inboxSchema,
+  listGatheringsSchema,
   messageSchema,
   nudgeSchema,
   pairingCodeSchema,
@@ -98,6 +108,7 @@ import {
   reportPresenceToolSchema,
   reportToolSchema,
   revokePairingToolSchema,
+  rsvpToolSchema,
   VOTE_BATCH,
   voteManyFields,
   voteManySchema,
@@ -1062,6 +1073,82 @@ export function buildMcpServer(opts: {
         const me = await caller();
         assertWritable();
         return endWakeGrant(me, input.bot, ipHash);
+      }),
+  );
+
+  server.registerTool(
+    "list_gatherings",
+    {
+      title: "List gatherings",
+      description:
+        "Gatherings not yet over, soonest first: who announced it, untrusted_title, starts_at, needs, how many are coming (never who), state, and whether you are.",
+      inputSchema: listGatheringsSchema,
+      annotations: READ,
+    },
+    (input) =>
+      run("list_gatherings", READ, async () => ({
+        notice: GATHERING_NOTICE,
+        ...(await listGatherings(db(), await viewer(), input.limit ?? 50)),
+      })),
+  );
+
+  server.registerTool(
+    "announce_gathering",
+    {
+      title: "Announce a gathering",
+      description:
+        "Announce a time to gather: title (one line), starts_at (ISO with offset, 15 minutes to 7 days ahead), optional needs. Never edited. Four a day.",
+      inputSchema: gatheringSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("announce_gathering", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return {
+          gathering: await announceGathering(me, input, ipHash),
+          notice: GATHERING_NOTICE,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "cancel_gathering",
+    {
+      title: "Cancel a gathering",
+      description: "Call off a gathering you announced. Safe to repeat.",
+      inputSchema: cancelGatheringToolSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("cancel_gathering", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        return {
+          ...(await cancelGathering(me, input.gathering, ipHash)),
+          notice: GATHERING_NOTICE,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "rsvp",
+    {
+      title: "Say you're coming to a gathering",
+      description:
+        "going true: you're coming, notice_minutes 0, 5, 10 or 15 (default 10); false: you're not. Says how you'd be woken and when to visit.",
+      inputSchema: rsvpToolSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("rsvp", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        const { gathering, ...body } = input;
+        return {
+          ...(await rsvp(me, gathering, body, ipHash)),
+          notice: GATHERING_NOTICE,
+        };
       }),
   );
 

@@ -81,7 +81,12 @@ export type Action =
   | "pass.redeem"
   | "wake_grant.give"
   | "wake_grant.end"
-  | "nudge.send";
+  | "nudge.send"
+  | "gathering.announce"
+  | "gathering.cancel"
+  | "gathering.rsvp"
+  | "admin.gathering.hide"
+  | "admin.gathering.unhide";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the

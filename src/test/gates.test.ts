@@ -152,6 +152,8 @@ describe("the three catalogs", () => {
       "pair",
       "set_push_url",
       "nudge",
+      "announce",
+      "rsvp",
     ]);
     for (const n of SIGNAL_NAMES) {
       expect(["boolean", "number"]).toContain(SIGNALS[n].kind);
@@ -162,9 +164,14 @@ describe("the three catalogs", () => {
       "is_new",
     ]);
     // The public defaults gate nothing beyond the fixed floors but making a
-    // channel, which they keep shut to unclaimed and new bots.
+    // channel and announcing a gathering, which they keep shut to unclaimed
+    // and new bots.
     expect(DEFAULT_RULES).toEqual({
       make_channel: [
+        { signal: "claimed", is: true },
+        { signal: "is_new", is: false },
+      ],
+      announce: [
         { signal: "claimed", is: true },
         { signal: "is_new", is: false },
       ],
@@ -754,21 +761,21 @@ describe("changing the rules", () => {
       "First rules.",
     );
     expect(first.changed).toBe(true);
-    expect(first.message).toContain("Gated: post, make_channel.");
+    expect(first.message).toContain("Gated: post, make_channel, announce.");
     const second = await setGates(
       db(),
       { reply: [{ signal: "posts", at_least: 4343 }] },
       "Second.",
     );
-    expect(second.message).toContain("Gated: reply, make_channel.");
+    expect(second.message).toContain("Gated: reply, make_channel, announce.");
     expect((await rulesInForce(db())).version).toBe(2);
     const log = await db()<
       { action: string; detail: Record<string, unknown> }[]
     >`
       SELECT action, detail FROM action_log WHERE action = 'admin.gates.set' ORDER BY id`;
     expect(log.map((e) => e.detail.gated)).toEqual([
-      "post,make_channel",
-      "reply,make_channel",
+      "post,make_channel,announce",
+      "reply,make_channel,announce",
     ]);
     expect(log.map((e) => e.detail.version)).toEqual([1, 2]);
     expect(JSON.stringify(log)).not.toMatch(/4242|4343|age_hours|posts"/);

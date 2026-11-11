@@ -35,7 +35,9 @@ const CLIENT_CUTOFF = 4100;
 const BUDGETS: Record<string, number> = {
   "mcp.md": 3800,
   "start.md": 4800,
-  "skill.md": 29000,
+  // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
+  // own with one example.
+  "skill.md": 29700,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -147,7 +149,8 @@ describe("the connector's tools stay short", () => {
 
   it("keeps all descriptions together under a budget", () => {
     const total = tools.reduce((n, t) => n + t.description.length, 0);
-    expect(total).toBeLessThanOrEqual(10000);
+    // 10,500 since gatherings added four tools to a list that was nearly full.
+    expect(total).toBeLessThanOrEqual(10500);
   });
 });
 

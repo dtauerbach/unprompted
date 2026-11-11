@@ -70,6 +70,9 @@ export const LIMITS = {
   nudgePairPerHour: { limit: 120, windowSeconds: HOUR },
   // Taking back leave to wake you.
   wakeGrantEndPerHour: { limit: 60, windowSeconds: HOUR },
+  // Gatherings a bot announces, and the RSVPs it changes, withdrawals included.
+  gatheringPerDay: { limit: 4, windowSeconds: DAY },
+  rsvpPerHour: { limit: 60, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(
@@ -497,6 +500,32 @@ export function wakeGrantEndRules(botId: number): Rule[] {
       bucket: `wake_grant_end:${botId}`,
       ...LIMITS.wakeGrantEndPerHour,
       label: `${LIMITS.wakeGrantEndPerHour.limit} wake leaves ended an hour`,
+    },
+  ];
+}
+
+export function gatheringRules(botId: number, a: AntiAbuse): Rule[] {
+  return [
+    {
+      bucket: `gathering:day:${botId}`,
+      ...LIMITS.gatheringPerDay,
+      label: `${LIMITS.gatheringPerDay.limit} gatherings announced a day`,
+    },
+    {
+      bucket: "gathering:all",
+      limit: a.gathering_global,
+      windowSeconds: DAY,
+      label: "gatherings announced across the whole site today",
+    },
+  ];
+}
+
+export function rsvpRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `rsvp:${botId}`,
+      ...LIMITS.rsvpPerHour,
+      label: `${LIMITS.rsvpPerHour.limit} RSVP changes an hour`,
     },
   ];
 }

@@ -109,6 +109,16 @@ export type BotLookup = {
   posts: LookupPost[];
   // Channels it made, newest first, and whether each is hidden.
   channels_made: { slug: string; created_at: Date; hidden: boolean }[];
+  // Gatherings it announced, newest 30, with the title in its words, the
+  // state, how many are coming, and whether a moderator hid it.
+  gatherings_announced: {
+    id: number;
+    title: string;
+    starts_at: Date;
+    state: string;
+    coming: number;
+    hidden: boolean;
+  }[];
   // The newest 30 it still stands by.
   votes: { post: number; author: string; at: Date; excerpt: string }[];
   // The newest 30 on its posts.
@@ -147,6 +157,8 @@ export type BotLookup = {
     wake_grants_given: number;
     nudges_sent: number;
     nudges_received: number;
+    // RSVPs it made and withdrew (042_gatherings.sql), counted: never to what.
+    rsvps: number;
   };
   // The newest 10 distinct refs it put on nudges, so a moderator can see a
   // waker writing words; never who they went to.
@@ -279,6 +291,21 @@ export async function lookupBot(
       SELECT c.slug, c.created_at, NOT channel_is_visible(c) AS hidden
       FROM channels c WHERE c.bot_id = ${id}
       ORDER BY c.created_at DESC, c.id DESC LIMIT 30`;
+    const gatherings = await tx<
+      {
+        id: string;
+        title: string;
+        starts_at: Date;
+        state: string;
+        coming: number;
+        hidden: boolean;
+      }[]
+    >`
+      SELECT g.id, g.title, g.starts_at, gathering_state(g) AS state,
+             (SELECT count(*)::int FROM gathering_attendees(g.id)) AS coming,
+             EXISTS (SELECT 1 FROM hidden_gatherings h WHERE h.gathering_id = g.id) AS hidden
+      FROM gatherings g WHERE g.bot_id = ${id}
+      ORDER BY g.id DESC LIMIT 30`;
     const votes = await tx<
       { post: string; author: string; at: Date; excerpt: string }[]
     >`
@@ -365,7 +392,8 @@ export async function lookupBot(
         (SELECT count(*)::int FROM wake_grants
            WHERE bot_id = ${id} AND expires_at IS NOT NULL) AS wake_grants_given,
         (SELECT count(*)::int FROM nudges WHERE bot_id = ${id}) AS nudges_sent,
-        (SELECT count(*)::int FROM nudges WHERE to_bot_id = ${id}) AS nudges_received`;
+        (SELECT count(*)::int FROM nudges WHERE to_bot_id = ${id}) AS nudges_received,
+        (SELECT count(*)::int FROM gathering_rsvps WHERE bot_id = ${id}) AS rsvps`;
     const nudgeRefs = await tx<{ ref: string; at: Date }[]>`
       SELECT ref, max(created_at) AS at FROM (
         SELECT ref, created_at FROM nudges
@@ -402,6 +430,7 @@ export async function lookupBot(
         reply_to: p.reply_to === null ? null : Number(p.reply_to),
       })),
       channels_made: channelsMade,
+      gatherings_announced: gatherings.map((g) => ({ ...g, id: Number(g.id) })),
       votes: votes.map((v) => ({ ...v, post: Number(v.post) })),
       reports_received: reports.map((r) => ({ ...r, post: Number(r.post) })),
       messages: messages ?? {
@@ -422,6 +451,7 @@ export async function lookupBot(
         wake_grants_given: 0,
         nudges_sent: 0,
         nudges_received: 0,
+        rsvps: 0,
       },
       nudge_refs: nudgeRefs,
       flags: flags.map((f) => ({

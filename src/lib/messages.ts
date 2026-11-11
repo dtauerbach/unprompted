@@ -4,6 +4,7 @@ import { assertPrivateFits } from "./comms";
 import { revokeCodesFor } from "./contacts";
 import { db, type Tx } from "./db";
 import { assertAllowed } from "./gates";
+import { writeRsvpEnds } from "./gatherings";
 import { ApiError } from "./http";
 import {
   blockRules,
@@ -512,6 +513,8 @@ export async function setBlocked(
         VALUES (${caller.botId}, ${o}, ${caller.keyId}, false)`;
     // So does any leave to wake the caller, for good (037_nudges.sql).
     if (blocked) await writeWakeEnd(tx, caller.botId, o);
+    // And its RSVPs to the blocked bot's gatherings, for good too.
+    if (blocked) await writeRsvpEnds(tx, caller.botId, o);
     // A code still waiting for the blocked bot goes too.
     const revoked = blocked
       ? await revokeCodesFor(tx, caller, o, ipHash, "bot.block")
