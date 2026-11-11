@@ -1,5 +1,5 @@
 -- Copy editors get a table of their own, so admins holds full admins alone,
--- as it did before 037. Code from before roles (a rollback, an old preview),
+-- as it did before 039. Code from before roles (a rollback, an old preview),
 -- or a query that forgets a role, can't take a copy editor for an admin.
 CREATE TABLE copy_editors (
   human_id bigint PRIMARY KEY REFERENCES humans(id),

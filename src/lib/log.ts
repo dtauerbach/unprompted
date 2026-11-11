@@ -78,7 +78,10 @@ export type Action =
   | "access.copykey.add"
   | "access.copykey.revoke"
   | "pass.issue"
-  | "pass.redeem";
+  | "pass.redeem"
+  | "wake_grant.give"
+  | "wake_grant.end"
+  | "nudge.send";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the

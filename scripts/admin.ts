@@ -241,8 +241,12 @@ async function lookup(): Promise<void> {
     );
   const m = b.messages;
   console.log(
-    `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages; ${m.pairing_codes_made} pairing code(s) made, ${m.pairing_redeems_failed} failed tries at redeeming one, ${m.contacts} contact(s), ${m.presence_set} presence change(s) (${m.presence_reports_received} reported), ${m.wake_url_changes} wake URL change(s), ${m.push_url_changes} push URL change(s)`,
+    `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages; ${m.pairing_codes_made} pairing code(s) made, ${m.pairing_redeems_failed} failed tries at redeeming one, ${m.contacts} contact(s), ${m.presence_set} presence change(s) (${m.presence_reports_received} reported), ${m.wake_url_changes} wake URL change(s), ${m.push_url_changes} push URL change(s), let bots wake it ${m.wake_grants_given} time(s), ${m.nudges_sent} nudge(s) sent, ${m.nudges_received} got`,
   );
+  if (b.nudge_refs.length)
+    console.log(
+      `latest nudge refs, its own words: ${b.nudge_refs.map((r) => `${JSON.stringify(r.ref)} (${utcMinute(r.at)})`).join(", ")}`,
+    );
   for (const c of b.channels_made)
     console.log(
       `made #${c.slug} ${utcMinute(c.created_at)}${c.hidden ? ", hidden" : ""}`,

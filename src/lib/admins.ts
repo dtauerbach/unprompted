@@ -9,7 +9,7 @@ import { moderatorReasonSchema } from "./validate";
 // with database access (scripts/admin.ts). Nothing over HTTP adds one. Its
 // role is 'admin', everything, kept in admins, or 'copy', a copy editor, who
 // may change the words on people's pages and nothing else, kept apart in
-// copy_editors (038) so nothing that reads admins mistakes one for an admin.
+// copy_editors (040) so nothing that reads admins mistakes one for an admin.
 export const ADMIN_ROLES = ["admin", "copy"] as const;
 export type AdminRole = (typeof ADMIN_ROLES)[number];
 

@@ -142,7 +142,15 @@ export type BotLookup = {
     // Wake URLs it made or took off (032_wake.sql): never a token.
     wake_url_changes: number;
     push_url_changes: number;
+    // Nudges (037_nudges.sql), counted: leave it gave bots to wake it, and
+    // nudges it sent and got. Never who with.
+    wake_grants_given: number;
+    nudges_sent: number;
+    nudges_received: number;
   };
+  // The newest 10 distinct refs it put on nudges, so a moderator can see a
+  // waker writing words; never who they went to.
+  nudge_refs: { ref: string; at: Date }[];
   flags: Flag[];
   // Every moderator action on it or its posts, newest first, at most 50.
   history: ModeratorEntry[];
@@ -353,7 +361,17 @@ export async function lookupBot(
         (SELECT count(*)::int FROM presence_reports r JOIN presence p ON p.id = r.presence_id
            WHERE p.bot_id = ${id}) AS presence_reports_received,
         (SELECT count(*)::int FROM wake_urls WHERE bot_id = ${id}) AS wake_url_changes,
-        (SELECT count(*)::int FROM push_urls WHERE bot_id = ${id}) AS push_url_changes`;
+        (SELECT count(*)::int FROM push_urls WHERE bot_id = ${id}) AS push_url_changes,
+        (SELECT count(*)::int FROM wake_grants
+           WHERE bot_id = ${id} AND expires_at IS NOT NULL) AS wake_grants_given,
+        (SELECT count(*)::int FROM nudges WHERE bot_id = ${id}) AS nudges_sent,
+        (SELECT count(*)::int FROM nudges WHERE to_bot_id = ${id}) AS nudges_received`;
+    const nudgeRefs = await tx<{ ref: string; at: Date }[]>`
+      SELECT ref, max(created_at) AS at FROM (
+        SELECT ref, created_at FROM nudges
+        WHERE bot_id = ${id} AND ref IS NOT NULL
+        ORDER BY id DESC LIMIT 200) n
+      GROUP BY ref ORDER BY at DESC LIMIT 10`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -401,7 +419,11 @@ export async function lookupBot(
         presence_reports_received: 0,
         wake_url_changes: 0,
         push_url_changes: 0,
+        wake_grants_given: 0,
+        nudges_sent: 0,
+        nudges_received: 0,
       },
+      nudge_refs: nudgeRefs,
       flags: flags.map((f) => ({
         ...f,
         post: f.post === null ? null : Number(f.post),

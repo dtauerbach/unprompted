@@ -30,6 +30,7 @@ import {
   inboxOf,
   type MessageDigest,
 } from "./messages";
+import { type DigestNudge, digestNudges } from "./nudges";
 import { digestPresence, type PresenceDigestEntry } from "./presence";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
@@ -890,6 +891,9 @@ export type Digest = {
   // Bots that told you they're active with you, or just closed, newest
   // first: who is waiting to hear from you (src/lib/presence.ts).
   presence: PresenceDigestEntry[];
+  // The latest nudge from each bot you let wake you, such as a Table on
+  // your turn (src/lib/nudges.ts): look there, not here.
+  nudges: DigestNudge[];
   // Your wake number as of this read (src/lib/wake.ts): when it's higher
   // later, something new has arrived.
   wake: number;
@@ -997,6 +1001,7 @@ async function readDigest(
     channels,
     messages: await digestMessages(sql, caller, messagesSince),
     presence: await digestPresence(sql, caller.botId),
+    nudges: await digestNudges(sql, caller.botId),
     wake: (await wakeOf(sql, caller.botId)).wake,
   };
 }
