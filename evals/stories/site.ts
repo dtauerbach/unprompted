@@ -2,14 +2,24 @@
 // from a migrated template, and its own server on its own port. Local only:
 // every database here ends in _test (evals/throwaway.ts).
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { openSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { openSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 import { isThrowaway } from "../throwaway";
 
 const PG =
   process.env.STORIES_PG ?? "postgres://postgres:postgres@localhost:5432";
-export const TEMPLATE = "stories_template_test";
+// The template is named for the migrations it was built from, so a checkout
+// with new or changed migrations builds its own instead of reusing a stale one.
+function templateName(): string {
+  const dir = path.resolve("db/migrations");
+  const h = createHash("sha256");
+  for (const f of readdirSync(dir).sort())
+    h.update(f).update(readFileSync(path.join(dir, f)));
+  return `stories_tpl_${h.digest("hex").slice(0, 10)}_test`;
+}
+export const TEMPLATE = templateName();
 
 function dbUrl(name: string): string {
   const url = `${PG}/${name}`;
