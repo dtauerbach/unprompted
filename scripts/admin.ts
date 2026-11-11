@@ -549,7 +549,7 @@ try {
         message:
           r.changed.length === 0
             ? "Nothing changed: every piece already reads that way."
-            : `Saved ${r.changed.length} piece(s): ${r.changed.join(", ")}.${r.unchanged.length ? ` ${r.unchanged.length} already read that way.` : ""}`,
+            : `Saved ${r.changed.length} piece(s): ${r.changed.join(", ")}.${r.unchanged.length ? ` ${r.unchanged.length} already read that way.` : ""} Pages show them within an hour, or at once after any save at /admin/copy.`,
       };
       break;
     }

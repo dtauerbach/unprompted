@@ -1,4 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  isInitializeRequest,
+  isJSONRPCNotification,
+  isJSONRPCRequest,
+  SUPPORTED_PROTOCOL_VERSIONS,
+} from "@modelcontextprotocol/sdk/types.js";
 import { allowanceAfterWrite, allowanceFor } from "./allowance";
 import { appealHide, myHiddenPosts } from "./appeals";
 import { callerForKey } from "./auth";
@@ -37,7 +43,13 @@ import {
   listGatherings,
   rsvp,
 } from "./gatherings";
-import { ApiError, databaseRefusal, logRefusal, parseWith } from "./http";
+import {
+  ApiError,
+  databaseRefusal,
+  logRefusal,
+  MAX_BODY_BYTES,
+  parseWith,
+} from "./http";
 import {
   inboxOf,
   inboxOfHandle,
@@ -123,6 +135,92 @@ import {
   wakeOf,
   wakeUrlState,
 } from "./wake";
+
+// The messages an app sends to connect and look around, which the site
+// answers the same for every caller: a request to initialize, ping or list
+// the tools, and the notice that it has initialized. None of them reads or
+// writes anything of a bot's.
+const HANDSHAKE_REQUESTS = new Set(["initialize", "ping", "tools/list"]);
+const HANDSHAKE_NOTICES = new Set(["notifications/initialized"]);
+// Apps send one message at a time; a longer batch takes the full path. So
+// does a batch asking for the tool list more than once, since the list is
+// large: a small request with no checked token can't fetch it many times
+// over in one answer.
+const MAX_HANDSHAKE_BATCH = 8;
+
+export type Handshake = { body: unknown; initialize: boolean };
+
+// The request's JSON-RPC body, when it is only the handshake and the
+// transport would take it as it stands; otherwise undefined, and the request
+// takes the full path with its token checked. Anything odd (headers the
+// transport refuses, a body too big or not JSON, a message that isn't
+// well-formed, initialize in a batch) takes the full path, so it is answered
+// exactly as before. Reads a clone, at most MAX_BODY_BYTES of it, and leaves
+// the request itself unread.
+export async function handshakeOf(
+  req: Request,
+): Promise<Handshake | undefined> {
+  const accept = req.headers.get("accept") ?? "";
+  if (!accept.includes("application/json")) return undefined;
+  if (!accept.includes("text/event-stream")) return undefined;
+  const type = req.headers.get("content-type")?.split(";")[0]?.trim();
+  if (type?.toLowerCase() !== "application/json") return undefined;
+  const version = req.headers.get("mcp-protocol-version");
+  if (version !== null && !SUPPORTED_PROTOCOL_VERSIONS.includes(version))
+    return undefined;
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY_BYTES)
+    return undefined;
+  const text = await peek(req, MAX_BODY_BYTES);
+  if (text === undefined) return undefined;
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const messages = Array.isArray(body) ? body : [body];
+  if (messages.length === 0 || messages.length > MAX_HANDSHAKE_BATCH)
+    return undefined;
+  const lists = messages.filter(
+    (m) => (m as { method?: unknown } | null)?.method === "tools/list",
+  );
+  if (lists.length > 1) return undefined;
+  const initialize = messages.some((m) => isInitializeRequest(m));
+  if (initialize && messages.length > 1) return undefined;
+  const ok = messages.every((m) => {
+    const method = (m as { method?: unknown } | null)?.method;
+    if (typeof method !== "string") return false;
+    if (isJSONRPCRequest(m))
+      return (
+        HANDSHAKE_REQUESTS.has(method) &&
+        (method !== "initialize" || isInitializeRequest(m))
+      );
+    return isJSONRPCNotification(m) && HANDSHAKE_NOTICES.has(method);
+  });
+  return ok ? { body, initialize } : undefined;
+}
+
+// Up to `max` bytes of a clone of the body, as text, or undefined if it's
+// longer. The request itself stays unread for the transport.
+async function peek(req: Request, max: number): Promise<string | undefined> {
+  const reader = req.clone().body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      // Not awaited: a tee's branch finishes cancelling only once the
+      // other branch, which the transport may still read, is done too.
+      reader.cancel().catch(() => {});
+      return undefined;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 // The connector's tools: the JSON API, one tool per route, calling the same
 // functions with the same checks. A tool takes its bot from the connection's

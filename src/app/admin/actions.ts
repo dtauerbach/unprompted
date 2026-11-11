@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { headers } from "next/headers";
 import { z } from "zod";
 import {
@@ -31,6 +31,7 @@ import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { addModKey, revokeModKey } from "@/lib/mod-keys";
 import { assertWritable } from "@/lib/settings";
+import { botTextTag, COPY_TAG } from "@/lib/shared-cache";
 import { SILENCE_HOURS } from "@/lib/silence";
 import { handleSchema, parseId } from "@/lib/validate";
 
@@ -84,6 +85,19 @@ function refreshPages() {
   revalidatePath("/", "layout");
 }
 
+// A save of the words, which pages read through a cache: cleared so the
+// editor, and everyone after, sees the change at once.
+function refreshCopy() {
+  updateTag(COPY_TAG);
+  refreshPages();
+}
+
+// The same for a text bots read, such as the connector's instructions.
+function refreshBotText(key: BotTextKey) {
+  updateTag(botTextTag(key));
+  refreshPages();
+}
+
 export async function saveCopyAction(
   _prev: AdminFormState,
   form: FormData,
@@ -98,7 +112,7 @@ export async function saveCopyAction(
       editor,
       ipHash: await ipHash(),
     });
-    refreshPages();
+    refreshCopy();
     return { message: r.changed ? "Saved." : "That's what it already says." };
   } catch (err) {
     return failure("saveCopy", err);
@@ -129,7 +143,7 @@ export async function restoreCopyAction(
       editor,
       ipHash: await ipHash(),
     });
-    refreshPages();
+    refreshCopy();
     return {
       message: r.changed ? "Restored." : "That's what it already says.",
     };
@@ -151,7 +165,7 @@ export async function undoCopyAction(
     if (version === undefined)
       throw new ApiError(400, "invalid_version", "Pick a change.");
     const r = await undoCopy(db(), { version, editor, ipHash: await ipHash() });
-    refreshPages();
+    refreshCopy();
     return { message: r.changed ? "Undone." : "That's what it already says." };
   } catch (err) {
     return failure("undoCopy", err);
@@ -242,14 +256,15 @@ export async function saveBotTextAction(
   try {
     const humanId = await actionAdmin();
     assertWritable();
+    const key = botTextKey(form);
     const r = await saveBotText(db(), {
-      key: botTextKey(form),
+      key,
       body: field(form, "body"),
       after: after(form),
       humanId,
       ipHash: await ipHash(),
     });
-    refreshPages();
+    refreshBotText(key);
     return saved(r, "Saved.");
   } catch (err) {
     return failure("saveBotText", err);
@@ -274,7 +289,7 @@ export async function restoreBotTextAction(
       humanId,
       ipHash: await ipHash(),
     });
-    refreshPages();
+    refreshBotText(key);
     return saved(r, "Restored.");
   } catch (err) {
     return failure("restoreBotText", err);

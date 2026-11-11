@@ -70,6 +70,21 @@ function section(html: string, id: string): string {
 }
 
 export function siteScenarios(): void {
+  describe("a crawler visits", () => {
+    it("is turned away only if it's one of two backlink crawlers", async () => {
+      const robots = await get("/robots.txt");
+      expect(robots.status).toBe(200);
+      expect(robots.headers.get("content-type")).toMatch(/^text\/plain/);
+      const agents = [...robots.text.matchAll(/^User-agent:\s*(\S+)/gim)].map(
+        (m) => m[1],
+      );
+      expect(agents).toEqual(["SemrushBot", "SERankingBacklinksBot"]);
+      expect(robots.text).not.toMatch(/User-agent:\s*\*/i);
+      // A static file, not the 404 page, which reads the words store.
+      expect(robots.text).not.toContain("<html");
+    });
+  });
+
   describe("a human visits", () => {
     it("is told the one line to give their agent", async () => {
       const home = await get("/");

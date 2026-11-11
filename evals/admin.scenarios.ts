@@ -90,6 +90,24 @@ async function copyTool(
   return { status: res.status, isError: r?.isError === true, data };
 }
 
+// A page, once it shows what `ok` looks for. Pages read their words through
+// a cache that the command line's save can't clear, so the local server is
+// run with a short time limit (UNPROMPTED_PAGE_CACHE_SECONDS) and this asks
+// again until the words arrive. An admin's save on the page, or a copy
+// key's, clears the cache: those are checked with a single get.
+async function pageOnceItShows(
+  path: string,
+  ok: (text: string) => boolean,
+): Promise<string> {
+  let text = "";
+  for (let i = 0; i < 40; i++) {
+    text = (await get(path)).text.replaceAll("<!-- -->", "");
+    if (ok(text)) return text;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return text;
+}
+
 function editCopy(signInId: string, key: string, words: string) {
   const run = spawnSync(
     "npx",
@@ -261,8 +279,12 @@ export function adminScenarios(): void {
           ).ok,
         ).toBe(false);
         const saved = set(file("ok.json", { "privacy.lead": lead }));
-        expect(saved.out).toBe("Saved 1 piece(s): privacy.lead.");
-        expect((await get("/privacy")).text).toContain(lead);
+        expect(saved.out).toBe(
+          "Saved 1 piece(s): privacy.lead. Pages show them within an hour, or at once after any save at /admin/copy.",
+        );
+        expect(
+          await pageOnceItShows("/privacy", (t) => t.includes(lead)),
+        ).toContain(lead);
         expect(set(file("ok.json", { "privacy.lead": lead })).out).toMatch(
           /^Nothing changed/,
         );
@@ -271,7 +293,9 @@ export function adminScenarios(): void {
           / copy\.load copy by .+: "Eval legal sync\."/,
         );
         expect(set(file("back.json", { "privacy.lead": null })).ok).toBe(true);
-        expect((await get("/privacy")).text).not.toContain(lead);
+        expect(
+          await pageOnceItShows("/privacy", (t) => !t.includes(lead)),
+        ).not.toContain(lead);
       } finally {
         // Put the built-in words back even if a step above failed.
         set(file("back.json", { "privacy.lead": null }));
@@ -327,11 +351,13 @@ export function adminScenarios(): void {
       const id = `eval-copy-${RUN_TAG}`;
       const words = `Bots <b>at play</b> ${RUN_TAG}`;
       expect(editCopy(id, "home.tagline", words).ok).toBe(true);
-      const home = await get("/");
-      expect(home.text).toContain(`Bots &lt;b&gt;at play&lt;/b&gt; ${RUN_TAG}`);
-      expect(home.text).not.toContain("<b>at play</b>");
+      const home = await pageOnceItShows("/", (t) => t.includes(RUN_TAG));
+      expect(home).toContain(`Bots &lt;b&gt;at play&lt;/b&gt; ${RUN_TAG}`);
+      expect(home).not.toContain("<b>at play</b>");
       expect(editCopy(id, "home.tagline", "--original").ok).toBe(true);
-      expect((await get("/")).text).toContain("Bots play. People observe.");
+      expect(await pageOnceItShows("/", (t) => !t.includes(RUN_TAG))).toContain(
+        "Bots play. People observe.",
+      );
     });
 
     it("can't drop what the page fills in", async () => {
@@ -346,11 +372,12 @@ export function adminScenarios(): void {
       );
       expect(moved.ok).toBe(true);
       // React marks the joins between filled-in spots with empty comments.
-      const forum = (await get("/forum")).text.replaceAll("<!-- -->", "");
+      const forum = await pageOnceItShows("/forum", (t) => t.includes(RUN_TAG));
       expect(forum).toMatch(
         new RegExp(`Find the <a [^>]*href="/p/\\d+"[^>]*>[^<]+</a> ${RUN_TAG}`),
       );
       expect(editCopy(id, "forum.welcome", "--original").ok).toBe(true);
+      await pageOnceItShows("/forum", (t) => !t.includes(RUN_TAG));
     });
 
     it("changes the words of the line people paste, never its link, and can't hide words in copy", async () => {
@@ -374,7 +401,7 @@ export function adminScenarios(): void {
         `Come and look around {link} ${tag}`,
       );
       expect(changed.ok, changed.out).toBe(true);
-      const now = (await get("/")).text.replaceAll("<!-- -->", "");
+      const now = await pageOnceItShows("/", (t) => t.includes(tag));
       expect(now).toMatch(
         new RegExp(`Come and look around http://[^ <]+/agent ${tag}<`),
       );
@@ -387,7 +414,7 @@ export function adminScenarios(): void {
       );
       expect(hidden.ok).toBe(false);
       expect(hidden.out).toMatch(/invisible/);
-      const home = (await get("/")).text.replaceAll("<!-- -->", "");
+      const home = await pageOnceItShows("/", (t) => !t.includes(tag));
       expect(home).toMatch(
         /Sign yourself up at http:\/\/[^ <]+\/agent and follow the getting started tutorial\.</,
       );
@@ -411,6 +438,9 @@ export function adminScenarios(): void {
         after: tagline.version,
       });
       expect(edit.isError).toBe(false);
+      // The new words show; with the server's one-second limit this can't
+      // tell the key's clear from the bucket turning over (the unit tests
+      // check the clear).
       const home = await get("/");
       expect(home.text).toContain(`Bots &lt;i&gt;chat&lt;/i&gt; ${RUN_TAG}`);
       const history = await copyTool(key, "copy_history", {
@@ -514,6 +544,7 @@ export function adminScenarios(): void {
       expect([refusedAt, code]).toEqual([60, "rate_limited"]);
       // The key's maker still saves: the key spent only its own budget.
       expect(editCopy(id, "forum.title", "--original").ok).toBe(true);
+      await pageOnceItShows("/forum", (t) => !t.includes(RUN_TAG));
       expect(
         copyKeyAsAdmin(id, "revoke", keyId ?? "", "Eval done.").printed,
       ).toBe("revoked");

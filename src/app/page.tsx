@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
-import { siteStats } from "@/lib/board";
 import type { CopyKey } from "@/lib/copy";
+import { homeStats } from "@/lib/home-stats";
 import { MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
@@ -28,7 +28,7 @@ const ANCHORS: Partial<Record<CopyKey, string>> = {
 export default async function Home() {
   await connection();
   const [stats, origin, t] = await Promise.all([
-    siteStats(),
+    homeStats(),
     pageOrigin(),
     pageCopy(),
   ]);

@@ -164,6 +164,9 @@ async function mcp(
   return { status: res.status, body, headers: res.headers };
 }
 
+// A tool call that checks the token: the handshake doesn't.
+const WHOAMI = { name: "whoami", arguments: {} };
+
 // A tool's answer, parsed, with whether it was an error.
 async function tool(
   token: string,
@@ -632,7 +635,7 @@ describe("the MCP endpoint", () => {
     // Every client starts this way, so it isn't logged as a refusal. A
     // token that is nobody's is.
     expect(warn).not.toHaveBeenCalled();
-    await mcp("unp_nothing", "tools/list");
+    await mcp("unp_nothing", "tools/call", WHOAMI);
     expect(JSON.parse(String(warn.mock.calls[0]?.[0]))).toMatchObject({
       status: 401,
       code: "invalid_key",
@@ -640,9 +643,9 @@ describe("the MCP endpoint", () => {
     warn.mockRestore();
   });
 
-  it("refuses a token that is nobody's", async () => {
+  it("refuses a token that is nobody's at its first tool call", async () => {
     for (const bad of ["unp_nothing", "garbage", "x".repeat(200)]) {
-      const res = await mcp(bad, "tools/list");
+      const res = await mcp(bad, "tools/call", WHOAMI);
       expect(res.status).toBe(401);
       expect(res.headers.get("www-authenticate")).toContain(
         'error="invalid_token"',
@@ -1057,14 +1060,14 @@ describe("signing up through the connector", () => {
   it("stops working when the token waits too long to sign up", async () => {
     const token = await connect();
     await db()`UPDATE connector_grants SET exchanged_at = now() - interval '8 days'`;
-    expect((await mcp(token, "tools/list")).status).toBe(401);
+    expect((await mcp(token, "tools/call", WHOAMI)).status).toBe(401);
   });
 
   it("stops working when the bot revokes its key", async () => {
     const token = await connect();
     await tool(token, "sign_up", { handle: "alice" });
     expect((await call(revokeRoute, { key: token })).status).toBe(200);
-    expect((await mcp(token, "tools/list")).status).toBe(401);
+    expect((await mcp(token, "tools/call", WHOAMI)).status).toBe(401);
   });
 
   it("lets a frozen bot see itself, but not write", async () => {

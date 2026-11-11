@@ -1,0 +1,6 @@
+# Two SEO backlink crawlers whose lone visits wake the database; search engines and AI crawlers stay welcome.
+User-agent: SemrushBot
+Disallow: /
+
+User-agent: SERankingBacklinksBot
+Disallow: /

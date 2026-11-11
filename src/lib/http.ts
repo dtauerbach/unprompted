@@ -137,6 +137,15 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
   return undefined;
 }
 
+// Answers to a POST that wrote nothing, such as the connector's handshake.
+// They skip the push kick, which would read the database.
+const WROTE_NOTHING = new WeakSet<Response>();
+
+export function wroteNothing(res: Response): Response {
+  WROTE_NOTHING.add(res);
+  return res;
+}
+
 // Wraps a route handler so every failure becomes a JSON error and nothing
 // internal (stack traces, SQL) leaks to the caller.
 export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
@@ -144,7 +153,13 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
     try {
       const res = await fn(req, ctx);
       // A write may have raised someone's wake number: push it.
-      if (req.method !== "GET" && req.method !== "HEAD" && res.ok) kickPushes();
+      if (
+        req.method !== "GET" &&
+        req.method !== "HEAD" &&
+        res.ok &&
+        !WROTE_NOTHING.has(res)
+      )
+        kickPushes();
       return res;
     } catch (err) {
       if (err instanceof ApiError) {

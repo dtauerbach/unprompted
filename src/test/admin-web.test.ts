@@ -14,7 +14,9 @@ import { issueOwnerCode } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
 import { addModKey, authenticateMod } from "@/lib/mod-keys";
+import { botTextTag, COPY_TAG } from "@/lib/shared-cache";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
+import { cacheCalls } from "./next-cache";
 
 // Who is an admin, and the admin pages' actions. The actions are POST
 // endpoints like any other, so these call each one with no session and with
@@ -31,7 +33,6 @@ vi.mock("@/lib/human-auth", () => ({
 vi.mock("next/headers", () => ({
   headers: async () => new Headers({ "x-real-ip": "10.9.9.8" }),
 }));
-vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/navigation", () => ({
   redirect: (to: string) => {
     nav.redirects.push(to);
@@ -432,6 +433,111 @@ describe("admin actions", () => {
       ),
     ).toEqual({ message: "Restored." });
     expect((await readCopy())["home.tagline"]).toBe(COPY["home.tagline"].text);
+  });
+
+  it("clear the words' cache on every save, so the editor sees the change at once", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    const { pageCopy } = await import("@/lib/page-copy");
+    // Pages have the built-in words cached.
+    expect((await pageCopy())["home.tagline"]).toBe(COPY["home.tagline"].text);
+    await a.saveCopyAction(
+      {},
+      form({ key: "home.tagline", body: "Bots at play.", after: "0" }),
+    );
+    expect(cacheCalls.updateTag).toEqual([COPY_TAG]);
+    expect((await pageCopy())["home.tagline"]).toBe("Bots at play.");
+    const [v] = await db()<{ id: string }[]>`SELECT id FROM copy_versions`;
+    await a.restoreCopyAction(
+      {},
+      form({ key: "home.tagline", version: "original", after: String(v?.id) }),
+    );
+    expect(cacheCalls.updateTag).toEqual([COPY_TAG, COPY_TAG]);
+    expect((await pageCopy())["home.tagline"]).toBe(COPY["home.tagline"].text);
+    await a.undoCopyAction({}, form({ version: "2" }));
+    expect(cacheCalls.updateTag).toEqual([COPY_TAG, COPY_TAG, COPY_TAG]);
+    expect((await pageCopy())["home.tagline"]).toBe("Bots at play.");
+    // Words loaded from the command line, which can't clear the cache: the
+    // admin's own words page reads the store, so it shows them at once.
+    await saveCopy(db(), {
+      key: "home.tagline",
+      body: "Loaded from the command line.",
+      after: 3,
+      editor: { humanId, role: "admin", keyId: null },
+      ipHash: null,
+    });
+    expect((await pageCopy())["home.tagline"]).toBe("Bots at play.");
+    const page = (await import("@/app/admin/copy/page")).default;
+    expect(renderToStaticMarkup(await page())).toContain(
+      "Loaded from the command line.",
+    );
+    // A save at /admin/copy that changes nothing still clears the cache, as
+    // the command line's message promises.
+    expect(
+      await a.saveCopyAction(
+        {},
+        form({
+          key: "home.tagline",
+          body: "Loaded from the command line.",
+          after: "4",
+        }),
+      ),
+    ).toEqual({ message: "That's what it already says." });
+    expect(cacheCalls.updateTag).toHaveLength(4);
+    expect((await pageCopy())["home.tagline"]).toBe(
+      "Loaded from the command line.",
+    );
+  });
+
+  it("clear the home page's counts on every save, since nothing else does", async () => {
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    const { homeStats } = await import("@/lib/home-stats");
+    expect((await homeStats()).bots).toBe(0);
+    await register("alice");
+    expect((await homeStats()).bots).toBe(0);
+    await a.saveCopyAction(
+      {},
+      form({ key: "home.tagline", body: "Bots at play.", after: "0" }),
+    );
+    expect((await homeStats()).bots).toBe(1);
+    await register("bob");
+    await a.saveBotTextAction(
+      {},
+      form({ key: "mcp", body: "Words for apps that connect.", after: "0" }),
+    );
+    expect((await homeStats()).bots).toBe(2);
+  });
+
+  it("clear a text's cache when an admin saves it", async () => {
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    expect(
+      await a.saveBotTextAction(
+        {},
+        form({ key: "mcp", body: "Words for apps that connect.", after: "0" }),
+      ),
+    ).toEqual({ message: "Saved." });
+    expect(cacheCalls.updateTag).toEqual([botTextTag("mcp")]);
+    await a.restoreBotTextAction(
+      {},
+      form({ key: "mcp", version: "original", after: "1" }),
+    );
+    expect(cacheCalls.updateTag).toEqual([
+      botTextTag("mcp"),
+      botTextTag("mcp"),
+    ]);
+    // A refused save clears nothing.
+    await a.saveBotTextAction({}, form({ key: "mcp", body: "", after: "2" }));
+    expect(cacheCalls.updateTag).toHaveLength(2);
   });
 
   it("restore an older version as the newest", async () => {
