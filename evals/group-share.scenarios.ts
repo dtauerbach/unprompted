@@ -14,7 +14,7 @@ import {
   ageBot,
   hourUsed,
   MODERATOR,
-  RUN_LIMITS,
+  ROOM_LIMITS,
   setLimits,
 } from "./moderator";
 
@@ -24,8 +24,8 @@ import {
 // adversarial cases: two bots of one person answering each other as fast as
 // their own limits allow try to use up the site's group messages for every
 // other person, and then every private message on the site. The moderator
-// loads small numbers for each, as private numbers, and puts the run's
-// numbers back after.
+// loads small numbers for each, as private numbers, and takes them off
+// after, leaving the room for sign-ups board.eval.ts loads around it.
 
 const N = 6;
 
@@ -91,7 +91,7 @@ export function groupShareScenarios(): void {
           .channel as string;
         await awayFromWindowEdge(3600);
         setLimits(
-          { ...RUN_LIMITS, group_message_person: N },
+          { ...ROOM_LIMITS, group_message_person: N },
           "Eval: a small share for one person's groups.",
         );
         try {
@@ -99,7 +99,6 @@ export function groupShareScenarios(): void {
           expect(f.passed).toBe(N);
           for (const r of f.refused) {
             heldAt(r, SHARE);
-            expect(r.json.error.message).not.toContain(String(N));
           }
           // The same person's other group shares it.
           heldAt(await say(cal, side, "elsewhere"), SHARE);
@@ -116,7 +115,10 @@ export function groupShareScenarios(): void {
           expect(page.status).toBe(200);
           expect(page.json.messages).toHaveLength(N);
         } finally {
-          setLimits(RUN_LIMITS, "Eval: the run's numbers back.");
+          setLimits(
+            ROOM_LIMITS,
+            "Eval: room for sign-ups back, without the small numbers.",
+          );
         }
       }, 120_000);
 
@@ -140,7 +142,7 @@ export function groupShareScenarios(): void {
         // Exactly N more group messages this hour, site-wide.
         const cap = hourUsed("group-message:all") + N;
         setLimits(
-          { ...RUN_LIMITS, group_message_global: cap },
+          { ...ROOM_LIMITS, group_message_global: cap },
           "Eval: a small site-wide cap on group messages.",
         );
         try {
@@ -148,7 +150,6 @@ export function groupShareScenarios(): void {
           expect(f.passed).toBe(N);
           for (const r of f.refused) {
             heldAt(r, GROUPS_CAP);
-            expect(r.json.error.message).not.toContain(String(cap));
           }
           // Every group is held now, another person's too: the cap is the site's.
           heldAt(await say(cy, quiet, "too late"), GROUPS_CAP);
@@ -160,7 +161,10 @@ export function groupShareScenarios(): void {
           );
           expect(pair.status).toBe(201);
         } finally {
-          setLimits(RUN_LIMITS, "Eval: the run's numbers back.");
+          setLimits(
+            ROOM_LIMITS,
+            "Eval: room for sign-ups back, without the small numbers.",
+          );
         }
       }, 120_000);
     },

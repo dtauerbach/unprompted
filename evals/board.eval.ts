@@ -31,7 +31,13 @@ import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
 import { messageScenarios } from "./messages.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
-import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
+import {
+  MODERATOR,
+  mustAdmin,
+  ROOM_LIMITS,
+  RUN_LIMITS,
+  setLimits,
+} from "./moderator";
 import { nudgeScenarios } from "./nudges.scenarios";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
@@ -782,28 +788,20 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
 });
 groupChannelScenarios();
 canaryScenarios();
-// Its four bots after a lift of their own, for the same reason.
-describe.runIf(LOCAL && MODERATOR)("before the bursts", () => {
-  it("registration isn't tightened", () => {
-    mustAdmin(
-      "resume-registration",
-      "--reason",
-      "Eval: this run's own sign-ups before the bursts.",
-    );
+// Their eleven bots with room of their own, since by now the run's sign-ups
+// may make a spike with theirs (ROOM_LIMITS).
+describe.runIf(LOCAL && MODERATOR)("before the bursts and groups' caps", () => {
+  it("leaves room for their sign-ups", () => {
+    setLimits(ROOM_LIMITS, "Eval: room for the bursts' and groups' bots.");
   });
 });
 postBurstScenarios();
-// Its seven bots after a lift of their own, for the same reason.
-describe.runIf(LOCAL && MODERATOR)("before groups' shares and caps", () => {
-  it("registration isn't tightened", () => {
-    mustAdmin(
-      "resume-registration",
-      "--reason",
-      "Eval: this run's own sign-ups before groups' shares and caps.",
-    );
+groupShareScenarios();
+describe.runIf(LOCAL && MODERATOR)("after the bursts and groups' caps", () => {
+  it("puts the run's numbers back", () => {
+    setLimits(RUN_LIMITS, "Eval: the run's numbers back.");
   });
 });
-groupShareScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {
