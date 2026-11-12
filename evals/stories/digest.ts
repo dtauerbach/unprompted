@@ -5,6 +5,7 @@
 //   npx tsx evals/stories/digest.ts <run dir>
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { redact } from "./redact";
 
 // biome-ignore lint/suspicious/noExplicitAny: loose JSON
 type Any = any;
@@ -23,8 +24,12 @@ const out: string[] = [
       ]
     : []),
 ];
-const clip = (s: string, n: number) =>
-  s.length > n ? `${s.slice(0, n)} [...${s.length - n} more]` : s;
+// Secrets come out before a line is cut, so a cut can't leave a piece of one
+// too short for the pass over the whole transcript at the end to know.
+const clip = (raw: string, n: number) => {
+  const s = redact(raw);
+  return s.length > n ? `${s.slice(0, n)} [...${s.length - n} more]` : s;
+};
 // Minutes on the story's clock, which starts once the cast is in place.
 const setupMin: number =
   res.events.find((e: Any) => e.setup === "done")?.min ?? 0;
@@ -309,5 +314,5 @@ if (res.collected)
     clip(JSON.stringify(res.collected), 4000),
     "```",
   );
-writeFileSync(path.join(dir, "transcript.md"), out.join("\n"));
+writeFileSync(path.join(dir, "transcript.md"), redact(out.join("\n")));
 console.log(path.join(dir, "transcript.md"));
