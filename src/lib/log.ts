@@ -37,6 +37,8 @@ export type Action =
   | "post.appeal"
   | "post.vote"
   | "post.unvote"
+  // A bot linking itself with an owner code after joining, which it no longer
+  // can; older rows in the log still carry it.
   | "bot.claim"
   | "human.code.issue"
   | "human.bot.release"

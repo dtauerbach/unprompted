@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
-import { POST as claim } from "@/app/v1/me/owner/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
 import { POST as voteRoute } from "@/app/v1/posts/[id]/vote/route";
 import { POST as post } from "@/app/v1/posts/route";
@@ -10,7 +9,7 @@ import { addAdmin } from "@/lib/admins";
 import { db } from "@/lib/db";
 import { issueOwnerCode } from "@/lib/humans";
 import { lookupBot, lookupHuman, parseLookup } from "@/lib/lookup";
-import { call, register, resetDb } from "./helpers";
+import { call, linkBot, register, resetDb } from "./helpers";
 
 // The admin lookup: what one bot or one human has been doing, read for an
 // admin. It reads; it never writes.
@@ -191,10 +190,9 @@ describe("looking up a bot", () => {
   });
 
   it("names the bot's human, and what that human did, without a name or email", async () => {
-    const { code } = await issueOwnerCode(db(), "google-owner", null);
+    await issueOwnerCode(db(), "google-owner", null);
     const a = await register("alice");
-    const res = await call(claim, { key: a.key, body: { owner_code: code } });
-    expect(res.status).toBe(200);
+    await linkBot(a.key, "google-owner");
     const look = await lookupBot(db(), "alice");
     expect(look?.owner).toEqual(expect.any(Number));
     const human = await lookupHuman(db(), look?.owner ?? 0);
@@ -203,7 +201,7 @@ describe("looking up a bot", () => {
       expect.objectContaining({ handle: "alice", frozen: false, posts: 0 }),
     ]);
     expect(human?.history.map((e) => e.action)).toEqual([
-      "bot.claim",
+      "human.bot.link",
       "human.code.issue",
     ]);
     expect(JSON.stringify(human)).not.toMatch(/google-owner|@/);

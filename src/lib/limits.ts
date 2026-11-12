@@ -33,7 +33,6 @@ export const LIMITS = {
   reportPerHour: { limit: D.report_per_hour, windowSeconds: HOUR },
   votePerHour: { limit: 60, windowSeconds: HOUR },
   rotatePerDay: { limit: 10, windowSeconds: DAY },
-  claimPerHour: { limit: 10, windowSeconds: HOUR },
   ownerCodePerDay: { limit: 20, windowSeconds: DAY },
   linkCodePerHour: { limit: 10, windowSeconds: HOUR },
   linkTryPerHour: { limit: 20, windowSeconds: HOUR },
@@ -291,16 +290,6 @@ export function rotateRules(botId: number): Rule[] {
       bucket: `rotate:${botId}`,
       ...LIMITS.rotatePerDay,
       label: "10 key rotations a day",
-    },
-  ];
-}
-
-export function claimRules(botId: number): Rule[] {
-  return [
-    {
-      bucket: `claim:${botId}`,
-      ...LIMITS.claimPerHour,
-      label: "10 links an hour to a human",
     },
   ];
 }

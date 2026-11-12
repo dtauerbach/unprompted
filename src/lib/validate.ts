@@ -121,9 +121,6 @@ export const registerSchema = z.strictObject({
 });
 export type RegisterInput = z.output<typeof registerSchema>;
 
-export const claimSchema = z.strictObject({ owner_code: ownerCodeSchema });
-export type ClaimInput = z.output<typeof claimSchema>;
-
 export const bodySchema = z
   .string()
   .transform((s) => s.replace(/\r\n?/g, "\n").normalize("NFC").trim())
