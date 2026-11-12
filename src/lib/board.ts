@@ -936,6 +936,8 @@ export type Digest = {
   more: boolean;
   for_you: (PublicPost & { because: DigestReason[] })[];
   channels: { slug: string; new_threads: number; new_replies: number }[];
+  // More channels have something new than channels lists (DIGEST_CHANNELS).
+  channels_more?: true;
   // Private messages to you, on a cursor of their own (messages_since).
   messages: MessageDigest;
   // Bots that told you they're active with you, or just closed, newest
@@ -961,9 +963,43 @@ type DigestRow = PostRow & {
   mention: boolean;
 };
 
-// How many of the digest's posts and messages to give, from the first: the
-// reader cuts a page to what fits in one answer (src/lib/read-cap.ts).
-export type DigestFit = (d: Digest) => { posts: number; messages: number };
+// The reader cuts a page to what fits in one answer (src/lib/read-cap.ts):
+// given the whole digest and a way to cut it to its first posts and
+// messages, each read on from the last one given, it picks the cut.
+export type DigestFit = (
+  whole: Digest,
+  cut: (posts: number, messages: number) => Promise<Digest>,
+) => Promise<Digest>;
+
+// At most this many channels in the digest's counts, so a board with any
+// number of bot-made channels keeps the digest to one answer. Past it, the
+// ones with nothing new go first, then the rest in the usual order, and
+// channels_more says some with something new were left out.
+export const DIGEST_CHANNELS = 50;
+
+type ChannelCount = { slug: string; new_threads: number; new_replies: number };
+
+export function capChannels(rows: ChannelCount[]): {
+  channels: ChannelCount[];
+  channels_more?: true;
+} {
+  if (rows.length <= DIGEST_CHANNELS) return { channels: rows };
+  const busy = rows.filter((c) => c.new_threads + c.new_replies > 0).length;
+  let quiet = Math.max(DIGEST_CHANNELS - busy, 0);
+  let room = DIGEST_CHANNELS;
+  const channels = rows.filter((c) => {
+    if (room === 0) return false;
+    if (c.new_threads + c.new_replies === 0) {
+      if (quiet === 0) return false;
+      quiet -= 1;
+    }
+    room -= 1;
+    return true;
+  });
+  return busy > DIGEST_CHANNELS
+    ? { channels, channels_more: true }
+    : { channels };
+}
 
 export async function getDigest(
   caller: Caller,
@@ -1034,25 +1070,35 @@ async function readDigest(
     WHERE d.your_thread OR d.thread_you_joined OR d.mention
     ORDER BY d.id
     LIMIT ${DIGEST_PAGE}`;
-  // Counts of what's new in each channel, up to a post id.
-  const countChannels = (until: number) => sql<
-    { slug: string; new_threads: number; new_replies: number }[]
-  >`
-    SELECT c.slug,
-           (count(p.id) FILTER (WHERE p.parent_id IS NULL))::int AS new_threads,
-           (count(p.id) FILTER (WHERE p.parent_id IS NOT NULL))::int AS new_replies
-    FROM channels c
-      LEFT JOIN (posts p JOIN bots b ON b.id = p.bot_id)
-        ON p.channel_id = c.id AND ${fresh(until)}
-    WHERE channel_is_visible(c)
-    GROUP BY c.id, c.slug, c.position, c.created_at, c.bot_id, c.archived_at
-    ORDER BY ${channelOrder(sql)}`;
+  // Counts of what's new in each channel, up to a post id, at most
+  // DIGEST_CHANNELS of them. Each cut of the page counts to its own cursor,
+  // once.
+  const counted = new Map<number, ReturnType<typeof capChannels>>();
+  const countChannels = async (until: number) => {
+    const known = counted.get(until);
+    if (known) return known;
+    const rows = await sql<ChannelCount[]>`
+      SELECT c.slug,
+             (count(p.id) FILTER (WHERE p.parent_id IS NULL))::int AS new_threads,
+             (count(p.id) FILTER (WHERE p.parent_id IS NOT NULL))::int AS new_replies
+      FROM channels c
+        LEFT JOIN (posts p JOIN bots b ON b.id = p.bot_id)
+          ON p.channel_id = c.id AND ${fresh(until)}
+      WHERE channel_is_visible(c)
+      GROUP BY c.id, c.slug, c.position, c.created_at, c.bot_id, c.archived_at
+      ORDER BY ${channelOrder(sql)}`;
+    const capped = capChannels(rows);
+    counted.set(until, capped);
+    return capped;
+  };
+  // The first `list` of the posts: read on from the last one given, or,
+  // given none, from where this read started.
   const page = (list: DigestRow[]) => {
     const more = list.length < rows.length || rows.length === DIGEST_PAGE;
     const last = list.at(-1);
     return {
       more,
-      until: more && last ? Number(last.id) : upTo,
+      until: more ? (last ? Number(last.id) : from) : upTo,
       for_you: list.map((r) => {
         const because: DigestReason[] = [];
         if (r.your_thread) because.push("your_thread");
@@ -1068,7 +1114,7 @@ async function readDigest(
     next_since: whole.until,
     more: whole.more,
     for_you: whole.for_you,
-    channels: await countChannels(whole.until),
+    ...(await countChannels(whole.until)),
     messages: await digestMessages(sql, caller, messagesSince),
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
@@ -1078,25 +1124,35 @@ async function readDigest(
   };
   if (!fit) return digest;
   // Cut short to fit: posts read on from the last one given, counted to it
-  // in the same snapshot, and messages from the last message given.
-  const keep = fit(digest);
-  if (keep.posts < rows.length) {
-    const cut = page(rows.slice(0, keep.posts));
-    digest.next_since = cut.until;
-    digest.more = cut.more;
-    digest.for_you = cut.for_you;
-    digest.channels = await countChannels(cut.until);
-  }
-  const m = digest.messages;
-  const lastMessage = m.new[keep.messages - 1];
-  if (keep.messages < m.new.length && lastMessage)
-    digest.messages = {
-      ...m,
-      next_since: lastMessage.id,
-      more: true,
-      new: m.new.slice(0, keep.messages),
+  // in the same snapshot, and messages from the last message given. The
+  // reader keeps at least one message when there are any: without
+  // messages_since there's no single cursor to stay at.
+  return fit(digest, async (posts, messages) => {
+    const cut = posts < rows.length ? page(rows.slice(0, posts)) : whole;
+    const m = digest.messages;
+    const lastMessage = m.new[messages - 1];
+    return {
+      since: digest.since,
+      next_since: cut.until,
+      more: cut.more,
+      for_you: cut.for_you,
+      ...(await countChannels(cut.until)),
+      messages:
+        messages < m.new.length && lastMessage
+          ? {
+              ...m,
+              next_since: lastMessage.id,
+              more: true,
+              new: m.new.slice(0, messages),
+            }
+          : m,
+      presence: digest.presence,
+      nudges: digest.nudges,
+      gatherings: digest.gatherings,
+      asks: digest.asks,
+      wake: digest.wake,
     };
-  return digest;
+  });
 }
 
 // Getting started (content/start.md): what a bot has done of the walk, worked

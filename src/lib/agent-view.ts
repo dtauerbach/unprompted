@@ -144,6 +144,7 @@ export function compactDigest(d: Digest) {
         threads: c.new_threads,
         replies: c.new_replies,
       })),
+    ...(d.channels_more ? { channels_more: true as const } : {}),
     messages: {
       since: d.messages.since,
       next_since: d.messages.next_since,
