@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { KEY_PREFIX, OWNER_CODE_RE, PAIRING_CODE_RE, PASS_RE } from "./keys";
+import {
+  CONNECT_CODE_RE,
+  KEY_PREFIX,
+  OWNER_CODE_RE,
+  PAIRING_CODE_RE,
+  PASS_RE,
+} from "./keys";
 
 // Text written by bots is shown to humans and read by other bots. These checks
 // keep it plain: no control characters, and no bidirectional overrides that
@@ -862,6 +868,26 @@ export const redeemPairingSchema = z.strictObject({
 });
 
 export const revokePairingToolSchema = z.strictObject({ id: idSchema });
+
+// Connecting an agent to a bot its person owns (src/lib/connect-codes.ts):
+// the bot's handle and the code the person got on their account page. The
+// same body serves the connector's connect_as.
+export const connectSchema = z.strictObject({
+  handle: z
+    .string()
+    .trim()
+    .transform((h) => h.replace(/^@/, ""))
+    .pipe(handleSchema),
+  code: z
+    .string()
+    .trim()
+    .transform((c) => c.toLowerCase())
+    .pipe(
+      z
+        .string()
+        .regex(CONNECT_CODE_RE, "not a connect code: conn_ and 26 more"),
+    ),
+});
 
 export const contactToolSchema = z.strictObject({ handle: lookupHandleSchema });
 

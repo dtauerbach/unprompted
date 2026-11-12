@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as connectRoute } from "@/app/v1/connect/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
 import { POST as passRoute } from "@/app/v1/me/passes/route";
@@ -14,6 +15,7 @@ import { POST as redeemRoute } from "@/app/v1/passes/redeem/route";
 import { POST as postsRoute } from "@/app/v1/posts/route";
 import { setFrozen, setSilenced, siteHealth } from "@/lib/admin";
 import { callerForKey } from "@/lib/auth";
+import { issueConnectCode } from "@/lib/connect-codes";
 import {
   approve,
   checkAuthorize,
@@ -712,9 +714,13 @@ describe("the MCP endpoint", () => {
         "announce_gathering",
         "cancel_gathering",
         "rsvp",
+        "connect_as",
       ].sort(),
     );
-    // skill.md names them all, so a bot reading it knows what it gets.
+    // skill.md names them all, so a bot reading it knows what it gets. The
+    // owner writes the guide, so a tool the guide doesn't name yet waits
+    // here, named, until it does.
+    const NOT_YET_IN_GUIDE = new Set(["connect_as"]);
     const skill = readFileSync(
       path.join(process.cwd(), "content/skill.md"),
       "utf8",
@@ -722,7 +728,9 @@ describe("the MCP endpoint", () => {
     const line =
       skill.split("\n").find((l) => l.includes("you have tools for")) ?? "";
     const listed = [...line.matchAll(/`([a-z_]+)`/g)].map((m) => m[1]);
-    expect(listed.sort()).toEqual(names.sort());
+    for (const n of listed) expect(names).toContain(n);
+    for (const n of names)
+      if (!listed.includes(n)) expect(NOT_YET_IN_GUIDE.has(n), n).toBe(true);
   });
 
   it("gives its instructions on initialize", async () => {
@@ -1433,5 +1441,141 @@ describe("link codes through the connector", () => {
     expect((await tool(token, "whoami")).data.bot.claimed).toBe(true);
     const again = await tool(token, "get_link_code");
     expect(again.data.error.code).toBe("already_claimed");
+  });
+});
+
+// A person connects an agent in an app to a bot they own: the connection's
+// token becomes the bot's key, as signing up would make it a new bot's, and
+// every other key the bot had stops (src/test/connect-codes.test.ts covers
+// the HTTP route).
+describe("connecting an app to a bot its person owns", () => {
+  async function rows(sql: string): Promise<number> {
+    const [r] = await db().unsafe<{ n: number }[]>(sql);
+    return r?.n ?? 0;
+  }
+  async function tries(ip: string): Promise<number> {
+    const [t] = await db()<{ n: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+      WHERE bucket = ${`connect-try:${hashIp(ip)}`}`;
+    return t?.n ?? 0;
+  }
+
+  it("makes this connection the bot, ends its other keys, and keeps the bot", async () => {
+    const first = await connect({ user: "google-1" });
+    const joined = await tool(first, "sign_up", { handle: "alice" });
+    expect(joined.data.bot.claimed).toBe(true);
+    const [bot] = await db()<{ id: string; owner_id: string }[]>`
+      SELECT id, owner_id FROM bots WHERE handle = 'alice'`;
+    await call(postsRoute, {
+      key: first,
+      body: { channel: "meta", body: "before" },
+    });
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const ip = freshIp();
+    const second = await connect({ user: null, ip });
+    const r = await tool(second, "connect_as", { handle: "alice", code });
+    expect(r.isError).toBe(false);
+    expect(r.data.bot.handle).toBe("alice");
+    expect(r.data.key_note).toMatch(/no longer work/);
+    expect(r.text).not.toContain(second);
+    expect((await tool(second, "whoami")).data.bot.handle).toBe("alice");
+    // The first connection's token was the bot's key, and isn't now.
+    expect((await mcp(first, "tools/call", WHOAMI)).status).toBe(401);
+    expect((await call(meRoute, { key: second })).body.bot.handle).toBe(
+      "alice",
+    );
+    const [after] = await db()<{ id: string; owner_id: string }[]>`
+      SELECT id, owner_id FROM bots WHERE handle = 'alice'`;
+    expect(after).toEqual(bot);
+    const id = Number(bot?.id);
+    expect(
+      await rows(`SELECT count(*)::int AS n FROM posts WHERE bot_id = ${id}`),
+    ).toBe(1);
+    expect(
+      await rows(
+        `SELECT count(*)::int AS n FROM connector_grants WHERE bot_id = ${id}`,
+      ),
+    ).toBe(2);
+    expect(
+      await rows(
+        `SELECT count(*)::int AS n FROM api_keys WHERE bot_id = ${id} AND revoked_at IS NULL`,
+      ),
+    ).toBe(1);
+    const [log] = await db()<{ detail: Record<string, unknown> }[]>`
+      SELECT detail FROM action_log WHERE action = 'bot.connect'`;
+    expect(log?.detail).toMatchObject({ via: "connector", keys_revoked: 1 });
+    // Tries count against the address of the person who allowed the app.
+    expect(await tries(ip)).toBe(1);
+    // It has joined now, as that bot.
+    expect(
+      (await tool(second, "sign_up", { handle: "zed" })).data.error.code,
+    ).toBe("already_signed_up");
+  });
+
+  it("refuses a connection that is already a bot, before looking at the code", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const ip = freshIp();
+    const other = await connect({ user: null, ip });
+    await tool(other, "sign_up", { handle: "bob" });
+    const r = await tool(other, "connect_as", { handle: "alice", code });
+    expect(r.data.error.code).toBe("already_signed_up");
+    expect((await tool(other, "whoami")).data.bot.handle).toBe("bob");
+    expect((await tool(owner, "whoami")).data.bot.handle).toBe("alice");
+    expect(await tries(ip)).toBe(0);
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM connect_codes WHERE used_at IS NOT NULL",
+      ),
+    ).toBe(0);
+    // The code still works for a new connection.
+    const fresh = await connect({ user: null });
+    expect(
+      (await tool(fresh, "connect_as", { handle: "alice", code })).isError,
+    ).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it("gives the same refusal as the HTTP route for a code that doesn't work, counting the try", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    const ip = freshIp();
+    const token = await connect({ user: null, ip });
+    const bad = { handle: "alice", code: "conn_abcdefghijkmnpqrstuvwxyz23" };
+    const r = await tool(token, "connect_as", bad);
+    const http = await call(connectRoute, { body: bad });
+    expect(r.data).toEqual(http.body);
+    expect(r.data.error.code).toBe("invalid_connect_code");
+    // Its token is still no one's key, and it can still sign up instead.
+    expect((await tool(token, "whoami")).data.error.code).toBe("not_signed_up");
+    expect(await tries(ip)).toBe(1);
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM api_keys WHERE revoked_at IS NOT NULL",
+      ),
+    ).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  it("writes nothing while the site is read-only", async () => {
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const token = await connect({ user: null });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const r = await tool(token, "connect_as", { handle: "alice", code });
+    delete process.env.UNPROMPTED_READ_ONLY;
+    expect(r.isError).toBe(true);
+    expect((await tool(owner, "whoami")).data.bot.handle).toBe("alice");
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM connect_codes WHERE used_at IS NOT NULL",
+      ),
+    ).toBe(0);
+    vi.restoreAllMocks();
   });
 });

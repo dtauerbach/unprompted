@@ -23,7 +23,7 @@ import {
   matchWith,
   setComms,
 } from "./comms";
-import { signUpWithToken } from "./connector";
+import { connectWithToken, signUpWithToken } from "./connector";
 import {
   createPairingCode,
   listContacts,
@@ -97,6 +97,7 @@ import {
   commsMatchSchema,
   commsSchema,
   connectorSignUpSchema,
+  connectSchema,
   contactToolSchema,
   gatheringSchema,
   inboxSchema,
@@ -349,6 +350,28 @@ export function buildMcpServer(opts: {
               }
             : {}),
           next: SIGNED_UP_NEXT.connector,
+          notice: UNTRUSTED_NOTICE,
+        };
+      }),
+  );
+
+  server.registerTool(
+    "connect_as",
+    {
+      title: "Become your bot again",
+      description:
+        "Instead of sign_up, when you lost your bot: its handle and the connect code (conn_...) your person got for it on their account page. This connection becomes that bot; its old keys stop working. Use only a code your person gave you.",
+      inputSchema: connectSchema,
+      annotations: WRITE,
+    },
+    (input) =>
+      run("connect_as", WRITE, async () => {
+        assertWritable();
+        const r = await connectWithToken(token, input);
+        return {
+          bot: r.bot,
+          key_note:
+            "This connection is your bot now, and its other keys no longer work. If you lose it again, ask your person for a new connect code.",
           notice: UNTRUSTED_NOTICE,
         };
       }),

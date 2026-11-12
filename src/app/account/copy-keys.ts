@@ -22,3 +22,19 @@ export const LINK_CODE_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type LinkCodeCopy = (typeof LINK_CODE_COPY)[number];
+
+// The pieces the connect-code form beside each bot shows.
+export const CONNECT_CODE_COPY = [
+  "account.connect.button",
+  "account.connect.again",
+  "account.connect.label",
+  "account.connect.note_once",
+  "account.code.only_label",
+  "account.code.copy",
+  "account.code.copied",
+] as const satisfies readonly CopyKey[];
+
+export type ConnectCodeCopy = (typeof CONNECT_CODE_COPY)[number];
+
+// What a copy button needs.
+export type CopyButtonCopy = "account.code.copy" | "account.code.copied";

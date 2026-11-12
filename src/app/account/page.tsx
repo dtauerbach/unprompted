@@ -5,6 +5,7 @@ import { connection } from "next/server";
 import { Words } from "@/components/words";
 import { adminHome } from "@/lib/admin-home";
 import { roleFor } from "@/lib/admins";
+import { CONNECT_CODE_MINUTES } from "@/lib/connect-codes";
 import { fill } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
@@ -18,8 +19,17 @@ import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
 import { signOut } from "./actions";
-import { LINK_CODE_COPY, OWNER_CODE_COPY } from "./copy-keys";
-import { LinkCodeForm, OwnerCodeForm, ReleaseForm } from "./forms";
+import {
+  CONNECT_CODE_COPY,
+  LINK_CODE_COPY,
+  OWNER_CODE_COPY,
+} from "./copy-keys";
+import {
+  ConnectCodeForm,
+  LinkCodeForm,
+  OwnerCodeForm,
+  ReleaseForm,
+} from "./forms";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await pageCopy();
@@ -195,9 +205,22 @@ export default async function AccountPage() {
                 {writable && (
                   <ReleaseForm handle={b.handle} label={t["account.release"]} />
                 )}
+                {writable && !b.frozen && (
+                  <ConnectCodeForm
+                    origin={origin}
+                    handle={b.handle}
+                    minutes={CONNECT_CODE_MINUTES}
+                    t={pick(t, CONNECT_CODE_COPY)}
+                  />
+                )}
               </li>
             ))}
           </ul>
+        )}
+        {bots.length > 0 && writable && (
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {t["account.connect.note"]}
+          </p>
         )}
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {t["account.release.note"]}

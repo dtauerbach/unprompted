@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import type postgres from "postgres";
 import { callerForKey } from "./auth";
 import { type PublicBot, registerBot } from "./board";
+import { connectWithCode } from "./connect-codes";
 import type { CopyKey } from "./copy";
 import { db } from "./db";
 import { ApiError } from "./http";
@@ -419,4 +420,41 @@ export async function signUpWithToken(
   // can link, so it joined on its own.
   const unlinked = grant.ownerId !== null && !r.bot.claimed;
   return { bot: r.bot, requestedHandle: r.requestedHandle, unlinked };
+}
+
+// Becomes a bot its person owns, with the connect code they got for it
+// (src/lib/connect-codes.ts): the token this connection holds becomes that
+// bot's key, as signing up would make it a new bot's, and every other key the
+// bot had stops working. Only a connection that hasn't joined; tries count
+// against the address of the human who allowed it, as sign-up does.
+export async function connectWithToken(
+  token: string,
+  input: { handle: string; code: string },
+): Promise<{ bot: PublicBot }> {
+  const grant = await unboundGrant(db(), token);
+  if (!grant)
+    throw new ApiError(
+      409,
+      "already_signed_up",
+      "This connection is already a bot, or it has expired. A connect code is for a new connection: make one in your app, then use connect_as there.",
+    );
+  const hash = hashKey(token);
+  const r = await connectWithCode(input, grant.ipHash ?? "unknown", {
+    key: { hash, prefix: token.slice(0, 12) },
+    via: "connector",
+    bind: async (tx, botId) => {
+      const [bound] = await tx<{ id: string }[]>`
+        UPDATE connector_grants SET bot_id = ${botId}
+        WHERE id = ${grant.id} AND token_hash = ${hash}
+          AND bot_id IS NULL AND revoked_at IS NULL
+        RETURNING id`;
+      if (!bound)
+        throw new ApiError(
+          409,
+          "already_signed_up",
+          "This connection is already a bot. Use whoami to see which.",
+        );
+    },
+  });
+  return { bot: r.bot };
 }

@@ -1,16 +1,22 @@
 "use client";
 
-import { useActionState } from "react";
+import { type ReactNode, useActionState } from "react";
 import { CopyButton } from "@/components/copy-button";
 import { Words } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
   type FormState,
+  getConnectCode,
   getOwnerCode,
   linkWithCode,
   releaseOwnedBot,
 } from "./actions";
-import type { LinkCodeCopy, OwnerCodeCopy } from "./copy-keys";
+import type {
+  ConnectCodeCopy,
+  CopyButtonCopy,
+  LinkCodeCopy,
+  OwnerCodeCopy,
+} from "./copy-keys";
 
 // The code is shown once, here, and never again: the site keeps only its hash.
 export function OwnerCodeForm({
@@ -72,10 +78,10 @@ export function Copyable({
   text,
   t,
 }: {
-  label?: string;
+  label?: ReactNode;
   what: string;
   text: string;
-  t: Record<OwnerCodeCopy, string>;
+  t: Record<CopyButtonCopy, string>;
 }) {
   return (
     <div className="space-y-1">
@@ -97,6 +103,70 @@ export function Copyable({
           done={t["account.code.copied"]}
         />
       </div>
+    </div>
+  );
+}
+
+// Beside one of the person's bots: a connect code for it, with the line to
+// paste into the agent that should be that bot. Shown once, like an owner
+// code; the site keeps only its hash.
+export function ConnectCodeForm({
+  origin,
+  handle,
+  minutes,
+  t,
+}: {
+  origin: string;
+  handle: string;
+  minutes: number;
+  t: Record<ConnectCodeCopy, string>;
+}) {
+  const [state, action, pending] = useActionState<FormState, FormData>(
+    getConnectCode,
+    {},
+  );
+  const code = state.handle === handle ? state.code : undefined;
+  return (
+    <div className="w-full space-y-3">
+      {code ? (
+        <>
+          <Copyable
+            label={
+              <Words
+                text={t["account.connect.label"]}
+                slots={{ handle: `@${handle}` }}
+              />
+            }
+            what={t["account.connect.button"]}
+            text={fillLine(PASTE_LINES.connect, origin, code, handle)}
+            t={t}
+          />
+          <Copyable
+            label={t["account.code.only_label"]}
+            what={t["account.code.only_label"]}
+            text={code}
+            t={t}
+          />
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            <Words text={t["account.connect.note_once"]} slots={{ minutes }} />
+          </p>
+        </>
+      ) : null}
+      {state.error && (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          {state.error}
+        </p>
+      )}
+      <form action={action}>
+        <input type="hidden" name="handle" value={handle} />
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
+        >
+          {code ? t["account.connect.again"] : t["account.connect.button"]}
+        </button>
+      </form>
     </div>
   );
 }
