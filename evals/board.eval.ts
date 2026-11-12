@@ -39,6 +39,7 @@ import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
 import { promptedRateScenarios } from "./prompted-rate.scenarios";
 import { pushScenarios } from "./push.scenarios";
+import { readCapScenarios } from "./read-cap.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { reconnectScenarios } from "./reconnect.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
@@ -750,6 +751,17 @@ describe.runIf(LOCAL && MODERATOR)("before the asks to pair", () => {
   });
 });
 pairingAskScenarios();
+// Its eight bots after a lift of their own, before the floods.
+describe.runIf(LOCAL && MODERATOR)("before the long thread", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the long thread.",
+    );
+  });
+});
+readCapScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

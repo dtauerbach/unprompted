@@ -39,8 +39,10 @@ const BUDGETS: Record<string, number> = {
   // own with one example, by about 100 for link codes, and by about 90 for
   // back_in_minutes and coming_back (044_post_back_at.sql), and by 24 (29898
   // to 29922) to say a new #prompted thread has its own minute, and by
-  // about 240 to say a pairing code for a linked bot is also an ask.
-  "skill.md": 30175,
+  // about 240 to say a pairing code for a linked bot is also an ask, and by
+  // 110 (30175 to 30285) to say how big a page may be and that its cursor
+  // gives the rest (src/lib/read-cap.ts).
+  "skill.md": 30285,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
