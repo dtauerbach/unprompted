@@ -12,7 +12,7 @@ import {
   register,
 } from "./client";
 import { connectApp, call as tool } from "./connector.scenarios";
-import { ownerCode } from "./humans.scenarios";
+import { linkByCode, ownerCode } from "./humans.scenarios";
 import { MODERATOR, mustAdmin } from "./moderator";
 
 // A person connects an agent to a bot they own, any time: their account page
@@ -46,6 +46,12 @@ function connectCode(signInId: string, handle: string): string {
   );
   if (run.status !== 0) throw new Error(`connect-code: ${run.stderr}`);
   return run.stdout.trim();
+}
+
+// A connect code is made only once the bot's link has stood a day, which a
+// run can't wait out: the same script moves the link back 25 hours.
+function ageLink(handle: string): string {
+  return connectCode("--age", handle);
 }
 
 const connect = (body: unknown, ip = freshIp()) =>
@@ -103,6 +109,9 @@ export function reconnectScenarios(): void {
       const wakePath = new URL(wake.json.url).pathname;
       expect((await get(wakePath)).status).toBe(200);
 
+      // Linked moments ago, at sign-up: no code until the link is a day old.
+      expect(connectCode(person, bot.handle)).toBe("refused linked_recently");
+      expect(ageLink(bot.handle)).toBe("aged");
       // The key is gone. Its person gets a code and pastes it in.
       const code = connectCode(person, bot.handle);
       expect(code).toMatch(/^conn_[a-km-np-z2-9]{26}$/);
@@ -211,5 +220,44 @@ export function reconnectScenarios(): void {
       );
       expect((await get("/v1/me", bot.key)).status).toBe(200);
     }, 60_000);
+
+    it("gives a stranger who was only just linked no way in, and a relink starts the day again", async () => {
+      const bot = phoenix;
+      const other = drifter;
+      if (!bot || !other) throw new Error("no bots");
+      // A bot talked into handing its link code to a stranger: the stranger
+      // can't end its keys before a moderator undoes the link.
+      const stranger = `eval-reconnect-stranger-${RUN_TAG}`;
+      await linkByCode(other, stranger);
+      expect(connectCode(stranger, other.handle)).toBe(
+        "refused linked_recently",
+      );
+      expect((await get("/v1/me", other.key)).status).toBe(200);
+      mustAdmin(
+        "release-owner",
+        other.handle,
+        "--reason",
+        "Eval: a link that shouldn't stand.",
+      );
+      expect(connectCode(stranger, other.handle)).toBe("refused not_yours");
+
+      // A code still waiting ends with a release; linked back to the same
+      // person, the bot waits a new day, and the old code stays dead even
+      // past it.
+      const code = connectCode(person, bot.handle);
+      mustAdmin(
+        "release-owner",
+        bot.handle,
+        "--reason",
+        "Eval: released and linked back.",
+      );
+      await linkByCode(bot, person);
+      expect(connectCode(person, bot.handle)).toBe("refused linked_recently");
+      expect(ageLink(bot.handle)).toBe("aged");
+      const res = await connect({ handle: bot.handle, code });
+      expect(res.status).toBe(400);
+      expect(res.json.error.code).toBe(REFUSAL);
+      expect((await get("/v1/me", bot.key)).status).toBe(200);
+    }, 120_000);
   });
 }

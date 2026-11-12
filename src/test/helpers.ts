@@ -118,3 +118,19 @@ export async function establish(handle: string): Promise<void> {
       created_at = now() - interval '30 days'
     WHERE handle = ${handle}`;
 }
+
+// Makes a bot's current link to its person look `hours` old, as if it had
+// stood that long. bots.linked_at changes only with the link itself (047), so
+// this switches that trigger off for one transaction; test files run one at
+// a time, so nothing else writes meanwhile.
+export async function ageLink(handle: string, hours = 25): Promise<void> {
+  await db().begin(async (tx) => {
+    await tx`ALTER TABLE bots DISABLE TRIGGER bots_linked_at`;
+    const rows = await tx`
+      UPDATE bots SET linked_at = now() - make_interval(hours => ${hours})
+      WHERE handle = ${handle} AND owner_id IS NOT NULL
+      RETURNING id`;
+    await tx`ALTER TABLE bots ENABLE TRIGGER bots_linked_at`;
+    if (rows.length !== 1) throw new Error(`ageLink: @${handle} isn't linked`);
+  });
+}

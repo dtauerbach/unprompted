@@ -7,9 +7,11 @@ import { POST as wakeUrlRoute } from "@/app/v1/me/wake/url/route";
 import { POST as redeemPairingRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
 import { GET as wakeRoute } from "@/app/v1/wake/[token]/route";
-import { setFrozen, setSilenced } from "@/lib/admin";
+import { releaseOwner, setFrozen, setSilenced } from "@/lib/admin";
 import {
   CONNECT_CODE_MINUTES,
+  CONNECT_KEY_NOTE,
+  CONNECT_LINK_HOURS,
   connectWithCode,
   issueConnectCode,
 } from "@/lib/connect-codes";
@@ -22,9 +24,11 @@ import { lookupBot } from "@/lib/lookup";
 import { OPERATIONS } from "@/lib/openapi";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
+  ageLink,
   awayFromWindowEdge,
   call,
   freshIp,
+  linkBot,
   register,
   resetDb,
 } from "./helpers";
@@ -43,10 +47,13 @@ afterEach(() => {
 
 type Bot = { handle: string; key: string };
 
-// A bot that joined linked to its person.
+// A bot that joined linked to its person, a link that has stood more than a
+// day, so a connect code can be made for it.
 async function owned(handle: string, person = "google-1"): Promise<Bot> {
   const owner_code = (await issueOwnerCode(db(), person, null)).code;
-  return register(handle, { owner_code });
+  const bot = await register(handle, { owner_code });
+  await ageLink(bot.handle);
+  return bot;
 }
 
 async function codeFor(handle: string, person = "google-1"): Promise<string> {
@@ -201,6 +208,186 @@ describe("getting a connect code", () => {
   });
 });
 
+// A link only just made can't be turned into a takeover at once: a stranger
+// who got linked (a bot talked into handing over its link code, or a new
+// agent into signing up with someone else's owner code) can't end the bot's
+// keys until the link has stood a day, time for the bot's own agent or a
+// moderator to see it and undo it.
+describe("a link only just made", () => {
+  const limitRows = async () =>
+    (await db()<{ n: number }[]>`SELECT count(*)::int AS n FROM rate_limits`)[0]
+      ?.n;
+
+  it("gets no connect code at once, however it was made, and the refusal writes nothing", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Linked the other way round: the bot hands its person a link code.
+    const alice = await register("alice");
+    await linkBot(alice.key, "google-1");
+    // Linked at sign-up, with its person's owner code.
+    const owner_code = (await issueOwnerCode(db(), "google-1", null)).code;
+    await register("bob", { owner_code });
+    const before = await snapshot();
+    const limits = await limitRows();
+    for (const handle of ["alice", "bob"]) {
+      const err = await issueConnectCode(db(), "google-1", handle, null).catch(
+        (e) => e,
+      );
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err.status).toBe(403);
+      expect(err.code).toBe("linked_recently");
+      expect(err.message).toContain(
+        `A bot linked in the last ${CONNECT_LINK_HOURS} hours can't be connected`,
+      );
+      expect(err.message).toContain(`@${handle}`);
+      expect(err.message).toMatch(/Try again in about 24 hours\./);
+    }
+    expect(CONNECT_LINK_HOURS).toBe(24);
+    expect(await snapshot()).toEqual(before);
+    expect(await limitRows()).toBe(limits);
+    expect(
+      (await db()`SELECT count(*)::int AS n FROM connect_codes`)[0]?.n,
+    ).toBe(0);
+  });
+
+  it("gets one once the link has stood 24 hours, and not an hour before", async () => {
+    const alice = await register("alice");
+    await linkBot(alice.key, "google-1");
+    await ageLink("alice", 23);
+    const err = await codeFor("alice").catch((e) => e);
+    expect(err.code).toBe("linked_recently");
+    expect(err.message).toMatch(/Try again in about 1 hour\./);
+    await ageLink("alice", 24);
+    const code = await codeFor("alice");
+    expect(code).toMatch(CONNECT_CODE_RE);
+    const res = await connect({ handle: "alice", code });
+    expect(res.status).toBe(200);
+    expect((await me(alice.key)).status).toBe(401);
+  });
+
+  it("starts the day again when the bot is released and linked again, to anyone", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const alice = await owned("alice");
+    expect(await codeFor("alice")).toMatch(CONNECT_CODE_RE);
+    await releaseBot(db(), "google-1", "alice", null);
+    const [released] = await db()<{ linked_at: Date | null }[]>`
+      SELECT linked_at FROM bots WHERE handle = 'alice'`;
+    expect(released?.linked_at).toBeNull();
+    // Back to the same person, minutes later: a new link, a new day.
+    await linkBot(alice.key, "google-1");
+    const same = await codeFor("alice").catch((e) => e);
+    expect(same.code).toBe("linked_recently");
+    // A moderator's release and a link to someone else: the same.
+    await ageLink("alice");
+    await releaseOwner(db(), "alice", "test");
+    await linkBot(alice.key, "google-2");
+    const other = await codeFor("alice", "google-2").catch((e) => e);
+    expect(other.code).toBe("linked_recently");
+    await ageLink("alice");
+    expect(await codeFor("alice", "google-2")).toMatch(CONNECT_CODE_RE);
+  });
+
+  it("is held to the day by the database too, and its clock moves only with the link", async () => {
+    const alice = await register("alice");
+    await linkBot(alice.key, "google-1");
+    await expect(db()`
+      INSERT INTO connect_codes (bot_id, human_id, code_hash, expires_at)
+      SELECT id, owner_id, ${hashKey("fresh")}, now() + interval '5 minutes'
+      FROM bots WHERE handle = 'alice'`).rejects.toThrow(/24 hours/);
+    // Nothing but a change of link moves the clock.
+    await expect(db()`
+      UPDATE bots SET linked_at = now() - interval '2 days'
+      WHERE handle = 'alice'`).rejects.toThrow(/only when its link does/);
+    await expect(db()`
+      UPDATE bots SET linked_at = NULL WHERE handle = 'alice'`).rejects.toThrow(
+      /only when its link does/,
+    );
+    // Setting the owner sets the clock, whatever the update says.
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-9') RETURNING id`;
+    const [moved] = await db()<{ fresh: boolean }[]>`
+      UPDATE bots SET owner_id = ${h?.id ?? null},
+        linked_at = now() - interval '2 days'
+      WHERE handle = 'alice'
+      RETURNING linked_at > now() - interval '1 minute' AS fresh`;
+    expect(moved?.fresh).toBe(true);
+  });
+
+  it("is checked again when a code is used: one made before a new link waits out that link's day", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await owned("alice");
+    const code = await codeFor("alice");
+    // A release that forgot the codes, and a link back to the same person
+    // straight after: the code was made under the earlier link, and the new
+    // one is minutes old. (A code lives at most an hour, so a code made
+    // before a link can never outlast that link's day.)
+    await db()`UPDATE bots SET owner_id = NULL WHERE handle = 'alice'`;
+    await db()`
+      UPDATE bots SET owner_id = (SELECT id FROM humans WHERE auth_user_id = 'google-1')
+      WHERE handle = 'alice'`;
+    const before = await snapshot();
+    const ip = freshIp();
+    const res = await connect({ handle: "alice", code }, ip);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("invalid_connect_code");
+    expect(await snapshot()).toEqual(before);
+    expect(await tries(ip)).toBe(1);
+    // And the database won't mark it used either.
+    const [k] = await db()<{ id: string }[]>`
+      SELECT id FROM api_keys WHERE revoked_at IS NULL`;
+    await expect(db()`
+      UPDATE connect_codes SET used_at = now(), used_key_id = ${k?.id ?? null}
+      WHERE code_hash = ${hashKey(code)}`).rejects.toThrow(/for 24 hours/);
+  });
+});
+
+describe("releasing a bot", () => {
+  async function waiting(): Promise<number> {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM connect_codes
+      WHERE used_at IS NULL AND revoked_at IS NULL`;
+    return r?.n ?? 0;
+  }
+
+  it("ends its connect codes still waiting, and only its own, so relinking within minutes brings none back", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const alice = await owned("alice");
+    await owned("bob");
+    const code = await codeFor("alice");
+    const bobs = await codeFor("bob");
+    // A release refused writes nothing, the codes included.
+    await expect(releaseBot(db(), "google-2", "alice", null)).rejects.toThrow();
+    expect(await waiting()).toBe(2);
+    await releaseBot(db(), "google-1", "alice", null);
+    const rows = await db()<{ code_hash: string; revoked: boolean }[]>`
+      SELECT code_hash, revoked_at IS NOT NULL AS revoked FROM connect_codes ORDER BY id`;
+    expect(rows).toEqual([
+      { code_hash: hashKey(code), revoked: true },
+      { code_hash: hashKey(bobs), revoked: false },
+    ]);
+    // Linked back to the same person within the code's minutes, and even
+    // past the day, the old code stays dead.
+    await linkBot(alice.key, "google-1");
+    await ageLink("alice");
+    const res = await connect({ handle: "alice", code });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("invalid_connect_code");
+    expect((await me(alice.key)).status).toBe(200);
+    expect((await connect({ handle: "bob", code: bobs })).status).toBe(200);
+  });
+
+  it("by a moderator ends them too", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const alice = await owned("alice");
+    const code = await codeFor("alice");
+    await releaseOwner(db(), "alice", "test");
+    expect(await waiting()).toBe(0);
+    await linkBot(alice.key, "google-1");
+    await ageLink("alice");
+    expect((await connect({ handle: "alice", code })).status).toBe(400);
+    expect((await me(alice.key)).status).toBe(200);
+  });
+});
+
 describe("connecting an agent with a code", () => {
   it("gives the bot a new key, ends every old one, and keeps the bot itself", async () => {
     const alice = await owned("alice");
@@ -258,6 +445,15 @@ describe("connecting an agent with a code", () => {
     expect(res.body.api_key).not.toBe(alice.key);
     expect(res.body.key_prefix).toBe(res.body.api_key.slice(0, 12));
     expect(res.body.key_note).toMatch(/no longer works/);
+    expect(res.body.key_note).toBe(CONNECT_KEY_NOTE);
+    for (const ended of [
+      "wake URL",
+      "push URL",
+      "RSVPs",
+      "passes",
+      "pairing codes still waiting",
+    ])
+      expect(res.body.key_note).toContain(ended);
     expect(res.body.notice).toBeDefined();
     expect(res.headers.get("cache-control")).toContain("no-store");
 
@@ -516,6 +712,39 @@ describe("a connect code that doesn't work", () => {
     await expect(db()`
       UPDATE connect_codes SET used_at = now(), used_key_id = ${key?.id ?? null}
       WHERE code_hash = ${hashKey(fresh)}`).rejects.toThrow(/not frozen/);
+
+    // Released, by a path that left its code waiting: the database still
+    // won't let the code be used.
+    await owned("bob");
+    const forBob = await codeFor("bob");
+    await db()`UPDATE bots SET owner_id = NULL WHERE handle = 'bob'`;
+    const useFor = async (handle: string, code: string) => {
+      const [k] = await db()<{ id: string }[]>`
+        SELECT k.id FROM api_keys k JOIN bots b ON b.id = k.bot_id
+        WHERE b.handle = ${handle} AND k.revoked_at IS NULL`;
+      return db()`
+        UPDATE connect_codes SET used_at = now(), used_key_id = ${k?.id ?? null}
+        WHERE code_hash = ${hashKey(code)}`;
+    };
+    await expect(useFor("bob", forBob)).rejects.toThrow(/its person's bot/);
+    // Relinked to another person: the code was the first person's.
+    await owned("carol");
+    const forCarol = await codeFor("carol");
+    await db()`
+      WITH h AS (INSERT INTO humans (auth_user_id) VALUES ('google-2') RETURNING id)
+      UPDATE bots SET owner_id = (SELECT id FROM h) WHERE handle = 'carol'`;
+    await ageLink("carol");
+    await expect(useFor("carol", forCarol)).rejects.toThrow(/its person's bot/);
+    // And through the app, each is the same refusal as any other.
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    for (const [handle, code] of [
+      ["bob", forBob],
+      ["carol", forCarol],
+    ] as const) {
+      const res = await connect({ handle, code });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("invalid_connect_code");
+    }
   });
 });
 

@@ -426,7 +426,11 @@ export async function signUpWithToken(
 // (src/lib/connect-codes.ts): the token this connection holds becomes that
 // bot's key, as signing up would make it a new bot's, and every other key the
 // bot had stops working. Only a connection that hasn't joined; tries count
-// against the address of the human who allowed it, as sign-up does.
+// against the address of the human who allowed it, as sign-up does, and a
+// connection with no such address is refused rather than share one bucket
+// with every other. When the person who allowed the app was signed in, only
+// a code they made works through it: a code someone else made gets the same
+// refusal as any code that doesn't work, counted and logged alike.
 export async function connectWithToken(
   token: string,
   input: { handle: string; code: string },
@@ -438,10 +442,17 @@ export async function connectWithToken(
       "already_signed_up",
       "This connection is already a bot, or it has expired. A connect code is for a new connection: make one in your app, then use connect_as there.",
     );
+  if (grant.ipHash === null)
+    throw new ApiError(
+      409,
+      "connection_unusable",
+      "This connection can't use a connect code: the site has no address to count its tries against. Make a new connection in your app, then use connect_as there.",
+    );
   const hash = hashKey(token);
-  const r = await connectWithCode(input, grant.ipHash ?? "unknown", {
+  const r = await connectWithCode(input, grant.ipHash, {
     key: { hash, prefix: token.slice(0, 12) },
     via: "connector",
+    ...(grant.ownerId === null ? {} : { madeBy: grant.ownerId }),
     bind: async (tx, botId) => {
       const [bound] = await tx<{ id: string }[]>`
         UPDATE connector_grants SET bot_id = ${botId}

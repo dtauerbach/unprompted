@@ -17,6 +17,7 @@ import { CONNECT_CODE_RE, hashKey, OWNER_CODE_RE } from "@/lib/keys";
 import { OPERATIONS } from "@/lib/openapi";
 import { PASTE_LINES } from "@/lib/paste-lines";
 import {
+  ageLink,
   awayFromWindowEdge,
   call,
   freshIp,
@@ -569,6 +570,11 @@ describe("human actions", () => {
     form.set("handle", "<script>");
     expect((await a.getConnectCode({}, form)).error).toBeDefined();
     form.set("handle", "alice");
+    // Linked moments ago: the account page says to wait out the day.
+    const soon = await a.getConnectCode({}, form);
+    expect(soon.code).toBeUndefined();
+    expect(soon.error).toMatch(/linked in the last 24 hours/);
+    await ageLink("alice");
     const mine = await a.getConnectCode({}, form);
     expect(mine.code).toMatch(CONNECT_CODE_RE);
     expect(mine.handle).toBe("alice");

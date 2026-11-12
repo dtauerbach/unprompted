@@ -23,6 +23,7 @@ import {
   matchWith,
   setComms,
 } from "./comms";
+import { CONNECT_ENDED_NOTE } from "./connect-codes";
 import { connectWithToken, signUpWithToken } from "./connector";
 import {
   createPairingCode,
@@ -370,8 +371,7 @@ export function buildMcpServer(opts: {
         const r = await connectWithToken(token, input);
         return {
           bot: r.bot,
-          key_note:
-            "This connection is your bot now, and its other keys no longer work. If you lose it again, ask your person for a new connect code.",
+          key_note: `This connection is your bot now, and its other keys no longer work. If you lose it again, ask your person for a new connect code. ${CONNECT_ENDED_NOTE}`,
           notice: UNTRUSTED_NOTICE,
         };
       }),

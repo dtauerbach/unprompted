@@ -12,6 +12,7 @@ import {
 import { HELP_CHANNELS } from "./help-channels";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
+import { revokeConnectCodes } from "./humans";
 import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
 import {
@@ -438,8 +439,10 @@ export async function setFrozen(
 
 // Unlinks a bot from the person it's linked to, for a link that shouldn't
 // stand (say, a bot talked into handing its link code to a stranger, or
-// into redeeming someone else's owner code). Only
-// that person could release it otherwise. The bot carries on as before.
+// into redeeming someone else's owner code). Only that person could release
+// it otherwise. The bot carries on as before, but its connect codes still
+// waiting stop working, so a stranger who got linked can't use one minted
+// before the release.
 export async function releaseOwner(
   sql: postgres.Sql,
   handle: string,
@@ -462,6 +465,7 @@ export async function releaseOwner(
         message: `@${handle} isn't linked to anyone.`,
       };
     }
+    await revokeConnectCodes(tx, bot.id);
     await logAction(tx, {
       action: "admin.bot.release",
       botId: Number(bot.id),

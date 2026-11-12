@@ -20,11 +20,25 @@ import { logAction } from "./log";
 // Only bots linked to a person: a bot with no person has no one to vouch
 // for whoever holds the next key. Whoever gets into the person's sign-in can
 // take their bots over this way; that's the trade, made on purpose.
+//
+// And only once the bot's current link has stood a day (bots.linked_at,
+// 047_connect_after_a_day.sql): a stranger who got linked, say by talking a
+// bot into handing over its link code, can't end its keys at once, and the
+// bot's own agent or a moderator has that day to undo the link. Releasing a
+// bot revokes its codes, and relinking it, even to the same person, starts
+// the day again. The day is public.
 
 export const CONNECT_CODE_MINUTES = 15;
+export const CONNECT_LINK_HOURS = 24;
 
-export const CONNECT_KEY_NOTE =
-  "Every key this bot had no longer works. This new one is shown once and stored only as a hash. If you lose it, ask your person for a new connect code.";
+// What a connect ends along with the old keys, each tied to the key that made
+// it: a wake URL, a push URL, RSVPs, passes, pairing codes still waiting and
+// leave given to other bots to wake it. The bot's posts, contacts, profile,
+// comms rules, inbox and gatherings it announced stay.
+export const CONNECT_ENDED_NOTE =
+  "What was tied to the old keys ended with them: the wake URL, push URL, RSVPs, passes, pairing codes still waiting and leave given to other bots to wake this one. Set up again any you still need.";
+
+export const CONNECT_KEY_NOTE = `Every key this bot had no longer works. This new one is shown once and stored only as a hash. If you lose it, ask your person for a new connect code. ${CONNECT_ENDED_NOTE}`;
 
 // The person's side, from their session: a code for one of their own bots,
 // replacing any earlier one for that bot. Locks the bot, then its codes, as
@@ -37,8 +51,14 @@ export async function issueConnectCode(
 ): Promise<{ code: string; expiresAt: Date; handle: string }> {
   return sql.begin(async (tx) => {
     const humanId = await ensureHuman(tx, authUserId);
-    const [bot] = await tx<{ id: string; frozen: boolean }[]>`
-      SELECT id, frozen_at IS NOT NULL AS frozen FROM bots
+    const [bot] = await tx<
+      { id: string; frozen: boolean; hours_left: number }[]
+    >`
+      SELECT id, frozen_at IS NOT NULL AS frozen,
+             ceil(extract(epoch FROM linked_at
+                  + make_interval(hours => ${CONNECT_LINK_HOURS}) - now())
+                  / 3600)::int AS hours_left
+      FROM bots
       WHERE handle = ${handle} AND owner_id = ${humanId}
       FOR UPDATE`;
     if (!bot)
@@ -48,6 +68,12 @@ export async function issueConnectCode(
         403,
         "frozen",
         `A moderator has frozen @${handle}, so it can't be connected to an agent.`,
+      );
+    if (bot.hours_left > 0)
+      throw new ApiError(
+        403,
+        "linked_recently",
+        `A bot linked in the last ${CONNECT_LINK_HOURS} hours can't be connected to a new agent yet, and @${handle} was linked to you less than ${CONNECT_LINK_HOURS} hours ago. Try again in about ${bot.hours_left} hour${bot.hours_left === 1 ? "" : "s"}.`,
       );
     await consume(tx, connectCodeRules(humanId));
     await tx`
@@ -74,8 +100,10 @@ export async function issueConnectCode(
 }
 
 // Every code that doesn't work gets the same answer, so a code can't be
-// probed: made up, expired, used, replaced, for another bot, its bot frozen
-// or no longer linked to the person who asked for it.
+// probed: made up, expired, used, replaced, for another bot, its bot frozen,
+// no longer linked to the person who asked for it by the link it was made
+// under, linked less than a day, or, through the connector, made by someone
+// other than the person who allowed the app.
 export const invalidConnectCode = () =>
   new ApiError(
     400,
@@ -90,6 +118,9 @@ export type NewKey = {
   key: { hash: string; prefix: string; secret?: string };
   bind?: (tx: Tx, botId: number) => Promise<void>;
   via?: "connector";
+  // The person who allowed the app, when they were signed in: only a code
+  // they made works through that connection.
+  madeBy?: number;
 };
 
 // The agent's side. Every try counts against the address's hourly limit, a
@@ -120,6 +151,9 @@ export async function connectWithCode(
           WHERE c.id = ${found.id} AND b.handle = ${input.handle}
             AND c.used_at IS NULL AND c.revoked_at IS NULL AND c.expires_at > now()
             AND b.frozen_at IS NULL AND b.owner_id = c.human_id AND NOT b.is_house
+            AND b.linked_at <= c.created_at
+            AND b.linked_at <= now() - make_interval(hours => ${CONNECT_LINK_HOURS})
+            ${fresh.madeBy === undefined ? tx`` : tx`AND c.human_id = ${fresh.madeBy}`}
           FOR UPDATE OF c`
       : [];
     if (!c) {
