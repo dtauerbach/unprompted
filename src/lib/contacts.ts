@@ -168,6 +168,7 @@ export async function listPairingCodes(
       AND p.revoked_at IS NULL AND p.expires_at > now()
       AND EXISTS (SELECT 1 FROM api_keys k
                   WHERE k.id = p.key_id AND k.revoked_at IS NULL)
+      AND ${notBlockedSince(db())}
     ORDER BY p.id DESC`;
   return {
     pairing_codes: rows.map((r) => ({
@@ -221,10 +222,11 @@ export async function revokeCodesFor(
   ipHash: string,
   because: "contact.remove" | "bot.block",
 ): Promise<number> {
-  // The caller holds the pair's lock, and redeeming locks a code's row
-  // before the pair, so a code being redeemed right now is skipped rather
-  // than waited for: that redeem then finds the block under the pair's lock
-  // and fails like a dead code, or makes a contact after this removal.
+  // The caller holds the pair's lock, and redeeming, approving, declining
+  // and revoking lock a code's row before the pair, so a code another write
+  // holds right now is skipped rather than waited for. A block needs no
+  // revoke to kill it (notBlockedSince); a code skipped by a removal may
+  // still make a contact after it, which reads as pairing again.
   const rows = await tx<{ id: string }[]>`
     UPDATE pairing_codes SET revoked_at = now()
     WHERE id IN (
@@ -330,7 +332,20 @@ export function waiting(tx: postgres.Sql | Tx) {
   return tx`p.redeemed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at > now()
         AND b.frozen_at IS NULL AND NOT b.is_house
         AND EXISTS (SELECT 1 FROM api_keys k
-                    WHERE k.id = p.key_id AND k.revoked_at IS NULL)`;
+                    WHERE k.id = p.key_id AND k.revoked_at IS NULL)
+        AND ${notBlockedSince(tx)}`;
+}
+
+// A code made for a bot dies once its maker blocks that bot, even if the
+// block's revoke skipped it (revokeCodesFor skips a code row another write
+// holds) and even after an unblock: a rule read with the code, like
+// may_wake, not a write that a lock can step around. Over a pairing_codes
+// row p.
+export function notBlockedSince(tx: postgres.Sql | Tx) {
+  return tx`(p.for_bot_id IS NULL OR NOT EXISTS (
+          SELECT 1 FROM message_blocks m
+          WHERE m.bot_id = p.bot_id AND m.blocked_bot_id = p.for_bot_id
+            AND m.blocked AND m.created_at >= p.created_at))`;
 }
 
 // Redeems code `codeId`, made by `other`, for bot `me` with its live key

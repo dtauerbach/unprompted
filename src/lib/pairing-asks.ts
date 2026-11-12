@@ -179,9 +179,14 @@ export async function declineAsk(
     await consume(tx, askAnswerRules(humanId));
     const a = await findAsk(tx, humanId, askId, true);
     if (!a) throw notWaiting();
-    await tx`
+    // Two Not nows racing (an hour's turn lets both past the limit) end
+    // here: the second inserts nothing and answers like any repeat.
+    const ins = await tx`
       INSERT INTO pairing_code_declines (code_id, human_id)
-      VALUES (${askId}, ${humanId})`;
+      VALUES (${askId}, ${humanId})
+      ON CONFLICT (code_id, human_id) DO NOTHING
+      RETURNING id`;
+    if (ins.length === 0) throw notWaiting();
     await logAction(tx, {
       action: "human.pairing.decline",
       botId: Number(a.target),

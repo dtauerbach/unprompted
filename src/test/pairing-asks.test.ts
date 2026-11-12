@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
+import {
+  POST as blockRoute,
+  DELETE as unblockRoute,
+} from "@/app/v1/bots/[handle]/block/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as contactsRoute } from "@/app/v1/me/contacts/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { DELETE as revokeRoute } from "@/app/v1/me/pairing-codes/[id]/route";
-import { POST as createRoute } from "@/app/v1/me/pairing-codes/route";
+import {
+  POST as createRoute,
+  GET as listCodesRoute,
+} from "@/app/v1/me/pairing-codes/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { setFrozen, setGates } from "@/lib/admin";
@@ -462,6 +468,69 @@ describe("a pairing code for a linked bot", () => {
     );
     expect(err.code).toBe("not_waiting");
     expect((await digest(b)).body.asks).toEqual([]);
+  });
+
+  it("stays dead once the asker blocks the bot it asked, even if the revoke skipped it and the block is lifted", async () => {
+    const { a, b } = await twoPeople();
+    const made = await create(a, { for: "bob" });
+    const codeId = Number(made.body.id);
+    // Another write (a person's Approve or Not now, say) holds the code's
+    // row while Alice blocks Bob, so the block's revoke skips it.
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked: () => void = () => {};
+    const isLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    const holder = db().begin(async (tx) => {
+      await tx`SELECT id FROM pairing_codes WHERE id = ${codeId} FOR UPDATE`;
+      locked();
+      await held;
+    });
+    await isLocked;
+    expect((await block(a, "bob")).status).toBeLessThan(300);
+    release();
+    await holder;
+    const [row] = await db()<{ revoked: boolean }[]>`
+      SELECT revoked_at IS NOT NULL AS revoked FROM pairing_codes WHERE id = ${codeId}`;
+    expect(row?.revoked).toBe(false);
+    expect(
+      (await call(unblockRoute, { key: a.key, params: { handle: "bob" } }))
+        .status,
+    ).toBeLessThan(300);
+    // Unblocked, and the code was never revoked, yet it's dead.
+    expect(await listAsks(db(), await humanId("google-2"))).toEqual([]);
+    expect((await digest(b)).body.asks).toEqual([]);
+    expect(
+      (await call(listCodesRoute, { key: a.key })).body.pairing_codes,
+    ).toEqual([]);
+    const err = await refusal(approveAsk(db(), "google-2", codeId, null));
+    expect(err.code).toBe("not_waiting");
+    expect((await redeem(b, made.body.code)).status).toBe(400);
+    expect((await counts()).contacts).toBe(0);
+    // A new ask after the unblock works as ever.
+    const again = await ask(a, b);
+    await approveAsk(db(), "google-2", again, null);
+    expect((await counts()).contacts).toBe(1);
+  });
+
+  it("answers a second Not now that races the first like a repeat, writing one decline", async () => {
+    const { a, b } = await twoPeople();
+    const id = await ask(a, b);
+    const answer = (p: Promise<unknown>) =>
+      p.then(
+        () => "ok",
+        (e: unknown) => (e instanceof ApiError ? e.code : String(e)),
+      );
+    const both = await Promise.all([
+      answer(declineAsk(db(), "google-2", id, null)),
+      answer(declineAsk(db(), "google-2", id, null)),
+    ]);
+    expect(both.sort()).toEqual(["not_waiting", "ok"]);
+    expect((await counts()).declines).toBe(1);
+    expect(await logged("human.pairing.decline")).toHaveLength(1);
   });
 
   it("isn't shown while either bot is frozen", async () => {

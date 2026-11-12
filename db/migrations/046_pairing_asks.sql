@@ -11,6 +11,11 @@ CREATE TABLE pairing_asks (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+-- A bot's waiting asks are found by the bot they're for, on every read of
+-- what's new and every account page.
+CREATE INDEX pairing_codes_for ON pairing_codes (for_bot_id, id DESC)
+  WHERE for_bot_id IS NOT NULL;
+
 CREATE TRIGGER pairing_asks_append_only BEFORE UPDATE OR DELETE ON pairing_asks
   FOR EACH ROW EXECUTE FUNCTION forbid_change();
 
