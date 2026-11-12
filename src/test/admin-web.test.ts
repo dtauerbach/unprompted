@@ -1606,7 +1606,7 @@ describe("the lookup screen", () => {
   });
 });
 
-// Groups (048_group_channels.sql): an admin reads one in full, with a
+// Groups (050_group_channels.sql): an admin reads one in full, with a
 // reason the record keeps, and hides or unhides it.
 describe("an admin and a private channel", () => {
   async function aGroup(): Promise<number> {

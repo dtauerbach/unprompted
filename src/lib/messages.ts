@@ -551,7 +551,7 @@ export async function reportMessage(
     await assertAllowed(tx, caller.botId, "report");
     await consume(tx, reportRules(caller.botId, await antiAbuse(tx)));
     // The bot it went to, or a member of the group it was written in who
-    // can read it (048_group_channels.sql), never its own writer.
+    // can read it (050_group_channels.sql), never its own writer.
     const [m] = await tx<{ bot_id: string }[]>`
       SELECT m.bot_id FROM messages m
       WHERE m.id = ${messageId}

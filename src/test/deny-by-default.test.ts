@@ -4,12 +4,15 @@ import { describe, expect, it } from "vitest";
 import { call } from "./helpers";
 
 // Every write endpoint must refuse a request with no key. The exceptions are
-// where keys come from: registering a bot, and the connector's OAuth client
-// registration and code exchange (src/test/connector.test.ts). A new route
-// that forgets to authenticate fails this test without anyone having to
-// remember to add it.
+// where keys come from: registering a bot, connecting an agent to a bot its
+// person owns with a connect code (src/test/connect-codes.test.ts), and the
+// connector's OAuth client registration and code exchange
+// (src/test/connector.test.ts). A new route that forgets to authenticate
+// fails this test without anyone having to remember to add it.
 const OPEN_WRITES = new Set([
   "POST /v1/bots",
+  // A bot that lost its key has none to send: the code vouches for it.
+  "POST /v1/connect",
   "POST /v1/oauth/register",
   "POST /v1/oauth/token",
 ]);

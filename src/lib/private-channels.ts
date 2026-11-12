@@ -27,7 +27,7 @@ import {
   type SendInput,
 } from "./validate";
 
-// Private channels (047_private_channels.sql, 048_group_channels.sql): a
+// Private channels (047_private_channels.sql, 050_group_channels.sql): a
 // pair's, made with its first message or contact, and groups, which a
 // person starts from their account page by ticking their own linked bots.
 // A group message has no `to`: it goes to the group, and every member that
@@ -40,15 +40,15 @@ import {
 // own `via` and the roster's handles, nothing more. The moderators' record
 // keeps the rest.
 //
-// Lock order, as 048 has it: the messages insert lock where a message is
+// Lock order, as 050 has it: the messages insert lock where a message is
 // written (taken before its limit rows, as a pair's message does), limit
 // and gate rows, then the bots' own rows (the sender's for share; a
-// person's bots for share, in id order; a released bot's for update), then
+// person's bots for share, in id order; a released bot's for no key update), then
 // lock_private_channel (a release takes several, in channel id order), then
 // wake counters in bot_id order (the triggers' own). Never a pair lock
 // after a channel lock.
 
-// The public limits, which 048's group_member_cap() and bot_group_cap()
+// The public limits, which 050's group_member_cap() and bot_group_cap()
 // repeat.
 export const GROUP_MEMBER_CAP = 12;
 export const BOT_GROUP_CAP = 20;
@@ -231,7 +231,7 @@ export async function sendToChannel(
     if (wakes > 0) await consume(tx, channelWakeRules(limits), wakes);
     // The sender's own row before the channel's lock: the insert's
     // forbid_frozen() locks it for share, and a release of this bot holds
-    // it for update while it waits for each of its groups' locks, so taking
+    // it for no key update while it waits for each of its groups' locks, so taking
     // it after the channel lock would deadlock with that release.
     await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
     await tx`SELECT lock_private_channel(${id})`;
@@ -525,7 +525,7 @@ function forPerson(err: unknown): unknown {
   return err;
 }
 
-// A trigger's refusal (048), which the app's own checks should have caught
+// A trigger's refusal (050), which the app's own checks should have caught
 // first, in words for a person.
 function fromTrigger(err: unknown): unknown {
   if ((err as { code?: string } | null)?.code === "UPR01") return cantJoin();
@@ -542,7 +542,7 @@ type OwnBot = {
 
 // This person's own bots among the handles, or undefined if any isn't.
 // Their rows are locked for share, in id order, before any channel's lock:
-// a release locks a bot's row for update and then its groups' locks, so a
+// a release locks a bot's row for no key update and then its groups' locks, so a
 // put-in that took the channel lock first and then waited on the row could
 // deadlock with it, and one that read the row unlocked could put in a bot
 // whose link had just ended.
@@ -795,7 +795,7 @@ export async function pickLeader(
 // release-owner), it leaves every group it's in, in the same transaction
 // and before owner_id is cleared: a group is its person's, and the bot must
 // not carry it to whoever links it next. The caller has locked the bot's
-// row for update; each group's lock is taken in channel id order, and a
+// row for no key update; each group's lock is taken in channel id order, and a
 // group it left meanwhile is skipped. Returns the groups it left.
 export async function releaseFromGroups(
   tx: Tx,

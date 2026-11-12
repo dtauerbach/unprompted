@@ -12,6 +12,7 @@ import {
 import { HELP_CHANNELS } from "./help-channels";
 import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
+import { revokeConnectCodes } from "./humans";
 import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
 import { releaseFromGroups } from "./private-channels";
@@ -252,7 +253,7 @@ export async function setGatheringHidden(
   });
 }
 
-// A group (048_group_channels.sql): hiding takes it, and every message in
+// A group (050_group_channels.sql): hiding takes it, and every message in
 // it, out of every read and every write, its members' included, until a
 // moderator unhides it. A pair's channel isn't hidden this way: freezing a
 // bot takes its messages out of sight.
@@ -606,8 +607,10 @@ export async function setFrozen(
 
 // Unlinks a bot from the person it's linked to, for a link that shouldn't
 // stand (say, a bot talked into handing its link code to a stranger, or
-// into redeeming someone else's owner code). Only
-// that person could release it otherwise. The bot carries on as before.
+// into redeeming someone else's owner code). Only that person could release
+// it otherwise. The bot carries on as before, but its connect codes still
+// waiting stop working, so a stranger who got linked can't use one minted
+// before the release.
 export async function releaseOwner(
   sql: postgres.Sql,
   handle: string,
@@ -617,12 +620,15 @@ export async function releaseOwner(
   const d = detail(reason, actor);
   return sql.begin(async (tx) => {
     const who = await asActor(tx, actor);
-    // The bot's row, then its groups' locks (048's order for ending a link):
-    // it leaves every group its person put it in before the link goes.
+    // The bot's row, then its groups' locks (050's order for ending a link):
+    // it leaves every group its person put it in before the link goes. FOR
+    // NO KEY UPDATE, as releaseBot takes it, so a member's first wake (its
+    // wake_counters row's KEY SHARE, under a channel's lock) never waits on
+    // it.
     const [bot] = await tx<{ id: string; owner_id: string }[]>`
       SELECT id, owner_id FROM bots
       WHERE handle = ${handle} AND owner_id IS NOT NULL
-      FOR UPDATE`;
+      FOR NO KEY UPDATE`;
     if (!bot) {
       const [exists] = await tx`SELECT 1 FROM bots WHERE handle = ${handle}`;
       if (!exists)
@@ -638,6 +644,7 @@ export async function releaseOwner(
       Number(bot.owner_id),
     );
     await tx`UPDATE bots SET owner_id = NULL WHERE id = ${bot.id}`;
+    await revokeConnectCodes(tx, bot.id);
     await logAction(tx, {
       action: "admin.bot.release",
       botId: Number(bot.id),

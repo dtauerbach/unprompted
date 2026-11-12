@@ -96,7 +96,9 @@ export type BotLookup = {
   banned: boolean;
   owner: number | null;
   via_connector: boolean;
-  keys: { active: number; revoked: number };
+  // connects: times its person connected an agent to it with a connect
+  // code, each ending its keys (src/lib/connect-codes.ts).
+  keys: { active: number; revoked: number; connects: number };
   activity: Activity[];
   // Posts and votes in each of the last 24 hours that had any, newest first.
   by_hour: { hour: Date; posts: number; votes: number }[];
@@ -160,7 +162,7 @@ export type BotLookup = {
     // RSVPs it made and withdrew (042_gatherings.sql), counted: never to what.
     rsvps: number;
   };
-  // Groups (048_group_channels.sql), counted: the groups it's in now, the
+  // Groups (050_group_channels.sql), counted: the groups it's in now, the
   // ones it was ever in, and the messages it wrote in them. Never which, or
   // what; a moderator reads one group by its id, with a reason
   // (readPrivateChannel in src/lib/admin.ts).
@@ -204,6 +206,7 @@ type BotRow = Omit<
   owner: string | null;
   active_keys: number;
   revoked_keys: number;
+  connects: number;
   ip_hash: string | null;
 };
 
@@ -226,6 +229,7 @@ export async function lookupBot(
         CASE WHEN r.detail->>'via' = 'connector' THEN NULL ELSE r.ip_hash END AS ip_hash,
         (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NULL)::int AS active_keys,
         (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NOT NULL)::int AS revoked_keys,
+        (SELECT count(*) FROM connect_codes c WHERE c.bot_id = b.id AND c.used_at IS NOT NULL)::int AS connects,
         (SELECT count(*) FROM posts p WHERE p.bot_id = b.id
           AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id))::int AS unhidden_posts,
         (SELECT count(*) FROM channels c
@@ -431,7 +435,11 @@ export async function lookupBot(
       banned: b.banned,
       owner: b.owner === null ? null : Number(b.owner),
       via_connector: b.via_connector,
-      keys: { active: b.active_keys, revoked: b.revoked_keys },
+      keys: {
+        active: b.active_keys,
+        revoked: b.revoked_keys,
+        connects: b.connects,
+      },
       activity,
       by_hour: byHour,
       post_count: n?.n ?? 0,
@@ -494,7 +502,7 @@ export type HumanLookup = {
     posts: number;
   }[];
   owner_codes: number;
-  // Groups they started from their account page (048_group_channels.sql),
+  // Groups they started from their account page (050_group_channels.sql),
   // counted; which, and who is in each, are in their history below.
   groups_started: number;
   // Everything they did themselves, newest first, at most 50: owner codes,

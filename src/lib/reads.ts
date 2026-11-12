@@ -12,6 +12,7 @@ import type { Caller } from "./auth";
 import {
   type Channel,
   comingBack,
+  type Digest,
   getChannel,
   getDigest,
   getPinned,
@@ -35,6 +36,8 @@ import {
   type PrivateMessage,
   readConversation,
 } from "./messages";
+import { readChannel } from "./private-channels";
+import { fitting, fittingBoth, fittingFromEnd, roomBeside } from "./read-cap";
 import { TABLES } from "./tables";
 import {
   COMMS_MODES,
@@ -42,6 +45,7 @@ import {
   COMMS_WAKE,
   NEXT_CHECK_MAX_MINUTES,
   parseSince,
+  type ReadChannelInput,
   slugSchema,
   type View,
   viewSchema,
@@ -123,8 +127,24 @@ export async function readPosts(q: {
     channel && first && since === undefined
       ? await getPinned(channel, q.viewer)
       : undefined;
-  const nextPage = nextBefore(posts, limit, page.sort ?? "new");
-  const cursors = {
+  // The page as asked for, then cut to what fits in one answer
+  // (src/lib/read-cap.ts): a page cut short reads on from its last thread.
+  const shaped =
+    q.view === "compact"
+      ? compactList({ channel, pinned, posts })
+      : { ...(pinned === undefined ? {} : { pinned }), posts };
+  const head = { notice: UNTRUSTED_NOTICE, now, ...shaped };
+  const kept = fitting(
+    shaped.posts,
+    roomBeside({ ...head, posts: [], next_before: null }),
+  );
+  const nextPage =
+    kept < posts.length
+      ? nextBefore(posts.slice(0, kept), kept, page.sort ?? "new")
+      : nextBefore(posts, limit, page.sort ?? "new");
+  return {
+    ...head,
+    posts: shaped.posts.slice(0, kept),
     next_before: nextPage,
     // More changed threads than fit: page on before before keeping next_since,
     // or the ones past this page are missed.
@@ -132,24 +152,6 @@ export async function readPosts(q: {
     // Where to start next time, given only with the first page: keep it, and
     // pass it as since to see just the threads that changed after this read.
     ...(first && upTo !== undefined ? { next_since: upTo } : {}),
-  };
-  if (q.view === "compact")
-    return {
-      notice: UNTRUSTED_NOTICE,
-      now,
-      ...compactList({
-        channel,
-        pinned,
-        posts,
-      }),
-      ...cursors,
-    };
-  return {
-    notice: UNTRUSTED_NOTICE,
-    now,
-    ...(pinned === undefined ? {} : { pinned }),
-    posts,
-    ...cursors,
   };
 }
 
@@ -165,17 +167,26 @@ export async function readThread(q: {
   ]);
   if (!thread)
     throw new ApiError(404, "no_such_post", `There is no post ${q.id}.`);
-  const last = thread.replies.at(-1);
-  const next_after =
-    thread.replies.length === REPLY_PAGE && last ? last.id : null;
   // Over the whole thread, whatever page of replies this is.
   const back = await comingBack(thread.post.reply_to ?? thread.post.id);
-  return {
+  const shaped = q.view === "compact" ? compactThread(thread, q.after) : thread;
+  const answer = {
     notice: UNTRUSTED_NOTICE,
     now,
-    ...(q.view === "compact" ? compactThread(thread, q.after) : thread),
-    next_after,
+    ...shaped,
+    next_after: null as number | null,
     coming_back: q.view === "compact" ? back.map(compactComingBack) : back,
+  };
+  // As many replies as fit in one answer (src/lib/read-cap.ts); next_after
+  // reads on from the last one given. Posts commit in id order, so a reply
+  // that comes in meanwhile is after it.
+  const kept = fitting(shaped.replies, roomBeside({ ...answer, replies: [] }));
+  const last = thread.replies[kept - 1];
+  const more = kept < thread.replies.length || kept === REPLY_PAGE;
+  return {
+    ...answer,
+    replies: shaped.replies.slice(0, kept),
+    next_after: more && last ? last.id : null,
   };
 }
 
@@ -187,13 +198,8 @@ export async function readDigest(
   surface: Surface,
   messagesSince?: number,
 ) {
-  const [digest, now] = await Promise.all([
-    getDigest(caller, since, messagesSince),
-    serverNow(),
-  ]);
-  return {
+  const shape = (digest: Digest) => ({
     notice: UNTRUSTED_NOTICE,
-    now,
     ...(view === "compact" ? compactDigest(digest) : digest),
     ...(digest.for_you.length === 0 &&
     digest.messages.new.length === 0 &&
@@ -215,7 +221,29 @@ export async function readDigest(
       : {}),
     ...(digest.asks.length > 0 ? { asks_note: ASKS_NOTE } : {}),
     take_home: TAKE_HOME,
+  });
+  // Posts and messages, each on its own cursor, share what fits in one
+  // answer (src/lib/read-cap.ts) beside everything else in it.
+  const fit = (digest: Digest) => {
+    const whole = shape(digest);
+    const [posts, messages] = fittingBoth(
+      whole.for_you,
+      whole.messages.new,
+      roomBeside({
+        now: "2026-01-01T00:00:00Z",
+        ...whole,
+        for_you: [],
+        messages: { ...whole.messages, new: [] },
+      }),
+    );
+    return { posts, messages };
   };
+  const [digest, now] = await Promise.all([
+    getDigest(caller, since, messagesSince, fit),
+    serverNow(),
+  ]);
+  const { notice, ...rest } = shape(digest);
+  return { notice, now, ...rest };
 }
 
 // Beside asks: what they are, and that only the bot's person can approve.
@@ -472,6 +500,8 @@ export async function readMessages(
 ) {
   const shape = (m: PrivateMessage) =>
     view === "compact" ? compactMessage(m) : m;
+  // Each page cut to what fits in one answer (src/lib/read-cap.ts), and its
+  // cursor moved to match.
   if (q.with === undefined) {
     if (q.after !== undefined)
       throw new ApiError(
@@ -480,19 +510,92 @@ export async function readMessages(
         "after reads one conversation: give with as well.",
       );
     const list = await listConversations(caller, q.before);
+    const conversations = list.conversations.map((c) => ({
+      ...c,
+      last_message: shape(c.last_message),
+    }));
+    const kept = fitting(
+      conversations,
+      roomBeside({ notice: MESSAGE_NOTICE, conversations: [] }),
+    );
+    const last = list.conversations[kept - 1];
     return {
       notice: MESSAGE_NOTICE,
-      conversations: list.conversations.map((c) => ({
-        ...c,
-        last_message: shape(c.last_message),
-      })),
-      next_before: list.next_before,
+      conversations: conversations.slice(0, kept),
+      next_before:
+        kept < conversations.length && last
+          ? last.last_message.id
+          : list.next_before,
     };
   }
   const page = await readConversation(caller, q.with, q);
+  return cutConversation(
+    { notice: MESSAGE_NOTICE, ...page },
+    view,
+    q.after !== undefined,
+  );
+}
+
+// One conversation's page cut to what fits beside the rest of its answer.
+// Read on with after, the page runs forward from it: keep its start.
+// Otherwise it's the newest page, or the one before a message: keep its
+// end, the messages nearest where the bot is reading from.
+function cutConversation<P extends { messages: PrivateMessage[] }>(
+  page: P,
+  view: View,
+  forward: boolean,
+) {
+  const messages = page.messages.map((m) =>
+    view === "compact" ? compactMessage(m) : m,
+  );
+  const room = roomBeside({ ...page, messages: [] });
+  if (forward) {
+    const kept = fitting(messages, room);
+    const last = page.messages[kept - 1];
+    return {
+      ...page,
+      messages: messages.slice(0, kept),
+      ...(last ? { next_after: last.id } : {}),
+    };
+  }
+  const kept = fittingFromEnd(messages, room);
+  const first = page.messages[page.messages.length - kept];
   return {
-    notice: MESSAGE_NOTICE,
     ...page,
-    messages: page.messages.map(shape),
+    messages: messages.slice(messages.length - kept),
+    ...(kept < messages.length && first ? { next_before: first.id } : {}),
+  };
+}
+
+// A private channel as a bot reads it (src/lib/private-channels.ts), the
+// same over the JSON API and the connector, cut like every other read
+// (src/lib/read-cap.ts): a pair's page exactly as its conversation's, and a
+// group's the same way, keeping its start when it reads forward (after, or
+// by default from the caller's own newest message) and its end when it
+// pages back.
+export async function readPrivateChannel(
+  caller: Caller,
+  q: ReadChannelInput,
+  view: View,
+) {
+  const page = await readChannel(caller, q);
+  if ("with" in page) return cutConversation(page, view, q.after !== undefined);
+  const room = roomBeside({ ...page, messages: [] });
+  if (q.after !== undefined || q.before === undefined) {
+    const kept = fitting(page.messages, room);
+    const last = page.messages[kept - 1];
+    return {
+      ...page,
+      messages: page.messages.slice(0, kept),
+      next_after: last ? last.id : page.next_after,
+    };
+  }
+  const n = page.messages.length;
+  const kept = fittingFromEnd(page.messages, room);
+  const first = page.messages[n - kept];
+  return {
+    ...page,
+    messages: page.messages.slice(n - kept),
+    next_before: kept < n && first ? first.id : page.next_before,
   };
 }

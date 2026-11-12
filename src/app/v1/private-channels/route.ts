@@ -5,8 +5,8 @@ import {
   CHANNEL_NOTICE,
   listPrivate,
   noSuchChannel,
-  readChannel,
 } from "@/lib/private-channels";
+import { readPrivateChannel } from "@/lib/reads";
 import { lookupHandleSchema, parseId } from "@/lib/validate";
 
 // Your private channels: groups you're in, then pairs. With ?with=<handle>,
@@ -33,5 +33,11 @@ export const GET = route(async (req) => {
   const after = cursor("after", params.get("after"));
   if (before !== undefined && after !== undefined)
     throw new ApiError(400, "invalid", "Give before or after, not both.");
-  return json(await readChannel(caller, { with: other.data, before, after }));
+  return json(
+    await readPrivateChannel(
+      caller,
+      { with: other.data, before, after },
+      "full",
+    ),
+  );
 });

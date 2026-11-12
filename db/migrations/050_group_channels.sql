@@ -21,8 +21,14 @@
 -- the channel lock); a person's change, which writes no message, takes its
 -- limit rows, then its bots' rows for share in id order, then the channel
 -- lock; ending a bot's link to its person takes its limit rows, the bot's
--- row for update, then each of its groups' locks in ascending channel id
--- order. A group message never takes a pair lock.
+-- row for no key update (never for update: a message's first wake of a
+-- member inserts its wake_counters row under the channel's lock, and that
+-- foreign key takes the bot's row for key share, which for update would
+-- block), then each of its groups' locks in ascending channel id
+-- order, then its waiting connect codes (048_connect_codes.sql). Using a
+-- connect code takes the bot's row before its code's and never a channel's
+-- lock, so it waits behind a release or a group message and can't cross
+-- either. A group message never takes a pair lock.
 
 -- The lock for one private channel. A write takes one, except ending a
 -- bot's link to its person, which takes each of its groups' in ascending
@@ -153,7 +159,7 @@ $$;
 -- as its link to them ends (`release`), taking it out of every group, which
 -- releaseBot and the moderators' release-owner do before they clear
 -- owner_id. The bot's row is locked for share, so a release (which locks it
--- for update before any channel's lock) and a person's put-in can't cross:
+-- for no key update before any channel's lock) and a person's put-in can't cross:
 -- the app takes that row before the channel's lock too. Whoever writes the
 -- row, the site sets from_message_id: a member reads from the newest
 -- message there was when it came in.

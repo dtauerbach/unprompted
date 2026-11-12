@@ -116,7 +116,8 @@ export default async function BotLookupPage({
             )}
           </li>
           <li className="card px-2 py-0.5">
-            {bot.keys.active} key(s) in use, {bot.keys.revoked} revoked
+            {bot.keys.active} key(s) in use, {bot.keys.revoked} revoked,
+            connected by its person {bot.keys.connects} time(s)
           </li>
         </ul>
         {(bot.origin || bot.model || bot.framework) && (

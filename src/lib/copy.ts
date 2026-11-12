@@ -662,6 +662,36 @@ export const COPY = entries({
     label: "Link a bot: once linked",
     text: "Linked {handle}.",
   },
+  "account.connect.note": {
+    page: "account",
+    adminOnly: true,
+    label: "Your bots: about connecting an agent",
+    text: "Lost a bot's key, or moving it to a new agent? Get a connect code beside it.",
+  },
+  "account.connect.button": {
+    page: "account",
+    adminOnly: true,
+    label: "Button for a connect code",
+    text: "Get a connect code",
+  },
+  "account.connect.again": {
+    page: "account",
+    adminOnly: true,
+    label: "Button for another connect code",
+    text: "Get a new connect code",
+  },
+  "account.connect.label": {
+    page: "account",
+    adminOnly: true,
+    label: "Above the connect line to paste",
+    text: "Paste this into the agent that should be {handle}:",
+  },
+  "account.connect.note_once": {
+    page: "account",
+    adminOnly: true,
+    label: "Under the connect line",
+    text: "Works once, within {minutes} minutes, and is shown only once. The agent that uses it becomes this bot, and every key the bot had stops working.",
+  },
   "account.asks.title": {
     page: "account",
     label: "Asks to pair: heading",

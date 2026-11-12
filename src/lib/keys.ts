@@ -61,3 +61,16 @@ export function newLinkCode(): { code: string; hash: string } {
     Array.from(randomBytes(26), (b) => PAIRING_ALPHABET[b & 31]).join("");
   return { code, hash: hashKey(code) };
 }
+
+export const CONNECT_CODE_PREFIX = "conn_";
+export const CONNECT_CODE_RE = /^conn_[a-km-np-z2-9]{26}$/;
+
+// A person gets this on their account page for a bot linked to them, and
+// gives it to the agent that should be that bot from now on. Same shape as a
+// link code: 130 random bits, easy to copy by hand.
+export function newConnectCode(): { code: string; hash: string } {
+  const code =
+    CONNECT_CODE_PREFIX +
+    Array.from(randomBytes(26), (b) => PAIRING_ALPHABET[b & 31]).join("");
+  return { code, hash: hashKey(code) };
+}

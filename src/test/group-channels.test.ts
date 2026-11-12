@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { GET as botRoute } from "@/app/v1/bots/[handle]/route";
 import { GET as channelsRoute } from "@/app/v1/channels/route";
+import { POST as connectRoute } from "@/app/v1/connect/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as commsRoute } from "@/app/v1/me/comms/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
@@ -24,6 +25,7 @@ import {
   setPrivateChannelHidden,
   setSilenced,
 } from "@/lib/admin";
+import { issueConnectCode } from "@/lib/connect-codes";
 import { db } from "@/lib/db";
 import { releaseBot } from "@/lib/humans";
 import { lookupBot, lookupHuman } from "@/lib/lookup";
@@ -36,10 +38,11 @@ import {
   setOwnBots,
   startChannel,
 } from "@/lib/private-channels";
+import { READ_MAX_BYTES } from "@/lib/read-cap";
 import { readMessages } from "@/lib/reads";
-import { call, freshIp, register, resetDb } from "./helpers";
+import { ageLink, call, freshIp, register, resetDb } from "./helpers";
 
-// Groups (048_group_channels.sql): private channels a person starts from
+// Groups (050_group_channels.sql): private channels a person starts from
 // the account page with their own bots. Only members read them, from when
 // they came in; a message wakes the other members; nothing about who put a
 // bot there reaches another bot.
@@ -1307,7 +1310,7 @@ describe("a release racing the bot's own group message", () => {
 });
 
 describe("a group message waiting on its sender's row", () => {
-  // A release holds the bot's row for update while it takes its groups'
+  // A release holds the bot's row for no key update while it takes its groups'
   // locks, so a group message must take that row before the channel's
   // lock, never under it. Held here, as a release would hold it, the
   // waiting message must leave the channel's lock free.
@@ -1317,7 +1320,7 @@ describe("a group message waiting on its sender's row", () => {
     const held = await sql.reserve();
     try {
       await held`BEGIN`;
-      await held`SELECT 1 FROM bots WHERE handle = ${a.handle} FOR UPDATE`;
+      await held`SELECT 1 FROM bots WHERE handle = ${a.handle} FOR NO KEY UPDATE`;
       const sent = send(a, g, "waits on its row");
       let waiting = false;
       for (let i = 0; i < 100 && !waiting; i++) {
@@ -1344,6 +1347,51 @@ describe("a group message waiting on its sender's row", () => {
       held.release();
     }
   });
+});
+
+describe("a release waiting on a group's lock", () => {
+  // A release holds the bot's row while it waits for each of its groups'
+  // locks. Another member's message holds that lock and, waking the bot for
+  // the first time, inserts its wake_counters row, whose foreign key takes
+  // the bot's row for key share. A release that held the row for update
+  // would block that, and each would wait on the other.
+  for (const how of ["person", "moderator"] as const)
+    it(`lets a first wake take the bot's row for key share (${how === "person" ? "its person releases it" : "release-owner"})`, async () => {
+      const { g } = await three();
+      const sql = db();
+      const held = await sql.reserve();
+      try {
+        await held`BEGIN`;
+        await held`SELECT pg_advisory_xact_lock(hashtextextended(${`unprompted.channel:${num(g)}`}, 0))`;
+        const released =
+          how === "person"
+            ? releaseBot(sql, "google-p", "bob", null)
+            : releaseOwner(sql, "bob", "linked by mistake");
+        let waiting = false;
+        for (let i = 0; i < 100 && !waiting; i++) {
+          const [w] = await sql<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+          waiting = (w?.n ?? 0) > 0;
+          if (!waiting) await new Promise((r) => setTimeout(r, 50));
+        }
+        expect(waiting).toBe(true);
+        // What a first wake's foreign key check takes, under the channel's
+        // lock; NOWAIT, so a release holding the row too strongly fails here
+        // rather than hanging the test.
+        const [k] = await held<{ ok: number }[]>`
+          SELECT 1 AS ok FROM bots WHERE handle = 'bob' FOR KEY SHARE NOWAIT`;
+        expect(k?.ok).toBe(1);
+        await held`COMMIT`;
+        await released;
+        const [b] = await sql<{ owner_id: string | null }[]>`
+          SELECT owner_id FROM bots WHERE handle = 'bob'`;
+        expect(b?.owner_id).toBeNull();
+      } finally {
+        await held`ROLLBACK`.catch(() => {});
+        held.release();
+      }
+    });
 });
 
 describe("the database keeps a bot's groups with its person", () => {
@@ -1396,5 +1444,164 @@ describe("read_channel with a handle and no channel", () => {
         expect(now.data.error, w).toMatchObject(was.error);
       } else expect(now.data, w).toEqual(was);
     }
+  });
+});
+
+// Every read stays within READ_MAX_BYTES (src/lib/read-cap.ts), a private
+// channel's too: its cursors read on, each message once, in order.
+describe("a private channel past the read cap", () => {
+  // The most a message can weigh: 4,000 characters of three bytes each.
+  const HEAVY = "€".repeat(4000);
+  const bytes = (body: unknown) => Buffer.byteLength(JSON.stringify(body));
+  async function keyOf(handle: string): Promise<string> {
+    const [r] = await db()<{ id: string }[]>`
+      SELECT k.id FROM api_keys k JOIN bots b ON b.id = k.bot_id
+      WHERE b.handle = ${handle} AND k.revoked_at IS NULL`;
+    return String(r?.id);
+  }
+  // Straight into the table, past the hourly limits.
+  async function heavy(from: string, channel: string): Promise<number> {
+    const [r] = await db()<{ id: string }[]>`
+      INSERT INTO messages (bot_id, channel_id, key_id, body)
+      VALUES (${await idOf(from)}, ${Number(num(channel))},
+              ${await keyOf(from)}, ${HEAVY})
+      RETURNING id`;
+    return Number(r?.id);
+  }
+  const ids = (body: { messages: { id: number }[] }) =>
+    body.messages.map((m) => m.id);
+
+  it("pages a group forward and back under the cap, each message once", async () => {
+    const { a, b, c, g } = await three();
+    const made: number[] = [];
+    for (let i = 0; i < 14; i++)
+      made.push(await heavy(i % 2 ? "alice" : "bob", g));
+    // cat has written nothing, so its default read starts at the beginning.
+    const first = await read(c, g);
+    expect(first.status).toBe(200);
+    expect(bytes(first.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+    expect(first.body.messages.length).toBeLessThan(made.length);
+    const forward = ids(first.body);
+    let after = first.body.next_after;
+    for (let pages = 0; pages < 20; pages++) {
+      const res = await read(c, g, `?after=${after}`);
+      expect(bytes(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      if (res.body.messages.length === 0) break;
+      forward.push(...ids(res.body));
+      after = res.body.next_after;
+      if (pages === 0) made.push(await heavy("bob", g));
+    }
+    expect(forward).toEqual(made);
+    // Back from past the newest.
+    const back: number[][] = [];
+    let before: number | null = (made.at(-1) as number) + 1;
+    while (before !== null) {
+      const res = await read(b, g, `?before=${before}`);
+      expect(bytes(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      back.unshift(ids(res.body));
+      before = res.body.next_before;
+    }
+    expect(back.length).toBeGreaterThan(3);
+    expect(back.flat()).toEqual(made);
+    // The connector's read_channel cuts the same page the same way.
+    const viaTool = await tool(c.key, "read_channel", { channel: g });
+    expect(Buffer.byteLength(JSON.stringify(viaTool.data))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+    expect(ids(viaTool.data)).toEqual(
+      forward.slice(0, viaTool.data.messages.length),
+    );
+    expect(viaTool.data.next_after).toBe(first.body.next_after);
+    // alice's own default read starts after her own newest.
+    const own = await read(a, g);
+    expect(ids(own.body)).toEqual(
+      made.filter((id) => id > (made[13] as number)),
+    );
+  });
+
+  it("pages a pair as read_messages pages it", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    for (const k of [a.key, b.key])
+      await call(inboxRoute, { key: k, body: { open: true } });
+    const insertPair = async (from: string, to: string) => {
+      const [r] = await db()<{ id: string }[]>`
+        INSERT INTO messages (bot_id, to_bot_id, key_id, body)
+        VALUES (${await idOf(from)}, ${await idOf(to)}, ${await keyOf(from)}, ${HEAVY})
+        RETURNING id`;
+      return Number(r?.id);
+    };
+    const made = [
+      await insertPair("bob", "alice"),
+      await insertPair("alice", "bob"),
+    ];
+    for (let i = 0; i < 12; i++)
+      made.push(
+        await insertPair(i % 2 ? "alice" : "bob", i % 2 ? "bob" : "alice"),
+      );
+    const pair = (q: string) =>
+      call(privateRoute, { key: a.key, path: `/v1/private-channels${q}` });
+    const old = (q: string) =>
+      call(messagesRoute, { key: a.key, path: `/v1/messages${q}` });
+    const back: number[][] = [];
+    let q = "?with=bob";
+    for (;;) {
+      const now = await pair(q);
+      const was = await old(q);
+      expect(bytes(now.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      expect(ids(now.body)).toEqual(ids(was.body));
+      expect(now.body.next_before).toBe(was.body.next_before);
+      back.unshift(ids(now.body));
+      if (now.body.next_before === null) break;
+      q = `?with=bob&before=${now.body.next_before}`;
+    }
+    expect(back.length).toBeGreaterThan(3);
+    expect(back.flat()).toEqual(made);
+    const viaTool = await tool(a.key, "read_channel", {
+      with: "bob",
+      after: made[0],
+    });
+    expect(Buffer.byteLength(JSON.stringify(viaTool.data))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+    const wasTool = await old(`?view=compact&with=bob&after=${made[0]}`);
+    expect(ids(viaTool.data)).toEqual(ids(wasTool.body));
+    expect(viaTool.data.next_after).toBe(wasTool.body.next_after);
+  });
+});
+
+// A connect code (src/lib/connect-codes.ts) gives a bot a new key and keeps
+// everything else, its groups included; it never touches owner_id, so the
+// trigger that keeps a bot's groups with its person never fires.
+describe("a group member connected to a new agent", () => {
+  it("stays in its groups and reads them with its new key, and the old key reads nothing", async () => {
+    const { a, b, g } = await three();
+    const humanId = await person("google-p");
+    await send(a, g, "before the new agent");
+    await ageLink("bob");
+    const { code } = await issueConnectCode(db(), "google-p", "bob", null);
+    const res = await call(connectRoute, {
+      body: { handle: "bob", code },
+      ip: freshIp(),
+      path: "/v1/connect",
+    });
+    expect(res.status).toBe(200);
+    const fresh = { handle: "bob", key: res.body.api_key as string };
+    expect((await read(b, g)).status).toBe(401);
+    const page = await read(fresh, g);
+    expect(page.status).toBe(200);
+    expect(page.body.you).toEqual({ via: "your_person", lead: true });
+    expect(
+      page.body.messages.map(
+        (m: { untrusted_body: string }) => m.untrusted_body,
+      ),
+    ).toEqual(["before the new agent"]);
+    expect((await send(fresh, g, "same bot, new agent")).status).toBe(201);
+    const listed = await listPersonChannels(db(), humanId);
+    expect(listed[0]?.members.map((m) => m.handle).sort()).toEqual([
+      "alice",
+      "bob",
+      "cat",
+    ]);
   });
 });

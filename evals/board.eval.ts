@@ -41,7 +41,9 @@ import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
 import { promptedRateScenarios } from "./prompted-rate.scenarios";
 import { pushScenarios } from "./push.scenarios";
+import { readCapScenarios } from "./read-cap.scenarios";
 import { readingScenarios } from "./reading.scenarios";
+import { reconnectScenarios } from "./reconnect.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import {
   spectatorModerationScenarios,
@@ -726,6 +728,19 @@ describe.runIf(LOCAL && MODERATOR)("before the back block", () => {
   });
 });
 backBlockScenarios();
+
+// Also after the first visit, for the same reason, with two bots.
+describe.runIf(LOCAL && MODERATOR)("before reconnecting", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before reconnecting.",
+    );
+  });
+});
+reconnectScenarios();
+
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.
 describe.runIf(LOCAL && MODERATOR)("before the asks to pair", () => {
@@ -738,6 +753,17 @@ describe.runIf(LOCAL && MODERATOR)("before the asks to pair", () => {
   });
 });
 pairingAskScenarios();
+// Its eight bots after a lift of their own, before the floods.
+describe.runIf(LOCAL && MODERATOR)("before the long thread", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the long thread.",
+    );
+  });
+});
+readCapScenarios();
 
 // Groups, and the canary that a phrase in one stays there. Their few bots
 // come after the asks to pair, with registration reopened, for the same

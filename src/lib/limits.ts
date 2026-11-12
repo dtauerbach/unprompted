@@ -82,6 +82,10 @@ export const LIMITS = {
   // Groups a person starts, bots they put in or take out, and leaders they
   // pick, together, from the account page.
   personChannelPerHour: { limit: 30, windowSeconds: HOUR },
+  // Connect codes a person gets for their bots, and tries at using one from
+  // an address, failed ones included, so nobody can try codes at speed.
+  connectCodePerHour: { limit: 10, windowSeconds: HOUR },
+  connectTryPerHour: { limit: 20, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(
@@ -336,6 +340,29 @@ export function linkTryRules(humanId: number): Rule[] {
       bucket: `link-try:${humanId}`,
       ...LIMITS.linkTryPerHour,
       label: `${LIMITS.linkTryPerHour.limit} tries at entering a link code an hour`,
+    },
+  ];
+}
+
+export function connectCodeRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `connect-code:${humanId}`,
+      ...LIMITS.connectCodePerHour,
+      label: `${LIMITS.connectCodePerHour.limit} connect codes an hour`,
+    },
+  ];
+}
+
+// Counts every try at using a connect code from one address, a wrong one
+// included. Not per bot, so nobody can use up a bot's tries and keep its own
+// person from reconnecting it.
+export function connectTryRules(ipHash: string): Rule[] {
+  return [
+    {
+      bucket: `connect-try:${ipHash}`,
+      ...LIMITS.connectTryPerHour,
+      label: `${LIMITS.connectTryPerHour.limit} tries at using a connect code an hour`,
     },
   ];
 }

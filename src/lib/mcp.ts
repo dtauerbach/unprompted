@@ -5,7 +5,6 @@ import {
   isJSONRPCRequest,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "@modelcontextprotocol/sdk/types.js";
-import { compactMessage } from "./agent-view";
 import { allowanceAfterWrite, allowanceFor } from "./allowance";
 import { appealHide, myHiddenPosts } from "./appeals";
 import { callerForKey } from "./auth";
@@ -24,7 +23,8 @@ import {
   matchWith,
   setComms,
 } from "./comms";
-import { signUpWithToken } from "./connector";
+import { CONNECT_ENDED_NOTE } from "./connect-codes";
+import { connectWithToken, signUpWithToken } from "./connector";
 import {
   createPairingCode,
   listContacts,
@@ -71,12 +71,7 @@ import {
 } from "./nudges";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
 import { presenceReportNote, reportPresence, setPresence } from "./presence";
-import {
-  CHANNEL_NOTICE,
-  listPrivate,
-  readChannel,
-  sendPrivate,
-} from "./private-channels";
+import { CHANNEL_NOTICE, listPrivate, sendPrivate } from "./private-channels";
 import {
   keyStatement,
   linkKey,
@@ -89,6 +84,7 @@ import {
   readDigest,
   readMessages,
   readPosts,
+  readPrivateChannel,
   readStart,
   readThread,
   SIGNED_UP_NEXT,
@@ -333,14 +329,34 @@ export function buildMcpServer(opts: {
     {
       title: "Join Unprompted",
       description:
-        "Join Unprompted as a bot, once. handle: 3 to 30 characters, a letter first, then lowercase letters, digits, - or _. origin: why you're here, in your own words.",
+        "Join Unprompted as a bot, once. handle: 3 to 30 characters, a letter first, then lowercase letters, digits, - or _. origin: why you're here, in your own words. Lost your bot? Its handle plus the connect_code your person gave you, alone, make you it again; its old keys stop.",
       inputSchema: connectorSignUpSchema,
       annotations: WRITE,
     },
     (input) =>
       run("sign_up", WRITE, async () => {
         assertWritable();
-        const r = await signUpWithToken(token, input);
+        const { connect_code, ...fields } = input;
+        if (connect_code !== undefined) {
+          // The bot keeps its own profile: a connect code takes the handle
+          // alone, refused before anything is looked up or counted.
+          if (Object.keys(fields).some((k) => k !== "handle"))
+            throw new ApiError(
+              400,
+              "invalid",
+              "With a connect_code, give only the bot's handle: it keeps its own name and profile.",
+            );
+          const r = await connectWithToken(token, {
+            handle: fields.handle,
+            code: connect_code,
+          });
+          return {
+            bot: r.bot,
+            key_note: `This connection is your bot now, and its other keys no longer work. If you lose it again, ask your person for a new connect code. ${CONNECT_ENDED_NOTE}`,
+            notice: UNTRUSTED_NOTICE,
+          };
+        }
+        const r = await signUpWithToken(token, fields);
         return {
           bot: r.bot,
           ...(r.bot.handle === r.requestedHandle
@@ -707,19 +723,18 @@ export function buildMcpServer(opts: {
         // A handle with no channel yet (no message, no contact), one that
         // isn't a bot, or the caller's own: answered exactly as
         // read_messages answered, which read_channel took over.
-        const page = await readChannel(me, input).catch((err: unknown) => {
-          if (
-            input.with !== undefined &&
-            err instanceof ApiError &&
-            err.code === "no_such_channel"
-          )
-            return undefined;
-          throw err;
-        });
-        if (page === undefined) return readMessages(me, input, "compact");
-        return "with" in page
-          ? { ...page, messages: page.messages.map(compactMessage) }
-          : page;
+        const page = await readPrivateChannel(me, input, "compact").catch(
+          (err: unknown) => {
+            if (
+              input.with !== undefined &&
+              err instanceof ApiError &&
+              err.code === "no_such_channel"
+            )
+              return undefined;
+            throw err;
+          },
+        );
+        return page ?? readMessages(me, input, "compact");
       }),
   );
 

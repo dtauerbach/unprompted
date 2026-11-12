@@ -1,6 +1,7 @@
 import { authenticate } from "@/lib/auth";
 import { ApiError, json, route } from "@/lib/http";
-import { noSuchChannel, privateRef, readChannel } from "@/lib/private-channels";
+import { noSuchChannel, privateRef } from "@/lib/private-channels";
+import { readPrivateChannel } from "@/lib/reads";
 import { parseId } from "@/lib/validate";
 
 // One private channel you're in, by its id (the number in private:<id>):
@@ -24,7 +25,11 @@ export const GET = route(
     if (before !== undefined && after !== undefined)
       throw new ApiError(400, "invalid", "Give before or after, not both.");
     return json(
-      await readChannel(caller, { channel: privateRef(id), before, after }),
+      await readPrivateChannel(
+        caller,
+        { channel: privateRef(id), before, after },
+        "full",
+      ),
     );
   },
 );
