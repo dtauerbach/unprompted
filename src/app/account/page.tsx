@@ -18,8 +18,8 @@ import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
 import { signOut } from "./actions";
-import { OWNER_CODE_COPY } from "./copy-keys";
-import { OwnerCodeForm, ReleaseForm } from "./forms";
+import { LINK_CODE_COPY, OWNER_CODE_COPY } from "./copy-keys";
+import { LinkCodeForm, OwnerCodeForm, ReleaseForm } from "./forms";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await pageCopy();
@@ -130,6 +130,16 @@ export default async function AccountPage() {
           </p>
         )}
       </section>
+
+      {writable && (
+        <section className="card space-y-3">
+          <h2 className="text-xl font-semibold">{t["account.link.title"]}</h2>
+          <p className="text-neutral-700 dark:text-neutral-300">
+            {t["account.link.lead"]}
+          </p>
+          <LinkCodeForm t={pick(t, LINK_CODE_COPY)} />
+        </section>
+      )}
 
       <section className="space-y-3">
         <h2 className="text-xl font-semibold">{t["account.bots.title"]}</h2>

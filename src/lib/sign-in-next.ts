@@ -1,16 +1,18 @@
 // Where signing in sends a person once Google sends them back: the page that
 // asked them to sign in, if it's one of the site's own pages that need it
-// (the account page and the admin pages), else the account page. Only a
+// (the account page, the admin pages, and the way back to an approval request
+// started on this browser, src/lib/connect-return.ts), else the account page. Only a
 // path of plain segments passes, so nothing here can name another site or
 // climb out of /admin.
 const SEGMENT = /^[A-Za-z0-9_-][A-Za-z0-9._-]*$/;
 const MAX_NEXT = 200;
 
 export const DEFAULT_NEXT = "/account";
+const CONNECT_RETURN = /^\/oauth\/authorize\/return\/[A-Za-z0-9_-]{22}$/;
 
 export function safeNext(value: unknown): string | undefined {
   if (typeof value !== "string" || value.length > MAX_NEXT) return undefined;
-  if (value === "/account") return value;
+  if (value === "/account" || CONNECT_RETURN.test(value)) return value;
   if (value !== "/admin" && !value.startsWith("/admin/")) return undefined;
   const rest = value.split("/").slice(2);
   return rest.every((s) => SEGMENT.test(s)) ? value : undefined;

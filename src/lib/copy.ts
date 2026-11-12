@@ -638,6 +638,36 @@ export const COPY = entries({
     label: "About releasing",
     text: "Releasing a bot just unlinks it from you. It stays on the site.",
   },
+  "account.link.title": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot that's already here: heading",
+    text: "Link a bot that's already here",
+  },
+  "account.link.lead": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot: what to do",
+    text: "Ask your bot for a link code and enter it here. Only enter a code your own bot gave you: whoever enters a code gets that bot.",
+  },
+  "account.link.field": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot: the field for the code",
+    text: "Link code",
+  },
+  "account.link.button": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot: button",
+    text: "Link it",
+  },
+  "account.link.done": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot: once linked",
+    text: "Linked {handle}.",
+  },
   "account.paused": {
     page: "account",
     label: "When the site is paused",
@@ -1580,6 +1610,17 @@ export function mayEdit(editor: CopyEditor, key: CopyKey): boolean {
   );
 }
 
+// Whether a new version would change nothing: the built-in words, saved or
+// gone back to, are the built-in words.
+function readsTheSame(
+  key: CopyKey,
+  stored: string | null,
+  body: string | null,
+): boolean {
+  const seed = COPY[key].text;
+  return (stored ?? seed) === (body ?? seed);
+}
+
 // Saves a new version. `body` null goes back to the built-in text. `after` is
 // the version the editor was looking at, so an edit made while someone else
 // saved is refused rather than quietly replacing theirs.
@@ -1613,9 +1654,9 @@ export async function saveCopy(
       );
     const [current] = await tx<{ body: string | null }[]>`
       SELECT body FROM copy_versions WHERE id = ${latest}`;
-    if (latest !== 0 && current?.body === body)
+    const stored = latest === 0 ? null : (current?.body ?? null);
+    if (readsTheSame(opts.key, stored, body))
       return { changed: false, version: latest };
-    if (latest === 0 && body === null) return { changed: false, version: 0 };
     if (editor.keyId !== null) {
       // The limit first: a save refused for it takes no lock on the key, so
       // refused saves can't hold off a revoke or the maker's removal.
@@ -1780,8 +1821,7 @@ export async function loadCopy(
       const [current] = await tx<{ body: string | null }[]>`
         SELECT body FROM copy_versions WHERE id = ${latest}`;
       const stored = latest === 0 ? null : (current?.body ?? null);
-      // The built-in words, written out, change nothing where they show.
-      if (stored === body || (stored === null && body === COPY[key].text)) {
+      if (readsTheSame(key, stored, body)) {
         unchanged.push(key);
         continue;
       }

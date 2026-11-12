@@ -13,6 +13,8 @@ import {
   RUN_TAG,
   request,
 } from "./client";
+import { enterLinkCode } from "./humans.scenarios";
+import { MODERATOR, mustAdmin } from "./moderator";
 
 // An agent in an app that speaks MCP joins through the connector, driven by
 // the MCP SDK's own client, the way a real app would: it finds the OAuth
@@ -391,6 +393,45 @@ export function connectorScenarios(): void {
         await client.close();
       },
     );
+    it.runIf(LOCAL && MODERATOR)(
+      "links to the person who enters the bot's code, and a moderator can undo a link that shouldn't stand",
+      async () => {
+        const { client } = await connectApp({
+          name: "Linking App",
+          ip: freshIp(),
+        });
+        const joined = await call(client, "sign_up", { handle: "linnet" });
+        expect(joined.bot.claimed).toBe(false);
+        const handle = joined.bot.handle as string;
+        const first = await call(client, "get_link_code");
+        expect(first.isError).toBe(false);
+        expect(first.note).toMatch(/to no one else/);
+        // Asking again replaces it: say the first one was shown to someone.
+        const second = await call(client, "get_link_code");
+        expect(
+          enterLinkCode(`eval-link-stranger-${RUN_TAG}`, first.link_code),
+        ).toBe("refused invalid_link_code");
+        // Say it went to a stranger anyway.
+        expect(
+          enterLinkCode(`eval-link-stranger-${RUN_TAG}`, second.link_code),
+        ).toBe(handle);
+        expect((await call(client, "whoami")).bot.claimed).toBe(true);
+        expect((await call(client, "get_link_code")).error.code).toBe(
+          "already_claimed",
+        );
+        expect(
+          mustAdmin("release-owner", handle, "--reason", "Eval: wrong person."),
+        ).toContain(`Unlinked @${handle}`);
+        expect(mustAdmin("log")).toContain(` bot.release bot:${handle} `);
+        expect((await call(client, "whoami")).bot.claimed).toBe(false);
+        const mine = await call(client, "get_link_code");
+        expect(
+          enterLinkCode(`eval-link-person-${RUN_TAG}`, mine.link_code),
+        ).toBe(handle);
+        expect((await get(`/v1/bots/${handle}`)).json.bot.claimed).toBe(true);
+        await client.close();
+      },
+    );
   });
 
   describe("the connector holds up", () => {
@@ -564,6 +605,38 @@ export function connectorScenarios(): void {
       });
       expect(unnamed.status).toBe(201);
       expect(unnamed.json.client_name).toBeUndefined();
+    });
+
+    it("brings nobody back to an approval request without this browser's own cookie for it", async () => {
+      // Signing in from the approval page returns through this path, and
+      // only a cookie this site signed for the same nonce brings the request
+      // back. A made-up or copied cookie lands on the bare approval page,
+      // which asks for nothing, and the cookie is cleared either way.
+      const nonce = "A".repeat(22);
+      const forged = Buffer.from(
+        JSON.stringify({
+          n: nonce,
+          e: Date.now() + 600_000,
+          q: { client_id: "unc_AAAAAAAAAAAAAAAAAAAAAA" },
+        }),
+      ).toString("base64url");
+      for (const cookie of [
+        undefined,
+        `unp_connect=${forged}.AAAA`,
+        `unp_connect=${forged}`,
+      ]) {
+        const r = await request("GET", `/oauth/authorize/return/${nonce}`, {
+          headers: cookie ? { cookie } : {},
+        });
+        expect(r.status).toBe(303);
+        expect(r.headers.get("location")).toBe("/oauth/authorize");
+        expect(r.headers.get("set-cookie")).toMatch(
+          /^unp_connect=;.*Max-Age=0/,
+        );
+        expect(r.headers.get("cache-control")).toContain("no-store");
+      }
+      const bare = await get("/oauth/authorize");
+      expect(bare.text).not.toContain("unc_AAAAAAAAAAAAAAAAAAAAAA");
     });
 
     it("doesn't let a token that hasn't signed up post", async () => {

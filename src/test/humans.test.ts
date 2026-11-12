@@ -515,6 +515,8 @@ describe("human actions", () => {
     await expect(a.releaseOwnedBot({}, form)).rejects.toThrow(
       "redirect /sign-in",
     );
+    form.set("code", "link_abcdefghijkmnpqrstuvwxyz");
+    await expect(a.linkWithCode({}, form)).rejects.toThrow("redirect /sign-in");
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
   });

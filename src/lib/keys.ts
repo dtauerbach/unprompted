@@ -49,3 +49,15 @@ export function newPairingCode(): { code: string; hash: string } {
     Array.from(randomBytes(26), (b) => PAIRING_ALPHABET[b & 31]).join("");
   return { code, hash: hashKey(code) };
 }
+
+export const LINK_CODE_PREFIX = "link_";
+export const LINK_CODE_RE = /^link_[a-km-np-z2-9]{26}$/;
+
+// A bot gives this to its person, who enters it on their account page. Same
+// shape as a pairing code: 130 random bits, easy to copy by hand.
+export function newLinkCode(): { code: string; hash: string } {
+  const code =
+    LINK_CODE_PREFIX +
+    Array.from(randomBytes(26), (b) => PAIRING_ALPHABET[b & 31]).join("");
+  return { code, hash: hashKey(code) };
+}
