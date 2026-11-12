@@ -37,6 +37,7 @@ vi.mock("@/app/admin/actions", () => {
 const { CopyForm, RestoreForm } = await import("@/app/admin/forms");
 const { UndoForm } = await import("@/app/admin/copy-key-forms");
 const {
+  COPY_FIRST,
   NOT_DONE,
   NOT_SAVED,
   NOT_SAVED_UNKEPT,
@@ -129,6 +130,59 @@ describe("the words page's box", () => {
     expect(b.box.value).toBe("Threads");
     expect(b.note()).toBe("Saved.");
     await type(b, "Threads!");
+    expect(b.note()).toBe(UNSAVED);
+  });
+
+  it("takes the words as the server tidied them, and doesn't bring the untidy ones back", async () => {
+    // The server trims a trailing space; its answer and the page's new
+    // version arrive together.
+    const b = await draw(PROPS);
+    answer = async () => {
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Threads", after: 21 }),
+      );
+      return { message: "Saved." };
+    };
+    await type(b, "Threads ");
+    await save(b);
+    expect(calls).toEqual(["Threads "]);
+    expect(b.box.value).toBe("Threads");
+    expect(b.note()).toBe("Saved.");
+    expect(sessionStorage.getItem(STORED)).toBeNull();
+    await act(async () => b.root.unmount());
+    const again = await draw({ ...PROPS, text: "Threads", after: 21 });
+    expect(again.box.value).toBe("Threads");
+    expect(again.note()).toBe("");
+  });
+
+  it("does the same when the new version comes after the answer", async () => {
+    const b = await draw(PROPS);
+    await type(b, "Threads ");
+    await save(b);
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Threads", after: 21 }),
+      ),
+    );
+    expect(b.box.value).toBe("Threads");
+    expect(b.note()).toBe("Saved.");
+    expect(sessionStorage.getItem(STORED)).toBeNull();
+  });
+
+  it("calls words typed while its own save was going unsaved, not overtaken", async () => {
+    let finish: (a: Answer) => void = () => {};
+    const b = await draw(PROPS);
+    answer = () => new Promise<Answer>((r) => (finish = r));
+    await type(b, "Threads");
+    await save(b);
+    await type(b, "Threads!");
+    await act(async () => {
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Threads", after: 21 }),
+      );
+      finish({ message: "Saved." });
+    });
+    expect(b.box.value).toBe("Threads!");
     expect(b.note()).toBe(UNSAVED);
   });
 
@@ -232,6 +286,59 @@ describe("the words page's box", () => {
     expect(sessionStorage.getItem(STORED)).toContain("Threads");
   });
 
+  it("stops saying newer words came in once the box is back to them", async () => {
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.note()).toBe(OVERTAKEN);
+    await type(b, "Board");
+    expect(b.note()).toBe("");
+    await type(b, "Board!");
+    expect(b.note()).toBe(UNSAVED);
+  });
+
+  it("swaps a refusal that says reload for the newer words, once they've come in", async () => {
+    answer = async () => ({
+      error:
+        "Someone saved a newer version while you were editing. Reload to see it.",
+    });
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await save(b);
+    expect(b.note()).toMatch(/Reload to see it/);
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Threads");
+    expect(b.note()).toBe(OVERTAKEN);
+  });
+
+  it("keeps refused words when newer words come in, even with nowhere to store them", async () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("full");
+      });
+    answer = async () => ({ error: "Keep {welcome_post} in the words." });
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await save(b);
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Threads");
+    expect(b.note()).toBe(OVERTAKEN);
+    setItem.mockRestore();
+  });
+
   it("takes newer words when the box holds nothing typed", async () => {
     const b = await draw(PROPS);
     await act(async () =>
@@ -290,6 +397,15 @@ describe("the words page's box", () => {
     await save(b);
     expect(b.note()).toBe(NOT_SAVED_UNKEPT);
     expect(b.box.value).toBe("Threads");
+    // A refusal that says reload says to copy the words first, too.
+    answer = async () => ({
+      error:
+        "Someone saved a newer version while you were editing. Reload to see it.",
+    });
+    await save(b);
+    expect(b.note()).toBe(
+      `Someone saved a newer version while you were editing. Reload to see it. ${COPY_FIRST}`,
+    );
     setItem.mockRestore();
   });
 

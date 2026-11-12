@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { MAX_BOT_TEXT } from "@/lib/bot-text-limit";
 import {
   type AdminFormState,
@@ -13,6 +13,7 @@ import {
   saveDescriptionAction,
 } from "./actions";
 import {
+  COPY_FIRST,
   currentError,
   draftKey,
   guardSave,
@@ -98,17 +99,21 @@ export function CopyForm({
   const [slow, setSlow] = useState(false);
   const [ready, setReady] = useState(false);
   const [kept, setKept] = useState(true);
-  // The words the last press of Save sent.
-  const sent = useRef<string | null>(null);
+  // The words the press of Save now going sent, until it finishes.
+  const [sent, setSent] = useState<string | null>(null);
   if (seen.after !== after || seen.text !== text) {
     // New words from the page: this box's own save, or someone else's. The
     // box takes them unless it holds other words the admin typed and hasn't
-    // saved, which it keeps, and says newer words came in meanwhile.
-    const typed =
-      draft !== seen.text && draft !== text && draft !== sent.current;
+    // saved, which it keeps. The server may tidy the words a save took (a
+    // trailing space), so the box takes the tidied ones in their place.
+    const ours = draft === sent || draft === state.saved;
+    const typed = draft !== seen.text && draft !== text && !ours;
     setSeen({ after, text });
-    if (typed) setNote("overtaken");
-    else {
+    if (typed) {
+      // Words typed while this box's own save was going aren't overtaken by
+      // it: they're just not saved yet.
+      setNote(sent === null ? "overtaken" : null);
+    } else {
       setDraft(text);
       setNote(null);
     }
@@ -116,16 +121,21 @@ export function CopyForm({
   const stored = draftKey(kind, copyKey);
   const unsaved = isUnsaved(draft, text, after, state);
   // Words typed and not yet saved come back after a reload or a trip to sign
-  // in. Read once the page is in the browser, where the storage is, before
-  // anything is written there.
+  // in. Read once, when the page is first in the browser, where the storage
+  // is, before anything is written there; never again, or words a save just
+  // took would come back from storage before they're cleared from it.
   useEffect(() => {
+    if (ready) return;
     const back = readDraft(sessionStore(), stored, after, text);
     if (back) {
       setDraft(back.body);
       setNote(back.overtaken ? "overtaken" : "restored");
     }
     setReady(true);
-  }, [stored, after, text]);
+  }, [ready, stored, after, text]);
+  useEffect(() => {
+    if (!pending) setSent(null);
+  }, [pending]);
   useEffect(() => {
     if (!ready) return;
     setKept(
@@ -148,13 +158,7 @@ export function CopyForm({
   // A whole document gets room and keeps its lines; a piece is one line.
   const document = kind === "bot_text";
   return (
-    <form
-      action={action}
-      onSubmit={() => {
-        sent.current = draft;
-      }}
-      className="space-y-2"
-    >
+    <form action={action} onSubmit={() => setSent(draft)} className="space-y-2">
       <Target kind={kind} id={copyKey} />
       <input type="hidden" name="after" value={after} />
       <textarea
@@ -162,7 +166,7 @@ export function CopyForm({
         value={draft}
         onChange={(e) => {
           setDraft(e.target.value);
-          if (note === "restored") setNote(null);
+          if (note === "restored" || e.target.value === text) setNote(null);
         }}
         rows={
           document
@@ -180,6 +184,7 @@ export function CopyForm({
         <SaveNote
           state={state}
           draft={draft}
+          after={after}
           pending={pending}
           slow={slow}
           unsaved={unsaved}
@@ -196,6 +201,7 @@ export function CopyForm({
 function SaveNote({
   state,
   draft,
+  after,
   pending,
   slow,
   unsaved,
@@ -204,6 +210,7 @@ function SaveNote({
 }: {
   state: SaveState;
   draft: string;
+  after: number;
   pending: boolean;
   slow: boolean;
   unsaved: boolean;
@@ -214,11 +221,13 @@ function SaveNote({
     if (!slow) return <Quiet>{SAVING}</Quiet>;
     return <Warn>{kept ? STILL_SAVING : STILL_SAVING_UNKEPT}</Warn>;
   }
-  const error = currentError(draft, state);
-  if (error)
-    return (
-      <Warn>{error === NOT_SAVED && !kept ? NOT_SAVED_UNKEPT : error}</Warn>
-    );
+  const error = currentError(draft, after, state);
+  if (error) {
+    if (kept || !unsaved) return <Warn>{error}</Warn>;
+    // A reload would lose the words: say so, whatever the refusal says.
+    if (error === NOT_SAVED) return <Warn>{NOT_SAVED_UNKEPT}</Warn>;
+    return <Warn>{`${error} ${COPY_FIRST}`}</Warn>;
+  }
   if (unsaved && note === "overtaken") return <Warn>{OVERTAKEN}</Warn>;
   if (unsaved && note === "restored") return <Warn>{RESTORED}</Warn>;
   if (unsaved) return <Warn>{UNSAVED}</Warn>;

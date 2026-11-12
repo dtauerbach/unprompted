@@ -9,14 +9,16 @@ import { unstable_rethrow } from "next/navigation";
 // when someone saved newer words meanwhile.
 
 // `saved` and `savedAfter`: the words a save took and the version they were
-// typed over. `failed`: the words a save didn't take, so its error shows only
-// while the box still holds them.
+// typed over. `failed` and `failedAfter`: the words a save didn't take and
+// the version they were typed over, so its error shows only while the box
+// still holds those words over that version.
 export type SaveState = {
   error?: string;
   message?: string;
   saved?: string;
   savedAfter?: number;
   failed?: string;
+  failedAfter?: number;
 };
 
 export const NOT_SAVED =
@@ -27,6 +29,8 @@ export const NOT_DONE =
 // The same, when this tab couldn't keep the words through a reload.
 export const NOT_SAVED_UNKEPT =
   "That didn't save. Copy your words before you reload the page, then save them again.";
+// Added to a refusal when this tab couldn't keep the words through a reload.
+export const COPY_FIRST = "Copy your words before you reload the page.";
 export const STILL_SAVING =
   "Still saving. If this doesn't finish, reload the page: your words will still be here.";
 export const STILL_SAVING_UNKEPT =
@@ -46,9 +50,11 @@ type Action = (
   form: FormData,
 ) => Promise<SaveState | undefined | null>;
 
+// A textarea's value in the page ends lines with \n; the form's copy of it
+// may end them with \r\n. Compared with the box, they must read the same.
 function text(form: FormData, name: string): string | undefined {
   const v = form.get(name);
-  return typeof v === "string" ? v : undefined;
+  return typeof v === "string" ? v.replace(/\r\n/g, "\n") : undefined;
 }
 
 // Wraps a server action so that every way it can end shows something: its
@@ -60,7 +66,8 @@ export function guardSave(
   return async (prev, form) => {
     const body = text(form, "body");
     const after = Number(text(form, "after"));
-    const failed = body === undefined ? {} : { failed: body };
+    const failed =
+      body === undefined ? {} : { failed: body, failedAfter: after };
     const broken = body === undefined ? NOT_DONE : NOT_SAVED;
     let r: SaveState | undefined | null;
     try {
@@ -90,13 +97,18 @@ export function isUnsaved(
   return !(state.saved === draft && state.savedAfter === after);
 }
 
-// The error beside Save, while the box still holds the words it refused.
+// The error beside Save, while the box still holds the words it refused over
+// the version it refused them over. Once newer words have come in, a refusal
+// that said "reload to see them" no longer holds.
 export function currentError(
   draft: string,
+  after: number,
   state: SaveState,
 ): string | undefined {
   if (!state.error) return undefined;
   if (state.failed !== undefined && state.failed !== draft) return undefined;
+  if (state.failedAfter !== undefined && state.failedAfter !== after)
+    return undefined;
   return state.error;
 }
 

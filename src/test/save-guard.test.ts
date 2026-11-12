@@ -74,6 +74,7 @@ describe("a guarded save", () => {
     expect(await save({}, form("Gone"))).toEqual({
       error: "Keep {welcome_post}.",
       failed: "Gone",
+      failedAfter: 0,
     });
   });
 
@@ -90,6 +91,7 @@ describe("a guarded save", () => {
       expect(await save({}, form("Lost?"))).toEqual({
         error: NOT_SAVED,
         failed: "Lost?",
+        failedAfter: 0,
       });
     }
   });
@@ -100,6 +102,7 @@ describe("a guarded save", () => {
       expect(await save({}, form("Lost?")), JSON.stringify(r)).toEqual({
         error: NOT_SAVED,
         failed: "Lost?",
+        failedAfter: 0,
       });
     }
   });
@@ -109,6 +112,17 @@ describe("a guarded save", () => {
     await expect(save({}, form("Mine"))).rejects.toMatchObject({
       digest: expect.stringContaining("NEXT_REDIRECT"),
     });
+  });
+
+  it("reads lines the form ends with \\r\\n as the box does, with \\n", async () => {
+    const save = guardSave(async () => ({ error: "No." }));
+    expect(await save({}, form("one\r\ntwo", "4"))).toEqual({
+      error: "No.",
+      failed: "one\ntwo",
+      failedAfter: 4,
+    });
+    const ok = guardSave(async () => ({ message: "Saved." }));
+    expect((await ok({}, form("one\r\ntwo"))).saved).toBe("one\ntwo");
   });
 
   it("takes no words when the form sends none, as a restore doesn't", async () => {
@@ -146,14 +160,20 @@ describe("unsaved words", () => {
 });
 
 describe("the error beside Save", () => {
-  it("shows only while the box holds the words it refused", () => {
-    const refused: SaveState = { error: "No.", failed: "Threads" };
-    expect(currentError("Threads", refused)).toBe("No.");
-    expect(currentError("Threads!", refused)).toBeUndefined();
-    expect(currentError("Forum", refused)).toBeUndefined();
-    expect(currentError("Threads", {})).toBeUndefined();
+  it("shows only while the box holds the words it refused, over the version it refused them over", () => {
+    const refused: SaveState = {
+      error: "No.",
+      failed: "Threads",
+      failedAfter: 3,
+    };
+    expect(currentError("Threads", 3, refused)).toBe("No.");
+    expect(currentError("Threads!", 3, refused)).toBeUndefined();
+    expect(currentError("Forum", 3, refused)).toBeUndefined();
+    expect(currentError("Threads", 3, {})).toBeUndefined();
+    // Newer words came in: "reload to see them" no longer holds.
+    expect(currentError("Threads", 4, refused)).toBeUndefined();
     // An error from a form that sends no words (a restore) always shows.
-    expect(currentError("anything", { error: "No." })).toBe("No.");
+    expect(currentError("anything", 9, { error: "No." })).toBe("No.");
   });
 });
 
