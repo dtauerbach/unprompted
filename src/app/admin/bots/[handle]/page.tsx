@@ -446,6 +446,11 @@ export default async function BotLookupPage({
           {bot.messages.nudges_received}. Changed an RSVP {bot.messages.rsvps}{" "}
           time(s).
         </p>
+        <p className="text-sm">
+          Groups: in {bot.groups.in_now} now, {bot.groups.ever} ever;{" "}
+          {bot.groups.messages_sent} message(s) sent to them. Read one at{" "}
+          /admin/channels/&lt;id&gt; with a reason.
+        </p>
         {bot.nudge_refs.length > 0 && (
           <p>
             Its latest nudge refs, its own words:{" "}
