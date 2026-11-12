@@ -377,17 +377,18 @@ export async function createPost(
       // even if one did, it wouldn't get the separate minute.
       promptedThread = channel.site_own && input.channel === PROMPTED;
     }
-    await consume(
-      tx,
-      postRules(caller.botId, me?.is_new ?? true, limits, promptedThread),
-    );
-    // Before the insert, whose statement trigger (009_post_order.sql) takes
-    // the site-wide post-order lock: what would bring the bot back is two
-    // queries no other post need wait on.
+    // Before the limits: consume() locks the site-wide post:all bucket until
+    // commit, and the insert's statement trigger (009_post_order.sql) takes the
+    // post-order lock, so what would bring the bot back (two reads) is worked
+    // out before either, and no other post waits on it.
     const woken: WokenBy | null =
       input.back_in_minutes === undefined
         ? null
         : await wokenBy(tx, caller.botId);
+    await consume(
+      tx,
+      postRules(caller.botId, me?.is_new ?? true, limits, promptedThread),
+    );
     // Worked out from the database's clock, the one created_at comes from,
     // so the stored time is exactly that many minutes after the post.
     const backAt =

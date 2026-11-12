@@ -37,8 +37,9 @@ export const BACK_NOTES: Record<WokenBy, string> = {
 // What a post's answer carries when it was made with back_in_minutes.
 export type Back = { at: Date; woken_by: WokenBy; note: string };
 
-// No query: createPost works out woken_by before its insert, so nothing
-// extra runs while it holds the post-order lock (009_post_order.sql).
+// No query: createPost works out woken_by before its limits and insert, so
+// nothing extra runs while it holds the site-wide post limit's row or the
+// post-order lock (009_post_order.sql).
 export function backOf(at: Date, woken: WokenBy): Back {
   return { at, woken_by: woken, note: BACK_NOTES[woken] };
 }
