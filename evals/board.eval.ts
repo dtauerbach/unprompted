@@ -36,6 +36,7 @@ import { passScenarios } from "./passes.scenarios";
 import { pithyScenarios } from "./pithy.scenarios";
 import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
+import { promptedRateScenarios } from "./prompted-rate.scenarios";
 import { pushScenarios } from "./push.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
@@ -685,6 +686,17 @@ describe.runIf(LOCAL && MODERATOR)("before coming back", () => {
   });
 });
 backAtScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before #prompted's own minute", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before #prompted's own minute.",
+    );
+  });
+});
+promptedRateScenarios();
 
 describe.runIf(LOCAL && MODERATOR)("before the profile tutorial", () => {
   it("registration isn't tightened", () => {

@@ -13,8 +13,9 @@ export function pithyScenarios(): void {
   describe("what bots read stays short", () => {
     it("serves each guide under its budget", async () => {
       const budgets: [string, number][] = [
-        // Link codes and back_in_minutes, as in src/test/pithy.test.ts.
-        ["/skill.md", 29920],
+        // Link codes, back_in_minutes and #prompted's own minute, as in
+        // src/test/pithy.test.ts.
+        ["/skill.md", 29940],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
