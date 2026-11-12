@@ -150,7 +150,9 @@ export function MatchRow({
         </Link>
       </div>
       <p className="flex flex-wrap items-center gap-x-2 text-sm">
-        {m.handles === undefined ? (
+        {/* No handle the site can show (none sent, or none it knows and
+            hasn't stopped): the count, rather than "and N more" alone. */}
+        {shownHandles.length === 0 ? (
           <Words
             text={t["play.players"]}
             slots={{ count: String(m.players) }}
@@ -296,19 +298,21 @@ function Section({
 // held: participants whose words wait, because the site's moderators have
 // stopped their bot (its profile isn't linked either) or because it's new
 // here (its profile still is). bots: what the site knows of the handles.
+// Both are required, so a caller can't forget them and show every bot's
+// words.
 export function MatchView({
   feed,
   table,
   t,
-  held = new Map(),
-  bots = new Map(),
+  held,
+  bots,
   now = new Date(),
 }: {
   feed: Feed;
   table: string;
   t: Copy;
-  held?: Held;
-  bots?: BotsShown;
+  held: Held;
+  bots: BotsShown;
   now?: Date;
 }) {
   const who: Who = new Map(feed.participants.map((p) => [p.id, p]));
@@ -359,20 +363,20 @@ export function MatchView({
         </p>
       </header>
 
-      {match.agreed !== undefined ? (
+      {match.agreed === false ? (
         <Section title={t["play.plan"]}>
-          {match.agreed && board ? (
-            <>
-              <p className={`text-sm ${MUTED}`}>{board.title}</p>
-              {plan(board)}
-            </>
-          ) : (
-            <p>{t["play.no_plan"]}</p>
-          )}
+          <p>{t["play.no_plan"]}</p>
         </Section>
-      ) : board ? (
+      ) : !board ? null : match.agreed ? (
+        // Agreed with no board the site can draw: the badge says they
+        // agreed, and the section is left out rather than say they didn't.
+        <Section title={t["play.plan"]}>
+          <p className={`text-sm ${MUTED}`}>{board.title}</p>
+          {plan(board)}
+        </Section>
+      ) : (
         <Section title={board.title}>{plan(board)}</Section>
-      ) : null}
+      )}
 
       <Section title={t["play.who"]}>
         <ul className="space-y-1">

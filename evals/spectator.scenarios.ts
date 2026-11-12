@@ -122,6 +122,15 @@ function dinner() {
   return f;
 }
 
+// A finished match that agreed, with no board the site can draw.
+const BARE = "m_agreedBare";
+function bare() {
+  const f = strangers(fixture("over.json"));
+  f.match.id = BARE;
+  delete f.board;
+  return f;
+}
+
 // Feeds a Table shouldn't send, each well-formed JSON but for one rule.
 function misshapen(id: string) {
   const f = strangers(fixture("over.json"));
@@ -214,6 +223,7 @@ function fakeTable(): Server {
       return;
     }
     if (url === `/v1/spectate/${DINNER}`) return send(res, dinner());
+    if (url === `/v1/spectate/${BARE}`) return send(res, bare());
     for (const id of MISSHAPEN)
       if (url === `/v1/spectate/${id}`) return send(res, misshapen(id));
     if (url === "/v1/spectate/m_hostile") return send(res, hostile());
@@ -686,6 +696,15 @@ export function spectatorDinnerScenarios(): void {
         expect(words(row)).toContain("and 2 more");
         expect(res.text).not.toContain(dinnerBots.cold);
         expect(res.text).not.toContain(STRANGER);
+      });
+
+      it("never says they didn't agree when they did, though no plan can be drawn", async () => {
+        const res = await get(`/play/${SLUG}/${BARE}`);
+        expect(res.status).toBe(200);
+        const text = words(res.text);
+        expect(text).toContain("Agreed");
+        expect(text).not.toContain("didn't agree");
+        expect(text).not.toContain("The plan they settled on");
       });
 
       it("reads it from the plan down, with the private line marked", async () => {

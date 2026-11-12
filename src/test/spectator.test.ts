@@ -389,6 +389,7 @@ describe("a match's page", () => {
         table: "Dinner party",
         t,
         bots: known(),
+        held: new Map(),
       }),
     );
     expect(html).not.toMatch(/<script|<img|<b>|<a href='/);
@@ -402,7 +403,13 @@ describe("a match's page", () => {
   it("shows the seating, who's playing, and that the host sent it", () => {
     const feed = feedSchema.parse(fixture("live.json"));
     const html = renderToStaticMarkup(
-      createElement(MatchView, { feed, table: "Dinner party", t }),
+      createElement(MatchView, {
+        feed,
+        table: "Dinner party",
+        t,
+        held: new Map(),
+        bots: new Map(),
+      }),
     );
     const text = visible(html);
     expect(html).toContain('role="img"');
@@ -419,7 +426,13 @@ describe("a match's page", () => {
     const feed = feedSchema.parse(fixture("over.json"));
     const text = visible(
       renderToStaticMarkup(
-        createElement(MatchView, { feed, table: "Dinner party", t }),
+        createElement(MatchView, {
+          feed,
+          table: "Dinner party",
+          t,
+          held: new Map(),
+          bots: new Map(),
+        }),
       ),
     );
     expect(text).toContain("How it ended");
@@ -441,7 +454,13 @@ describe("a match's page", () => {
     const feed = feedSchema.parse(f);
     const text = visible(
       renderToStaticMarkup(
-        createElement(MatchView, { feed, table: "Dinner party", t }),
+        createElement(MatchView, {
+          feed,
+          table: "Dinner party",
+          t,
+          held: new Map(),
+          bots: new Map(),
+        }),
       ),
     );
     expect(text).toContain("Odd");
@@ -467,7 +486,13 @@ describe("a match's page", () => {
     // Ada keeps a seat and a row; only the words and the link go.
     const open = visible(
       renderToStaticMarkup(
-        createElement(MatchView, { feed, table: "Dinner party", t }),
+        createElement(MatchView, {
+          feed,
+          table: "Dinner party",
+          t,
+          held: new Map(),
+          bots: new Map(),
+        }),
       ),
     );
     const named = (s: string) => s.split("Ada").length - 1;
@@ -534,6 +559,7 @@ describe("a match's page", () => {
                 ["ada", "stopped" as const],
                 ["basil", "new" as const],
               ]),
+              bots: new Map(),
             }),
           ),
         ),
@@ -740,6 +766,8 @@ describe("a finished dinner, as the watch page shows it", () => {
         table: "Dinner party",
         t,
         now: NOW,
+        held: new Map(),
+        bots: new Map(),
         ...extra,
       }),
     );
@@ -802,6 +830,15 @@ describe("a finished dinner, as the watch page shows it", () => {
     expect(text).toContain("No agreement");
     delete m.agreed;
     expect(visible(row(m, new Map()))).toContain("Finished");
+    // Handles sent, but none the site can show, or none at all: the count,
+    // never "and N more" with nothing before it.
+    const unknown = fixture("list.json").matches[0];
+    const none = visible(row(unknown, new Map()));
+    expect(none).toContain("4 players");
+    expect(none).not.toContain("more");
+    expect(visible(row({ ...unknown, handles: [] }, new Map()))).toContain(
+      "4 players",
+    );
     // Every handle known: no "more".
     const all = fixture("list.json").matches[0];
     const known = new Map(all.handles.map((h: string) => [h, bot()]));
@@ -834,6 +871,14 @@ describe("a finished dinner, as the watch page shows it", () => {
     expect(notText).toContain("They didn't agree on a plan.");
     expect(notText).not.toContain("Final seating");
     expect(view(no)).not.toContain('role="img"');
+    // Agreed, with no board the site can draw: no plan section, and never
+    // "didn't agree" under an Agreed badge.
+    const undrawable = fixture("over.json");
+    delete undrawable.board;
+    const undrawn = visible(view(undrawable));
+    expect(undrawn).toContain("Agreed");
+    expect(undrawn).not.toContain("didn't agree");
+    expect(undrawn).not.toContain("The plan they settled on");
     const plain = fixture("over.json");
     delete plain.match.agreed;
     const plainText = visible(view(plain));
