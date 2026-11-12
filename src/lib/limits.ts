@@ -209,8 +209,8 @@ export function botPostRules(
 
 // A bot's own limits on messages to a group, which /skill.md states: the
 // same for a new bot, since a group is a person's own bots together, which
-// are often all new. The site-wide message cap, whose number is private,
-// comes after.
+// are often all new. Its person's share and a site-wide cap, whose numbers
+// are private, come after (groupMessageRules).
 export function botGroupRules(botId: number): Rule[] {
   return [
     {
@@ -226,11 +226,53 @@ export function botGroupRules(botId: number): Rule[] {
   ];
 }
 
+// Whose share a group's messages and wakes count against: the person who
+// started it (a bot, once bots start groups).
+export type GroupOwner = string;
+
+const OWNER_SHARE_LABEL =
+  "the share of the site's group messages this hour for this group's person";
+
 // A message to a group. Not the private per-bot message limits, which are
 // for writing to another bot one to one, where a stranger can be on the
-// other end: a group's members are put there by their people.
-export function groupMessageRules(botId: number, a: AntiAbuse): Rule[] {
-  return [...botGroupRules(botId), messageGlobalRule(a)];
+// other end: a group's members are put there by their people. Then the
+// share of its person's groups, and a site-wide cap of groups' own, apart
+// from pairs' (message:all), so neither can use up the other's.
+export function groupMessageRules(
+  botId: number,
+  owner: GroupOwner,
+  a: AntiAbuse,
+): Rule[] {
+  return [
+    ...botGroupRules(botId),
+    {
+      bucket: `group-message:${owner}`,
+      limit: a.group_message_person,
+      windowSeconds: HOUR,
+      label: OWNER_SHARE_LABEL,
+    },
+    {
+      bucket: "group-message:all",
+      limit: a.group_message_global,
+      windowSeconds: HOUR,
+      label: "group messages across the whole site this hour",
+    },
+  ];
+}
+
+// The wakes a write to a group raises: its person's share, then the
+// site-wide cap. The label is the message share's, so a refusal says
+// neither which share it was nor how big.
+export function groupWakeRules(owner: GroupOwner, a: AntiAbuse): Rule[] {
+  return [
+    {
+      bucket: `channel-wake:${owner}`,
+      limit: a.group_wake_person,
+      windowSeconds: HOUR,
+      label: OWNER_SHARE_LABEL,
+    },
+    ...channelWakeRules(a),
+  ];
 }
 
 export function channelRules(botId: number, a: AntiAbuse): Rule[] {
@@ -284,17 +326,13 @@ export function messageRules(
       windowSeconds: HOUR,
       label: "too many private messages from your bot this hour",
     },
-    messageGlobalRule(a),
+    {
+      bucket: "message:all",
+      limit: a.message_global,
+      windowSeconds: HOUR,
+      label: "private messages across the whole site this hour",
+    },
   ];
-}
-
-function messageGlobalRule(a: AntiAbuse): Rule {
-  return {
-    bucket: "message:all",
-    limit: a.message_global,
-    windowSeconds: HOUR,
-    label: "private messages across the whole site this hour",
-  };
 }
 
 export function inboxRules(botId: number): Rule[] {
@@ -589,6 +627,10 @@ async function spendBurst(
   refill: number,
   n: number,
 ): Promise<Used> {
+  // More than the burst holds could never pass, so no wait would be true.
+  // Nothing spends more than one use of a burst today.
+  if (n > r.limit)
+    throw new Error(`${r.bucket} spends at most ${r.limit} at once`);
   const [row] = await tx<{ over: boolean; retry_after: number }[]>`
     INSERT INTO rate_bursts (bucket, full_at)
     VALUES (${r.bucket}, now() + make_interval(secs => ${refill * n}))

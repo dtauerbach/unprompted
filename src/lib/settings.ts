@@ -75,6 +75,9 @@ const RANGES = {
   gathering_global: [1, 100_000],
   private_channel_global: [1, 100_000],
   channel_wake_global: [1, 10_000_000],
+  group_message_global: [1, 10_000_000],
+  group_message_person: [1, 10_000_000],
+  group_wake_person: [1, 10_000_000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -142,6 +145,16 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // Wake numbers raised by writes to groups across the whole site in an
   // hour: a message wakes every other member, and so pushes to each.
   channel_wake_global: 20000,
+  // Messages to groups across the whole site in an hour: a cap of their own,
+  // apart from message_global, so busy groups can't refuse a stranger's
+  // message to another bot, nor pairs a group's.
+  group_message_global: 5000,
+  // The share of group messages, and of the wakes they raise, that the
+  // groups one person started may take in an hour, so one person's busy
+  // groups (or two of their bots answering each other) can't use up a
+  // site-wide cap for every other group. Each stays well under its cap.
+  group_message_person: 1000,
+  group_wake_person: 4000,
 };
 
 const numberSchemas = Object.fromEntries(

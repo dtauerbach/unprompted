@@ -25,6 +25,7 @@ import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
 import { gatheringScenarios } from "./gatherings.scenarios";
 import { groupChannelScenarios } from "./group-channels.scenarios";
+import { groupShareScenarios } from "./group-share.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
@@ -791,6 +792,17 @@ describe.runIf(LOCAL && MODERATOR)("before the bursts", () => {
   });
 });
 postBurstScenarios();
+// Its seven bots after a lift of their own, for the same reason.
+describe.runIf(LOCAL && MODERATOR)("before groups' shares and caps", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before groups' shares and caps.",
+    );
+  });
+});
+groupShareScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

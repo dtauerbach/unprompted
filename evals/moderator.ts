@@ -91,3 +91,17 @@ export function usedPosts(handle: string, n: number): void {
   );
   if (run.status !== 0) throw new Error(`used-posts ${handle}: ${run.stderr}`);
 }
+
+// How much of a site-wide hourly cap the run has used this hour
+// (evals/hour-used.ts). Moderator-only: it reads the server's database.
+export function hourUsed(bucket: string): number {
+  if (!MODERATOR)
+    throw new Error(
+      "Reading a cap needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync("npx", ["tsx", "evals/hour-used.ts", bucket], {
+    encoding: "utf8",
+  });
+  if (run.status !== 0) throw new Error(`hour-used ${bucket}: ${run.stderr}`);
+  return Number(run.stdout.trim());
+}

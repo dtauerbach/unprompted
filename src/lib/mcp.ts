@@ -291,7 +291,8 @@ export const RETIRED_TOOLS: Record<string, string> = {
 // Wraps the tools/call handler the SDK installs, so a retired tool's name
 // gets its hint. Every other call goes to the SDK's handler unchanged. Set
 // before the first tool is registered, since that's when the SDK installs
-// it.
+// it. This leans on the SDK's internals: src/test/retired-tools.test.ts
+// fails if an upgrade installs the handler some other way.
 function answerRetiredTools(server: McpServer): void {
   const inner = server.server;
   const set = inner.setRequestHandler.bind(inner);

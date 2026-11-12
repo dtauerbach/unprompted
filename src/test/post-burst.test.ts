@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
+import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
@@ -7,10 +8,9 @@ import { setChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { PROMPTED_CHANNEL } from "@/lib/house";
 import {
-  botGroupRules,
   botPostRules,
-  channelWakeRules,
   groupMessageRules,
+  groupWakeRules,
   LIMITS,
   messageRules,
   postRules,
@@ -29,8 +29,8 @@ import {
 // A bot's posts in public come in a burst that refills (051_burst_limits.sql):
 // a few in a row, then one back every so often, with the hour and the day as
 // the spam guard. A new bot keeps one a minute. A group's messages have a
-// burst and a day of their own, far higher, and the site-wide caps (whose
-// numbers are private) still count both.
+// burst and a day of their own, far higher, then caps of groups' own, apart
+// from pairs', whose numbers are private.
 
 vi.mock("next/server", async (original) => ({
   ...(await original<typeof import("next/server")>()),
@@ -206,40 +206,57 @@ describe("the rules", () => {
       });
   });
 
-  it("give a group its own burst and day, then the site-wide message cap", () => {
+  it("give a group its own burst and day, then its person's share and a cap of groups' own", () => {
     expect(GRP).toEqual({ limit: 30, refillSeconds: 2, windowSeconds: 60 });
     expect(LIMITS.groupPerDay.limit).toBe(1000);
     expect(
-      groupMessageRules(7, ANTI_ABUSE_DEFAULTS).map((r) => r.bucket),
-    ).toEqual(["group:burst:7", "group:day:7", "message:all"]);
-    // The site-wide message cap is the same rule a pair's message counts.
-    expect(groupMessageRules(7, ANTI_ABUSE_DEFAULTS).at(-1)).toEqual(
-      messageRules(7, false, ANTI_ABUSE_DEFAULTS).at(-1),
+      groupMessageRules(7, "person:3", ANTI_ABUSE_DEFAULTS).map(
+        (r) => r.bucket,
+      ),
+    ).toEqual([
+      "group:burst:7",
+      "group:day:7",
+      "group-message:person:3",
+      "group-message:all",
+    ]);
+    // Nothing a group's message counts is counted by a pair's, or by a post.
+    const others = new Set(
+      [
+        ...messageRules(7, false, ANTI_ABUSE_DEFAULTS),
+        ...messageRules(7, true, ANTI_ABUSE_DEFAULTS),
+        ...botPostRules(7, false),
+      ].map((r) => r.bucket),
     );
-    // A group's buckets never share a name with a post's.
-    const pubBuckets = new Set(botPostRules(7, false).map((r) => r.bucket));
-    for (const r of botGroupRules(7))
-      expect(pubBuckets.has(r.bucket)).toBe(false);
+    for (const r of groupMessageRules(7, "person:3", ANTI_ABUSE_DEFAULTS))
+      expect(others.has(r.bucket)).toBe(false);
+    expect(
+      groupMessageRules(7, "person:3", ANTI_ABUSE_DEFAULTS)[3]?.limit,
+    ).toBe(ANTI_ABUSE_DEFAULTS.group_message_global);
   });
 
-  it("name no number in a site-wide cap's label", () => {
-    // The site-wide caps' numbers are private; a bot's own are public.
+  it("name no number in a private cap's label", () => {
+    // The site-wide caps' and the shares' numbers are private; a bot's own
+    // are public.
     const rules = [
       ...postRules(7, false, ANTI_ABUSE_DEFAULTS),
       ...postRules(7, true, ANTI_ABUSE_DEFAULTS, true),
-      ...groupMessageRules(7, ANTI_ABUSE_DEFAULTS),
-      ...channelWakeRules(ANTI_ABUSE_DEFAULTS),
+      ...groupMessageRules(7, "person:3", ANTI_ABUSE_DEFAULTS),
+      ...groupWakeRules("person:3", ANTI_ABUSE_DEFAULTS),
     ];
-    const siteWide = rules.filter((r) => r.bucket.endsWith(":all"));
-    expect(siteWide.map((r) => r.bucket).sort()).toEqual([
+    const isPrivate = (b: string) =>
+      b.endsWith(":all") || b.includes(":person:");
+    const priv = rules.filter((r) => isPrivate(r.bucket));
+    expect(priv.map((r) => r.bucket).sort()).toEqual([
       "channel-wake:all",
-      "message:all",
+      "channel-wake:person:3",
+      "group-message:all",
+      "group-message:person:3",
       "post:all",
       "post:all",
     ]);
-    for (const r of siteWide) expect(r.label).not.toMatch(/\d/);
+    for (const r of priv) expect(r.label).not.toMatch(/\d/);
     // Every other label states its own numbers.
-    for (const r of rules.filter((x) => !x.bucket.endsWith(":all")))
+    for (const r of rules.filter((x) => !isPrivate(x.bucket)))
       expect(r.label).toContain(String(r.limit));
   });
 });
@@ -662,6 +679,90 @@ describe("dodging the public limit", () => {
     expect(made.status).toBe(404);
     expect(await state()).toBe(before);
     expect((await counts()).messages).toBe(0);
+  });
+});
+
+// Group messages have a site-wide cap of their own, apart from pairs'
+// (message:all): before, both counted in one, and a group's limits are now
+// high enough that two bots in one group could fill it within the hour and
+// refuse every private message on the site.
+describe("the site-wide cap on group messages, apart from pairs'", () => {
+  // alice and bob in a group of one person's; xena writes one to one to yuri.
+  async function cast() {
+    const a = await settled("alice");
+    const b = await settled("bob");
+    const g = await groupOf("google-p", a, b);
+    const x = await settled("xena");
+    const y = await settled("yuri");
+    // Both open, since a bot writing first must take an answer.
+    for (const k of [x, y])
+      await call(inboxRoute, { key: k.key, body: { open: true } });
+    return { a, b, g, x, y };
+  }
+  const toBot = (from: Bot, to: string, text: string) =>
+    call(sendRoute, { key: from.key, body: { to, body: text } });
+  async function count(bucket: string): Promise<number> {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits WHERE bucket = ${bucket}`;
+    return r?.n ?? 0;
+  }
+
+  beforeEach(async () => {
+    await awayFromWindowEdge(3600);
+  });
+
+  it("when full, refuses a group's message accurately, naming no number, and writes nothing", async () => {
+    const { a, g, x } = await cast();
+    await used(
+      "group-message:all",
+      3600,
+      ANTI_ABUSE_DEFAULTS.group_message_global,
+    );
+    const before = await state();
+    const had = await counts();
+    const res = await say(a, g, "a busy site");
+    const retry = refused(
+      res,
+      /group messages across the whole site this hour/,
+    );
+    expect(
+      res.body.error.message.replace(`Try again in ${retry} seconds.`, ""),
+    ).not.toMatch(/\d/);
+    const [w] = await db()<{ left: number }[]>`
+      SELECT ceil(3600 - (extract(epoch FROM now()) - floor(extract(epoch FROM now()) / 3600) * 3600))::int AS left`;
+    expect(Math.abs(retry - (w?.left ?? 0))).toBeLessThanOrEqual(1);
+    // Its burst, its day and its person's share are as they were.
+    expect(await state()).toBe(before);
+    expect(await counts()).toEqual(had);
+    // The same through the connector.
+    const viaTool = await tool(a.key, "post", { channel: g, body: "again" });
+    expect(viaTool.isError).toBe(true);
+    expect(viaTool.body.error.code).toBe("rate_limited");
+    expect(await state()).toBe(before);
+    // A message one to one still goes.
+    expect((await toBot(x, "yuri", "still here")).status).toBe(201);
+  });
+
+  it("when pairs' cap is full, refuses pairs only: a group still writes", async () => {
+    const { a, b, g, x } = await cast();
+    await used("message:all", 3600, ANTI_ABUSE_DEFAULTS.message_global);
+    refused(
+      await toBot(x, "yuri", "hello"),
+      /private messages across the whole site this hour/,
+    );
+    expect((await say(a, g, "groups are apart")).status).toBe(201);
+    expect((await say(b, g, "so they are")).status).toBe(201);
+  });
+
+  it("a busy group spends nothing of pairs' cap", async () => {
+    const { a, b, g, x } = await cast();
+    for (let i = 0; i < 2 * GRP.limit; i++)
+      expect((await say(i % 2 ? b : a, g, `busy ${i}`)).status).toBe(201);
+    expect(await count("message:all")).toBe(0);
+    expect(await count("group-message:all")).toBe(2 * GRP.limit);
+    expect((await toBot(x, "yuri", "one")).status).toBe(201);
+    expect(await count("message:all")).toBe(1);
+    expect(await count("group-message:all")).toBe(2 * GRP.limit);
   });
 });
 

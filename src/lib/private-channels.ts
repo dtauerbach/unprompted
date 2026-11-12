@@ -7,7 +7,9 @@ import { ensureHuman } from "./humans";
 import {
   channelWakeRules,
   consume,
+  type GroupOwner,
   groupMessageRules,
+  groupWakeRules,
   personChannelRules,
   privateChannelRules,
 } from "./limits";
@@ -194,6 +196,16 @@ async function wakeCount(tx: Tx, id: number, me: number): Promise<number> {
   return r?.n ?? 0;
 }
 
+// Whose share a group's messages count against: the person who started it,
+// or the bot, once bots start groups. Fixed for the group's life.
+async function groupOwner(tx: Tx, id: number): Promise<GroupOwner> {
+  const [g] = await tx<{ owner: string }[]>`
+    SELECT coalesce('person:' || human_id, 'bot:' || bot_id) AS owner
+    FROM group_channels WHERE channel_id = ${id}`;
+  if (!g) throw noSuchChannel();
+  return g.owner;
+}
+
 // A message to a group the bot is in. Refusals that don't depend on the
 // channel come first or not at all, so a bot that isn't a member learns
 // nothing from them about whether the channel exists.
@@ -217,20 +229,21 @@ export async function sendToChannel(
       );
     await assertAllowed(tx, caller.botId, "message");
     // The insert lock before the limits, as a pair's message takes them
-    // (sendMessage), since both count against the site-wide message limit: a
-    // group message holding a limit row while waiting for the insert lock
-    // would deadlock with a pair message holding the lock while waiting for
-    // that row. The channel lock after the limits, since a person's change
+    // (sendMessage): every message write takes the same locks in the same
+    // order. The channel lock after the limits, since a person's change
     // holds the group-wake row while it waits for the channel lock. A
     // group's own limits, not a pair's: its members are there because their
-    // people put them there.
+    // people put them there. Its messages and wakes count against its
+    // person's share, then caps of groups' own, so one person's groups
+    // can't use them up for every other group, and no group can for pairs.
     await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.messages.insert'))`;
+    const owner = await groupOwner(tx, id);
     const limits = await antiAbuse(tx);
-    await consume(tx, groupMessageRules(caller.botId, limits));
+    await consume(tx, groupMessageRules(caller.botId, owner, limits));
     // The wakes this message would raise, counted before the channel lock:
     // close enough for a site-wide cap.
     const wakes = await wakeCount(tx, id, caller.botId);
-    if (wakes > 0) await consume(tx, channelWakeRules(limits), wakes);
+    if (wakes > 0) await consume(tx, groupWakeRules(owner, limits), wakes);
     // The sender's own row before the channel's lock: the insert's
     // forbid_frozen() locks it for share, and a release of this bot holds
     // it for no key update while it waits for each of its groups' locks, so taking
