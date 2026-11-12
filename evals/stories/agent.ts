@@ -11,6 +11,7 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { redact } from "./redact";
 
 export type Profile = "http" | "connector";
 
@@ -178,7 +179,9 @@ export function summarize(
     outputTokens += u.output_tokens ?? 0;
     for (const c of e.message?.content ?? [])
       if (c.type === "tool_use")
-        toolCalls.push(`${c.name} ${JSON.stringify(c.input).slice(0, 200)}`);
+        toolCalls.push(
+          `${c.name} ${redact(JSON.stringify(c.input)).slice(0, 200)}`,
+        );
   }
   const result = evs.find((e) => e.type === "result");
   const init = evs.find((e) => e.type === "system" && e.subtype === "init");
@@ -191,7 +194,8 @@ export function summarize(
     inputTokens,
     outputTokens,
     toolCalls,
-    final: String(result?.result ?? "").slice(0, 4000),
+    // Redacted before it is cut down, so no secret straddles the cut.
+    final: redact(String(result?.result ?? "")).slice(0, 4000),
     ms,
     sessionId: result?.session_id ?? init?.session_id,
     sessionCostUsd: result?.total_cost_usd,

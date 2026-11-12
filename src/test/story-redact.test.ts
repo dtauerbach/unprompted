@@ -123,6 +123,100 @@ describe("redacting a story transcript", () => {
       }
     });
 
+  // The exact-length shapes: an owner code, a pass, a Table session, a
+  // pairing code. Markdown or prose can put a _ or - right after one.
+  const EXACT = () =>
+    SAMPLES().filter((s) =>
+      /^(own|pass|dinner|mafia|pair|link|conn)_/.test(s.secret),
+    );
+  const TRAILING = [
+    (x: string) => `_${x}_ is the pass`,
+    (x: string) => `__${x}__`,
+    (x: string) => `${x}- next`,
+    (x: string) => `${x}_`,
+    (x: string) => `${x}-x`,
+    (x: string) => `${x}-session`,
+    (x: string) => `**${x}**.`,
+  ];
+  for (const s of EXACT())
+    it(`cuts a ${s.name} that a _ or - follows`, () => {
+      for (const around of TRAILING)
+        expect(redact(around(s.secret))).toBe(around(s.shown));
+    });
+
+  it("cuts the named cases with each kind of token", () => {
+    const pass = newPass().pass;
+    const own = newOwnerCode().code;
+    const pair = newPairingCode().code;
+    const rps = `rps_${b64(16)}`;
+    expect(redact(`_${pass}_ is the pass`)).toBe("_pass_…_ is the pass");
+    expect(redact(`__${own}__`)).toBe("__own_…__");
+    expect(redact(`${pass}- next`)).toBe("pass_…- next");
+    expect(redact(`${pair}_`)).toBe("pair_…_");
+    expect(redact(`${rps}-x`)).toBe(`rps_…${rps.slice(-4)}-x`);
+  });
+
+  it("cuts a prefix written in capitals or mixed case", () => {
+    const pair = newPairingCode().code;
+    const upper = pair.toUpperCase();
+    expect(redact(`code ${upper} please`)).toBe("code PAIR_… please");
+    const pass = newPass().pass;
+    expect(redact(`Pass_${pass.slice(5)}`)).toBe("Pass_…");
+    const key = newKey().secret;
+    expect(redact(`UNP_${key.slice(4)}`)).toBe(`UNP_…${key.slice(-4)}`);
+    const own = newOwnerCode().code;
+    expect(redact(`OWN_${own.slice(4)}.`)).toBe("OWN_….");
+  });
+
+  it("cuts a token right after a terminal colour, \\v or \\x0a", () => {
+    const esc = String.fromCharCode(27);
+    const bs = "\\";
+    for (const s of SAMPLES())
+      for (const around of [
+        (x: string) => `${esc}[1m${x}${esc}[0m`,
+        (x: string) => `${esc}[0;32m${x}`,
+        (x: string) => `"${bs}u001b[1m${x}${bs}u001b[0m"`,
+        (x: string) => `'${bs}x1b[1m${x}'`,
+        (x: string) => `${bs}033[1m${x}`,
+        (x: string) => `${bs}e[1m${x}`,
+        (x: string) => `"a${bs}v${x}"`,
+        (x: string) => `'a${bs}x0a${x}'`,
+      ])
+        expect(redact(around(s.secret))).toBe(around(s.shown));
+  });
+
+  it("leaves a path after a named key", () => {
+    for (const text of [
+      "code: src/lib/Some_File-Name.test.ts",
+      '{"code":"src/app/v1/Route_2.ts"}',
+      "token = ./Tokens/README2.md",
+      "secret: Some_Secret_Handler2.ts.",
+    ])
+      expect(redact(text)).toBe(text);
+    // A secret is still cut after the same names.
+    const code = b64(32);
+    expect(redact(`code: ${code}.`)).toBe("code: [redacted].");
+  });
+
+  it("runs in one pass over a long run of letters or prefixes", () => {
+    const esc = String.fromCharCode(27);
+    for (const text of [
+      "a".repeat(230_000),
+      "ab_".repeat(80_000),
+      "secret_".repeat(33_000),
+      "token=".repeat(38_000),
+      "unp_".repeat(60_000),
+      "pass_".repeat(50_000),
+      "aB3".repeat(80_000),
+      `token: ${"aB3/".repeat(60_000)}`,
+      `${esc}[`.repeat(80_000),
+    ]) {
+      const t = performance.now();
+      redact(text);
+      expect(performance.now() - t).toBeLessThan(2000);
+    }
+  });
+
   it("cuts a key inside a longer word, and a wake URL encoded whole", () => {
     const key = newKey().secret;
     const out = redact(`file_${key}_backup.txt`);
