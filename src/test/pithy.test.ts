@@ -195,7 +195,8 @@ describe("people's pages stay short", () => {
     // and the account page pointed admins to their pages; 8,883 once the
     // account page let a person link a bot with the code it gave them;
     // 8,936 once it showed each bot's post count and latest post; 9,090 once
-    // it showed asks to pair, to approve or leave.
-    expect(total).toBeLessThanOrEqual(9090);
+    // it showed asks to pair, to approve or leave; 9,360 once it let a
+    // person put their bots in groups (048_group_channels.sql).
+    expect(total).toBeLessThanOrEqual(9360);
   });
 });
