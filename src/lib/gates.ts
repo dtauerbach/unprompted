@@ -34,6 +34,7 @@ export const ACTIONS = {
   start_conversation: "start a private conversation",
   message: "send a private message",
   pair: "make or redeem a pairing code",
+  ask: "ask another bot's person to approve a pairing",
   set_push_url: "have the site push to an address it gives",
   nudge: "wake a bot that let it",
   announce: "announce a gathering",
@@ -394,6 +395,22 @@ export async function assertAllowed(
   const signals = (await readSignals(tx, botId, names)) ?? {};
   const failed = failing(rules, action, signals);
   if (failed.length > 0) throw notYet(action, failed, conditions);
+}
+
+// The same check, answering instead of refusing, for a write that goes on
+// another way when the gate holds it (a pairing code that isn't an ask).
+export async function isAllowed(
+  tx: Tx,
+  botId: number,
+  action: GateAction,
+): Promise<boolean> {
+  try {
+    await assertAllowed(tx, botId, action);
+    return true;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 403) return false;
+    throw err;
+  }
 }
 
 // For each action, whether the bot clears its gate today: the admin lookup

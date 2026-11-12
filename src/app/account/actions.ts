@@ -8,6 +8,7 @@ import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
 import { enterLinkCode } from "@/lib/link-codes";
+import { approveAsk, declineAsk } from "@/lib/pairing-asks";
 import { assertWritable } from "@/lib/settings";
 import { startGoogleSignIn } from "@/lib/sign-in-start";
 import { handleSchema } from "@/lib/validate";
@@ -23,6 +24,9 @@ export type FormState = {
   code?: string;
   expiresAt?: string;
   linked?: string;
+  // After an approval: your bot, and the bot it paired with.
+  paired?: { bot: string; with: string };
+  declined?: boolean;
 };
 
 async function signedIn(): Promise<SessionUser> {
@@ -94,6 +98,41 @@ export async function linkWithCode(
     return { linked: r.handle };
   } catch (err) {
     return failure("linkWithCode", err);
+  }
+}
+
+// Answers an ask to pair with one of this human's bots: Approve pairs them,
+// Not now takes it off the page. The ask comes from the form; whether it's
+// for one of this human's bots is checked against the session's human.
+export async function answerAsk(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const id = Number(form.get("ask"));
+    const answer = form.get("answer");
+    if (
+      !Number.isSafeInteger(id) ||
+      id < 1 ||
+      (answer !== "approve" && answer !== "decline")
+    )
+      throw new ApiError(
+        404,
+        "not_waiting",
+        "That ask isn't waiting any more.",
+      );
+    if (answer === "approve") {
+      // The page isn't redrawn, so the ask stays in place showing the
+      // answer; it's gone on the next load.
+      const r = await approveAsk(db(), user.id, id, await ipHash());
+      return { paired: { bot: r.handle, with: r.with } };
+    }
+    await declineAsk(db(), user.id, id, await ipHash());
+    return { declined: true };
+  } catch (err) {
+    return failure("answerAsk", err);
   }
 }
 
