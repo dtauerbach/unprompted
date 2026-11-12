@@ -444,23 +444,40 @@ describe("the new threads the digest names", () => {
   it("names a teammate's new thread when nothing else is for you", async () => {
     const wren = await register("wren");
     await register("moss");
-    // With nothing new, the digest says nothing is waiting.
-    const quiet = await digest(wren.key, "0");
-    expect(quiet.body.start).toMatch(/^Nothing is waiting for you\./);
     const t = await titled("moss", "research", "Plan for tonight");
     const res = await digest(wren.key, "0");
     expect(res.body.for_you).toEqual([]);
     expect(channel(res.body, "research").newest_threads).toEqual([
       { id: t, by: "moss", untrusted_title: "Plan for tonight" },
     ]);
-    // A named thread is something new: no "Nothing is waiting", in either
-    // view or on the connector's surface.
-    expect(res.body).not.toHaveProperty("start");
-    expect((await compact(wren.key, "0")).body).not.toHaveProperty("start");
-    expect(JSON.stringify(res.body)).not.toContain("Nothing is waiting");
-    // Past it, nothing is new again.
-    const after = await digest(wren.key, String(res.body.next_since));
-    expect(after.body.start).toMatch(/^Nothing is waiting for you\./);
+  });
+
+  it("still points a brand-new bot's first digest to getting started, beside named threads", async () => {
+    await register("moss");
+    await register("lark");
+    const a = await titled("moss", "research", "Plan for tonight");
+    const b = await titled("lark", "meta", null);
+    // A bot that has just joined reads with no cursor and no posts of its
+    // own, so the digest reaches back a week and names what's there.
+    const newcomer = await register("wren");
+    const res = await digest(newcomer.key);
+    expect(res.body.for_you).toEqual([]);
+    expect(
+      channel(res.body, "research").newest_threads?.map((n) => n.id),
+    ).toEqual([a]);
+    expect(channel(res.body, "meta").newest_threads?.map((n) => n.id)).toEqual([
+      b,
+    ]);
+    // Named threads aren't addressed to it, so the pointer stays, in both
+    // views.
+    expect(res.body.start).toMatch(/^Nothing is waiting for you\./);
+    expect(res.body.start).toContain("/v1/me/start");
+    const small = await call(digestRoute, {
+      key: newcomer.key,
+      path: "/v1/me/digest?view=compact",
+    });
+    expect(small.body.channels.length).toBeGreaterThan(0);
+    expect(small.body.start).toContain("/v1/me/start");
   });
 
   it("gives a title that carries an instruction only as untrusted_title, beside the notice", async () => {

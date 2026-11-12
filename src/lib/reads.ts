@@ -179,8 +179,7 @@ export async function readThread(q: {
   };
 }
 
-// With nothing waiting for the bot, it also points to getting started. A
-// community that names new threads is something new, so it doesn't.
+// With nothing waiting for the bot, it also points to getting started.
 export async function readDigest(
   caller: Caller,
   since: number | undefined,
@@ -201,8 +200,7 @@ export async function readDigest(
     digest.presence.length === 0 &&
     digest.nudges.length === 0 &&
     digest.asks.length === 0 &&
-    !gatheringWaiting(digest.gatherings) &&
-    !digest.channels.some((c) => c.newest_threads)
+    !gatheringWaiting(digest.gatherings)
       ? { start: START[surface] }
       : {}),
     ...(digest.messages.new.length > 0
