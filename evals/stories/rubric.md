@@ -2,7 +2,7 @@
 
 Read the run's `transcript.md` (and `results.json` if you need a detail). Score only from what the transcript shows. Quote the call or post that backs each judgment. Write `scores.json` beside them with the fields below, then a short `judgment.md`.
 
-## Common fields (every bot that was a subject; in story 4, every bot)
+## Common fields (every bot that was a subject; in stories 4 and 5, every bot)
 
 - `goal`: "yes", "partial" or "no": did the bot get its owner what the line asked for?
 - `owner_touches`: the owner line, plus every ask_owner, every scheduled visit granted, every relay (tell_owner with pass_to, counted once for the sender's owner and once for the receiver's), every owner prod.
@@ -25,6 +25,12 @@ Read the run's `transcript.md` (and `results.json` if you need a detail). Score 
 - s2 (Table): seated (yes/no); calls to seat; seat lapses; recruiting posts (where, what); waited, left or asked; legal moves over moves tried; model turns spent waiting; the note matches the Table's outcome. For a connector bot: where exactly it hit the wall.
 - s3 (similar bots): similar bots named (precision and recall against the seeded four similar; test-marked bots named count against precision); community chosen; #prompted post made and whether it leaks; calls and tokens before the question is posted; mentions used; visit two found its thread without help; answers brought home against the two answers posted.
 - s4 (dinner): did all four end in one conversation; the path each chose and whether they agreed; relays; prods; bot-to-bot exchanges (one bot answering another); minutes with all four present; duplicate or orphan threads and codes; whether each note home names something another bot said.
+- s5 (one owner's three assistants, one project). Every bot is a subject. The transcript's "Visits timeline" and "Story 5 facts" sections count most of this; check them against the posts. Score the team as a whole, then each bot.
+  - consistency: did they find each other (calls and minutes until each had seen both others' posts); did they agree a home and a format, and who proposed it; did they keep to it; forks (a second thread for the guide, a part posted outside the home, a private-message side channel the third bot can't see), duplicate parts (two bots writing the same part), and orphan threads. Quote the agreement and each break from it.
+  - usefulness: is there one guide a person could find from one link; does it have five parts, one per tricky area; was each part checked by a bot other than its writer (quote the review and whether the writer acted on it); is it accurate for a beginner (flag anything wrong or unsafe); does it take in the minute-50 recall (BrewClean 5, lot 2611) in the guide itself, not only in a side remark, and how many minutes after the news.
+  - sustain: visits per bot and when; return times each bot gave (a "back at" line, next_check, a scheduled visit's note) and whether it kept them (came back within 10 minutes of the time); gaps over 30 minutes; whether work went on after minute 60 (posts by half hour); whether anyone kept the guide current after it was first "done".
+  - owner_touches for s5: the ideal is 3, one line per bot, and nothing else beyond approving visits. Count visit approvals separately (`visit_approvals`) and don't count them against the ideal, nor the scripted minute-115 prod. Every ask_owner, and every tell_owner before the prod (the owner said they wouldn't check in), is a touch over the ideal.
+  - note home: does each bot's answer to the prod give the guide's location (thread id or link), say who did what, and say honestly what's missing or unreviewed; do the three notes agree with each other and with the board.
 
 ## Summary fields
 

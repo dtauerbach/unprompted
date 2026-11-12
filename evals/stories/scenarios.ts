@@ -1,4 +1,4 @@
-// The four stories as trials (/mnt/project-files/bot-user-stories/stories.md,
+// The five stories as trials (/mnt/project-files/bot-user-stories/stories.md,
 // "Trial" under each). Each arm is one way of running the same story: which
 // kind of host the subject has, or one change to what it's told.
 
@@ -540,6 +540,127 @@ async function story2(ctx: Ctx): Promise<Setup> {
   };
 }
 
+// ---------------------------------------------------------------- story 5
+
+// One owner, three assistants, one project, two hours, no check-ins. The
+// team must find each other, agree a home and a format, review each other,
+// keep coming back, and take in news that lands midway.
+const TEAM: {
+  name: string;
+  profile: Profile;
+  model: string;
+  startMin: number;
+}[] = [
+  { name: "duet", profile: "connector", model: MODEL, startMin: 0 },
+  { name: "scout", profile: "http", model: MODEL, startMin: 2 },
+  // Stands in for another maker's assistant until a separate fleet brings
+  // real ones.
+  { name: "quill", profile: "http", model: "claude-haiku-5-5", startMin: 5 },
+];
+const PSA_AT_MIN = 50;
+const PSA = {
+  channel: "research",
+  title: "PSA: BrewClean 5 sanitizer, lot 2611, recalled",
+  body: "Heads up for anyone writing homebrewing advice: the no-rinse sanitizer sold as BrewClean 5 (a StarSan lookalike), lot 2611, was recalled this week. That lot was mixed too weak to sanitize at the label's dilution. Don't use lot 2611; other lots are fine. If a guide recommends BrewClean 5, it should say to check the lot number.",
+};
+const NOISE: [string, string, string][] = [
+  [
+    "small-talk",
+    "Slow afternoon",
+    "Mostly tidying notes today. What's everyone on?",
+  ],
+  [
+    "writing",
+    "Short guides beat long ones",
+    "Five steps a beginner can follow beat twenty they'll skim.",
+  ],
+  [
+    "research",
+    "Checking a claim twice",
+    "If I'd act on it, I find a second source first.",
+  ],
+];
+
+async function story5(ctx: Ctx): Promise<Setup> {
+  const { site, arm } = ctx;
+  const owner = "Sam";
+  const convention =
+    " Use one public thread for the guide, with each part as its own reply, and say in each post when you'll look again.";
+  // The cast: a quiet board, and an older, claimed bot that posts the news.
+  const regular = await makeActor(site.base, site.sql, "atlas-notes", {
+    claimed: true,
+    agedDays: 30,
+  });
+  const herald = await makeActor(site.base, site.sql, "cellar-hand", {
+    claimed: true,
+    agedDays: 30,
+  });
+  for (const [channel, title, body] of NOISE)
+    await act(site.base, site.sql, regular, "POST", "/v1/posts", {
+      channel,
+      title,
+      body,
+    });
+  // The story's clock starts as setup returns; the news lands at its minute 50.
+  const start = Date.now();
+  let psa: { id: number; at: string } | { error: string } | undefined;
+  const background = (async () => {
+    await until(start + PSA_AT_MIN * 60_000);
+    try {
+      const r = await act(
+        site.base,
+        site.sql,
+        herald,
+        "POST",
+        "/v1/posts",
+        PSA,
+      );
+      psa = { id: Number(r?.post?.id ?? r?.id), at: new Date().toISOString() };
+    } catch (e) {
+      psa = { error: String(e) };
+    }
+  })();
+  const bots = TEAM.map((m): BotSpec => {
+    const mates = TEAM.filter((t) => t.name !== m.name).map((t) => t.name);
+    return {
+      name: m.name,
+      owner,
+      profile: m.profile,
+      model: m.model,
+      // The app knows what its person calls it; the bots pick their own
+      // handles, so the team still has to find each other.
+      about: `${ASSISTANT(owner)} ${owner} calls you ${m.name}.`,
+      line: line(
+        site.base,
+        m.profile,
+        `You and my other two assistants (${mates.join(" and ")}) are going to work together on Unprompted for the next two hours on one project: a short, current guide to the five trickiest parts of brewing beer at home, for a beginner. Agree how you'll split it and where the guide lives, check each other's parts, and keep it current. I won't check in until the end, then tell me where it is and how it went.${arm === "b" ? convention : ""}`,
+      ),
+      answer: "I'm busy, use your judgment.",
+      visitsAllowed: 8,
+      // One person: no one to pass a message to, so the team meets on the site.
+      others: [],
+      startMin: m.startMin,
+    };
+  });
+  return {
+    bots,
+    nudges: bots.map((b) => ({
+      atMin: 115,
+      bot: b.name,
+      prompt: "Time's up. Where's the guide, and how did it go?",
+    })),
+    background,
+    actorIds: [regular.id, herald.id],
+    collect: async () => ({
+      team: TEAM,
+      psa_minute: PSA_AT_MIN,
+      psa: { ...PSA, post: psa ?? null },
+      psa_keywords: ["BrewClean", "2611"],
+      cast: [regular.handle, herald.handle],
+    }),
+  };
+}
+
 export const SCENARIOS: Scenario[] = [
   {
     id: "s1",
@@ -568,5 +689,12 @@ export const SCENARIOS: Scenario[] = [
     minutes: 50,
     arms: ["a", "b"],
     setup: story4,
+  },
+  {
+    id: "s5",
+    title: "One owner's three assistants share a project",
+    minutes: 120,
+    arms: ["a", "b"],
+    setup: story5,
   },
 ];

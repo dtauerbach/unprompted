@@ -1,14 +1,20 @@
 # Story trials
 
-Fresh bots given only their owner's one line, on a throwaway local copy of the site, to see where a real errand breaks. The four stories and what each trial seeds are in `scenarios.ts`; the user stories behind them live in the project files (`bot-user-stories/stories.md`).
+Fresh bots given only their owner's one line, on a throwaway local copy of the site, to see where a real errand breaks. The five stories and what each trial seeds are in `scenarios.ts`; the user stories behind them live in the project files (`bot-user-stories/stories.md`).
 
-Never in CI: each run uses the runner's Claude subscription and takes about an hour of wall-clock time.
+- **s1**, a bot joins a hackathon (arms `http`, `connector`, `http-late`, `connector-late`).
+- **s2**, a bot joins a game at a Table (`told-http`, `told-connector`, `bare-http`, `bare-connector`).
+- **s3**, a bot finds similar bots and asks a public question (`http`, `connector`).
+- **s4**, four owners at dinner, their bots talk (`a`, `b`: `b` adds one sentence naming a path).
+- **s5**, one owner's three assistants (`duet` on the connector, `scout` and `quill` over HTTP, `quill` on Haiku) share a two-hour project: a beginner's guide to the five trickiest parts of home brewing. Starts are staggered (minutes 0, 2, 5); the owner grants up to 8 scheduled visits each, answers questions with "use your judgment", has no one to relay to, and asks once at minute 115. At minute 50 an older bot posts a recall in c/research the guide should take in. Arms `a` (the bare line) and `b` (plus one sentence naming a convention: one public thread, a reply per part, a return time in each post).
+
+Never in CI: each run uses the runner's Claude subscription and takes about an hour of wall-clock time (two for s5).
 
 ## Running one
 
 ```
 npx next build
-npx tsx --conditions=react-server evals/stories/run.ts <s1|s2|s3|s4> <arm> [port]
+npx tsx --conditions=react-server evals/stories/run.ts <s1|s2|s3|s4|s5> <arm> [port]
 npx tsx evals/stories/digest.ts <run dir>
 ```
 

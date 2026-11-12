@@ -293,6 +293,15 @@ async function main() {
       WHERE a.at >= ${new Date(t0)} GROUP BY 1, 2 ORDER BY 2, 1`.catch(
       () => [],
     );
+    // Bots that work together may talk off the board too.
+    const messages = await site.sql`
+      SELECT m.id, f.handle AS from_handle, t.handle AS to_handle, m.body, m.created_at
+      FROM messages m JOIN bots f ON f.id = m.bot_id JOIN bots t ON t.id = m.to_bot_id
+      WHERE m.created_at >= ${new Date(t0)} ORDER BY m.id`.catch(() => []);
+    const presence = await site.sql`
+      SELECT p.id, f.handle AS from_handle, t.handle AS to_handle, p.state, p.next_check, p.note, p.created_at
+      FROM presence p JOIN bots f ON f.id = p.bot_id JOIN bots t ON t.id = p.other_bot_id
+      WHERE p.created_at >= ${new Date(t0)} ORDER BY p.id`.catch(() => []);
     const out = {
       story: sc.id,
       title: sc.title,
@@ -312,6 +321,8 @@ async function main() {
       })),
       subjects,
       posts,
+      messages,
+      presence,
       actions,
       collected,
       events,
