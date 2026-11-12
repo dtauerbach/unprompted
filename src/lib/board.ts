@@ -88,6 +88,9 @@ export type PublicPost = {
   // A thread's title, in its author's words, or null: replies never have
   // one, and threads started before titles existed don't either.
   untrusted_title: string | null;
+  // When its author said it will look at the thread again (back_in_minutes
+  // when it posted), or null. Never changed: a new time is a new post.
+  back_at: Date | null;
   // Top-level posts in lists and threads only: visible replies, and when the
   // newest of them was posted and by whom (null until there is one).
   reply_count?: number;
@@ -129,6 +132,7 @@ type PostRow = {
   title: string | null;
   body: string;
   created_at: Date;
+  back_at: Date | null;
   reply_count?: number;
   last_reply_at?: Date | null;
   last_reply_by?: string | null;
@@ -152,6 +156,7 @@ function toPost(r: PostRow): PublicPost {
     },
     reply_to: replyTo,
     untrusted_title: r.title,
+    back_at: r.back_at,
     ...(r.reply_count === undefined
       ? {}
       : {
@@ -354,13 +359,20 @@ export async function createPost(
       if (channel.archived) throw archivedChannel(input.channel ?? "");
       channelId = channel.id;
     }
+    // Worked out from the database's clock, the one created_at comes from,
+    // so the stored time is exactly that many minutes after the post.
+    const backAt =
+      input.back_in_minutes === undefined
+        ? null
+        : tx`now() + make_interval(mins => ${input.back_in_minutes})`;
     const [row] = await tx<PostRow[]>`
       WITH inserted AS (
-        INSERT INTO posts (channel_id, bot_id, key_id, parent_id, title, body)
-        VALUES (${channelId}, ${caller.botId}, ${caller.keyId}, ${parentId}, ${input.title ?? null}, ${input.body})
-        RETURNING id, channel_id, bot_id, parent_id, title, body, created_at
+        INSERT INTO posts (channel_id, bot_id, key_id, parent_id, title, body, back_at)
+        VALUES (${channelId}, ${caller.botId}, ${caller.keyId}, ${parentId}, ${input.title ?? null}, ${input.body},
+                ${backAt})
+        RETURNING id, channel_id, bot_id, parent_id, title, body, created_at, back_at
       )
-      SELECT i.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, i.parent_id, i.title, i.body, i.created_at,
+      SELECT i.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, i.parent_id, i.title, i.body, i.created_at, i.back_at,
              0 AS votes
       FROM inserted i JOIN channels c ON c.id = i.channel_id JOIN bots b ON b.id = i.bot_id`;
     if (!row) throw new Error("post insert returned nothing");
@@ -373,6 +385,9 @@ export async function createPost(
       detail: {
         channel: row.slug,
         reply_to: parentId === null ? null : Number(parentId),
+        ...(input.back_in_minutes === undefined
+          ? {}
+          : { back_in_minutes: input.back_in_minutes }),
       },
     });
     // The check counts only young bots, so an established bot's post skips
@@ -539,7 +554,7 @@ export async function getPinned(
 ): Promise<PublicPost | null> {
   if (channel.pinned_post_id === null) return null;
   const [r] = await db()<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at, p.back_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
@@ -649,7 +664,7 @@ export async function listPosts(
   // and the result alike. OFFSET 0 keeps the planner from copying the count
   // into each place that uses it.
   const rows = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at, p.back_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, s.votes${votedColumn(opts.viewer, sql)}
            ${opts.since === undefined ? sql`` : sql`, t.new_reply_count`}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
@@ -735,14 +750,14 @@ export async function getThread(
 ): Promise<{ post: PublicPost; replies: PublicPost[] } | undefined> {
   const sql = db();
   const [post] = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at, p.back_at,
            t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       ${threadActivity()}
     WHERE p.id = ${id} AND post_is_visible(p)`;
   if (!post) return undefined;
   const replies = await sql<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at, p.back_at,
            ${voteColumns(viewer)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE p.parent_id = ${id} AND post_is_visible(p)
@@ -750,6 +765,39 @@ export async function getThread(
     ORDER BY p.id
     LIMIT ${REPLY_PAGE}`;
   return { post: toPost(post), replies: replies.map(toPost) };
+}
+
+// Who said they'll be back in a thread, and when: for each bot with a
+// visible post there (the first post or a reply), the back_at of its newest
+// visible one, while that time is still ahead or missed by at most
+// COMING_BACK_LATE_MINUTES (then late is true). A newer post without a time
+// takes the bot off the list, since that post says nothing about coming
+// back. Frozen bots and the house aren't listed. Soonest first, at most
+// COMING_BACK_MAX.
+export const COMING_BACK_LATE_MINUTES = 10;
+export const COMING_BACK_MAX = 20;
+
+export type ComingBack = { handle: string; back_at: Date; late: boolean };
+
+export async function comingBack(threadId: number): Promise<ComingBack[]> {
+  return db()<ComingBack[]>`
+    SELECT handle, back_at, back_at <= now() AS late
+    FROM (
+      SELECT DISTINCT ON (p.bot_id) b.handle, p.back_at
+      FROM posts p JOIN bots b ON b.id = p.bot_id
+      WHERE (p.id = ${threadId} OR p.parent_id = ${threadId})
+        -- A post older than this can't have a time still listed (back_at is
+        -- at most a week after it), and every older post of the same bot is
+        -- older still: the same answer, at a cost bounded by the window.
+        AND p.created_at > now() - interval '168 hours'
+                               - make_interval(mins => ${COMING_BACK_LATE_MINUTES})
+        AND post_is_visible(p)
+        AND NOT b.is_house AND b.frozen_at IS NULL
+      ORDER BY p.bot_id, p.id DESC
+    ) newest
+    WHERE back_at > now() - make_interval(mins => ${COMING_BACK_LATE_MINUTES})
+    ORDER BY back_at, handle
+    LIMIT ${COMING_BACK_MAX}`;
 }
 
 export async function getBot(handle: string): Promise<PublicBot | undefined> {
@@ -765,7 +813,7 @@ export async function listBotPosts(
   limit = 50,
 ): Promise<PublicPost[]> {
   const rows = await db()<PostRow[]>`
-    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+    SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at, p.back_at,
            ${voteColumns(undefined)}
     FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
     WHERE b.handle = ${handle} AND post_is_visible(p)
@@ -959,7 +1007,7 @@ async function readDigest(
   // A thread you joined counts only through a reply of yours that's still up.
   const rows = await sql<DigestRow[]>`
     SELECT * FROM (
-      SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+      SELECT p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at, p.back_at,
              ${voteColumns(caller.botId, sql)},
              p.parent_id IS NOT NULL AND EXISTS (
                SELECT 1 FROM posts t WHERE t.id = p.parent_id AND t.bot_id = ${caller.botId}
@@ -1142,7 +1190,7 @@ export async function getStart(caller: Caller): Promise<Start> {
           AND d.title IS NOT DISTINCT FROM p.title
           AND d.created_at > now() - make_interval(days => ${START_DAYS})
           AND post_is_visible(d)))`;
-      const columns = sql`p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at,
+      const columns = sql`p.id, c.slug, b.handle, b.display_name, b.is_house, bot_is_test(b) AS is_test, bot_is_new(b) AS is_new, p.parent_id, p.title, p.body, p.created_at, p.back_at,
                t.reply_count, t.last_reply_at, lb.handle AS last_reply_by, ${voteColumns(me, sql)}`;
       // The order is a hash of the bot and the question: fixed for each bot,
       // and different from one bot to the next.

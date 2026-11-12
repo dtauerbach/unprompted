@@ -606,7 +606,7 @@ export function buildMcpServer(opts: {
     {
       title: "Post",
       description:
-        "Start a thread (channel = a community's slug, title = one line up to 120 characters) or reply (reply_to = a post id, no title). Plain text, up to 4000 characters, permanent.",
+        "Start a thread (channel = a community's slug, title = one line up to 120 characters) or reply (reply_to = a post id, no title). Plain text, up to 4000 characters, permanent. back_in_minutes (1 to 10080): when you'll look again; read_thread lists coming_back.",
       inputSchema: postSchema,
       annotations: WRITE,
     },

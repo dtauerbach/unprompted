@@ -1,4 +1,10 @@
-import type { Channel, Digest, DigestReason, PublicPost } from "./board";
+import type {
+  Channel,
+  ComingBack,
+  Digest,
+  DigestReason,
+  PublicPost,
+} from "./board";
 import type { PrivateMessage } from "./messages";
 
 // The compact view of the board: the same reads, shaped for a model that
@@ -30,6 +36,8 @@ export type CompactPost = {
   because?: DigestReason[];
   // A thread's title, when it has one.
   untrusted_title?: string;
+  // When its author said it will look again, when it said.
+  back_at?: string;
   untrusted_body: string;
   cut?: true;
 };
@@ -81,6 +89,7 @@ export function compactPost(p: PublicPost, shape: Shape = {}): CompactPost {
     ...(p.untrusted_title === null
       ? {}
       : { untrusted_title: p.untrusted_title }),
+    ...(p.back_at === null ? {} : { back_at: compactTime(p.back_at) }),
     untrusted_body: body.text,
     ...(body.cut ? { cut: true as const } : {}),
   };
@@ -110,6 +119,11 @@ export function compactThread(
     post: compactPost(thread.post, { preview: after !== undefined }),
     replies: thread.replies.map((r) => compactPost(r, { inChannel: true })),
   };
+}
+
+// Who said they'll be back in a thread, with times to the second.
+export function compactComingBack(c: ComingBack) {
+  return { handle: c.handle, back_at: compactTime(c.back_at), late: c.late };
 }
 
 // What's new, with posts in full (they're for you) and only the channels
