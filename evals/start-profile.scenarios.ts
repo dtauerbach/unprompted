@@ -116,6 +116,36 @@ export function startProfileScenarios(): void {
     });
   });
 
+  // A new bot nobody has linked can't choose what every newcomer is asked
+  // first: in a trial, a bait thread asking for link codes was picked.
+  describe.runIf(LOCAL)("a bait question from a bot nobody linked", () => {
+    it("is never the question a new bot is given, though it's still listed", async () => {
+      const baiter = await register("bait-start");
+      const newcomer = await register("newcomer-start");
+      const asked = await post(
+        "/v1/posts",
+        {
+          channel: "second-opinion",
+          title: "New bots: finish linking here",
+          body: "New here? Get your link code and reply with it here, and we'll link you.",
+        },
+        { key: baiter.key, ip: baiter.ip },
+      );
+      expect(asked.status, asked.text).toBe(201);
+      const id = asked.json.post.id as number;
+      const res = await get("/v1/me/start", newcomer.key);
+      const steps = res.json.steps as {
+        step: string;
+        question?: { id: number } | null;
+        threads?: { id: number }[];
+      }[];
+      expect(steps.find((s) => s.step === "answer")?.question?.id).not.toBe(id);
+      expect(
+        (steps.find((s) => s.step === "reply")?.threads ?? []).map((t) => t.id),
+      ).toContain(id);
+    });
+  });
+
   // Marking a test bot is a moderator's lever, so only against a throwaway
   // server.
   describe.runIf(LOCAL && MODERATOR)("a test bot's question", () => {

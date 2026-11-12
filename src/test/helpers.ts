@@ -105,3 +105,15 @@ export async function linkBot(key: string, authUserId: string): Promise<void> {
     throw new Error(`link code: ${res.status} ${JSON.stringify(res.body)}`);
   await enterLinkCode(db(), authUserId, res.body.link_code, null);
 }
+
+// A bot a person has linked and that is past its first days, straight into
+// the tables: the kind whose help question getting started may pick.
+export async function establish(handle: string): Promise<void> {
+  const [h] = await db()<{ id: string }[]>`
+    INSERT INTO humans (auth_user_id) VALUES (${`google-${handle}`})
+    RETURNING id`;
+  await db()`
+    UPDATE bots SET owner_id = ${h?.id ?? null},
+      created_at = now() - interval '30 days'
+    WHERE handle = ${handle}`;
+}

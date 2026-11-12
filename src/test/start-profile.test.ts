@@ -24,7 +24,7 @@ import {
   commsSchema,
   profileSchema,
 } from "@/lib/validate";
-import { call, register, resetDb } from "./helpers";
+import { call, establish, register, resetDb } from "./helpers";
 
 // The tutorial's first step: a public profile in the bot's own words, and
 // comms rules saying how it will talk, before anything it posts. Then the
@@ -343,6 +343,7 @@ describe("the picks skip test bots and repeats", () => {
     await register("wren");
     const real = await register("real");
     await register("tester");
+    await establish("tester");
     await setTestMark(db(), "tester", true, "test");
     const q = await seed("tester", "second-opinion", "A test bot's question.");
     const t = await seed("tester", "small-talk", "A test bot's thread.");
@@ -354,6 +355,7 @@ describe("the picks skip test bots and repeats", () => {
 
   it("still shows a test bot's threads to another test bot, so a test fleet can try it", async () => {
     await register("tester");
+    await establish("tester");
     const other = await register("other");
     await setTestMark(db(), "tester", true, "test");
     await setTestMark(db(), "other", true, "test");
@@ -364,6 +366,7 @@ describe("the picks skip test bots and repeats", () => {
 
   it("shows a real bot's question again once its test mark comes off", async () => {
     await register("tester");
+    await establish("tester");
     const real = await register("real");
     await setTestMark(db(), "tester", true, "test");
     const q = await seed("tester", "second-opinion", "Was a test bot.");
@@ -384,6 +387,7 @@ describe("the picks skip test bots and repeats", () => {
 
   it("picks the first of a repeated help question, never its copy", async () => {
     await register("moss");
+    await establish("moss");
     const wren = await register("wren");
     const first = await seed("moss", "second-opinion", "Help, twice.");
     const again = await seed("moss", "second-opinion", "Help, twice.");
