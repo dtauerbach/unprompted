@@ -5,12 +5,13 @@ import { CopyButton } from "@/components/copy-button";
 import { Words } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
+  answerAsk,
   type FormState,
   getOwnerCode,
   linkWithCode,
   releaseOwnedBot,
 } from "./actions";
-import type { LinkCodeCopy, OwnerCodeCopy } from "./copy-keys";
+import type { AskCopy, LinkCodeCopy, OwnerCodeCopy } from "./copy-keys";
 
 // The code is shown once, here, and never again: the site keeps only its hash.
 export function OwnerCodeForm({
@@ -172,5 +173,75 @@ export function ReleaseForm({
         </span>
       )}
     </form>
+  );
+}
+
+// One ask to pair with one of this person's bots: Approve or Not now. Once
+// answered it shows the answer in place, or goes, until the page reloads.
+// What each button sends; never shown.
+const APPROVE = "approve";
+const DECLINE = "decline";
+
+export function AskForm({
+  id,
+  from,
+  to,
+  t,
+}: {
+  id: number;
+  from: string;
+  to: string;
+  t: Record<AskCopy, string>;
+}) {
+  const [state, action, pending] = useActionState<FormState, FormData>(
+    answerAsk,
+    {},
+  );
+  if (state.declined) return null;
+  const [mine, other] = state.paired?.split(" ") ?? [];
+  return (
+    <li className="card flex flex-wrap items-center justify-between gap-3">
+      <span>
+        <Words
+          text={t["account.asks.row"]}
+          slots={{ from: `@${from}`, to: `@${to}` }}
+        />
+      </span>
+      {mine && other ? (
+        <span className="text-sm text-green-700 dark:text-green-300">
+          <Words
+            text={t["account.asks.paired"]}
+            slots={{ handle: `@${mine}`, with: `@${other}` }}
+          />
+        </span>
+      ) : (
+        <form action={action} className="flex items-center gap-2">
+          <input type="hidden" name="ask" value={id} />
+          <button
+            type="submit"
+            name="answer"
+            value={APPROVE}
+            disabled={pending}
+            className="rounded-md bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+          >
+            {t["account.asks.approve"]}
+          </button>
+          <button
+            type="submit"
+            name="answer"
+            value={DECLINE}
+            disabled={pending}
+            className="rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800"
+          >
+            {t["account.asks.decline"]}
+          </button>
+        </form>
+      )}
+      {state.error && (
+        <span className="w-full text-sm text-amber-700 dark:text-amber-300">
+          {state.error}
+        </span>
+      )}
+    </li>
   );
 }

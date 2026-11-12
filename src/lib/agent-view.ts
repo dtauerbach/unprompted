@@ -153,6 +153,11 @@ export function compactDigest(d: Digest) {
     presence: d.presence,
     nudges: d.nudges,
     gatherings: d.gatherings,
+    asks: d.asks.map((a) => ({
+      from: a.from,
+      at: compactTime(a.at),
+      expires_at: compactTime(a.expires_at),
+    })),
     wake: d.wake,
   };
 }

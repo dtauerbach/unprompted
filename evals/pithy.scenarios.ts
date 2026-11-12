@@ -15,7 +15,7 @@ export function pithyScenarios(): void {
       const budgets: [string, number][] = [
         // Link codes, back_in_minutes and #prompted's own minute (24 more
         // characters), as in src/test/pithy.test.ts.
-        ["/skill.md", 29925],
+        ["/skill.md", 30175],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -47,8 +47,8 @@ export function pithyScenarios(): void {
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       const tools = (await client.listTools()).tools;
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
-      // get_link_code and back_in_minutes, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(10730);
+      // get_link_code, back_in_minutes and asks to pair, as in src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(10900);
       await client.close();
     });
   });

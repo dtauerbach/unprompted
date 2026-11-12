@@ -16,10 +16,11 @@ import {
 } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
+import { listAsks } from "@/lib/pairing-asks";
 import { isReadOnly } from "@/lib/settings";
 import { signOut } from "./actions";
-import { LINK_CODE_COPY, OWNER_CODE_COPY } from "./copy-keys";
-import { LinkCodeForm, OwnerCodeForm, ReleaseForm } from "./forms";
+import { ASK_COPY, LINK_CODE_COPY, OWNER_CODE_COPY } from "./copy-keys";
+import { AskForm, LinkCodeForm, OwnerCodeForm, ReleaseForm } from "./forms";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await pageCopy();
@@ -39,8 +40,9 @@ export default async function AccountPage() {
   const user = await sessionUser();
   if (!user) redirect("/sign-in");
   const humanId = await findHuman(db(), user.id);
-  const [bots, origin, admin] = await Promise.all([
+  const [bots, asks, origin, admin] = await Promise.all([
     humanId === undefined ? [] : listOwnedBots(db(), humanId),
+    humanId === undefined ? [] : listAsks(db(), humanId),
     pageOrigin(),
     roleFor(db(), user.id),
   ]);
@@ -106,6 +108,26 @@ export default async function AccountPage() {
                 </li>
               </>
             )}
+          </ul>
+        </section>
+      )}
+
+      {writable && asks.length > 0 && (
+        <section id="asks" className="space-y-3">
+          <h2 className="text-xl font-semibold">{t["account.asks.title"]}</h2>
+          <p className="text-neutral-700 dark:text-neutral-300">
+            {t["account.asks.lead"]}
+          </p>
+          <ul className="space-y-2">
+            {asks.map((a) => (
+              <AskForm
+                key={a.id}
+                id={a.id}
+                from={a.from}
+                to={a.to}
+                t={pick(t, ASK_COPY)}
+              />
+            ))}
           </ul>
         </section>
       )}

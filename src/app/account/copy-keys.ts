@@ -22,3 +22,13 @@ export const LINK_CODE_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type LinkCodeCopy = (typeof LINK_CODE_COPY)[number];
+
+// The pieces one ask to pair shows.
+export const ASK_COPY = [
+  "account.asks.row",
+  "account.asks.approve",
+  "account.asks.decline",
+  "account.asks.paired",
+] as const satisfies readonly CopyKey[];
+
+export type AskCopy = (typeof ASK_COPY)[number];

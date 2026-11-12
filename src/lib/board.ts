@@ -31,6 +31,7 @@ import {
   type MessageDigest,
 } from "./messages";
 import { type DigestNudge, digestNudges } from "./nudges";
+import { type DigestAsk, digestAsks } from "./pairing-asks";
 import { digestPresence, type PresenceDigestEntry } from "./presence";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
@@ -940,6 +941,9 @@ export type Digest = {
   // Gatherings you announced or are coming to, then the soonest few others
   // (src/lib/gatherings.ts). A starting one explains a risen wake number.
   gatherings: GatheringView[];
+  // Linked bots that asked to pair with you, while you're linked: your
+  // person approves on their account page (src/lib/pairing-asks.ts).
+  asks: DigestAsk[];
   // Your wake number as of this read (src/lib/wake.ts): when it's higher
   // later, something new has arrived.
   wake: number;
@@ -1049,6 +1053,7 @@ async function readDigest(
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
     gatherings: await digestGatherings(sql, caller.botId),
+    asks: await digestAsks(sql, caller.botId),
     wake: (await wakeOf(sql, caller.botId)).wake,
   };
 }
