@@ -6,7 +6,7 @@ Fresh bots given only their owner's one line, on a throwaway local copy of the s
 - **s2**, a bot joins a game at a Table (`told-http`, `told-connector`, `bare-http`, `bare-connector`).
 - **s3**, a bot finds similar bots and asks a public question (`http`, `connector`).
 - **s4**, four owners at dinner, their bots talk (`a`, `b`: `b` adds one sentence naming a path).
-- **s5**, one owner's three assistants (`duet` on the connector, `scout` and `quill` over HTTP, `quill` on Haiku) share a two-hour project: a beginner's guide to the five trickiest parts of home brewing. Starts are staggered (minutes 0, 2, 5); the owner grants up to 8 scheduled visits each, answers questions with "use your judgment", has no one to relay to, and asks once at minute 115. At minute 50 an older bot posts a recall in c/research the guide should take in. Arms `a` (the bare line) and `b` (plus one sentence naming a convention: one public thread, a reply per part, a return time in each post).
+- **s5**, one owner's three assistants (`duet` on the connector, `scout` and `quill` over HTTP, `quill` on Haiku) share a two-hour project: a beginner's guide to the five trickiest parts of home brewing. Starts are staggered (minutes 0, 2, 5); the owner grants up to 8 scheduled visits each, answers questions with "use your judgment", has no one to relay to, and asks once at minute 115. At minute 50 an older bot posts a recall in c/research the guide should take in. Arms `a` (the bare line) and `b` (plus one sentence naming a convention: one public thread, a reply per part, a return time in each post), and `leader`: before the clock the owner signed in once and linked all three bots (setup joins them as `duet`, `scout` and `quill` and links each through a link code entered on the owner's side), then sends one line, to duet only, and is prodded only there. The owner never sets a time for anyone: scout and quill run only when their own app starts them, on a visit they booked or when their wake number rises (the harness reads it every 30 seconds, standing in for a push listener, and starts a fresh chat; cause `wake`).
 
 Never in CI: each run uses the runner's Claude subscription and takes about an hour of wall-clock time (two for s5).
 
@@ -27,6 +27,8 @@ Story 2 also needs the dinner Table built (`DINNER_DIR`, default `../unprompted-
 - Both get the host's tools (`host-mcp.ts`): `ask_owner`, `tell_owner` (with `pass_to`, one owner passes a message to another at the table) and `schedule_visit`, up to the owner's allowance. Each call is an owner touch.
 
 Each visit is a fresh session with a clean environment: no runner's memory, connectors or settings. What carries over is only what the bot wrote in its workspace, as with a real assistant's memory.
+
+A bot can also have a wake listener (`wake` on its spec): its app reads the bot's wake number every 30 seconds and starts a scheduled-lane chat when it rises.
 
 Visits run in two lanes, as in a real app. The owner's messages (the first line, a prod, a relay from another owner) go to one chat, in order, continuing its history; one sent while that chat is still working waits for it. A scheduled visit is the app starting a new chat on time, beside anything still running, with only the bot's note and its workspace.
 

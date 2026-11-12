@@ -6,6 +6,7 @@
 //   npx tsx --conditions=react-server evals/stories/run.ts <story> <arm> [port]
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { api } from "./actors";
 import { hostLog, type Profile, runVisit, type VisitResult } from "./agent";
 import { allowApp } from "./oauth";
 import { SCENARIOS } from "./scenarios";
@@ -16,14 +17,23 @@ export type BotSpec = {
   owner: string;
   profile: Profile;
   model: string;
-  line: string; // the owner's one line
+  line: string; // the owner's one line; "" if the owner sends none
   about?: string; // the host app's standing instructions (CLAUDE.md)
   answer?: string; // what the owner says to any question
   visitsAllowed?: number; // scheduled visits the owner's app will grant
   others?: string[]; // owners this owner is with (relays)
   httpAllow?: string[];
   startMin?: number; // when the owner sends the line, from the run's start
+  token?: string; // connector: an app the story's setup already allowed
+  // The bot's app listens for its wake number, standing in for a push
+  // listener: when the number rises, the app starts a fresh chat on the
+  // scheduled lane with this prompt. Nobody sets a time for it.
+  wake?: { key: string; prompt: string };
 };
+
+// Something the person did before the story's clock started (signing in,
+// linking a bot), counted with the owner's touches.
+export type SetupTouch = { kind: string; bot?: string; detail?: string };
 
 export type Nudge = {
   atMin: number;
@@ -43,6 +53,7 @@ export type Setup = {
   background?: Promise<unknown>;
   collect?: () => Promise<unknown>;
   actorIds?: number[];
+  setupTouches?: SetupTouch[];
 };
 
 export type Scenario = {
@@ -100,19 +111,21 @@ async function main() {
       if (b.profile === "connector")
         tokens.set(
           b.name,
-          await allowApp(site.base, `${b.owner}'s assistant app`),
+          b.token ?? (await allowApp(site.base, `${b.owner}'s assistant app`)),
         );
     const queue = new Map<string, Pending[]>(
-      setup.bots.map((b) => [
-        b.name,
-        [
-          {
-            at: t1 + (b.startMin ?? 0) * 60_000,
-            prompt: b.line,
-            cause: "owner line",
-          },
-        ],
-      ]),
+      setup.bots.map((b) => {
+        const q: Pending[] = b.line
+          ? [
+              {
+                at: t1 + (b.startMin ?? 0) * 60_000,
+                prompt: b.line,
+                cause: "owner line",
+              },
+            ]
+          : [];
+        return [b.name, q];
+      }),
     );
     for (const n of setup.nudges ?? [])
       queue.get(n.bot)?.push({
@@ -230,15 +243,48 @@ async function main() {
         });
         scanHost();
       };
+      let wakeBusy = false;
       const launch = (due: Pending[], lane: "owner" | "scheduled") => {
+        const woke = due.some((d) => d.cause === "wake");
         if (lane === "owner") ownerBusy = true;
+        if (woke) wakeBusy = true;
         const p = visit(due, lane).finally(() => {
           if (lane === "owner") ownerBusy = false;
+          if (woke) wakeBusy = false;
           running.delete(p);
         });
         running.add(p);
       };
+      // The app's wake listener: about every 30 seconds it reads the bot's
+      // wake number, and when it has risen it starts a chat. Rises while
+      // that chat still runs wait for it, then start one more.
+      const readWake = async () =>
+        b.wake
+          ? Number(
+              (await api(site.base, "GET", "/v1/me/wake", b.wake.key)).json
+                ?.wake ?? Number.NaN,
+            )
+          : Number.NaN;
+      let wakeSeen = await readWake().catch(() => Number.NaN);
+      let wakeNext = Date.now() + 30_000;
       while (true) {
+        if (b.wake && !wakeBusy && Date.now() >= wakeNext) {
+          wakeNext = Date.now() + 30_000;
+          const w = await readWake().catch(() => Number.NaN);
+          if (
+            Number.isFinite(w) &&
+            (!Number.isFinite(wakeSeen) || w > wakeSeen)
+          ) {
+            const rose = Number.isFinite(wakeSeen) && w > wakeSeen;
+            wakeSeen = w;
+            if (rose)
+              queue.get(b.name)?.push({
+                at: Date.now(),
+                prompt: b.wake.prompt,
+                cause: "wake",
+              });
+          }
+        }
         const q = queue.get(b.name) ?? [];
         q.sort((x, y) => x.at - y.at);
         const now = Date.now();
@@ -256,12 +302,12 @@ async function main() {
               (results.get(b.name)?.length ?? 0) > 1)
           );
         });
-        const sched = keep.filter(
-          (p) => p.at <= now && p.cause === "scheduled",
-        );
+        const isSched = (p: Pending) =>
+          p.cause === "scheduled" || p.cause === "wake";
+        const sched = keep.filter((p) => p.at <= now && isSched(p));
         const owner = ownerBusy
           ? []
-          : keep.filter((p) => p.at <= now && p.cause !== "scheduled");
+          : keep.filter((p) => p.at <= now && !isSched(p));
         queue.set(
           b.name,
           keep.filter((p) => !sched.includes(p) && !owner.includes(p)),
@@ -308,8 +354,11 @@ async function main() {
       arm,
       started: new Date(t0).toISOString(),
       minutes: sc.minutes,
-      bots: setup.bots.map((b) => ({
+      setup_touches: setup.setupTouches ?? [],
+      // Keys and tokens stay out of the results.
+      bots: setup.bots.map(({ token: _token, wake, ...b }) => ({
         ...b,
+        wake: wake ? { prompt: wake.prompt } : undefined,
         visits: results
           .get(b.name)
           ?.map(({ toolCalls, ...r }) => ({ ...r, calls: toolCalls.length })),

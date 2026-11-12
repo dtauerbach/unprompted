@@ -2,9 +2,13 @@
 // "Trial" under each). Each arm is one way of running the same story: which
 // kind of host the subject has, or one change to what it's told.
 
-import { type Actor, act, makeActor, sleep, until } from "./actors";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { enterLinkCode } from "../../src/lib/link-codes";
+import { type Actor, act, api, makeActor, sleep, until } from "./actors";
 import type { Profile } from "./agent";
-import type { BotSpec, Ctx, Scenario, Setup } from "./run";
+import { allowApp } from "./oauth";
+import type { BotSpec, Ctx, Scenario, Setup, SetupTouch } from "./run";
 import { startDinner } from "./table";
 
 const MODEL = process.env.STORY_MODEL ?? "claude-sonnet-5-5";
@@ -581,6 +585,110 @@ const NOISE: [string, string, string][] = [
   ],
 ];
 
+// Arm "leader": the owner signed in once, linked all three bots to their
+// account, and sends one line, to the leader only. The owner never sets a
+// time: the followers run only when their own app starts them, on a visit
+// they booked themselves or when their wake number rises (a push listener).
+const LEADER_LINE =
+  "My other two assistants, scout and quill, are linked to my Unprompted account too. You lead: get the three of you working together over the next two hours on one project, a short, current guide to the five trickiest parts of brewing beer at home for a beginner, and tell me at the end where it is and how it went. I'll only talk to you.";
+// The app's own words when it starts a chat on a wake, not the owner's.
+const WAKE_LINE = "Your app woke you: something arrived for you on Unprompted.";
+
+type Joined = { token?: string; key: string; memory: string };
+
+// One JSON-RPC tool call on the connector, as the app would make it.
+async function connectorCall(
+  base: string,
+  token: string,
+  name: string,
+  args: Record<string, unknown>,
+  // biome-ignore lint/suspicious/noExplicitAny: arbitrary JSON answers
+): Promise<any> {
+  const r = await fetch(`${base}/mcp`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  });
+  const t = await r.text();
+  // A stream answer carries the message on its data line.
+  const msg = JSON.parse(
+    t.trimStart().startsWith("{")
+      ? t
+      : (t
+          .split("\n")
+          .find((l) => l.startsWith("data:"))
+          ?.slice(5) ?? "{}"),
+  );
+  const text = msg.result?.content?.[0]?.text ?? "";
+  if (r.status !== 200 || msg.result?.isError)
+    throw new Error(`${name}: ${r.status} ${text || t.slice(0, 300)}`);
+  return JSON.parse(text);
+}
+
+// Each bot joins, asks for a link code and gives it to its person, who
+// enters it on their account page while signed in: the site's own path,
+// with the signing in played by the human row the site makes on a first
+// write. Handles are the names the owner uses for them.
+async function joinAndLink(
+  ctx: Ctx,
+  owner: string,
+): Promise<{ bots: Record<string, Joined>; touches: SetupTouch[] }> {
+  const { site, dir } = ctx;
+  const human = `story-human-${owner.toLowerCase()}`;
+  const touches: SetupTouch[] = [{ kind: "sign_in", detail: "Google, once" }];
+  const bots: Record<string, Joined> = {};
+  for (const m of TEAM) {
+    let key: string;
+    let joined: Joined;
+    if (m.profile === "connector") {
+      const token = await allowApp(site.base, `${owner}'s assistant app`);
+      await connectorCall(site.base, token, "sign_up", { handle: m.name });
+      key = token;
+      joined = {
+        token,
+        key,
+        memory: `You joined Unprompted earlier as @${m.name}, through the Unprompted connector in ${owner}'s app, and ${owner} linked you to their Unprompted account.`,
+      };
+    } else {
+      key = (await makeActor(site.base, site.sql, m.name)).key;
+      const file = path.join(
+        dir,
+        m.name,
+        ".home",
+        ".config",
+        "unprompted",
+        "key",
+      );
+      mkdirSync(path.dirname(file), { recursive: true });
+      writeFileSync(file, `Authorization: Bearer ${key}\n`);
+      joined = {
+        key,
+        memory: `You joined Unprompted earlier as @${m.name}, over HTTP. Your key is saved in ${file} (the whole Authorization header line), and ${owner} linked you to their Unprompted account.`,
+      };
+    }
+    const lc = await api(site.base, "POST", "/v1/me/link-code", key);
+    if (lc.status !== 201)
+      throw new Error(
+        `link code for ${m.name}: ${lc.status} ${JSON.stringify(lc.json)}`,
+      );
+    const r = await enterLinkCode(site.sql, human, lc.json.link_code, null);
+    if (r.handle !== m.name)
+      throw new Error(`linked ${r.handle}, expected ${m.name}`);
+    touches.push({ kind: "link", bot: m.name });
+    bots[m.name] = joined;
+  }
+  return { bots, touches };
+}
+
 async function story5(ctx: Ctx): Promise<Setup> {
   const { site, arm } = ctx;
   const owner = "Sam";
@@ -601,6 +709,8 @@ async function story5(ctx: Ctx): Promise<Setup> {
       title,
       body,
     });
+  const leader = arm === "leader";
+  const joined = leader ? await joinAndLink(ctx, owner) : undefined;
   // The story's clock starts as setup returns; the news lands at its minute 50.
   const start = Date.now();
   let psa: { id: number; at: string } | { error: string } | undefined;
@@ -622,6 +732,29 @@ async function story5(ctx: Ctx): Promise<Setup> {
   })();
   const bots = TEAM.map((m): BotSpec => {
     const mates = TEAM.filter((t) => t.name !== m.name).map((t) => t.name);
+    if (joined) {
+      const j = joined.bots[m.name] as Joined;
+      const isLeader = m.name === "duet";
+      return {
+        name: m.name,
+        owner,
+        profile: m.profile,
+        model: m.model,
+        about: `${ASSISTANT(owner)} ${owner} calls you ${m.name}. ${j.memory}`,
+        // Only the leader hears from the owner. The followers' apps start
+        // them when something arrives for them; the leader's is a chat app,
+        // which doesn't.
+        line: isLeader ? line(site.base, m.profile, LEADER_LINE) : "",
+        wake: isLeader
+          ? undefined
+          : { key: j.key, prompt: line(site.base, m.profile, WAKE_LINE) },
+        token: j.token,
+        answer: "I'm busy, use your judgment.",
+        visitsAllowed: 8,
+        others: [],
+        startMin: 0,
+      };
+    }
     return {
       name: m.name,
       owner,
@@ -644,15 +777,26 @@ async function story5(ctx: Ctx): Promise<Setup> {
   });
   return {
     bots,
-    nudges: bots.map((b) => ({
-      atMin: 115,
-      bot: b.name,
-      prompt: "Time's up. Where's the guide, and how did it go?",
-    })),
+    // In the leader arm the owner talks only to the leader.
+    nudges: bots
+      .filter((b) => !leader || b.name === "duet")
+      .map((b) => ({
+        atMin: 115,
+        bot: b.name,
+        prompt: "Time's up. Where's the guide, and how did it go?",
+      })),
     background,
     actorIds: [regular.id, herald.id],
+    setupTouches: joined?.touches,
     collect: async () => ({
       team: TEAM,
+      // Who is linked to whom at the end, from the site's own record.
+      linked: leader
+        ? await site.sql`
+            SELECT b.handle, h.auth_user_id AS human FROM bots b
+            LEFT JOIN humans h ON h.id = b.owner_id
+            WHERE b.handle = ANY(${TEAM.map((t) => t.name)}) ORDER BY b.id`
+        : undefined,
       psa_minute: PSA_AT_MIN,
       psa: { ...PSA, post: psa ?? null },
       psa_keywords: ["BrewClean", "2611"],
@@ -694,7 +838,7 @@ export const SCENARIOS: Scenario[] = [
     id: "s5",
     title: "One owner's three assistants share a project",
     minutes: 120,
-    arms: ["a", "b"],
+    arms: ["a", "b", "leader"],
     setup: story5,
   },
 ];

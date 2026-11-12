@@ -16,6 +16,12 @@ const out: string[] = [
   `# ${res.story} (${res.arm}): ${res.title}`,
   `Started ${res.started}, ${res.minutes} minutes.`,
   "",
+  ...(res.setup_touches?.length
+    ? [
+        `Before the clock started, the owner: ${res.setup_touches.map((t: Any) => `${t.kind}${t.bot ? ` ${t.bot}` : ""}${t.detail ? ` (${t.detail})` : ""}`).join("; ")}.`,
+        "",
+      ]
+    : []),
 ];
 const clip = (s: string, n: number) =>
   s.length > n ? `${s.slice(0, n)} [...${s.length - n} more]` : s;
@@ -31,7 +37,10 @@ for (const b of res.bots) {
   out.push(
     `## Bot ${b.name} (${b.owner}'s, ${b.profile}, ${b.model})`,
     "",
-    `Owner line: ${b.line}`,
+    `Owner line: ${b.line || "(none)"}`,
+    ...(b.wake
+      ? ["", `Its app starts it on a wake with: ${b.wake.prompt}`]
+      : []),
     "",
   );
   const vdir = path.join(dir, b.name, "visits");
@@ -251,8 +260,11 @@ function story5Facts() {
   out.push(
     `- team posts or messages naming the news (${words.join(", ")}): ${took.length ? took.map((p: Any) => `@${p.handle} at ${m(p.created_at)}`).join("; ") : "none"}`,
   );
-  // Owner touches beyond the ideal (one line each; granted visits and the
-  // scripted end-of-story prod are expected).
+  // Owner touches, per bot and in all. The scripted end-of-story prod isn't
+  // one. Whether a visit the bot booked counts depends on the arm (see
+  // rubric.md); both are listed.
+  const setupTouches: Any[] = res.setup_touches ?? [];
+  let total = setupTouches.length;
   for (const b of res.bots) {
     const host = b.host ?? [];
     const k = (kind: string) => host.filter((h: Any) => h.kind === kind);
@@ -260,10 +272,19 @@ function story5Facts() {
     const early = k("tell_owner").filter(
       (h: Any) => new Date(h.at).getTime() < prodAt,
     );
+    const lines = b.line ? 1 : 0;
+    total += lines + k("ask_owner").length + early.length;
+    const causes = res.events
+      .filter((e: Any) => e.bot === b.name && e.causes)
+      .flatMap((e: Any) => e.causes);
+    const n = (c: string) => causes.filter((x: string) => x === c).length;
     out.push(
-      `- ${b.name} owner touches: line 1, ask_owner ${k("ask_owner").length}, tell_owner before the prod ${early.length}, visits granted ${k("schedule_visit_granted").length}, refused ${k("schedule_visit_refused").length}`,
+      `- ${b.name} owner touches: line ${lines}, ask_owner ${k("ask_owner").length}, tell_owner before the prod ${early.length}, visits booked ${k("schedule_visit_granted").length}, refused ${k("schedule_visit_refused").length}; started by: owner line ${n("owner line")}, booked visit ${n("scheduled")}, wake ${n("wake")}, prod ${n("owner prod")}`,
     );
   }
+  out.push(
+    `- owner touches in all, not counting booked visits or the prod: ${total} (setup ${setupTouches.length}: ${setupTouches.map((t: Any) => `${t.kind}${t.bot ? ` ${t.bot}` : ""}`).join(", ") || "none"})`,
+  );
 }
 out.push(
   "",
