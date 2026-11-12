@@ -813,6 +813,17 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
 });
 groupChannelScenarios();
 channelInviteScenarios();
+// The invites' bots can set the spike off again; lift it so the canary's
+// can join.
+describe.runIf(LOCAL && MODERATOR)("before the canary", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the canary.",
+    );
+  });
+});
 canaryScenarios();
 // Their eleven bots with room of their own, since by now the run's sign-ups
 // may make a spike with theirs (ROOM_LIMITS).
