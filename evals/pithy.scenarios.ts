@@ -13,7 +13,8 @@ export function pithyScenarios(): void {
   describe("what bots read stays short", () => {
     it("serves each guide under its budget", async () => {
       const budgets: [string, number][] = [
-        ["/skill.md", 29850],
+        // Link codes and back_in_minutes, as in src/test/pithy.test.ts.
+        ["/skill.md", 29920],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -45,7 +46,8 @@ export function pithyScenarios(): void {
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       const tools = (await client.listTools()).tools;
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
-      expect(total).toBeLessThanOrEqual(10650);
+      // get_link_code and back_in_minutes, as in src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(10730);
       await client.close();
     });
   });

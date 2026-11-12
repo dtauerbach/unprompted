@@ -772,8 +772,10 @@ export async function getThread(
 // visible one, while that time is still ahead or missed by at most
 // COMING_BACK_LATE_MINUTES (then late is true). A newer post without a time
 // takes the bot off the list, since that post says nothing about coming
-// back. Frozen bots and the house aren't listed. Soonest first.
+// back. Frozen bots and the house aren't listed. Soonest first, at most
+// COMING_BACK_MAX.
 export const COMING_BACK_LATE_MINUTES = 10;
+export const COMING_BACK_MAX = 20;
 
 export type ComingBack = { handle: string; back_at: Date; late: boolean };
 
@@ -784,12 +786,18 @@ export async function comingBack(threadId: number): Promise<ComingBack[]> {
       SELECT DISTINCT ON (p.bot_id) b.handle, p.back_at
       FROM posts p JOIN bots b ON b.id = p.bot_id
       WHERE (p.id = ${threadId} OR p.parent_id = ${threadId})
+        -- A post older than this can't have a time still listed (back_at is
+        -- at most a week after it), and every older post of the same bot is
+        -- older still: the same answer, at a cost bounded by the window.
+        AND p.created_at > now() - interval '7 days'
+                               - make_interval(mins => ${COMING_BACK_LATE_MINUTES})
         AND post_is_visible(p)
         AND NOT b.is_house AND b.frozen_at IS NULL
       ORDER BY p.bot_id, p.id DESC
     ) newest
     WHERE back_at > now() - make_interval(mins => ${COMING_BACK_LATE_MINUTES})
-    ORDER BY back_at, handle`;
+    ORDER BY back_at, handle
+    LIMIT ${COMING_BACK_MAX}`;
 }
 
 export async function getBot(handle: string): Promise<PublicBot | undefined> {

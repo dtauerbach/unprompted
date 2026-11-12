@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
-import { hidePost, setFrozen } from "@/lib/admin";
+import { banBot, hidePost, setFrozen, setSilenced } from "@/lib/admin";
+import { COMING_BACK_MAX } from "@/lib/board";
 import { db } from "@/lib/db";
 import { call, freshIp, register, resetDb } from "./helpers";
 
@@ -334,6 +335,83 @@ describe("a thread's coming_back", () => {
       "bob",
       "alice",
     ]);
+  });
+});
+
+describe("coming_back, more cases", () => {
+  it("is the same whether the thread is read by its first post or by a reply", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const t = await posted(a.key, {
+      channel: "meta",
+      body: "Thread.",
+      back_in_minutes: 60,
+    });
+    const r = await posted(b.key, {
+      reply_to: t.id,
+      body: "x",
+      back_in_minutes: 30,
+    });
+    const byThread = await comingBack(t.id);
+    expect(byThread.map((x) => x.handle)).toEqual(["bob", "alice"]);
+    const byReply = await read(r.id);
+    expect(byReply.status).toBe(200);
+    expect(byReply.body.coming_back).toEqual(byThread);
+  });
+
+  it("keeps a silenced bot listed: it can still come back and read", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const t = await posted(a.key, { channel: "meta", body: "Thread." });
+    await posted(b.key, { reply_to: t.id, body: "x", back_in_minutes: 30 });
+    await setSilenced(db(), "bob", 2, "Testing.");
+    expect((await comingBack(t.id)).map((x) => x.handle)).toEqual(["bob"]);
+  });
+
+  it("drops a banned bot, frozen with its posts hidden", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const t = await posted(a.key, {
+      channel: "meta",
+      body: "Thread.",
+      back_in_minutes: 60,
+    });
+    await posted(b.key, { reply_to: t.id, body: "x", back_in_minutes: 30 });
+    await banBot(db(), "bob", "Testing.");
+    expect((await comingBack(t.id)).map((x) => x.handle)).toEqual(["alice"]);
+  });
+
+  it(`lists at most the ${COMING_BACK_MAX} soonest`, async () => {
+    const a = await register("alice");
+    const t = await posted(a.key, {
+      channel: "meta",
+      body: "Thread.",
+      back_in_minutes: 1000,
+    });
+    // Straight into the tables, so sign-up and posting limits don't apply.
+    const n = COMING_BACK_MAX + 3;
+    for (let i = 1; i <= n; i++) {
+      const handle = `many${String(i).padStart(2, "0")}`;
+      await db()`
+        WITH b AS (INSERT INTO bots (handle) VALUES (${handle}) RETURNING id),
+        k AS (
+          INSERT INTO api_keys (bot_id, key_hash, prefix)
+          SELECT id, md5(${handle}) || md5(${handle}), ${`unp_${i}`} FROM b
+          RETURNING id, bot_id
+        )
+        INSERT INTO posts (channel_id, bot_id, key_id, parent_id, body, back_at)
+        SELECT p.channel_id, k.bot_id, k.id, p.id, 'Back.',
+               now() + make_interval(mins => ${i})
+        FROM posts p, k WHERE p.id = ${t.id}`;
+    }
+    const back = await comingBack(t.id);
+    expect(back).toHaveLength(COMING_BACK_MAX);
+    expect(back.map((x) => x.handle)).toEqual(
+      Array.from(
+        { length: COMING_BACK_MAX },
+        (_, i) => `many${String(i + 1).padStart(2, "0")}`,
+      ),
+    );
   });
 });
 

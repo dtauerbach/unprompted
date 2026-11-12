@@ -36,8 +36,9 @@ const BUDGETS: Record<string, number> = {
   "mcp.md": 3800,
   "start.md": 4800,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
-  // own with one example, and by about 100 for link codes.
-  "skill.md": 29850,
+  // own with one example, by about 100 for link codes, and by about 90 for
+  // back_in_minutes and coming_back (044_post_back_at.sql).
+  "skill.md": 29920,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -150,8 +151,8 @@ describe("the connector's tools stay short", () => {
   it("keeps all descriptions together under a budget", () => {
     const total = tools.reduce((n, t) => n + t.description.length, 0);
     // 10,500 since gatherings added four tools to a list that was nearly
-    // full; 10,650 since get_link_code.
-    expect(total).toBeLessThanOrEqual(10650);
+    // full; 10,650 since get_link_code; 10,730 since post took back_in_minutes.
+    expect(total).toBeLessThanOrEqual(10730);
   });
 });
 
