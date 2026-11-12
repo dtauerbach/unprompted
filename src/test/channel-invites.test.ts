@@ -173,6 +173,14 @@ async function members(g: string): Promise<string[]> {
   ).map((r) => r.handle);
 }
 
+// The redeem tries counted against a bot this hour.
+async function tries(who: Bot): Promise<number> {
+  const [r] = await db()<{ n: number }[]>`
+    SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+    WHERE bucket = ${`pairing:redeem:${await idOf(who.handle)}`}`;
+  return r?.n ?? 0;
+}
+
 async function logged(action: string) {
   return db()<{ subject: string; detail: Record<string, unknown> | null }[]>`
     SELECT subject, detail FROM action_log WHERE action = ${action} ORDER BY id`;
@@ -529,6 +537,72 @@ describe("joining", () => {
     expect((await redeem(n, inv.body.invite.code)).status).toBe(200);
   });
 
+  it("an old invite dies once the leader removes its bot: by code, and as an ask, which leaves the page", async () => {
+    const { l, g } = await leaderWithGroup();
+    const n = await bot("newt");
+    const humanId = await person("google-n", n);
+    const first = await invite(l, g, "newt");
+    const second = await invite(l, g, "newt");
+    expect((await redeem(n, first.body.invite.code)).status).toBe(200);
+    // In the group, the second ask isn't shown.
+    expect(await listAsks(db(), humanId)).toHaveLength(0);
+    expect((await remove(l, g, "newt")).status).toBe(200);
+    // Removed since it was made: neither shown again nor usable.
+    expect(await listAsks(db(), humanId)).toHaveLength(0);
+    const again = await redeem(n, second.body.invite.code);
+    expect(again.status).toBe(400);
+    expect(again.body.error.code).toBe("invalid_code");
+    await expect(
+      approveAsk(db(), "google-n", second.body.invite.id, null),
+    ).rejects.toMatchObject({ code: "not_waiting" });
+    expect(await members(g)).toEqual(["lea"]);
+    // A new invite, made after the removal, stands.
+    const third = await invite(l, g, "newt");
+    expect(await listAsks(db(), humanId)).toHaveLength(1);
+    expect((await redeem(n, third.body.invite.code)).status).toBe(200);
+  });
+
+  it("an old invite dies once its maker hands on the lead, and the new leader's stand", async () => {
+    const { l, g } = await leaderWithGroup();
+    const m = await bot("mia");
+    await bringIn(l, g, m);
+    const n = await bot("newt");
+    const humanId = await person("google-n", n);
+    const old = await invite(l, g, "newt");
+    expect(await listAsks(db(), humanId)).toHaveLength(1);
+    expect((await lead(l, g, "mia")).status).toBe(200);
+    expect(await listAsks(db(), humanId)).toHaveLength(0);
+    const r = await redeem(n, old.body.invite.code);
+    expect(r.status).toBe(400);
+    expect(r.body.error.code).toBe("invalid_code");
+    // Nothing of lea's waits in mia's list, and mia's own invite works.
+    const listed = await call(codesRoute, { key: m.key });
+    expect(listed.body.pairing_codes).toEqual([]);
+    const fresh = await invite(m, g, "newt");
+    expect((await redeem(n, fresh.body.invite.code)).status).toBe(200);
+  });
+
+  it("gives a dead code the one refusal whatever the joiner's own standing, and counts a live invite's refusal", async () => {
+    const { l, g } = await leaderWithGroup();
+    const n = await bot("newt");
+    // newt's own rules take no private messages: a made-up code is still
+    // invalid_code, not comms_rules.
+    await call(commsRoute, {
+      key: n.key,
+      body: { accepts: ["public"] },
+    });
+    const made = await redeem(n, `pair_${"A".repeat(26)}`);
+    expect(made.status).toBe(400);
+    expect(made.body.error.code).toBe("invalid_code");
+    // A live invite says why, and the try still counts.
+    const inv = await invite(l, g, "newt");
+    const before = await tries(n);
+    const live = await redeem(n, inv.body.invite.code);
+    expect(live.status).toBe(403);
+    expect(live.body.error.code).toBe("comms_rules");
+    expect(await tries(n)).toBe(before + 1);
+  });
+
   it("gives every invite that doesn't work the one pairing-code refusal, and counts each try", async () => {
     const { l, g } = await leaderWithGroup();
     const n = await bot("newt");
@@ -713,6 +787,25 @@ describe("leaving, removing and the lead", () => {
     await bringIn(l, g, n);
     await setSilenced(db(), "newt", 24, "test");
     expect((await leave(n, g)).status).toBe(200);
+  });
+
+  it("ending a contact leaves an invite to a group standing; blocking ends it", async () => {
+    const { l, g } = await leaderWithGroup();
+    const n = await bot("newt");
+    const code = await call(makeCodeRoute, {
+      key: l.key,
+      body: { for: "newt" },
+    });
+    expect((await redeem(n, code.body.code)).status).toBe(200);
+    const inv = await invite(l, g, "newt");
+    const ended = await tool(l.key, "leave", { with: "newt" });
+    expect(ended.isError).toBe(false);
+    expect(ended.data.pairing_codes_revoked).toBeUndefined();
+    expect((await redeem(n, inv.body.invite.code)).status).toBe(200);
+    expect((await leave(n, g)).status).toBe(200);
+    const again = await invite(l, g, "newt");
+    expect((await block(l, "newt")).status).toBe(200);
+    expect((await redeem(n, again.body.invite.code)).status).toBe(400);
   });
 
   it("leaving a pair's channel ends the contact", async () => {
@@ -1132,6 +1225,34 @@ describe("what a bot learns", () => {
     else if (typeof v === "string" && /human:\d|google-/.test(v))
       out.push(`${path}=${v}`);
   }
+
+  it("tells a bot its leader invites into a person's group nothing of who started it or whose bots its members are", async () => {
+    const a = await bot("ada");
+    const b = await bot("bea");
+    await person("google-p", a, b);
+    const g = (
+      await startChannel(db(), "google-p", ["ada", "bea"], "ada", null)
+    ).channel;
+    const s = await bot("sam");
+    await person("google-s", s);
+    const inv = await invite(a, g, "sam");
+    const answers: unknown[] = [];
+    answers.push((await call(digestRoute, { key: s.key })).body.asks);
+    answers.push((await redeem(s, inv.body.invite.code)).body);
+    answers.push((await read(s, g)).body);
+    answers.push((await tool(s.key, "read_channel", { channel: g })).data);
+    answers.push((await tool(s.key, "list_channels", {})).data.private);
+    answers.push((await call(channelsRoute, { key: s.key })).body.private);
+    const out: string[] = [];
+    for (const [i, x] of answers.entries()) walk(x, `#${i}`, out);
+    expect(out).toEqual([]);
+    const text = JSON.stringify(answers);
+    expect(text).not.toMatch(/your_person|same person|person's|started|yours/);
+    expect((await read(s, g)).body.you).toEqual({
+      via: "invited",
+      lead: false,
+    });
+  });
 
   it("is handles, the leader and the bot's own codes", async () => {
     const l = await bot("lea");

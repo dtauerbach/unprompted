@@ -1,3 +1,4 @@
+import type postgres from "postgres";
 import type { Caller } from "./auth";
 import {
   type Approval,
@@ -367,7 +368,8 @@ export async function completeJoin(
     }[]
   >`
     SELECT is_group(${channel}) AND private_channel_is_visible(${channel}) AS open,
-      channel_has(${channel}, ${maker}) AS maker_in,
+      channel_invite_stands(${channel}, ${maker}, ${me},
+        (SELECT p.created_at FROM pairing_codes p WHERE p.id = ${codeId})) AS maker_in,
       channel_has(${channel}, ${me}) AS in_already,
       (SELECT count(*)::int FROM channel_roster(${channel})) AS size,
       (SELECT frozen_at IS NOT NULL FROM bots WHERE id = ${me}) AS frozen,
@@ -424,47 +426,66 @@ export async function joinWithCode(
     const r = await redeemPairingCode(caller, code, ipHash);
     return { ...r, note: pairedNote(r.contact.handle, via) };
   }
+  // Every try counts, a live invite refused included: the count commits
+  // and the refusal is thrown after. Only an invite found alive tells the
+  // bot anything more than invalid_code.
   const r = await db().begin(async (tx) => {
     await assertAllowed(tx, me, "pair");
     await consume(tx, pairingRedeemRules(me));
-    const own = await ownStanding(tx, me);
-    if (!own.takes) throw ownCommsRefusal();
-    if (own.groups >= BOT_GROUP_CAP) throw groupCap();
-    // Being put in a group raises the bot's own wake number.
-    await consume(tx, channelWakeRules(await antiAbuse(tx)));
-    const [c] = await tx<{ id: string; bot_id: string; channel_id: string }[]>`
+    const find = (lock: boolean) => tx<
+      { id: string; bot_id: string; channel_id: string }[]
+    >`
       SELECT p.id, p.bot_id, p.channel_id
       FROM pairing_codes p JOIN bots b ON b.id = p.bot_id
       WHERE p.code_hash = ${hash} AND p.for_bot_id = ${me}
         AND p.channel_id IS NOT NULL AND ${waiting(tx)}
         AND NOT has_blocked(${me}, p.bot_id) AND NOT has_blocked(p.bot_id, ${me})
-      FOR UPDATE OF p`;
-    const out = c
-      ? await completeJoin(
-          tx,
-          me,
-          Number(c.id),
-          Number(c.bot_id),
-          Number(c.channel_id),
-          { via: "code" },
-        )
-      : ({ kind: "dead" } as const);
-    if (out.kind === "joined") {
-      await logAction(tx, {
-        action: "channel.join",
-        botId: me,
-        keyId: caller.keyId,
-        subject: out.channel,
-        ipHash,
-        detail: { pairing_code: Number(c?.id), via: "code" },
-      });
-      return out;
+      ${lock ? tx`FOR UPDATE OF p` : tx``}`;
+    let out: JoinOutcome | { kind: "refused"; err: ApiError } = {
+      kind: "dead",
+    };
+    const [alive] = await find(false);
+    if (alive) {
+      // Being put in a group raises the bot's own wake number: a limit row,
+      // so before the code's row.
+      await consume(tx, channelWakeRules(await antiAbuse(tx)));
+      const [c] = await find(true);
+      if (c) {
+        const own = await ownStanding(tx, me);
+        out = !own.takes
+          ? { kind: "refused", err: ownCommsRefusal() }
+          : own.groups >= BOT_GROUP_CAP
+            ? { kind: "refused", err: groupCap() }
+            : await completeJoin(
+                tx,
+                me,
+                Number(c.id),
+                Number(c.bot_id),
+                Number(c.channel_id),
+                { via: "code" },
+              );
+        if (out.kind === "joined") {
+          await logAction(tx, {
+            action: "channel.join",
+            botId: me,
+            keyId: caller.keyId,
+            subject: out.channel,
+            ipHash,
+            detail: { pairing_code: Number(c.id), via: "code" },
+          });
+          return out;
+        }
+        if (out.kind === "full") out = { kind: "refused", err: channelFull() };
+        if (out.kind === "cant") {
+          const now = await ownStanding(tx, me);
+          out = {
+            kind: "refused",
+            err: now.takes ? groupCap() : ownCommsRefusal(),
+          };
+        }
+      }
     }
-    if (out.kind === "full") throw channelFull();
-    if (out.kind === "cant") {
-      const now = await ownStanding(tx, me);
-      throw now.takes ? groupCap() : ownCommsRefusal();
-    }
+    if (out.kind === "refused") return out;
     await logAction(tx, {
       action: "pairing.redeem_failed",
       botId: me,
@@ -474,6 +495,7 @@ export async function joinWithCode(
     });
     return undefined;
   });
+  if (r?.kind === "refused") throw r.err;
   if (!r) throw invalidCode();
   const { kind: _, ...group } = r;
   return {
@@ -488,7 +510,7 @@ export async function joinWithCode(
 
 // The group this bot is in, or the one refusal for any channel it can't
 // use. A pair's channel comes back as such, for leave.
-async function groupOf(tx: Tx, me: number, ref: string) {
+async function groupOf(tx: postgres.Sql | Tx, me: number, ref: string) {
   const id = refId(ref);
   const found = id === undefined ? undefined : await findChannel(tx, me, id);
   if (!found) throw noSuchChannel();
@@ -510,7 +532,7 @@ export async function leaveChannel(
   const me = caller.botId;
   if (input.with !== undefined)
     return removeContact(caller, input.with, ipHash);
-  const seen = await groupOf(db() as unknown as Tx, me, input.channel ?? "");
+  const seen = await groupOf(db(), me, input.channel ?? "");
   if (seen.kind === "pair")
     return removeContact(caller, seen.other.handle, ipHash);
   const id = seen.id;

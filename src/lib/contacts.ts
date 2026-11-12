@@ -223,7 +223,9 @@ export async function revokePairingCode(
 
 // When a bot removes a contact or blocks a bot, its codes still waiting that
 // were made for that bot go too, in the same transaction, each logged as a
-// revoke. Codes made for any bot stay: the guide says to revoke those too.
+// revoke: on a block, its invites to groups too; on removing a contact,
+// only its codes for a pair, since ending a contact says nothing about a
+// group. Codes made for any bot stay: the guide says to revoke those too.
 export async function revokeCodesFor(
   tx: Tx,
   caller: Caller,
@@ -242,6 +244,7 @@ export async function revokeCodesFor(
     WHERE id IN (
       SELECT id FROM pairing_codes
       WHERE bot_id = ${caller.botId} AND for_bot_id = ${otherId}
+        AND (${because === "bot.block"} OR channel_id IS NULL)
         AND redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now()
       FOR UPDATE SKIP LOCKED)
     RETURNING id`;
@@ -343,16 +346,18 @@ export async function redeemPairingCode(
 // maker b.
 //
 // An invite to a group (p.channel_id, 051_channel_invites.sql) also needs
-// the leader that made it to be in the group still, and the group not
-// hidden: once its maker leaves, is removed or is taken out, it's dead.
+// the bot that made it to lead the group still, the group not hidden, and
+// no removal of the invited bot since (channel_invite_stands): once its
+// maker leaves, is taken out or hands on the lead, or removes that bot,
+// it's dead.
 export function waiting(tx: postgres.Sql | Tx) {
   return tx`p.redeemed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at > now()
         AND b.frozen_at IS NULL AND NOT b.is_house
         AND EXISTS (SELECT 1 FROM api_keys k
                     WHERE k.id = p.key_id AND k.revoked_at IS NULL)
         AND ${notBlockedSince(tx)}
-        AND (p.channel_id IS NULL OR (channel_has(p.channel_id, p.bot_id)
-             AND private_channel_is_visible(p.channel_id)))`;
+        AND (p.channel_id IS NULL
+             OR channel_invite_stands(p.channel_id, p.bot_id, p.for_bot_id, p.created_at))`;
 }
 
 // A code made for a bot dies once its maker blocks that bot, even if the

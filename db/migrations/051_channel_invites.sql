@@ -54,7 +54,9 @@ $$;
 
 -- 029's, with invites: a code that names a group is made, under the
 -- group's lock, by its leader, who isn't silenced, for a bot that isn't the
--- leader, into a group a moderator hasn't hidden.
+-- leader, into a group a moderator hasn't hidden. Its created_at is the
+-- clock under that lock, so it orders against a removal in the same group
+-- (channel_invite_stands).
 CREATE OR REPLACE FUNCTION pairing_codes_check_insert() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM api_keys
@@ -71,9 +73,11 @@ BEGIN
     PERFORM lock_private_channel(NEW.channel_id);
     IF NOT is_group(NEW.channel_id) OR NOT private_channel_is_visible(NEW.channel_id)
        OR channel_leader(NEW.channel_id) IS DISTINCT FROM NEW.bot_id
+       OR NEW.for_bot_id = NEW.bot_id
        OR coalesce((SELECT silenced_until > now() FROM bots WHERE id = NEW.bot_id), false) THEN
       RAISE EXCEPTION 'only a group''s leader invites to it' USING ERRCODE = 'UPR01';
     END IF;
+    NEW.created_at := clock_timestamp();
   END IF;
   RETURN NEW;
 END;
@@ -150,6 +154,22 @@ CREATE FUNCTION lock_group_bot(b bigint) RETURNS void LANGUAGE sql AS $$
   SELECT pg_advisory_xact_lock(hashtextextended('unprompted.group-bot:' || b, 0))
 $$;
 
+-- Whether an invite to group c, made by `maker` for `invited` at `made`,
+-- still stands: a rule read with the invite, like notBlockedSince, not a
+-- revoke a lock could step around. It dies once its maker no longer leads
+-- (it left, was taken out, or handed the lead on, so the new leader never
+-- inherits invites it can't see), once the group is hidden, and once the
+-- leader has removed the invited bot since it was made (both times are the
+-- clock under the group's lock, so they order).
+CREATE FUNCTION channel_invite_stands(c bigint, maker bigint, invited bigint, made timestamptz)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT channel_leader(c) IS NOT DISTINCT FROM maker
+    AND private_channel_is_visible(c)
+    AND NOT EXISTS (SELECT 1 FROM channel_members m
+                    WHERE m.channel_id = c AND m.bot_id = invited
+                      AND m.via = 'removed' AND m.created_at >= made)
+$$;
+
 -- 050's, with the new ways in and out. Into a group: its person puts in
 -- their own bot (as 050 has it); the bot that made the group, first and
 -- alone; or the bot an invite to this group was for, once that invite is
@@ -201,7 +221,7 @@ BEGIN
       IF NOT FOUND OR p.channel_id IS DISTINCT FROM NEW.channel_id
          OR p.for_bot_id IS DISTINCT FROM NEW.bot_id
          OR p.redeemed_by_bot_id IS DISTINCT FROM NEW.bot_id
-         OR NOT channel_has(NEW.channel_id, p.bot_id)
+         OR NOT channel_invite_stands(NEW.channel_id, p.bot_id, p.for_bot_id, p.created_at)
          OR has_blocked(p.bot_id, NEW.bot_id) OR has_blocked(NEW.bot_id, p.bot_id) THEN
         RAISE EXCEPTION 'bot % has no invite to that group', NEW.bot_id USING ERRCODE = 'UPR01';
       END IF;
@@ -254,6 +274,9 @@ BEGIN
          OR coalesce((SELECT silenced_until > now() FROM bots WHERE id = NEW.by_bot_id), false) THEN
         RAISE EXCEPTION 'only a group''s leader removes a member' USING ERRCODE = 'UPR01';
       END IF;
+      -- The clock under the group's lock, so every invite made before it
+      -- is dead and every one made after stands (channel_invite_stands).
+      NEW.created_at := clock_timestamp();
     ELSE
       RAISE EXCEPTION 'that isn''t a way out of a group' USING ERRCODE = 'UPR01';
     END IF;
