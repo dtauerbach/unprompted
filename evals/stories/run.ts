@@ -175,46 +175,23 @@ async function main() {
         mkdirSync(path.join(bdir, "workspace"), { recursive: true });
         writeFileSync(path.join(bdir, "workspace", "CLAUDE.md"), b.about);
       }
+      // Two lanes, as in a real app. The owner's messages (the first line, a
+      // prod, a relay) go to one chat, in order: a message sent while that
+      // chat is still working waits for it, as typing into a busy chat does.
+      // A scheduled visit is the app starting a new chat on time, beside
+      // whatever else is running, with only the bot's note.
       let n = 0;
-      while (true) {
-        const q = queue.get(b.name) ?? [];
-        q.sort((x, y) => x.at - y.at);
-        const next = q[0];
-        if (Date.now() >= end || (next && next.at > end)) break;
-        if (!next || next.at > Date.now() + 5000) {
-          // Idle: a relay or prod may still arrive.
-          await new Promise((r) => setTimeout(r, 5000));
-          continue;
-        }
-        const reported = (endedAt.get(b.name) ?? []).some(
-          (t) => next.unlessAfter !== undefined && t > next.unlessAfter,
-        );
-        if (
-          reported ||
-          (next.cause === "owner prod (if needed)" &&
-            (results.get(b.name)?.length ?? 0) > 1)
-        ) {
-          q.shift();
-          continue;
-        }
-        await new Promise((r) =>
-          setTimeout(r, Math.max(0, next.at - Date.now())),
-        );
-        // Visits that came due while waiting run together, as one message.
-        const due = q.filter((p) => p.at <= Date.now());
-        queue.set(
-          b.name,
-          q.filter((p) => p.at > Date.now()),
-        );
+      let ownerBusy = false;
+      let ownerLast: VisitResult | undefined;
+      const running = new Set<Promise<void>>();
+      const visit = async (due: Pending[], lane: "owner" | "scheduled") => {
         const prompt = due.map((d) => d.prompt).join("\n\n");
-        // The owner writing again (a prod or a relay) lands in the same chat,
-        // with its history; a scheduled visit starts fresh, with only the note.
-        const fromOwner = due.some((d) => d.cause !== "scheduled");
-        const last = results.get(b.name)?.at(-1);
+        const prior = lane === "owner" ? ownerLast : undefined;
         n++;
+        const k = n;
         note({
           bot: b.name,
-          visit: n,
+          visit: k,
           causes: due.map((d) => d.cause),
           prompt: prompt.slice(0, 300),
         });
@@ -229,25 +206,22 @@ async function main() {
           hostScript: script,
           others: b.others,
           httpAllow: b.httpAllow,
-          visit: n,
-          resume: n > 1 && fromOwner ? last?.sessionId : undefined,
+          visit: k,
+          resume: prior?.sessionId,
           // A visit may last to the story's end: an always-on bot that
           // waits through it is the point, not a runaway.
           timeoutMs: Math.max(60_000, end + 5 * 60_000 - Date.now()),
         });
         // A continued chat reports its whole cost so far; keep this visit's.
-        if (
-          n > 1 &&
-          fromOwner &&
-          r.costUsd !== undefined &&
-          last?.sessionId === r.sessionId
-        )
-          r.costUsd -= last?.sessionCostUsd ?? 0;
+        if (prior && r.costUsd !== undefined && prior.sessionId === r.sessionId)
+          r.costUsd -= prior.sessionCostUsd ?? 0;
+        if (lane === "owner") ownerLast = r;
         results.get(b.name)?.push(r);
         endedAt.get(b.name)?.push(Date.now());
         note({
           bot: b.name,
-          visit: n,
+          visit: k,
+          lane,
           done: true,
           turns: r.turns,
           cost: r.costUsd,
@@ -255,7 +229,49 @@ async function main() {
           timedOut: r.timedOut,
         });
         scanHost();
+      };
+      const launch = (due: Pending[], lane: "owner" | "scheduled") => {
+        if (lane === "owner") ownerBusy = true;
+        const p = visit(due, lane).finally(() => {
+          if (lane === "owner") ownerBusy = false;
+          running.delete(p);
+        });
+        running.add(p);
+      };
+      while (true) {
+        const q = queue.get(b.name) ?? [];
+        q.sort((x, y) => x.at - y.at);
+        const now = Date.now();
+        // Idle until the story ends: a relay or prod may still arrive.
+        if (now >= end) break;
+        // Drop prods that are no longer needed.
+        const keep = q.filter((p) => {
+          if (p.at > now) return true;
+          const reported = (endedAt.get(b.name) ?? []).some(
+            (t) => p.unlessAfter !== undefined && t > p.unlessAfter,
+          );
+          return !(
+            reported ||
+            (p.cause === "owner prod (if needed)" &&
+              (results.get(b.name)?.length ?? 0) > 1)
+          );
+        });
+        const sched = keep.filter(
+          (p) => p.at <= now && p.cause === "scheduled",
+        );
+        const owner = ownerBusy
+          ? []
+          : keep.filter((p) => p.at <= now && p.cause !== "scheduled");
+        queue.set(
+          b.name,
+          keep.filter((p) => !sched.includes(p) && !owner.includes(p)),
+        );
+        // Visits that came due together run together, as one message.
+        if (sched.length) launch(sched, "scheduled");
+        if (owner.length) launch(owner, "owner");
+        await new Promise((r) => setTimeout(r, 1000));
       }
+      await Promise.all(running);
     };
     await Promise.all(setup.bots.map(loop));
     clearInterval(ticker);

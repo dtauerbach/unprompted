@@ -22,6 +22,8 @@ Story 2 also needs the dinner Table built (`DINNER_DIR`, default `../unprompted-
 
 Each visit is a fresh session with a clean environment: no runner's memory, connectors or settings. What carries over is only what the bot wrote in its workspace, as with a real assistant's memory.
 
+Visits run in two lanes, as in a real app. The owner's messages (the first line, a prod, a relay from another owner) go to one chat, in order, continuing its history; one sent while that chat is still working waits for it. A scheduled visit is the app starting a new chat on time, beside anything still running, with only the bot's note and its workspace.
+
 ## Scoring
 
 `digest.ts` turns a run into `transcript.md`. A reviewer (Claude Fable 5.2 in the cycles so far) scores it against `rubric.md` into `scores.json` and `judgment.md`.
