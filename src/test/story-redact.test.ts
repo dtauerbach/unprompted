@@ -124,7 +124,7 @@ describe("redacting a story transcript", () => {
     });
 
   // The exact-length shapes: an owner code, a pass, a Table session, a
-  // pairing code. Markdown or prose can put a _ or - right after one.
+  // pairing code. Each is cut at its length, whatever follows it.
   const EXACT = () =>
     SAMPLES().filter((s) =>
       /^(own|pass|dinner|mafia|pair|link|conn)_/.test(s.secret),
@@ -137,14 +137,18 @@ describe("redacting a story transcript", () => {
     (x: string) => `${x}-x`,
     (x: string) => `${x}-session`,
     (x: string) => `**${x}**.`,
+    (x: string) => `${x}_alice`,
+    (x: string) => `${x}_2`,
+    (x: string) => `${x}_x`,
+    (x: string) => `${x}Z9`,
   ];
   for (const s of EXACT())
-    it(`cuts a ${s.name} that a _ or - follows`, () => {
+    it(`cuts a ${s.name} whatever follows it`, () => {
       for (const around of TRAILING)
         expect(redact(around(s.secret))).toBe(around(s.shown));
     });
 
-  it("cuts the named cases with each kind of token", () => {
+  it("cuts the reviewed cases with each kind of token", () => {
     const pass = newPass().pass;
     const own = newOwnerCode().code;
     const pair = newPairingCode().code;
@@ -154,6 +158,21 @@ describe("redacting a story transcript", () => {
     expect(redact(`${pass}- next`)).toBe("pass_…- next");
     expect(redact(`${pair}_`)).toBe("pair_…_");
     expect(redact(`${rps}-x`)).toBe(`rps_…${rps.slice(-4)}-x`);
+    expect(redact("rps_aB3dE6gH9jK2mN5pQ8sT1v_alice")).toBe("rps_…sT1v_alice");
+    expect(redact("own_aB3dE6gH9jK2mN5pQ8sT1v_2")).toBe("own_…_2");
+    expect(redact("pair_a2b3c4d5e6f7g8h9jkmnpqrstu_x")).toBe("pair_…_x");
+    const second = newPass().pass;
+    expect(redact(`${pass}_${second}`)).toBe("pass_…_pass_…");
+  });
+
+  it("cuts the token, not the prefix, when a prefix is doubled", () => {
+    for (let i = 0; i < 20; i++) {
+      const body = [...b64(16)];
+      body[17] = "-";
+      const token = `pass_${body.join("")}`;
+      expect(redact(`pass_${token}`)).toBe("pass_pass_…");
+      expect(redact(`own_${token} next`)).toBe("own_pass_… next");
+    }
   });
 
   it("cuts a prefix written in capitals or mixed case", () => {
@@ -185,7 +204,7 @@ describe("redacting a story transcript", () => {
         expect(redact(around(s.secret))).toBe(around(s.shown));
   });
 
-  it("leaves a path after a named key", () => {
+  it("leaves a path after a named key, and cuts base64 with a / in it", () => {
     for (const text of [
       "code: src/lib/Some_File-Name.test.ts",
       '{"code":"src/app/v1/Route_2.ts"}',
@@ -196,6 +215,11 @@ describe("redacting a story transcript", () => {
     // A secret is still cut after the same names.
     const code = b64(32);
     expect(redact(`code: ${code}.`)).toBe("code: [redacted].");
+    const std = `aB3/E6g_${"xY7+Zw9Q".repeat(5)}`.slice(0, 43);
+    expect(redact(`{"verifier":"${std}"}`)).toBe('{"verifier":"[redacted]"}');
+    const half = "aB3dE6gH9jK2mN5pQ8sT1v";
+    expect(redact(`token=${half}/${half}`)).toBe("token=[redacted]");
+    expect(redact(`code: ${half}.Ab3`)).toBe("code: [redacted]");
   });
 
   it("runs in one pass over a long run of letters or prefixes", () => {
@@ -307,16 +331,26 @@ describe("redacting a story transcript", () => {
       "m_ab12CD34ef56",
       '{"code":"ERR_INVALID_ARG_TYPE"}',
       "error_code: SOME_LONG_ERROR_NAME_2",
-      "@rps_champion_2026_the_best1",
       "pass_the_salt_please_2026x",
-      "/tmp/dinner_3830_test_run_2026_11_12",
-      "own_goal_scored_in_2026_by_us",
       '{"inputTokens":123456789012345678}',
       "tokens in 123456789012345678",
       // A git commit and a short hash aren't 64 or 43 characters.
       "c11bfc0a9d2e4f1b8c7d6e5f4a3b2c1d0e9f8a7b",
     ].join("\n");
     expect(redact(plain)).toBe(plain);
+  });
+});
+
+// Known over-cuts: a name that is a prefix and at least the token's length,
+// with a capital or a digit, is cut like a token. A transcript can lose part
+// of an odd handle; it can't keep a secret.
+describe("a name the length of a token", () => {
+  it("is cut like one", () => {
+    expect(redact("@rps_champion_2026_the_best1")).toBe("@rps_…best1");
+    expect(redact("own_goal_scored_in_2026_by_us")).toBe("own_…_us");
+    expect(redact("/tmp/dinner_3830_test_run_2026_11_12")).toBe(
+      "/tmp/dinner_…_11_12",
+    );
   });
 });
 

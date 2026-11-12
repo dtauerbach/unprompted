@@ -23,12 +23,6 @@ const ESCAPED = [
   "(?<=(?:\\x1b|\\\\u001[bB]|\\\\x1[bB]|\\\\0?33|\\\\e)\\[[0-9;]{0,16}m)",
 ].join("|");
 const EDGE_BEFORE = `(?:(?<![A-Za-z0-9])|${ESCAPED})`;
-// Where an exact-length token must end: at anything but a letter, digit, _
-// or -; at a _ that a letter or digit doesn't follow, as in markdown
-// (_pass_…_, __own_…__); or at a -, which joins a token to a word in prose
-// (pass_…- next, rps_…-session). A _ before a word (own_goal_scored_in_…)
-// says it's a name.
-const EDGE_AFTER = `(?=$|[^${B64}]|_(?![A-Za-z0-9])|-)`;
 // A random base64url token almost always holds a capital or a digit; a field
 // or tool name with the same prefix (wake_until, link_signing_key) holds
 // neither. Looked for within the token's length, so a long run of letters
@@ -40,6 +34,25 @@ const anyCase = (word: string) =>
   [...word]
     .map((c) => (/[a-z]/.test(c) ? `[${c}${c.toUpperCase()}]` : c))
     .join("");
+
+// Every prefix below, so a token's body can't start with one: in
+// pass_pass_…, the token is the second, and cutting the first would leave
+// the end of the real one showing.
+const ALL_PREFIXES = [
+  "unpcopy_",
+  "unpmod_",
+  "unp_",
+  "wake_",
+  "dinner_",
+  "mafia_",
+  "rps_",
+  "own_",
+  "pass_",
+  "pair_",
+  "link_",
+  "conn_",
+];
+const NOT_A_PREFIX = `(?!${ALL_PREFIXES.map((p) => anyCase(p)).join("|")})`;
 
 type Shape = {
   prefixes: string[];
@@ -61,16 +74,20 @@ const SHAPES: Shape[] = [
     keepTail: true,
   },
   // A Table's player session: 16 random bytes, base64url, 22 characters.
+  // The exact-length shapes are cut at their length whatever follows: a
+  // transcript is better off with part of an odd handle cut
+  // (rps_champion_2026_the_best) than with a token that a word follows
+  // (rps_…_alice) left whole.
   {
     prefixes: ["dinner_", "mafia_", "rps_"],
-    body: `${random(22)}[${B64}]{22}${EDGE_AFTER}`,
+    body: `${NOT_A_PREFIX}${random(22)}[${B64}]{22}`,
     edge: true,
     keepTail: true,
   },
   // Owner codes and passes: the same 22.
   {
     prefixes: ["own_", "pass_"],
-    body: `${random(22)}[${B64}]{22}${EDGE_AFTER}`,
+    body: `${NOT_A_PREFIX}${random(22)}[${B64}]{22}`,
     edge: true,
     keepTail: false,
   },
@@ -79,7 +96,7 @@ const SHAPES: Shape[] = [
   // alphabet, not RANDOM, is what tells one from a word.
   {
     prefixes: ["pair_", "link_", "conn_"],
-    body: `[a-km-np-zA-KM-NP-Z2-9]{26}${EDGE_AFTER}`,
+    body: `${NOT_A_PREFIX}[a-km-np-zA-KM-NP-Z2-9]{26}`,
     edge: true,
     keepTail: false,
   },
@@ -111,7 +128,11 @@ const NAMED = new RegExp(
   "g",
 );
 const SHOUTED = /^[A-Z][A-Z0-9_]*$/;
-const PATH = /\/|\.[A-Za-z][A-Za-z0-9]{0,5}$/;
+// A path: from the root, here or a folder up, or a folder in small letters,
+// or a source file by its extension. Anything else with a / in it may be
+// standard base64.
+const PATH =
+  /^(?:\/|\.\.?\/|[a-z][a-z0-9_-]*\/)|\.(?:ts|tsx|js|json|md|sql|yaml|yml|txt|log)$/;
 const keep = (value: string) => {
   const v = value.replace(/\.+$/, "");
   return !/[A-Z0-9]/.test(v) || SHOUTED.test(v) || PATH.test(v);
