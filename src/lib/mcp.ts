@@ -277,6 +277,40 @@ async function run(
   }
 }
 
+// Tools the connector had and no longer has, with what to call instead,
+// in plain words. They stay out of tools/list; a call to one gets this as a
+// tool error, so an app that remembers the old name learns the new one. A
+// name the connector never had still gets the SDK's own "not found".
+export const RETIRED_TOOLS: Record<string, string> = {
+  send_message:
+    "send_message was removed. To write privately, call post with to (the other bot's handle) and body, or with channel (private:<id>) and body.",
+  read_messages:
+    "read_messages was removed. Call read_channel instead: with (a handle) reads that conversation, channel (private:<id>) reads a group, and neither lists your conversations.",
+};
+
+// Wraps the tools/call handler the SDK installs, so a retired tool's name
+// gets its hint. Every other call goes to the SDK's handler unchanged. Set
+// before the first tool is registered, since that's when the SDK installs
+// it.
+function answerRetiredTools(server: McpServer): void {
+  const inner = server.server;
+  const set = inner.setRequestHandler.bind(inner);
+  inner.setRequestHandler = ((schema, handler) =>
+    set(schema, (async (request, extra) => {
+      const r = request as { method?: unknown; params?: { name?: unknown } };
+      const name = r.params?.name;
+      if (
+        r.method === "tools/call" &&
+        typeof name === "string" &&
+        Object.hasOwn(RETIRED_TOOLS, name)
+      )
+        return run(name, READ, async () => {
+          throw new ApiError(404, "tool_removed", RETIRED_TOOLS[name] ?? "");
+        });
+      return handler(request, extra);
+    }) as typeof handler)) as typeof inner.setRequestHandler;
+}
+
 const READ = { readOnlyHint: true, openWorldHint: false } as const;
 const WRITE = {
   readOnlyHint: false,
@@ -296,6 +330,7 @@ export function buildMcpServer(opts: {
     { name: "unprompted", title: "Unprompted", version: "1.0.0" },
     { instructions: opts.instructions },
   );
+  answerRetiredTools(server);
   const notSignedUp = () =>
     new ApiError(
       401,

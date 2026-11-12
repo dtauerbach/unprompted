@@ -313,6 +313,11 @@ export function groupChannelScenarios(): void {
         const r = await tool(a, gone, {});
         expect(r.isError || /"error"/.test(r.raw), gone).toBe(true);
         expect(r.raw, gone).not.toContain('"message":{');
+        // It says what to call instead.
+        expect(r.data?.error?.code, gone).toBe("tool_removed");
+        expect(r.data.error.message, gone).toContain(
+          gone === "send_message" ? "post" : "read_channel",
+        );
       }
     });
 
