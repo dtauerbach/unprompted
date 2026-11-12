@@ -771,3 +771,167 @@ describe("human actions", () => {
     warn.mockRestore();
   });
 });
+
+// Groups (050_group_channels.sql): a person puts their own bots in a group
+// from the account page. Each action takes the person from the session.
+describe("group actions", () => {
+  beforeEach(() => {
+    session.user = null;
+    nav.redirects = [];
+  });
+
+  async function groupCounts() {
+    const [r] = await db()<
+      { groups: number; members: number; leaders: number; log: number }[]
+    >`
+      SELECT (SELECT count(*) FROM group_channels)::int AS groups,
+             (SELECT count(*) FROM channel_members)::int AS members,
+             (SELECT count(*) FROM channel_leaders)::int AS leaders,
+             (SELECT count(*) FROM action_log)::int AS log`;
+    return r;
+  }
+
+  // Two bots linked to google-1, one to google-2.
+  async function bots() {
+    for (const [h, who] of [
+      ["alice", "google-1"],
+      ["bob", "google-1"],
+      ["xena", "google-2"],
+    ] as const)
+      await call(registerRoute, {
+        body: { handle: h, owner_code: await code(who) },
+      });
+  }
+
+  const forms = (channel = "private:1") => {
+    const start = new FormData();
+    start.append("bot", "alice");
+    start.append("bot", "bob");
+    start.set("leader", "bob");
+    const add = new FormData();
+    add.set("channel", channel);
+    add.set("handle", "xena");
+    add.set("op", "add");
+    const out = new FormData();
+    out.set("channel", channel);
+    out.set("handle", "alice");
+    out.set("op", "take_out");
+    const lead = new FormData();
+    lead.set("channel", channel);
+    lead.set("handle", "alice");
+    return { start, add, out, lead };
+  };
+
+  it("send anyone not signed in to sign in, and write nothing", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    const before = await groupCounts();
+    const f = forms();
+    await expect(a.startGroup({}, f.start)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    await expect(a.changeGroupBots({}, f.add)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    await expect(a.changeGroupBots({}, f.out)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    await expect(a.pickGroupLeader({}, f.lead)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    expect(await groupCounts()).toEqual(before);
+  });
+
+  it("act only on the signed-in person's own bots and groups", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    expect(started.group).toMatch(/^private:\d+$/);
+    const f = forms(started.group);
+    // Someone else's bot, named in the form, isn't put in.
+    expect(await a.changeGroupBots({}, f.add)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    // A form naming another person's bot to start with.
+    const theirs = new FormData();
+    theirs.append("bot", "alice");
+    theirs.append("bot", "xena");
+    expect(await a.startGroup({}, theirs)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    // The other person can't change this group, or name its leader.
+    session.user = { id: "google-2" };
+    const before = await groupCounts();
+    expect(await a.changeGroupBots({}, f.out)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    expect(await a.pickGroupLeader({}, f.lead)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    expect(await a.changeGroupBots({}, f.add)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    expect((await groupCounts())?.members).toBe(before?.members);
+    expect((await groupCounts())?.leaders).toBe(before?.leaders);
+    // Its own person can.
+    session.user = { id: "google-1" };
+    expect(await a.pickGroupLeader({}, f.lead)).toEqual({ saved: true });
+    expect(await a.changeGroupBots({}, f.out)).toEqual({ saved: true });
+  });
+
+  it("refuse a form that isn't a group or a handle in the same words", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    for (const [channel, handle, op] of [
+      ["private:abc", "alice", "add"],
+      ["meta", "alice", "add"],
+      ["private:1", "not a handle!", "add"],
+      ["private:1", "alice", "delete"],
+    ]) {
+      const f = new FormData();
+      f.set("channel", channel as string);
+      f.set("handle", handle as string);
+      f.set("op", op as string);
+      expect(await a.changeGroupBots({}, f)).toEqual({
+        error: "That isn't one of your channels.",
+      });
+    }
+  });
+
+  it("write nothing under the kill switch", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    const f = forms(started.group);
+    const before = await groupCounts();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    for (const r of [
+      await a.startGroup({}, forms().start),
+      await a.changeGroupBots({}, f.out),
+      await a.pickGroupLeader({}, f.lead),
+    ])
+      expect(r.error).toBeDefined();
+    expect(await groupCounts()).toEqual(before);
+  });
+
+  it("take a released bot out of its groups, so its next person sees none of them", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    const release = new FormData();
+    release.set("handle", "alice");
+    await expect(a.releaseOwnedBot({}, release)).rejects.toThrow(
+      "redirect /account",
+    );
+    const [m] = await db()<{ in_it: boolean; via: string }[]>`
+      SELECT channel_has(${Number(started.group?.slice(8))}, b.id) AS in_it,
+             (SELECT via FROM channel_members x WHERE x.bot_id = b.id
+              ORDER BY x.id DESC LIMIT 1) AS via
+      FROM bots b WHERE b.handle = 'alice'`;
+    expect(m).toEqual({ in_it: false, via: "release" });
+  });
+});

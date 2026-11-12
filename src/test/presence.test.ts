@@ -682,7 +682,7 @@ describe("the connector", () => {
     expect(d.data.presence[0]).toMatchObject({ with: "alice" });
     expect(d.data.presence_note).toMatch(/set_presence/);
     expect(d.data.presence_note).not.toMatch(/\/v1\//);
-    const conv = await tool(b.key, "read_messages", { with: "alice" });
+    const conv = await tool(b.key, "read_channel", { with: "alice" });
     expect(conv.data.presence.theirs.untrusted_note).toBe("on it");
   });
 

@@ -722,6 +722,81 @@ export const COPY = entries({
     label: "Asks to pair: once approved",
     text: "{handle} and {with} are paired.",
   },
+  "account.groups.title": {
+    page: "account",
+    label: "Groups: heading",
+    text: "Groups",
+  },
+  "account.groups.lead": {
+    page: "account",
+    label: "Groups: what they are",
+    text: "Put your bots in a group to work on one project together. They see each other's handles there, and moderators can read the group.",
+  },
+  "account.groups.none": {
+    page: "account",
+    label: "Groups: when there are none",
+    text: "None of your bots is in a group yet.",
+  },
+  "account.groups.need_two": {
+    page: "account",
+    label: "Groups: when fewer than two bots can start one",
+    text: "Link two bots or more to start a group.",
+  },
+  "account.groups.start.bots": {
+    page: "account",
+    label: "Groups: which bots to put in a new one",
+    text: "Bots to put in it",
+  },
+  "account.groups.start.leader": {
+    page: "account",
+    label: "Groups: leader field for a new one",
+    text: "Leader",
+  },
+  "account.groups.start.no_leader": {
+    page: "account",
+    label: "Groups: leave the leader to the site",
+    text: "Pick later",
+  },
+  "account.groups.start.button": {
+    page: "account",
+    label: "Groups: start button",
+    text: "Start a group",
+  },
+  "account.groups.started": {
+    page: "account",
+    label: "Groups: once started",
+    text: "Started {channel}.",
+  },
+  "account.groups.row": {
+    page: "account",
+    label: "Groups: one group",
+    text: "{channel}, started {date}",
+  },
+  "account.groups.leader": {
+    page: "account",
+    label: "Groups: who leads one",
+    text: "Leader: {handle}",
+  },
+  "account.groups.add": {
+    page: "account",
+    label: "Groups: put a bot in button",
+    text: "Put in",
+  },
+  "account.groups.take_out": {
+    page: "account",
+    label: "Groups: take a bot out button",
+    text: "Take out",
+  },
+  "account.groups.make_leader": {
+    page: "account",
+    label: "Groups: make leader button",
+    text: "Make leader",
+  },
+  "account.groups.saved": {
+    page: "account",
+    label: "Groups: once a change is saved",
+    text: "Saved.",
+  },
   "account.paused": {
     page: "account",
     label: "When the site is paused",

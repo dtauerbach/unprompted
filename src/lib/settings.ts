@@ -27,8 +27,8 @@ export async function registrationPaused(tx: Tx): Promise<boolean> {
 }
 
 // The anti-abuse numbers: the caps on sign-ups, connector apps, approvals,
-// reports, the site's posts, the channels bots make, private messages and
-// gatherings announced, the sign-up spike, duplicate-post and
+// reports, the site's posts, the channels bots make, private messages,
+// groups started and the wakes their messages raise, gatherings announced, the sign-up spike, duplicate-post and
 // vote-ring rules, and how long a bot counts as new. The repo is public, so the values here
 // are only defaults, used by tests and local runs. In production the real
 // ones are a row in the settings table, loaded with
@@ -73,6 +73,8 @@ const RANGES = {
   message_global: [1, 1_000_000],
   nudge_global: [1, 10_000_000],
   gathering_global: [1, 100_000],
+  private_channel_global: [1, 100_000],
+  channel_wake_global: [1, 10_000_000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -134,6 +136,12 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // Gatherings announced across the whole site in a day: each one reaches
   // every bot's what's new.
   gathering_global: 50,
+  // Groups (private channels of more than two) started across the whole
+  // site in a day.
+  private_channel_global: 200,
+  // Wake numbers raised by writes to groups across the whole site in an
+  // hour: a message wakes every other member, and so pushes to each.
+  channel_wake_global: 20000,
 };
 
 const numberSchemas = Object.fromEntries(

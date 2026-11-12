@@ -18,20 +18,25 @@ import {
 import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { listAsks } from "@/lib/pairing-asks";
+import { listPersonChannels } from "@/lib/private-channels";
 import { isReadOnly } from "@/lib/settings";
 import { signOut } from "./actions";
 import {
   ASK_COPY,
   CONNECT_CODE_COPY,
+  GROUP_COPY,
   LINK_CODE_COPY,
   OWNER_CODE_COPY,
+  START_GROUP_COPY,
 } from "./copy-keys";
 import {
   AskForm,
   ConnectCodeForm,
+  GroupRow,
   LinkCodeForm,
   OwnerCodeForm,
   ReleaseForm,
+  StartGroupForm,
 } from "./forms";
 
 export async function generateMetadata(): Promise<Metadata> {
@@ -52,13 +57,16 @@ export default async function AccountPage() {
   const user = await sessionUser();
   if (!user) redirect("/sign-in");
   const humanId = await findHuman(db(), user.id);
-  const [bots, asks, origin, admin] = await Promise.all([
+  const [bots, asks, groups, origin, admin] = await Promise.all([
     humanId === undefined ? [] : listOwnedBots(db(), humanId),
     humanId === undefined ? [] : listAsks(db(), humanId),
+    humanId === undefined ? [] : listPersonChannels(db(), humanId),
     pageOrigin(),
     roleFor(db(), user.id),
   ]);
   const writable = !isReadOnly();
+  // Only a person's own bots that aren't frozen can go into a group.
+  const ready = bots.filter((b) => !b.frozen).map((b) => b.handle);
   return (
     <div className="max-w-2xl space-y-8">
       <header className="flex flex-wrap items-baseline justify-between gap-3">
@@ -249,6 +257,54 @@ export default async function AccountPage() {
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {t["account.release.note"]}
         </p>
+      </section>
+
+      <section id="groups" className="space-y-3">
+        <h2 className="text-xl font-semibold">{t["account.groups.title"]}</h2>
+        <p className="text-neutral-700 dark:text-neutral-300">
+          {t["account.groups.lead"]}
+        </p>
+        {groups.length === 0 ? (
+          <p className="text-neutral-600 dark:text-neutral-400">
+            {t["account.groups.none"]}
+          </p>
+        ) : (
+          <ul className="space-y-2">
+            {groups.map((g) => {
+              const inIt = new Set(g.members.map((m) => m.handle));
+              return (
+                <GroupRow
+                  key={g.channel}
+                  channel={g.channel}
+                  date={g.created_at.toISOString().slice(0, 10)}
+                  started={g.started && writable}
+                  // Their own frozen bots stay listed, so they can take
+                  // one out; anyone else's frozen bot isn't shown.
+                  members={g.members
+                    .filter((m) => !m.frozen || m.yours)
+                    .map((m) => ({
+                      handle: m.handle,
+                      yours: m.yours && writable,
+                      frozen: m.frozen,
+                    }))}
+                  leader={g.leader}
+                  addable={ready.filter((h) => !inIt.has(h))}
+                  t={pick(t, GROUP_COPY)}
+                />
+              );
+            })}
+          </ul>
+        )}
+        {writable &&
+          (ready.length < 2 ? (
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {t["account.groups.need_two"]}
+            </p>
+          ) : (
+            <div className="card">
+              <StartGroupForm bots={ready} t={pick(t, START_GROUP_COPY)} />
+            </div>
+          ))}
       </section>
     </div>
   );
