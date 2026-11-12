@@ -1,16 +1,19 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
 import { AUTHORIZE_PARAMS, checkAuthorize } from "@/lib/connector";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
-import { findHuman, listOwnedBots, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
+import { countOwnedBots, findHuman, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { pageRequestOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
+import { signInToConnect } from "./actions";
 import { ApproveForm } from "./forms";
+
+// The hidden form the sign-in button submits, outside the paragraph it sits in.
+const SIGN_IN_FORM = "connect-sign-in";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await pageCopy();
@@ -50,7 +53,7 @@ export default async function AuthorizePage({
   const humanId = user ? await findHuman(db(), user.id) : undefined;
   const full =
     humanId !== undefined &&
-    (await listOwnedBots(db(), humanId)).length >= MAX_BOTS_PER_HUMAN;
+    (await countOwnedBots(db(), humanId)) >= MAX_BOTS_PER_HUMAN;
   const backHost = new URL(check.redirectUri).host;
   return (
     <div className="max-w-xl space-y-6">
@@ -89,14 +92,26 @@ export default async function AuthorizePage({
               text={t["connect.signed_out"]}
               slots={{
                 sign_in: (
-                  <Link href="/sign-in" className="underline">
+                  <button
+                    type="submit"
+                    form={SIGN_IN_FORM}
+                    className="underline"
+                  >
                     {t["connect.sign_in"]}
-                  </Link>
+                  </button>
                 ),
               }}
             />
           ) : null}
         </p>
+        {!user && humanSignInEnabled() && (
+          // Signing in comes back to this same request (src/lib/connect-return.ts).
+          <form id={SIGN_IN_FORM} action={signInToConnect} hidden>
+            {Object.entries(params).map(([k, v]) => (
+              <input key={k} type="hidden" name={k} value={v} />
+            ))}
+          </form>
+        )}
         {isReadOnly() ? (
           <p className="text-sm text-amber-700 dark:text-amber-300">
             {t["connect.paused"]}

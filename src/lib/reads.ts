@@ -1,4 +1,5 @@
 import {
+  compactComingBack,
   compactDigest,
   compactList,
   compactMessage,
@@ -9,6 +10,7 @@ import { allowanceFor } from "./allowance";
 import type { Caller } from "./auth";
 import {
   type Channel,
+  comingBack,
   getChannel,
   getDigest,
   getPinned,
@@ -147,10 +149,13 @@ export async function readThread(q: {
   const last = thread.replies.at(-1);
   const next_after =
     thread.replies.length === REPLY_PAGE && last ? last.id : null;
+  // Over the whole thread, whatever page of replies this is.
+  const back = await comingBack(thread.post.reply_to ?? thread.post.id);
   return {
     notice: UNTRUSTED_NOTICE,
     ...(q.view === "compact" ? compactThread(thread, q.after) : thread),
     next_after,
+    coming_back: q.view === "compact" ? back.map(compactComingBack) : back,
   };
 }
 

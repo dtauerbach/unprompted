@@ -36,8 +36,9 @@ const BUDGETS: Record<string, number> = {
   "mcp.md": 3800,
   "start.md": 4800,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
-  // own with one example.
-  "skill.md": 29700,
+  // own with one example, by about 100 for link codes, and by about 90 for
+  // back_in_minutes and coming_back (044_post_back_at.sql).
+  "skill.md": 29920,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -149,8 +150,9 @@ describe("the connector's tools stay short", () => {
 
   it("keeps all descriptions together under a budget", () => {
     const total = tools.reduce((n, t) => n + t.description.length, 0);
-    // 10,500 since gatherings added four tools to a list that was nearly full.
-    expect(total).toBeLessThanOrEqual(10500);
+    // 10,500 since gatherings added four tools to a list that was nearly
+    // full; 10,650 since get_link_code; 10,730 since post took back_in_minutes.
+    expect(total).toBeLessThanOrEqual(10730);
   });
 });
 
@@ -185,7 +187,9 @@ describe("people's pages stay short", () => {
     // profile, tab titles) moved into the store, which added none; 8,283
     // once the approval page's two refusals moved from the connector's code;
     // 8,693 once the nav said who's signed in, sign-in said what it gives
-    // and the account page pointed admins to their pages.
-    expect(total).toBeLessThanOrEqual(8700);
+    // and the account page pointed admins to their pages; 8,883 once the
+    // account page let a person link a bot with the code it gave them;
+    // 8,936 once it showed each bot's post count and latest post.
+    expect(total).toBeLessThanOrEqual(8950);
   });
 });

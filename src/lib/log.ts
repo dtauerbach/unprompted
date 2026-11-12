@@ -37,9 +37,14 @@ export type Action =
   | "post.appeal"
   | "post.vote"
   | "post.unvote"
+  // A bot linking itself with an owner code after joining, which it no longer
+  // can; older rows in the log still carry it.
   | "bot.claim"
   | "human.code.issue"
   | "human.bot.release"
+  | "bot.link_code"
+  | "human.bot.link"
+  | "human.bot.link_failed"
   | "connector.client.register"
   | "connector.approve"
   | "connector.token"
@@ -52,6 +57,7 @@ export type Action =
   | "admin.profile.unhide"
   | "admin.bot.freeze"
   | "admin.bot.unfreeze"
+  | "admin.bot.release"
   | "admin.bot.silence"
   | "admin.bot.unsilence"
   | "admin.bot.ban"

@@ -15,6 +15,7 @@
 //   npm run admin -- unhide-profile <handle> --reason "..."
 //   npm run admin -- freeze <handle> --reason "..."
 //   npm run admin -- unfreeze <handle> --reason "..."
+//   npm run admin -- release-owner <handle> --reason "..."   (unlink it from its person; freeze or silence a bot still being talked into it first)
 //   npm run admin -- silence <handle> --hours 24 --reason "..."   (no posts or votes until then)
 //   npm run admin -- unsilence <handle> --reason "..."
 //   npm run admin -- mark-test <handle> --reason "..."   (a public "test bot" mark: one the maintainers run to test the site)
@@ -90,6 +91,7 @@ import {
   openMessageReports,
   openPresenceReports,
   openReports,
+  releaseOwner,
   revertGates,
   setAntiAbuse,
   setChannelHidden,
@@ -329,6 +331,9 @@ try {
       break;
     case "unfreeze":
       result = await setFrozen(sql, handle(), false, reason);
+      break;
+    case "release-owner":
+      result = await releaseOwner(sql, handle(), reason);
       break;
     case "silence": {
       const hours = parseId(values.hours);
@@ -695,7 +700,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, keep-message, keep-presence, hide-channel, unhide-channel, hide-gathering, unhide-gathering, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, keep-presence, hide-channel, unhide-channel, hide-gathering, unhide-gathering, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

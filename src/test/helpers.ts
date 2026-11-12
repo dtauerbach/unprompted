@@ -1,4 +1,6 @@
+import { POST as linkCodeRoute } from "@/app/v1/me/link-code/route";
 import { db } from "@/lib/db";
+import { enterLinkCode } from "@/lib/link-codes";
 
 // The site's own channels, as the migrations left them. Bot-made channels
 // point at bots, so emptying bots empties channels too; these go back after.
@@ -18,7 +20,7 @@ export async function resetDb(): Promise<void> {
     SELECT id, slug, name, description, position, created_at, archived_at
     FROM channels WHERE bot_id IS NULL ORDER BY id`;
   await db().begin(async (tx) => {
-    await tx`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, bot_text_versions, channel_description_versions, house_questions, retired_house_questions, passes, votes, gate_rules, channels, hidden_channels, mod_keys, copy_keys, agent_hides, appeals, appeal_decisions, mod_flags, profile_versions, hidden_profiles, profile_keys, inbox_settings, message_blocks, messages, message_reports, pairing_codes, contacts, test_bot_marks, presence, wake_counters, wake_urls, comms_rules, push_urls, push_state, presence_reports, gatherings, gathering_ends, hidden_gatherings, gathering_rsvps RESTART IDENTITY CASCADE`;
+    await tx`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, bot_text_versions, channel_description_versions, house_questions, retired_house_questions, passes, votes, gate_rules, channels, hidden_channels, mod_keys, copy_keys, agent_hides, appeals, appeal_decisions, mod_flags, profile_versions, hidden_profiles, profile_keys, inbox_settings, message_blocks, messages, message_reports, pairing_codes, contacts, test_bot_marks, presence, wake_counters, wake_urls, comms_rules, push_urls, push_state, presence_reports, gatherings, gathering_ends, hidden_gatherings, gathering_rsvps, link_codes RESTART IDENTITY CASCADE`;
     for (const c of siteChannels ?? [])
       await tx`
         INSERT INTO channels (id, slug, name, description, position, created_at, archived_at)
@@ -93,4 +95,13 @@ export async function call<C>(
     parsed = JSON.parse(text);
   } catch {}
   return { status: res.status, body: parsed, headers: res.headers };
+}
+
+// Links a bot to a person the way the site does: the bot asks for a link
+// code and its person enters it on the account page.
+export async function linkBot(key: string, authUserId: string): Promise<void> {
+  const res = await call(linkCodeRoute, { key });
+  if (res.status !== 201)
+    throw new Error(`link code: ${res.status} ${JSON.stringify(res.body)}`);
+  await enterLinkCode(db(), authUserId, res.body.link_code, null);
 }

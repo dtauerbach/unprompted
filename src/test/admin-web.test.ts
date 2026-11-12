@@ -930,6 +930,34 @@ describe("admin actions", () => {
   });
 });
 
+// The words page puts a box to type over before anything else: each piece's
+// own page opens on the words showing now in a box with Save, its history
+// folded away below, and the list of every piece leads with the boxes, with
+// recent changes folded away at the end.
+function expectEditFirst(list: string, history: string): void {
+  const box = history.indexOf("<textarea");
+  expect(box).toBeGreaterThan(-1);
+  expect(history.slice(box)).toMatch(
+    /^<textarea name="body"[^>]*aria-label="Headline"[^>]*>Bots &lt;i&gt;at play&lt;\/i&gt;\.<\/textarea>/,
+  );
+  expect(history).toMatch(/<button type="submit"[^>]*>Save<\/button>/);
+  const folded = history.indexOf("<details");
+  expect(folded).toBeGreaterThan(box);
+  expect(history.indexOf("Use the original")).toBeGreaterThan(folded);
+  expect(history.indexOf("Use this one")).toBe(-1);
+  expect(history).not.toContain("line-through");
+  const firstBox = list.indexOf("<textarea");
+  const recent = list.indexOf('id="recent"');
+  expect(firstBox).toBeGreaterThan(-1);
+  expect(recent).toBeGreaterThan(firstBox);
+  expect(list.slice(recent)).toMatch(/^id="recent"[^>]*><details>/);
+  expect(list.indexOf('id="keys"')).toBeGreaterThan(firstBox);
+  expect(list).not.toContain("line-through");
+  expect(list).not.toContain("see history");
+  expect(list).toContain(`href="/admin/copy/home.tagline"`);
+  expect(list).toContain('href="#recent"');
+}
+
 describe("admin pages", () => {
   const pages = async () => ({
     moderation: (await import("@/app/admin/page")).default,
@@ -1202,6 +1230,7 @@ describe("admin pages", () => {
     expect(history).toContain("Bots &lt;i&gt;at play&lt;/i&gt;.");
     expect(history).toContain(COPY["home.tagline"].text);
     expect(history).toContain("Use the original");
+    expectEditFirst(list, history);
     await expect(p.history(historyOf("nope"))).rejects.toThrow("not found");
     // A version saved under a key the code dropped doesn't break the editor,
     // and its history isn't a page any more.
@@ -1223,6 +1252,56 @@ describe("admin pages", () => {
     await expect(p.history(historyOf("constructor"))).rejects.toThrow(
       "not found",
     );
+  });
+  it("show a piece's words in a box even when its newest save no longer fits, and no box while read-only", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    // Saved before its spot was required, say: the page shows the original.
+    await db()`
+      INSERT INTO copy_versions (key, body, human_id)
+      VALUES ('forum.welcome', 'Read the rules first.', ${humanId})`;
+    const p = await pages();
+    const page = renderToStaticMarkup(
+      await p.history(historyOf("forum.welcome")),
+    );
+    const seed = COPY["forum.welcome"].text;
+    expect(page).toMatch(
+      new RegExp(
+        `<textarea name="body"[^>]*>${seed.replace(/[.?{}]/g, "\\$&")}</textarea>`,
+      ),
+    );
+    expect(page).toContain("no longer fits the page, so the original shows");
+    expect(page).toContain("no longer fits, so not showing");
+    expect(page).not.toContain(", showing now");
+    const list = renderToStaticMarkup(await p.copy());
+    expect(list).toContain("no longer fits the page, so the original shows");
+    expect(list).toMatch(
+      new RegExp(
+        `<textarea name="body"[^>]*aria-label="Pointer to the welcome post"[^>]*>${seed.replace(/[.?{}]/g, "\\$&")}</textarea>`,
+      ),
+    );
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const before = await writes();
+    const quiet = renderToStaticMarkup(
+      await p.history(historyOf("home.tagline")),
+    );
+    expect(quiet).not.toContain("<textarea");
+    expect(quiet).not.toContain("<form");
+    expect(quiet).toContain(
+      "The site is in read-only mode, so nothing can be saved right now.",
+    );
+    expect(quiet).toContain(COPY["home.tagline"].text);
+    const quietList = renderToStaticMarkup(await p.copy());
+    expect(quietList).not.toContain("<textarea");
+    expect(quietList).toContain(
+      "The site is in read-only mode, so nothing can be saved right now.",
+    );
+    expect(await writes()).toEqual(before);
   });
 });
 

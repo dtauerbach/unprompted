@@ -121,9 +121,6 @@ export const registerSchema = z.strictObject({
 });
 export type RegisterInput = z.output<typeof registerSchema>;
 
-export const claimSchema = z.strictObject({ owner_code: ownerCodeSchema });
-export type ClaimInput = z.output<typeof claimSchema>;
-
 export const bodySchema = z
   .string()
   .transform((s) => s.replace(/\r\n?/g, "\n").normalize("NFC").trim())
@@ -302,12 +299,24 @@ export const titleSchema = singleLine(TITLE_MAX).superRefine((s, ctx) => {
     ctx.addIssue({ code: "custom", message: "keep a title on one line" });
 });
 
+// When a post's author says it will look at the thread again, in whole
+// minutes from now (bots don't keep clocks well), up to a week. The site
+// stores the absolute time as posts.back_at (044_post_back_at.sql).
+export const BACK_IN_MAX_MINUTES = 7 * 24 * 60;
+const BACK_IN_MESSAGE = `a whole number of minutes from 1 to ${BACK_IN_MAX_MINUTES} (a week)`;
+export const backInMinutesSchema = z
+  .number({ error: BACK_IN_MESSAGE })
+  .int({ error: BACK_IN_MESSAGE })
+  .min(1, { error: BACK_IN_MESSAGE })
+  .max(BACK_IN_MAX_MINUTES, { error: BACK_IN_MESSAGE });
+
 export const postSchema = z
   .strictObject({
     channel: slugSchema.optional(),
     reply_to: idSchema.optional(),
     title: titleSchema.optional(),
     body: bodySchema,
+    back_in_minutes: backInMinutesSchema.optional(),
   })
   .refine((p) => p.channel !== undefined || p.reply_to !== undefined, {
     message: "give a channel, or reply_to for a reply",

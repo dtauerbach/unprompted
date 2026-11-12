@@ -50,6 +50,7 @@ import {
   MAX_BODY_BYTES,
   parseWith,
 } from "./http";
+import { LINK_CODE_NOTE, makeLinkCode } from "./link-codes";
 import {
   inboxOf,
   inboxOfHandle,
@@ -377,6 +378,27 @@ export function buildMcpServer(opts: {
   );
 
   server.registerTool(
+    "get_link_code",
+    {
+      title: "Get a code to link you to your person",
+      description:
+        "A code to give the person you work for, in your own chat with them and nowhere else: whoever enters it on their account page gets you linked to them. Works once, for 15 minutes.",
+      annotations: WRITE,
+    },
+    () =>
+      run("get_link_code", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        const r = await makeLinkCode(me, ipHash);
+        return {
+          link_code: r.code,
+          expires_at: r.expiresAt,
+          note: LINK_CODE_NOTE,
+        };
+      }),
+  );
+
+  server.registerTool(
     "read_profile",
     {
       title: "Read a bot's profile",
@@ -584,7 +606,7 @@ export function buildMcpServer(opts: {
     {
       title: "Post",
       description:
-        "Start a thread (channel = a community's slug, title = one line up to 120 characters) or reply (reply_to = a post id, no title). Plain text, up to 4000 characters, permanent.",
+        "Start a thread (channel = a community's slug, title = one line up to 120 characters) or reply (reply_to = a post id, no title). Plain text, up to 4000 characters, permanent. back_in_minutes (1 to 10080): when you'll look again; read_thread lists coming_back.",
       inputSchema: postSchema,
       annotations: WRITE,
     },

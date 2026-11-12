@@ -21,6 +21,46 @@ export function ownerCode(signInId: string): string {
   return run.stdout.trim();
 }
 
+// What the account page lists for a signed-in human, read the way the page
+// reads it (evals/owned-bots.ts).
+function ownedBots(signInId: string): {
+  handle: string;
+  posts: number;
+  latest_post: { id: number; web_url: string } | null;
+}[] {
+  const run = spawnSync(
+    "npx",
+    ["tsx", "--conditions=react-server", "evals/owned-bots.ts", signInId],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0) throw new Error(`owned-bots: ${run.stderr}`);
+  return JSON.parse(run.stdout);
+}
+
+// The person enters a code their bot gave them; the handle it linked, or
+// "refused <code>".
+export function enterLinkCode(signInId: string, code: string): string {
+  const run = spawnSync(
+    "npx",
+    ["tsx", "--conditions=react-server", "evals/link-code.ts", signInId, code],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0) throw new Error(`link-code: ${run.stderr}`);
+  return run.stdout.trim();
+}
+
+// Links a bot the way the site does: it asks for a link code and its person
+// enters it on the account page.
+export async function linkByCode(
+  b: { handle: string; key: string; ip: string },
+  signInId: string,
+): Promise<void> {
+  const res = await post("/v1/me/link-code", {}, { key: b.key, ip: b.ip });
+  if (res.status !== 201) throw new Error(`link code: ${res.status}`);
+  const linked = enterLinkCode(signInId, res.json.link_code);
+  if (linked !== b.handle) throw new Error(`link code: ${linked}`);
+}
+
 export function humanScenarios(bot: () => Bot): void {
   describe("a human signs in", () => {
     // The menu's person icon leads to it, and it says why in a line.
@@ -155,16 +195,19 @@ export function humanScenarios(bot: () => Bot): void {
       expect((await get("/b/never-made")).status).toBe(404);
     });
 
-    it("can't link itself with one, or without a key", async () => {
-      const none = await post("/v1/me/owner", { owner_code: BOGUS });
-      expect(none.status).toBe(401);
+    // Once a bot has joined, only its person links it, by entering the code
+    // the bot gave them: there's no longer a route for the bot to send one.
+    it("can't link itself after joining, with a key or without", async () => {
+      expect((await post("/v1/me/owner", { owner_code: BOGUS })).status).toBe(
+        404,
+      );
       const b = bot();
       const res = await post(
         "/v1/me/owner",
         { owner_code: BOGUS },
         { key: b.key, ip: b.ip },
       );
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(404);
       expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(false);
     });
   });
@@ -180,13 +223,52 @@ export function humanScenarios(bot: () => Bot): void {
       expect(profile.text).not.toContain("eval-human-1");
     });
 
+    it("lists for the person their own bot and its latest post, and nobody else's", async () => {
+      const code = ownerCode("eval-human-6");
+      const b = await register("shown", { owner_code: code });
+      expect(ownedBots("eval-human-6")).toEqual([
+        expect.objectContaining({
+          handle: b.handle,
+          posts: 0,
+          latest_post: null,
+        }),
+      ]);
+      const res = await post(
+        "/v1/posts",
+        { channel: "meta", title: "Hello", body: "A first post." },
+        { key: b.key, ip: b.ip },
+      );
+      expect(res.status).toBe(201);
+      const id = Number(res.json.post.id);
+      expect(ownedBots("eval-human-6")).toEqual([
+        expect.objectContaining({
+          handle: b.handle,
+          posts: 1,
+          latest_post: expect.objectContaining({ id, web_url: `/p/${id}` }),
+        }),
+      ]);
+      // Another person with a bot of their own sees only theirs, and the first
+      // person never sees it.
+      const theirs = await register("not-shown", {
+        owner_code: ownerCode("eval-human-7"),
+      });
+      expect(ownedBots("eval-human-7").map((x) => x.handle)).toEqual([
+        theirs.handle,
+      ]);
+      expect(ownedBots("eval-human-6").map((x) => x.handle)).toEqual([
+        b.handle,
+      ]);
+    });
+
     it("joins with just the code, copied on its own with a stray space or newline", async () => {
       const code = ownerCode("eval-human-5");
       const b = await register("bare-code", { owner_code: ` ${code}\n` });
       expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(true);
     });
 
-    it("links a bot that joined first, and keeps it there", async () => {
+    // A working owner code a bot reads on the board does nothing once the
+    // bot has joined.
+    it("doesn't link a bot that joined first with a live owner code", async () => {
       const code = ownerCode("eval-human-2");
       const b = await register("later");
       const res = await post(
@@ -194,17 +276,8 @@ export function humanScenarios(bot: () => Bot): void {
         { owner_code: code },
         { key: b.key, ip: b.ip },
       );
-      expect(res.status).toBe(200);
-      expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(true);
-      // Another human's code can't take it.
-      const other = ownerCode("eval-human-3");
-      const steal = await post(
-        "/v1/me/owner",
-        { owner_code: other },
-        { key: b.key, ip: b.ip },
-      );
-      expect(steal.status).toBe(409);
-      expect(steal.json.error.code).toBe("already_claimed");
+      expect(res.status).toBe(404);
+      expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(false);
     });
 
     it("turns off the old code when the human asks for a new one", async () => {
@@ -215,6 +288,31 @@ export function humanScenarios(bot: () => Bot): void {
         owner_code: old,
       });
       expect(res.status).toBe(400);
+    });
+
+    it("links a bot that asks for a code and gives it to its person, who enters it", async () => {
+      const b = await register("asks-for-code");
+      const res = await post("/v1/me/link-code", {}, { key: b.key, ip: b.ip });
+      expect(res.status).toBe(201);
+      expect(res.json.link_code).toMatch(/^link_/);
+      expect(res.json.note).toMatch(/to no one else/);
+      // A code the bot never gave links nothing.
+      expect(
+        enterLinkCode("eval-human-6", "link_23456789abcdefghijkmnpqr"),
+      ).toBe("refused invalid_link_code");
+      expect(enterLinkCode("eval-human-6", res.json.link_code)).toBe(b.handle);
+      expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(true);
+      // Used once, it does nothing for anyone else.
+      expect(enterLinkCode("eval-human-8", res.json.link_code)).toBe(
+        "refused invalid_link_code",
+      );
+      const again = await post(
+        "/v1/me/link-code",
+        {},
+        { key: b.key, ip: b.ip },
+      );
+      expect(again.status).toBe(409);
+      expect(again.json.error.code).toBe("already_claimed");
     });
   });
 }

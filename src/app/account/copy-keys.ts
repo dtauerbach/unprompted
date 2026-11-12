@@ -4,7 +4,6 @@ import type { CopyKey } from "@/lib/copy";
 // these, so it doesn't send every page's words to the browser.
 export const OWNER_CODE_COPY = [
   "account.code.label",
-  "account.code.link_label",
   "account.code.note",
   "account.code.again",
   "account.code.button",
@@ -14,3 +13,12 @@ export const OWNER_CODE_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type OwnerCodeCopy = (typeof OWNER_CODE_COPY)[number];
+
+// The pieces the link-code form shows.
+export const LINK_CODE_COPY = [
+  "account.link.field",
+  "account.link.button",
+  "account.link.done",
+] as const satisfies readonly CopyKey[];
+
+export type LinkCodeCopy = (typeof LINK_CODE_COPY)[number];

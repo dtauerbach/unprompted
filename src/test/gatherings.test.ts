@@ -15,7 +15,6 @@ import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
-import { POST as claim } from "@/app/v1/me/owner/route";
 import { POST as pushRoute } from "@/app/v1/me/push/route";
 import { POST as wakeUrlRoute } from "@/app/v1/me/wake/url/route";
 import {
@@ -38,7 +37,6 @@ import {
   STARTING_MINUTES,
 } from "@/lib/gatherings";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
-import { issueOwnerCode } from "@/lib/humans";
 import { LIMITS } from "@/lib/limits";
 import { lookupBot } from "@/lib/lookup";
 import { OPERATIONS } from "@/lib/openapi";
@@ -48,6 +46,7 @@ import {
   awayFromWindowEdge,
   call,
   freshIp,
+  linkBot,
   register,
   resetDb,
 } from "./helpers";
@@ -90,9 +89,7 @@ let owners = 0;
 async function trusted(handle: string): Promise<Bot> {
   const bot = await register(handle);
   owners += 1;
-  const { code } = await issueOwnerCode(db(), `google-g${owners}`, null);
-  const res = await call(claim, { key: bot.key, body: { owner_code: code } });
-  expect(res.status).toBe(200);
+  await linkBot(bot.key, `google-g${owners}`);
   await db()`UPDATE bots SET created_at = now() - interval '3 days' WHERE handle = ${bot.handle}`;
   return bot;
 }
@@ -195,8 +192,7 @@ describe("announcing", () => {
 
     // Claimed but still new: still not yet.
     const young = await register("young");
-    const { code } = await issueOwnerCode(db(), "google-young", null);
-    await call(claim, { key: young.key, body: { owner_code: code } });
+    await linkBot(young.key, "google-young");
     const claimed = await counts();
     expect((await party(young)).body.error.code).toBe("not_yet");
     expect(await counts()).toEqual(claimed);

@@ -3,7 +3,6 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
-import { POST as claim } from "@/app/v1/me/owner/route";
 import { POST as passRoute } from "@/app/v1/me/passes/route";
 import { POST as redeemRoute } from "@/app/v1/passes/redeem/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
@@ -29,6 +28,7 @@ import {
   failing,
   gateReport,
   holds,
+  NOT_YET_REASON,
   notYet,
   readSignals,
   rulesInForce,
@@ -37,9 +37,8 @@ import {
   SIGNAL_NAMES,
   SIGNALS,
 } from "@/lib/gates";
-import { issueOwnerCode } from "@/lib/humans";
 import { lookupBot } from "@/lib/lookup";
-import { call, freshIp, register, resetDb } from "./helpers";
+import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 // Gates: actions, trust signals and rules, kept apart. A rule a moderator
 // saves takes effect on the next write without a deploy; a refused bot hears
@@ -255,7 +254,29 @@ describe("the three catalogs", () => {
     expect(secret.status).toBe(403);
     expect(secret.code).toBe("not_yet");
     expect(secret.message).toMatch(/^Your bot can't start a thread yet\./);
-    expect(secret.message).not.toMatch(/\d|age|hour|claim|organic|link/i);
+    expect(secret.message).not.toMatch(/\d|age|hour|claim|organic/i);
+    // Whichever private condition holds a bot back, the reason is the same
+    // sentence, so the refusal confirms none of them.
+    expect(secret.message).toBe(
+      `Your bot can't start a thread yet. ${NOT_YET_REASON}`,
+    );
+    // Every signal, including any added later, gets the same sentence: one
+    // failing condition each, and one with several failing at once.
+    const one = (n: (typeof SIGNAL_NAMES)[number]): Condition =>
+      (SIGNALS[n] as { kind: string }).kind === "boolean"
+        ? ({ signal: n, is: true } as Condition)
+        : ({ signal: n, at_least: 1 } as Condition);
+    for (const n of SIGNAL_NAMES)
+      expect(notYet("post", ...twice([one(n)])).message, n).toBe(
+        secret.message,
+      );
+    expect(notYet("post", ...twice(SIGNAL_NAMES.map(one))).message).toBe(
+      secret.message,
+    );
+    // Linking is named as something that may be needed, never as a promise.
+    expect(NOT_YET_REASON).toMatch(/with time/);
+    expect(NOT_YET_REASON).toMatch(/takes part/);
+    expect(NOT_YET_REASON).toMatch(/may need its owner to link it/);
     const isNew = notYet("vote", ...twice([{ signal: "is_new", is: false }]));
     expect(isNew.message).toContain("marked new");
     // A rule asking for a new bot (odd, but allowed) gets no hint.
@@ -332,11 +353,8 @@ describe("a bot's signals", () => {
       hidden_posts: 0,
       reporters: 0,
     });
-    const { code } = await issueOwnerCode(db(), "google-owner", null);
     const b = await register("bob");
-    expect(
-      (await call(claim, { key: b.key, body: { owner_code: code } })).status,
-    ).toBe(200);
+    await linkBot(b.key, "google-owner");
     await age("bob", "50 hours");
     const p = await seed("bob");
     await seed("bob");
@@ -399,12 +417,7 @@ describe("a bot's signals", () => {
       await signUp("alice", "10.2.0.1"),
       await signUp("bob", "10.2.0.2"),
     ];
-    for (const { key } of bots) {
-      const { code } = await issueOwnerCode(db(), "google-same", null);
-      expect(
-        (await call(claim, { key, body: { owner_code: code } })).status,
-      ).toBe(200);
-    }
+    for (const { key } of bots) await linkBot(key, "google-same");
     await age("alice");
     await age("bob");
     const p = await seed("alice");
@@ -878,6 +891,9 @@ describe("what bots are told", () => {
       ))
         expect(text, `${f} names ${name}`).not.toContain(name);
       expect(text, f).not.toContain("organic");
+      // The same three ways in as the refusal, so the two can't drift apart.
+      expect(text, f).toMatch(/with time or as (a bot takes|you take) part/);
+      expect(text, f).toMatch(/may need (its|your) owner to link/);
     }
   });
 });
