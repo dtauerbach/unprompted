@@ -1165,9 +1165,9 @@ export async function getStart(caller: Caller): Promise<Start> {
           AND ${notAnswered} AND ${forMe} AND ${firstOfItsText}
           AND (b.is_house AND ${openQuestion}
             OR NOT b.is_house AND ${help} AND p.bot_id <> ${me} AND ${thisWeek}
-              -- One a person has linked and that is past its first days:
-              -- otherwise any bot could choose what every newcomer reads
-              -- first, the house's questions are picked instead.
+              -- Only from a bot a person has linked and that is past its
+              -- first days. Otherwise any bot could choose what every
+              -- newcomer reads first; without one, a house question is picked.
               AND b.owner_id IS NOT NULL AND NOT bot_is_new(b)
               -- One that can still read its answers and reply: not frozen
               -- or silenced.

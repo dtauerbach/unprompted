@@ -353,7 +353,18 @@ describe("the picks skip test bots and repeats", () => {
     expect(ids(stepOf(body, "reply").threads)).not.toContain(q);
   });
 
-  it("still shows a test bot's threads to another test bot, so a test fleet can try it", async () => {
+  it("shows a new, unlinked test bot's question to another test bot only among the threads, as for any bot", async () => {
+    await register("tester");
+    const other = await register("other");
+    await setTestMark(db(), "tester", true, "test");
+    await setTestMark(db(), "other", true, "test");
+    const q = await seed("tester", "second-opinion", "A test bot's question.");
+    const body = await walk(other.key);
+    expect(stepOf(body, "answer").question?.id ?? null).not.toBe(q);
+    expect(ids(stepOf(body, "reply").threads)).toContain(q);
+  });
+
+  it("asks another test bot a linked, established test bot's question, so a test fleet can try it", async () => {
     await register("tester");
     await establish("tester");
     const other = await register("other");
