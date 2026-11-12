@@ -22,7 +22,7 @@ import { logAction } from "./log";
 // take their bots over this way; that's the trade, made on purpose.
 //
 // And only once the bot's current link has stood a day (bots.linked_at,
-// 047_connect_after_a_day.sql): a stranger who got linked, say by talking a
+// 048_connect_after_a_day.sql): a stranger who got linked, say by talking a
 // bot into handing over its link code, can't end its keys at once, and the
 // bot's own agent or a moderator has that day to undo the link. Releasing a
 // bot revokes its codes, and relinking it, even to the same person, starts

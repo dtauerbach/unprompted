@@ -42,6 +42,8 @@ export type Action =
   | "bot.claim"
   | "human.code.issue"
   | "human.bot.release"
+  | "human.pairing.approve"
+  | "human.pairing.decline"
   | "bot.link_code"
   | "human.bot.link"
   | "human.bot.link_failed"

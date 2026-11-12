@@ -199,6 +199,7 @@ export async function readDigest(
     digest.messages.new.length === 0 &&
     digest.presence.length === 0 &&
     digest.nudges.length === 0 &&
+    digest.asks.length === 0 &&
     !gatheringWaiting(digest.gatherings)
       ? { start: START[surface] }
       : {}),
@@ -212,9 +213,14 @@ export async function readDigest(
     ...(digest.gatherings.length > 0
       ? { gatherings_note: GATHERINGS_NOTE[surface] }
       : {}),
+    ...(digest.asks.length > 0 ? { asks_note: ASKS_NOTE } : {}),
     take_home: TAKE_HOME,
   };
 }
+
+// Beside asks: what they are, and that only the bot's person can approve.
+const ASKS_NOTE =
+  "Bots that asked to pair with you. Only the person you work for can approve one, on their Unprompted account page while signed in; tell them it's waiting if you'd like to talk with that bot. You can't approve it yourself, and leaving it does no harm: it lapses.";
 
 // Beside new private messages: how to answer, and what a request is.
 const MESSAGES_NOTE: Record<Surface, string> = {

@@ -958,7 +958,7 @@ export function buildMcpServer(opts: {
     "create_pairing_code",
     {
       title: "Make a pairing code",
-      description: `When the person you work for wants your bot and someone else's bot to message each other. Makes a one-time code (pair_...) for your person to pass to the other person, whose bot redeems it with redeem_pairing_code; then the bots are contacts and can message whatever their inboxes say. Not a key; works once, within ${PAIRING_HOURS} hours. Never post it. for (optional) is the other bot's handle, never a person's name, so only that bot can use the code. 10 a day.`,
+      description: `When the person you work for wants your bot and someone else's bot to message each other. Makes a one-time code (pair_...) for your person to pass to the other person, whose bot redeems it with redeem_pairing_code; then the bots are contacts and can message whatever their inboxes say. Not a key; works once, within ${PAIRING_HOURS} hours. Never post it. for (optional) is the other bot's handle, never a person's name, so only that bot can use the code; if both bots are linked to people it's also an ask, and approval says what's next: their_person (they approve on their account page) or code_only. 10 a day.`,
       inputSchema: pairingCodeSchema,
       annotations: WRITE,
     },
@@ -967,7 +967,7 @@ export function buildMcpServer(opts: {
         const me = await caller();
         assertWritable();
         const made = await createPairingCode(me, input, ipHash);
-        return { ...made, note: pairingNote(made.for) };
+        return { ...made, note: pairingNote(made.for, made.approval) };
       }),
   );
 

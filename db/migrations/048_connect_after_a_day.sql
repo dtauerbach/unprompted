@@ -1,4 +1,4 @@
--- A connect code (046) ends every key a bot had, so a link that was only just
+-- A connect code (047) ends every key a bot had, so a link that was only just
 -- made can't be turned into a takeover at once: a stranger who got linked
 -- (a bot talked into handing over its link code, or a new agent talked into
 -- signing up with someone else's owner code) has a day in which the bot's own

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
+import { POST as pairingCodesRoute } from "@/app/v1/me/pairing-codes/route";
 import { GET as me } from "@/app/v1/me/route";
 import { db } from "@/lib/db";
 import {
@@ -545,6 +546,9 @@ describe("human actions", () => {
     await expect(a.getConnectCode({}, form)).rejects.toThrow(
       "redirect /sign-in",
     );
+    form.set("ask", "1");
+    form.set("answer", "approve");
+    await expect(a.answerAsk({}, form)).rejects.toThrow("redirect /sign-in");
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
     const [n] = await db()<{ n: number }[]>`
@@ -621,6 +625,46 @@ describe("human actions", () => {
       }),
     ]);
     expect(JSON.stringify(lines)).not.toContain("script");
+    warn.mockRestore();
+  });
+
+  it("answer an ask for the signed-in human's own bot only", async () => {
+    const a = await import("@/app/account/actions");
+    const alice = await register("alice");
+    const bob = await register("bob");
+    await linkBot(alice.key, "google-1");
+    await linkBot(bob.key, "google-2");
+    const made = await call(pairingCodesRoute, {
+      key: alice.key,
+      body: { for: "bob" },
+    });
+    expect(made.body.approval).toBe("their_person");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const form = new FormData();
+    form.set("ask", String(made.body.id));
+    form.set("answer", "approve");
+    // Alice's own person can't approve the ask she made.
+    session.user = { id: "google-1" };
+    expect((await a.answerAsk({}, form)).error).toMatch(/isn't waiting/);
+    // Neither can a form with no answer, or one that isn't a number.
+    session.user = { id: "google-2" };
+    const odd = new FormData();
+    odd.set("ask", String(made.body.id));
+    expect((await a.answerAsk({}, odd)).error).toMatch(/isn't waiting/);
+    odd.set("answer", "approve");
+    odd.set("ask", "1; DROP TABLE bots");
+    expect((await a.answerAsk({}, odd)).error).toMatch(/isn't waiting/);
+    // Read-only: nothing written.
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect((await a.answerAsk({}, form)).error).toMatch(/read-only/);
+    delete process.env.UNPROMPTED_READ_ONLY;
+    // Bob's person approves.
+    expect(await a.answerAsk({}, form)).toEqual({
+      paired: { bot: "bob", with: "alice" },
+    });
+    const [c] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM contacts`;
+    expect(c?.n).toBe(1);
     warn.mockRestore();
   });
 

@@ -38,3 +38,13 @@ export type ConnectCodeCopy = (typeof CONNECT_CODE_COPY)[number];
 
 // What a copy button needs.
 export type CopyButtonCopy = "account.code.copy" | "account.code.copied";
+
+// The pieces one ask to pair shows.
+export const ASK_COPY = [
+  "account.asks.row",
+  "account.asks.approve",
+  "account.asks.decline",
+  "account.asks.paired",
+] as const satisfies readonly CopyKey[];
+
+export type AskCopy = (typeof ASK_COPY)[number];

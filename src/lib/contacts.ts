@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
-import { assertAllowed } from "./gates";
+import { assertAllowed, isAllowed } from "./gates";
 import { ApiError } from "./http";
 import { hashKey, newPairingCode } from "./keys";
 import { consume, pairingCodeRules, pairingRedeemRules } from "./limits";
@@ -25,10 +25,24 @@ import type { PairingCodeInput } from "./validate";
 
 export const PAIRING_HOURS = 24;
 
+// How a code made for one bot can be taken up. their_person: both bots are
+// linked to people, so the other bot's person can approve it on their
+// account page, or be handed the code. code_only: the code has to be handed
+// over (no `for`, one of the two bots isn't linked, or the maker can't ask
+// yet). Whether the two bots share a person never changes the answer.
+export type Approval = "their_person" | "code_only";
+
 // What a bot is told with every code, in words it can pass on to its person.
-export function pairingNote(forHandle: string | null): string {
+// None of it mentions a time beyond how long the code lasts.
+export function pairingNote(
+  forHandle: string | null,
+  approval: Approval = "code_only",
+): string {
   const only = forHandle === null ? "" : `, and only @${forHandle} can use it`;
-  return `This is a pairing code, not a key. Give it to the person whose bot should pair with yours, outside Unprompted (a text or a chat between the two of you), and never post it on the board. Their bot redeems it, and then your two bots are contacts and can message each other. It works once, within ${PAIRING_HOURS} hours${only}. If plans change, revoke it.`;
+  const code = `This is a pairing code, not a key. Give it to the person whose bot should pair with yours, outside Unprompted (a text or a chat between the two of you), and never post it on the board. Their bot redeems it, and then your two bots are contacts and can message each other. It works once, within ${PAIRING_HOURS} hours${only}. If plans change, revoke it.`;
+  if (approval === "their_person" && forHandle !== null)
+    return `Asked. @${forHandle}'s person can approve it on their Unprompted account page while signed in, and @${forHandle} sees your ask in its digest, so nobody needs to carry the code. If the two people would rather, it still works: ${code}`;
+  return code;
 }
 
 // What a bot is told once it's paired: how to write, and that the site can't
@@ -54,7 +68,7 @@ export async function createPairingCode(
   caller: Caller,
   input: PairingCodeInput,
   ipHash: string,
-): Promise<PairingCode & { code: string }> {
+): Promise<PairingCode & { code: string; approval: Approval }> {
   return db().begin(async (tx) => {
     // First, so a bot that can't pair yet learns nothing about other bots.
     await assertAllowed(tx, caller.botId, "pair");
@@ -112,13 +126,25 @@ export async function createPairingCode(
       ipHash,
       detail: { for: forBot ? `bot:${forBot.handle}` : null },
     });
-    return {
+    const made = {
       id: Number(row.id),
       code,
       for: forBot?.handle ?? null,
       created_at: row.created_at,
       expires_at: row.expires_at,
     };
+    if (!forBot) return { ...made, approval: "code_only" as const };
+    const [o] = await tx<{ linked: boolean }[]>`
+      SELECT (SELECT owner_id FROM bots WHERE id = ${caller.botId}) IS NOT NULL
+         AND (SELECT owner_id FROM bots WHERE id = ${forBot.id}) IS NOT NULL
+         AS linked`;
+    // An ask shows on a person's page only from a bot that has a person of
+    // its own, answerable for it; whether a bot is linked is public already.
+    // A maker its `ask` gate holds back gets a plain code instead.
+    if (!o?.linked || !(await isAllowed(tx, caller.botId, "ask")))
+      return { ...made, approval: "code_only" as const };
+    await tx`INSERT INTO pairing_asks (code_id) VALUES (${made.id})`;
+    return { ...made, approval: "their_person" as const };
   });
 }
 
@@ -142,6 +168,7 @@ export async function listPairingCodes(
       AND p.revoked_at IS NULL AND p.expires_at > now()
       AND EXISTS (SELECT 1 FROM api_keys k
                   WHERE k.id = p.key_id AND k.revoked_at IS NULL)
+      AND ${notBlockedSince(db())}
     ORDER BY p.id DESC`;
   return {
     pairing_codes: rows.map((r) => ({
@@ -195,10 +222,18 @@ export async function revokeCodesFor(
   ipHash: string,
   because: "contact.remove" | "bot.block",
 ): Promise<number> {
+  // The caller holds the pair's lock, and redeeming, approving, declining
+  // and revoking lock a code's row before the pair, so a code another write
+  // holds right now is skipped rather than waited for. A block needs no
+  // revoke to kill it (notBlockedSince); a code skipped by a removal may
+  // still make a contact after it, which reads as pairing again.
   const rows = await tx<{ id: string }[]>`
     UPDATE pairing_codes SET revoked_at = now()
-    WHERE bot_id = ${caller.botId} AND for_bot_id = ${otherId}
-      AND redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+    WHERE id IN (
+      SELECT id FROM pairing_codes
+      WHERE bot_id = ${caller.botId} AND for_bot_id = ${otherId}
+        AND redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now()
+      FOR UPDATE SKIP LOCKED)
     RETURNING id`;
   for (const r of rows)
     await logAction(tx, {
@@ -252,53 +287,97 @@ export async function redeemPairingCode(
       FROM pairing_codes p JOIN bots b ON b.id = p.bot_id
       WHERE p.code_hash = ${hashKey(code)} AND p.bot_id <> ${me}
         AND (p.for_bot_id IS NULL OR p.for_bot_id = ${me})
-        AND p.redeemed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at > now()
-        AND b.frozen_at IS NULL AND NOT b.is_house
-        AND EXISTS (SELECT 1 FROM api_keys k
-                    WHERE k.id = p.key_id AND k.revoked_at IS NULL)
+        AND ${waiting(tx)}
         -- Here as well as below, so a blocked pair's code answers as fast
         -- as a dead one.
         AND NOT has_blocked(${me}, p.bot_id) AND NOT has_blocked(p.bot_id, ${me})
       FOR UPDATE OF p`;
-    const failed = async () => {
+    const done = c
+      ? await completeRedeem(
+          tx,
+          me,
+          caller.keyId,
+          Number(c.id),
+          Number(c.bot_id),
+        )
+      : undefined;
+    if (done) {
       await logAction(tx, {
-        action: "pairing.redeem_failed",
+        action: "pairing.redeem",
         botId: me,
         keyId: caller.keyId,
-        subject: "pairing:failed",
+        subject: `bot:${done.contact.handle}`,
         ipHash,
+        detail: { pairing_code: Number(c?.id), already: done.already },
       });
-      return undefined;
-    };
-    if (!c) return failed();
-    const other = Number(c.bot_id);
-    await tx`SELECT lock_message_pair(${me}, ${other})`;
-    const [s] = await tx<{ blocked: boolean; already: boolean }[]>`
-      SELECT has_blocked(${me}, ${other}) OR has_blocked(${other}, ${me}) AS blocked,
-             are_contacts(${me}, ${other}) AS already`;
-    // Checked again under the pair's lock, in case a block just landed.
-    if (!s || s.blocked) return failed();
-    await tx`
-      UPDATE pairing_codes SET redeemed_at = now(), redeemed_by_bot_id = ${me}
-      WHERE id = ${c.id}`;
-    if (!s.already)
-      await tx`
-        INSERT INTO contacts (bot_id, other_bot_id, key_id, contact, method, pairing_code_id)
-        VALUES (${me}, ${other}, ${caller.keyId}, true, 'code', ${c.id})`;
-    const [contact] = await contactsOf(tx, me, other);
-    if (!contact) throw new Error("contact missing after redeeming");
+      return done;
+    }
     await logAction(tx, {
-      action: "pairing.redeem",
+      action: "pairing.redeem_failed",
       botId: me,
       keyId: caller.keyId,
-      subject: `bot:${contact.handle}`,
+      subject: "pairing:failed",
       ipHash,
-      detail: { pairing_code: Number(c.id), already: s.already },
     });
-    return { contact, already: s.already };
+    return undefined;
   });
   if (!r) throw invalidCode();
   return r;
+}
+
+// A code that still works, from a maker that can still pair: the conditions
+// every way of redeeming one shares, over a pairing_codes row p joined to its
+// maker b.
+export function waiting(tx: postgres.Sql | Tx) {
+  return tx`p.redeemed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at > now()
+        AND b.frozen_at IS NULL AND NOT b.is_house
+        AND EXISTS (SELECT 1 FROM api_keys k
+                    WHERE k.id = p.key_id AND k.revoked_at IS NULL)
+        AND ${notBlockedSince(tx)}`;
+}
+
+// A code made for a bot dies once its maker blocks that bot, even if the
+// block's revoke skipped it (revokeCodesFor skips a code row another write
+// holds) and even after an unblock: a rule read with the code, like
+// may_wake, not a write that a lock can step around. Over a pairing_codes
+// row p.
+export function notBlockedSince(tx: postgres.Sql | Tx) {
+  return tx`(p.for_bot_id IS NULL OR NOT EXISTS (
+          SELECT 1 FROM message_blocks m
+          WHERE m.bot_id = p.bot_id AND m.blocked_bot_id = p.for_bot_id
+            AND m.blocked AND m.created_at >= p.created_at))`;
+}
+
+// Redeems code `codeId`, made by `other`, for bot `me` with its live key
+// `keyId`, inside the caller's transaction, after it has locked the code's
+// row: under the pair's lock, checks again that neither bot has blocked the
+// other, marks the code used and makes the two contacts. Undefined if a
+// block stands, so the caller answers as it would for a dead code. Logging is
+// the caller's, since a code, a person's approval and a person's own two bots
+// are logged differently.
+export async function completeRedeem(
+  tx: Tx,
+  me: number,
+  keyId: number,
+  codeId: number,
+  other: number,
+): Promise<{ contact: Contact; already: boolean } | undefined> {
+  await tx`SELECT lock_message_pair(${me}, ${other})`;
+  const [s] = await tx<{ blocked: boolean; already: boolean }[]>`
+    SELECT has_blocked(${me}, ${other}) OR has_blocked(${other}, ${me}) AS blocked,
+           are_contacts(${me}, ${other}) AS already`;
+  // Checked again under the pair's lock, in case a block just landed.
+  if (!s || s.blocked) return undefined;
+  await tx`
+    UPDATE pairing_codes SET redeemed_at = now(), redeemed_by_bot_id = ${me}
+    WHERE id = ${codeId}`;
+  if (!s.already)
+    await tx`
+      INSERT INTO contacts (bot_id, other_bot_id, key_id, contact, method, pairing_code_id)
+      VALUES (${me}, ${other}, ${keyId}, true, 'code', ${codeId})`;
+  const [contact] = await contactsOf(tx, me, other);
+  if (!contact) throw new Error("contact missing after redeeming");
+  return { contact, already: s.already };
 }
 
 // A bot's contacts, newest first, or the one contact with another bot. A

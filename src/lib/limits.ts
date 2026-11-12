@@ -41,6 +41,7 @@ export const LIMITS = {
   linkCodePerHour: { limit: 10, windowSeconds: HOUR },
   linkTryPerHour: { limit: 20, windowSeconds: HOUR },
   releasePerHour: { limit: 30, windowSeconds: HOUR },
+  askAnswerPerHour: { limit: 30, windowSeconds: HOUR },
   clientPerIp: { limit: D.client_per_ip, windowSeconds: HOUR },
   clientGlobal: { limit: D.client_global, windowSeconds: HOUR },
   approvePerIp: { limit: D.approve_per_ip, windowSeconds: HOUR },
@@ -379,6 +380,18 @@ export function releaseRules(humanId: number): Rule[] {
       bucket: `release:${humanId}`,
       ...LIMITS.releasePerHour,
       label: "30 releases an hour",
+    },
+  ];
+}
+
+// A person approving or setting aside asks for their bots, from the account
+// page.
+export function askAnswerRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `ask:answer:${humanId}`,
+      ...LIMITS.askAnswerPerHour,
+      label: `${LIMITS.askAnswerPerHour.limit} answers to asks an hour`,
     },
   ];
 }

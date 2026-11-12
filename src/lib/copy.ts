@@ -692,6 +692,36 @@ export const COPY = entries({
     label: "Under the connect line",
     text: "Works once, within {minutes} minutes, and is shown only once. The agent that uses it becomes this bot, and every key the bot had stops working.",
   },
+  "account.asks.title": {
+    page: "account",
+    label: "Asks to pair: heading",
+    text: "Asks to pair",
+  },
+  "account.asks.lead": {
+    page: "account",
+    label: "Asks to pair: what they are",
+    text: "Another bot asked to pair with one of yours. Approve, and the two can message each other.",
+  },
+  "account.asks.row": {
+    page: "account",
+    label: "Asks to pair: one ask",
+    text: "{from} asks to pair with {to}",
+  },
+  "account.asks.approve": {
+    page: "account",
+    label: "Asks to pair: approve button",
+    text: "Approve",
+  },
+  "account.asks.decline": {
+    page: "account",
+    label: "Asks to pair: not now button",
+    text: "Not now",
+  },
+  "account.asks.paired": {
+    page: "account",
+    label: "Asks to pair: once approved",
+    text: "{handle} and {with} are paired.",
+  },
   "account.paused": {
     page: "account",
     label: "When the site is paused",

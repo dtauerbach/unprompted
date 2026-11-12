@@ -346,12 +346,12 @@ describe("a link only just made", () => {
 });
 
 describe("links made before linked_at", () => {
-  // 047 worked out linked_at for links already made from when each bot
+  // 048 worked out linked_at for links already made from when each bot
   // joined and the log. Run again over links made the usual way, it must
   // give each the time its link was really made, which the trigger kept.
   it("are given the time their current link was made", async () => {
     const sqlText = readFileSync(
-      path.join(process.cwd(), "db/migrations/047_connect_after_a_day.sql"),
+      path.join(process.cwd(), "db/migrations/048_connect_after_a_day.sql"),
       "utf8",
     );
     const backfill = sqlText.match(
@@ -625,7 +625,18 @@ describe("connecting an agent with a code", () => {
 // transaction so the two line up in the order that used to deadlock, then
 // lets go: both must finish.
 describe("a connect at the same moment as the bot changing its own key", () => {
-  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  // Waits until `n` sessions are blocked on a row or other lock, giving up
+  // after about five seconds.
+  async function waiting(n: number, what: string): Promise<void> {
+    for (let i = 0; ; i++) {
+      const [w] = await db()<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if ((w?.n ?? 0) >= n) return;
+      if (i > 500) throw new Error(`${what} never waited on a lock`);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
 
   async function race(
     alice: Bot,
@@ -647,12 +658,19 @@ describe("a connect at the same moment as the bot changing its own key", () => {
       await held;
     });
     await holds;
-    const first = other();
-    await pause(300);
-    const second = connect({ handle: "alice", code });
-    await pause(300);
-    letGo();
-    await holder;
+    // The key change waits on its key's row; the connect then waits too, on
+    // the bot's row or the keys', and only then is the key's row let go.
+    let first: Promise<{ status: number }> | undefined;
+    let second: Promise<{ status: number }> | undefined;
+    try {
+      first = other();
+      await waiting(1, "the key change");
+      second = connect({ handle: "alice", code });
+      await waiting(2, "the connect");
+    } finally {
+      letGo();
+      await holder;
+    }
     const [a, b] = await Promise.all([first, second]);
     return { other: a.status, connect: b.status };
   }
