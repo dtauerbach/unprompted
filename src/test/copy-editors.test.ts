@@ -298,7 +298,7 @@ describe("a copy editor on the admin pages", () => {
         {},
         form({ key: "home.tagline", body: "New words.", after: "0" }),
       ),
-    ).toEqual({ message: "Saved." });
+    ).toEqual({ message: "Saved.", version: expect.any(Number) });
     const [v] = await copyHistory(db(), "home.tagline");
     expect(
       await a.undoCopyAction({}, form({ version: String(v?.id) })),
@@ -314,7 +314,7 @@ describe("a copy editor on the admin pages", () => {
           after: String(latest),
         }),
       ),
-    ).toEqual({ message: "Restored." });
+    ).toEqual({ message: "Restored.", version: expect.any(Number) });
     expect((await readCopy())["home.tagline"]).toBe("New words.");
   });
 

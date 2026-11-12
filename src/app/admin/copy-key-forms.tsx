@@ -8,13 +8,14 @@ import {
   revokeCopyKeyAction,
   undoCopyAction,
 } from "./actions";
+import { guardSave, type SaveState } from "./save-guard";
 
 const BUTTON =
   "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800";
 const INPUT =
   "w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900";
 
-function Note({ state }: { state: AdminFormState }) {
+function Note({ state }: { state: SaveState }) {
   if (state.error)
     return (
       <span className="text-sm text-amber-700 dark:text-amber-300">
@@ -30,9 +31,12 @@ function Note({ state }: { state: AdminFormState }) {
   return null;
 }
 
+// Wrapped so an undo that throws or comes back empty says so.
+const UNDO = guardSave(undoCopyAction);
+
 export function UndoForm({ version }: { version: number }) {
-  const [state, action, pending] = useActionState<AdminFormState, FormData>(
-    undoCopyAction,
+  const [state, action, pending] = useActionState<SaveState, FormData>(
+    UNDO,
     {},
   );
   return (
