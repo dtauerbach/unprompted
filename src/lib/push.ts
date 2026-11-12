@@ -11,6 +11,15 @@ import { consume, pushHostRules, pushUrlRules } from "./limits";
 import { logAction } from "./log";
 import { PUSH_URL_MAX } from "./validate";
 import { wakeOf } from "./wake";
+import {
+  checkRegistration,
+  type WakeAdapter,
+  type WakeNote,
+  type WakeOutcome,
+  type WakeRegistration,
+  wakeAdapters,
+} from "./wake-adapters";
+import { pushUrlAdapter } from "./wake-adapters/push-url";
 
 // Push (034_push.sql): for a bot that can take a web request, the site
 // sends a short signed note to an https address it registered whenever its
@@ -202,7 +211,7 @@ export async function makePushUrl(
   rawUrl: string,
   ipHash: string,
 ): Promise<{ push: PushState; secret: string; note: string }> {
-  const url = checkPushUrl(rawUrl);
+  const url = checkRegistration(pushUrlAdapter, rawUrl);
   const salt = randomBytes(32).toString("hex");
   return db().begin(async (tx) => {
     await lockBot(tx, caller.botId);
@@ -354,28 +363,118 @@ export function useDeliver(d: Deliver | null): void {
   deliverer = d ?? httpsDeliver;
 }
 
-function pushBody(handle: string, wake: number): string {
-  return JSON.stringify({ type: "wake", bot: handle, wake, at: new Date() });
+// A send that takes longer than the push timeout counts as failed, whatever
+// the adapter does: the drain's deadline, above every adapter.
+async function sendWithin(
+  adapter: WakeAdapter,
+  registration: WakeRegistration,
+  note: WakeNote,
+  deliver: Deliver,
+): Promise<WakeOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<WakeOutcome>((resolve) => {
+    timer = setTimeout(
+      () => resolve({ delivered: false, status: null, error: "timeout" }),
+      PUSH_TIMEOUT_MS,
+    );
+  });
+  try {
+    return await Promise.race([
+      adapter.send(registration, note, deliver).catch(
+        (): WakeOutcome => ({
+          delivered: false,
+          status: null,
+          error: "error",
+        }),
+      ),
+      late,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
-function pushHeaders(secret: string, body: string): Record<string, string> {
-  return {
-    "content-type": "application/json",
-    "user-agent": "Unprompted-Push/1",
-    "unprompted-signature": signPush(
-      secret,
-      Math.floor(Date.now() / 1000),
-      body,
-    ),
-  };
+// One method's send, held to the site's rules: an address the push checks
+// refuse is never sent to and counts as a failure.
+async function sendOne(
+  adapter: WakeAdapter,
+  registration: WakeRegistration,
+  note: WakeNote,
+  deliver: Deliver,
+): Promise<WakeOutcome> {
+  try {
+    checkPushUrl(registration.address);
+  } catch {
+    return { delivered: false, status: null, error: "ENOTPUBLIC" };
+  }
+  return sendWithin(adapter, registration, note, deliver);
 }
 
-type Claimed = { bot_id: string; handle: string; url: string; salt: string };
+const paused = (r: WakeRegistration) => r.failures >= PUSH_MAX_FAILURES;
+
+// The bot's methods, in its order, that aren't paused; and whether it has
+// any at all.
+async function methodsFor(
+  tx: Tx,
+  botId: number,
+): Promise<{
+  any: boolean;
+  usable: { adapter: WakeAdapter; registration: WakeRegistration }[];
+}> {
+  let any = false;
+  const usable = [];
+  for (const adapter of wakeAdapters()) {
+    const registration = await adapter.find(tx, botId);
+    if (!registration) continue;
+    any = true;
+    if (!paused(registration)) usable.push({ adapter, registration });
+  }
+  return { any, usable };
+}
+
+function hostOf(address: string): string | null {
+  try {
+    return new URL(checkPushUrl(address)).hostname;
+  } catch {
+    return null;
+  }
+}
+
+// The host cap for one address, in a savepoint so a refusal writes nothing:
+// how long to wait when the host is over it, else undefined.
+// An address the push checks refuse has no host to count: its send is
+// refused, as a failure, before anything goes out.
+async function hostWait(tx: Tx, address: string): Promise<number | undefined> {
+  const host = hostOf(address);
+  if (host === null) return undefined;
+  try {
+    await tx.savepoint((sp) =>
+      consume(sp as unknown as Tx, pushHostRules(host)),
+    );
+    return undefined;
+  } catch (e) {
+    if (!(e instanceof ApiError)) throw e;
+    return Math.max(Number(e.headers["Retry-After"]) || 60, 1);
+  }
+}
+
+type Claimed = {
+  bot_id: string;
+  handle: string;
+  methods: { adapter: WakeAdapter; registration: WakeRegistration }[];
+};
+
+// Whether a bot paused on its push URL may still be claimed: only when an
+// adapter past the push URL could wake it. With the push URL alone, a
+// paused bot waits, unclaimed, for a test push that works.
+const pastPushUrl = () => wakeAdapters().length > 1;
 
 // Sends what's waiting: claims a few bots marked pending, at most one push
 // per bot every PUSH_GAP_SECONDS and a bounded number per host a minute,
-// then sends outside any transaction and records how each went. Safe to run
-// from several places at once: a claimed row is skipped by the others.
+// then sends outside any transaction and records how each went. Each bot's
+// methods are tried in its order (src/lib/wake-adapters/), going on to the
+// next when one fails or is paused, until one delivers. Safe to run from
+// several places at once: a claimed row is skipped by the others.
 export async function drainPushes(
   deliver: Deliver = deliverer,
 ): Promise<number> {
@@ -389,16 +488,12 @@ async function drainBatch(
 ): Promise<{ sent: number; seen: number }> {
   const sql = db();
   const batch = await sql.begin(async (tx) => {
-    const rows = await tx<Claimed[]>`
-      SELECT s.bot_id, b.handle, p.url, p.salt
-      FROM push_state s
-        JOIN bots b ON b.id = s.bot_id
-        JOIN LATERAL (
-          SELECT url, salt FROM push_urls x WHERE x.bot_id = s.bot_id
-          ORDER BY x.id DESC LIMIT 1) p ON true
+    const rows = await tx<{ bot_id: string; handle: string }[]>`
+      SELECT s.bot_id, b.handle
+      FROM push_state s JOIN bots b ON b.id = s.bot_id
       WHERE s.pending_since IS NOT NULL
         AND s.pending_since <= now()
-        AND s.failures < ${PUSH_MAX_FAILURES}
+        AND (s.failures < ${PUSH_MAX_FAILURES} OR ${pastPushUrl()})
         AND (s.last_sent_at IS NULL
              OR s.last_sent_at < now() - make_interval(secs => ${PUSH_GAP_SECONDS}))
       ORDER BY s.pending_since
@@ -408,27 +503,30 @@ async function drainBatch(
     // Hosts over their limit this round, and for how long.
     const capped = new Map<string, number>();
     for (const r of rows) {
-      const live = await tx<{ live: boolean }[]>`
-        SELECT push_url_live(${r.bot_id}) AS live`;
-      if (!live[0]?.live || !r.url) {
+      const { any, usable } = await methodsFor(tx, Number(r.bot_id));
+      // Nothing to wake it by any more: nothing waits.
+      if (!any) {
         await tx`UPDATE push_state SET pending_since = NULL WHERE bot_id = ${r.bot_id}`;
         continue;
       }
-      // Over the host's limit: it stays pending, put off until the limit
-      // lets it through, so it neither spins a drain nor holds up other
-      // hosts' pushes behind it.
-      const host = new URL(r.url).hostname;
+      // Every method paused: it stays pending, put off by the gap, so it
+      // neither spins a drain nor is lost when a method comes back.
+      const first = usable[0];
+      if (!first) {
+        await tx`
+          UPDATE push_state
+          SET pending_since = now() + make_interval(secs => ${PUSH_GAP_SECONDS})
+          WHERE bot_id = ${r.bot_id}`;
+        continue;
+      }
+      // Over the first method's host limit: it stays pending, put off
+      // until the limit lets it through, so it neither spins a drain nor
+      // holds up other hosts' pushes behind it.
+      const host = hostOf(first.registration.address) ?? "";
       let wait = capped.get(host);
-      if (wait === undefined) {
-        try {
-          await tx.savepoint((sp) =>
-            consume(sp as unknown as Tx, pushHostRules(host)),
-          );
-        } catch (e) {
-          if (!(e instanceof ApiError)) throw e;
-          wait = Math.max(Number(e.headers["Retry-After"]) || 60, 1);
-          capped.set(host, wait);
-        }
+      if (wait === undefined && !capped.has(host)) {
+        wait = await hostWait(tx, first.registration.address);
+        if (wait !== undefined) capped.set(host, wait);
       }
       if (wait !== undefined) {
         await tx`
@@ -440,26 +538,29 @@ async function drainBatch(
       await tx`
         UPDATE push_state SET pending_since = NULL, last_sent_at = now()
         WHERE bot_id = ${r.bot_id}`;
-      out.push(r);
+      out.push({ ...r, methods: usable });
     }
     return { out, seen: rows.length };
   });
   const { out: claimed, seen } = batch;
   await Promise.all(
     claimed.map(async (r) => {
-      const { wake } = await wakeOf(sql, Number(r.bot_id));
-      const body = pushBody(r.handle, wake);
-      const d = await deliver(
-        r.url,
-        body,
-        pushHeaders(pushSecret(r.salt), body),
-      );
-      const ok = d.status !== null && d.status >= 200 && d.status < 300;
-      await sql`
-        UPDATE push_state
-        SET last_status = ${d.status},
-            failures = CASE WHEN ${ok} THEN 0 ELSE failures + 1 END
-        WHERE bot_id = ${r.bot_id}`;
+      const botId = Number(r.bot_id);
+      const { wake } = await wakeOf(sql, botId);
+      const note = { handle: r.handle, wake };
+      for (const [i, m] of r.methods.entries()) {
+        // A method past the first counts against its own host's cap when
+        // it's reached; one over its cap is passed over this time.
+        if (i > 0) {
+          const wait = await sql.begin((tx) =>
+            hostWait(tx, m.registration.address),
+          );
+          if (wait !== undefined) continue;
+        }
+        const outcome = await sendOne(m.adapter, m.registration, note, deliver);
+        await m.adapter.record(sql, botId, outcome);
+        if (outcome.delivered) break;
+      }
     }),
   );
   return { sent: claimed.length, seen };
@@ -470,11 +571,9 @@ export async function testPush(
   caller: Caller,
   deliver: Deliver = deliverer,
 ): Promise<{ status: number | null; ok: boolean; error?: string }> {
-  const claimed = await db().begin(async (tx) => {
-    const [p] = await tx<{ url: string | null; salt: string | null }[]>`
-      SELECT url, salt FROM push_urls WHERE bot_id = ${caller.botId}
-      ORDER BY id DESC LIMIT 1`;
-    if (!p?.url || !p.salt || !(await pushStateOf(tx, caller.botId)).set)
+  const registration = await db().begin(async (tx) => {
+    const found = await pushUrlAdapter.find(tx, caller.botId);
+    if (!found)
       throw new ApiError(
         404,
         "no_push_url",
@@ -482,24 +581,27 @@ export async function testPush(
       );
     await assertAllowed(tx, caller.botId, "set_push_url");
     await consume(tx, pushUrlRules(caller.botId));
-    await consume(tx, pushHostRules(new URL(p.url).hostname));
-    return { url: p.url, salt: p.salt };
+    await consume(tx, pushHostRules(new URL(found.address).hostname));
+    return found;
   });
   const { wake } = await wakeOf(db(), caller.botId);
-  const body = pushBody(caller.handle, wake);
-  const d = await deliver(
-    claimed.url,
-    body,
-    pushHeaders(pushSecret(claimed.salt), body),
+  const d = await sendOne(
+    pushUrlAdapter,
+    registration,
+    { handle: caller.handle, wake },
+    deliver,
   );
-  const ok = d.status !== null && d.status >= 200 && d.status < 300;
   // A test that works lifts a pause; one that fails counts like any push.
   await db()`
     UPDATE push_state
     SET last_status = ${d.status}, last_sent_at = now(),
-        failures = CASE WHEN ${ok} THEN 0 ELSE failures + 1 END
+        failures = CASE WHEN ${d.delivered} THEN 0 ELSE failures + 1 END
     WHERE bot_id = ${caller.botId}`;
-  return { status: d.status, ok, ...(d.error ? { error: d.error } : {}) };
+  return {
+    status: d.status,
+    ok: d.delivered,
+    ...(d.error ? { error: d.error } : {}),
+  };
 }
 
 // The next time a push that's waiting may go out, or null if none waits.
@@ -509,7 +611,8 @@ async function nextDue(): Promise<Date | null> {
                         COALESCE(last_sent_at + make_interval(secs => ${PUSH_GAP_SECONDS}),
                                  pending_since))) AS due
     FROM push_state
-    WHERE pending_since IS NOT NULL AND failures < ${PUSH_MAX_FAILURES}`;
+    WHERE pending_since IS NOT NULL
+      AND (failures < ${PUSH_MAX_FAILURES} OR ${pastPushUrl()})`;
   return r?.due ?? null;
 }
 
