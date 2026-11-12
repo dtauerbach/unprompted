@@ -9,7 +9,8 @@ import { unstable_rethrow } from "next/navigation";
 // when someone saved newer words meanwhile.
 
 // `saved` and `savedAfter`: the words a save took and the version they were
-// typed over. `failed` and `failedAfter`: the words a save didn't take and
+// typed over. `savedVersion`: the version that save made, when it made one
+// (a save of the words already showing makes none). `failed` and `failedAfter`: the words a save didn't take and
 // the version they were typed over, so its error shows only while the box
 // still holds those words over that version.
 export type SaveState = {
@@ -17,6 +18,7 @@ export type SaveState = {
   message?: string;
   saved?: string;
   savedAfter?: number;
+  savedVersion?: number;
   failed?: string;
   failedAfter?: number;
 };
@@ -45,10 +47,12 @@ export const OVERTAKEN =
 // How long a save may take before the box says it's still going.
 export const SLOW_SAVE_MS = 15_000;
 
+// What a server action answers: `version` is the version a save made.
+type Answer = { error?: string; message?: string; version?: number };
 type Action = (
   prev: SaveState,
   form: FormData,
-) => Promise<SaveState | undefined | null>;
+) => Promise<Answer | undefined | null>;
 
 // A textarea's value in the page ends lines with \n; the form's copy of it
 // may end them with \r\n. Compared with the box, they must read the same.
@@ -69,7 +73,7 @@ export function guardSave(
     const failed =
       body === undefined ? {} : { failed: body, failedAfter: after };
     const broken = body === undefined ? NOT_DONE : NOT_SAVED;
-    let r: SaveState | undefined | null;
+    let r: Answer | undefined | null;
     try {
       r = await action(prev, form);
     } catch (err) {
@@ -81,6 +85,9 @@ export function guardSave(
     return {
       message: r.message,
       ...(body === undefined ? {} : { saved: body, savedAfter: after }),
+      ...(body !== undefined && typeof r.version === "number"
+        ? { savedVersion: r.version }
+        : {}),
     };
   };
 }

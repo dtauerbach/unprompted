@@ -106,7 +106,9 @@ export function CopyForm({
     // since words that arrive meanwhile may be someone else's. The server
     // may tidy the words a save took (a trailing space), so the box takes
     // the tidied ones in their place.
-    const landed = state.saved !== undefined && state.savedAfter === seen.after;
+    // This box's own save made the version now showing.
+    const landed =
+      state.savedVersion !== undefined && state.savedVersion === after;
     const ours = landed && draft === state.saved;
     const typed = draft !== seen.text && draft !== text && !ours;
     setSeen({ after, text });
@@ -120,7 +122,9 @@ export function CopyForm({
     }
   }
   const stored = draftKey(kind, copyKey);
-  const unsaved = isUnsaved(draft, text, after, state);
+  // Until a save going now answers, the box judges its words against the
+  // version it last took, not words that came in meanwhile.
+  const unsaved = isUnsaved(draft, seen.text, seen.after, state);
   // Words typed and not yet saved come back after a reload or a trip to sign
   // in. Read once, when the page is first in the browser, where the storage
   // is, before anything is written there; never again, or words a save just
@@ -140,11 +144,15 @@ export function CopyForm({
       keepDraft(
         sessionStore(),
         stored,
-        { after, base: note === "overtaken" ? null : text, body: draft },
+        {
+          after: seen.after,
+          base: note === "overtaken" ? null : seen.text,
+          body: draft,
+        },
         unsaved,
       ),
     );
-  }, [ready, stored, after, text, draft, unsaved, note]);
+  }, [ready, stored, seen, draft, unsaved, note]);
   useEffect(() => {
     if (!pending) {
       setSlow(false);
@@ -182,7 +190,7 @@ export function CopyForm({
         <SaveNote
           state={state}
           draft={draft}
-          after={after}
+          after={seen.after}
           pending={pending}
           slow={slow}
           unsaved={unsaved}

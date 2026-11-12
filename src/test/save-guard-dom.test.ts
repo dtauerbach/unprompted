@@ -8,10 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // and a reload brings them back. This is what an admin saw go wrong: they
 // typed, pressed Save, and nothing changed, with nothing said.
 
-type Answer = { error?: string; message?: string } | undefined;
+type Answer =
+  | { error?: string; message?: string; version?: number }
+  | undefined;
 const calls: (string | null)[] = [];
+// A save that works makes version 21, the page's next version.
 let answer: (body: string | null) => Promise<Answer> = async () => ({
   message: "Saved.",
+  version: 21,
 });
 
 vi.mock("@/app/admin/actions", () => {
@@ -101,7 +105,7 @@ async function save(b: Box) {
 beforeEach(() => {
   calls.length = 0;
   sessionStorage.clear();
-  answer = async () => ({ message: "Saved." });
+  answer = async () => ({ message: "Saved.", version: 21 });
 });
 
 afterEach(async () => {
@@ -141,7 +145,7 @@ describe("the words page's box", () => {
       b.root.render(
         createElement(CopyForm, { ...PROPS, text: "Threads", after: 21 }),
       );
-      return { message: "Saved." };
+      return { message: "Saved.", version: 21 };
     };
     await type(b, "Threads ");
     await save(b);
@@ -180,7 +184,7 @@ describe("the words page's box", () => {
       b.root.render(
         createElement(CopyForm, { ...PROPS, text: "Threads", after: 21 }),
       );
-      finish({ message: "Saved." });
+      finish({ message: "Saved.", version: 21 });
     });
     expect(b.box.value).toBe("Threads!");
     expect(b.note()).toBe(UNSAVED);
@@ -228,7 +232,7 @@ describe("the words page's box", () => {
     const again = await draw(PROPS);
     expect(again.box.value).toBe("Threads");
     expect(again.note()).toBe(RESTORED);
-    answer = async () => ({ message: "Saved." });
+    answer = async () => ({ message: "Saved.", version: 21 });
     await save(again);
     expect(calls.at(-1)).toBe("Threads");
     expect(again.note()).toBe("Saved.");
@@ -267,7 +271,7 @@ describe("the words page's box", () => {
     const third = await draw({ ...PROPS, text: "Board", after: 22 });
     expect(third.box.value).toBe("Threads");
     expect(third.note()).toBe(OVERTAKEN);
-    answer = async () => ({ message: "Saved." });
+    answer = async () => ({ message: "Saved.", version: 21 });
     await save(third);
     expect(calls.at(-1)).toBe("Threads");
     expect(third.note()).toBe("Saved.");
@@ -334,6 +338,22 @@ describe("the words page's box", () => {
     );
     expect(b.box.value).toBe("Threads");
     expect(b.note()).toBe(OVERTAKEN);
+  });
+
+  it("after a save that changed nothing, says newer words came in when someone else's arrive", async () => {
+    answer = async () => ({ message: "That's what it already says." });
+    const b = await draw(PROPS);
+    await save(b);
+    expect(b.note()).toBe("That's what it already says.");
+    await type(b, "Forum and more");
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Forum and more");
+    expect(b.note()).toBe(OVERTAKEN);
+    expect(JSON.parse(sessionStorage.getItem(STORED) ?? "{}").base).toBeNull();
   });
 
   it("stops saying newer words came in once the box is back to them", async () => {
@@ -477,8 +497,37 @@ describe("the words page's box", () => {
     expect(b.note()).toBe(STILL_SAVING);
     expect(b.box.value).toBe("Threads");
     expect(sessionStorage.getItem(STORED)).toContain("Threads");
-    await act(async () => finish({ message: "Saved." }));
+    await act(async () => finish({ message: "Saved.", version: 21 }));
     expect(b.note()).toBe("Saved.");
+  });
+
+  it("keeps words a hung save holds as typed over the older words, so a reload marks them overtaken", async () => {
+    let finish: (a: Answer) => void = () => {};
+    answer = () =>
+      new Promise<Answer>((resolve) => {
+        finish = resolve;
+      });
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await save(b);
+    // Someone else's words come in while the save hangs.
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Threads");
+    expect(JSON.parse(sessionStorage.getItem(STORED) ?? "{}")).toEqual({
+      after: 0,
+      base: "Forum",
+      body: "Threads",
+    });
+    // The admin reloads, as the page says to when a save hangs.
+    await act(async () => b.root.unmount());
+    await act(async () => finish(undefined));
+    const again = await draw({ ...PROPS, text: "Board", after: 22 });
+    expect(again.box.value).toBe("Threads");
+    expect(again.note()).toBe(OVERTAKEN);
   });
 
   it("keeps each box's words apart", async () => {

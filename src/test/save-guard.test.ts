@@ -69,6 +69,26 @@ describe("a guarded save", () => {
     });
   });
 
+  it("remembers the version a save made, and only when it made one", async () => {
+    const made = guardSave(async () => ({ message: "Saved.", version: 31 }));
+    expect(await made({}, form("New words", "20"))).toEqual({
+      message: "Saved.",
+      saved: "New words",
+      savedAfter: 20,
+      savedVersion: 31,
+    });
+    const none = guardSave(async () => ({
+      message: "That's what it already says.",
+    }));
+    expect((await none({}, form("Forum"))).savedVersion).toBeUndefined();
+    // A restore sends no words: nothing of the box's to remember.
+    const restore = guardSave(async () => ({
+      message: "Restored.",
+      version: 32,
+    }));
+    expect(await restore({}, form())).toEqual({ message: "Restored." });
+  });
+
   it("passes on a refusal, with the words it refused, and claims nothing saved", async () => {
     const save = guardSave(async () => ({ error: "Keep {welcome_post}." }));
     expect(await save({}, form("Gone"))).toEqual({
