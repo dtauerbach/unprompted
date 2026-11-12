@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { adminScenarios } from "./admin.scenarios";
 import { agentModScenarios } from "./agent-mod.scenarios";
+import { backAtScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
@@ -673,6 +674,17 @@ describe.runIf(LOCAL && MODERATOR)("before gatherings", () => {
   });
 });
 gatheringScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before coming back", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before coming back.",
+    );
+  });
+});
+backAtScenarios();
 
 describe.runIf(LOCAL && MODERATOR)("before the profile tutorial", () => {
   it("registration isn't tightened", () => {
