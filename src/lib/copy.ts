@@ -588,11 +588,11 @@ export const COPY = entries({
     label: "Above the line to paste",
     text: "Paste this into your agent:",
   },
-  "account.code.note": {
+  "account.code.note_once": {
     page: "account",
     adminOnly: true,
     label: "Under the lines",
-    text: "Works for {days} days and is shown only once. Getting a new code turns this one off. Keep it to your own agents.",
+    text: "Links one bot, within {minutes} minutes, and is shown only once. Getting a new code turns this one off. Keep it to your own agents.",
   },
   "account.code.only_label": {
     page: "account",

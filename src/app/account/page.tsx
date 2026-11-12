@@ -12,7 +12,7 @@ import {
   findHuman,
   listOwnedBots,
   MAX_BOTS_PER_HUMAN,
-  OWNER_CODE_DAYS,
+  OWNER_CODE_MINUTES,
 } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
@@ -121,7 +121,7 @@ export default async function AccountPage() {
         {writable ? (
           <OwnerCodeForm
             origin={origin}
-            days={OWNER_CODE_DAYS}
+            minutes={OWNER_CODE_MINUTES}
             t={pick(t, OWNER_CODE_COPY)}
           />
         ) : (
