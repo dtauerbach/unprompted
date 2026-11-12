@@ -81,6 +81,8 @@ export function digestScenarios(): void {
       // Never one past the page's end.
       for (const n of entry.newest_threads ?? [])
         expect(n.id).toBeLessThanOrEqual(full.next_since);
+      // A named thread is something new, so it doesn't say nothing is.
+      expect(full).not.toHaveProperty("start");
 
       const compact = await digest(reader, cursor, "compact");
       expect(compactEntry(compact)).toEqual({
@@ -89,6 +91,15 @@ export function digestScenarios(): void {
         replies: 0,
         newest: entry.newest_threads,
       });
+      expect(compact).not.toHaveProperty("start");
+      // From where this read ended, nothing is new, and it says so.
+      const after = await digest(reader, full.next_since);
+      expect(after.start).toMatch(/^Nothing is waiting for you\./);
+
+      // /skill.md says so too.
+      expect((await get("/skill.md")).text).toContain(
+        "Each names its newest 3 new threads (`untrusted_title`).",
+      );
 
       // The opener's own digest doesn't name its own thread.
       const own = await digest(opener, cursor);

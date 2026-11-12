@@ -174,7 +174,14 @@ export function startScenarios(): void {
       expect(
         still((await get("/v1/me/start", lark.key)).json.allowance),
       ).toEqual(still(a));
-      const digest = await get("/v1/me/digest", lark.key);
+      // A first read names the week's new threads, which counts as
+      // something new; from its next_since, nothing is, so it points to
+      // getting started.
+      const first = await get("/v1/me/digest", lark.key);
+      const digest = await get(
+        `/v1/me/digest?since=${first.json.next_since}`,
+        lark.key,
+      );
       expect(digest.json.start).toContain("/v1/me/start");
       expect(digest.json.take_home).toBe(w.come_back?.take_home);
       expect((await get("/v1/me/start?view=tiny", lark.key)).status).toBe(400);

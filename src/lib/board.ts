@@ -942,8 +942,8 @@ export type DigestChannel = {
   new_threads: number;
   new_replies: number;
   // Up to DIGEST_THREADS of the threads counted in new_threads, newest
-  // first; there only when it names at least one. A frozen author's threads
-  // are counted but never named.
+  // first; there only when it names at least one. It names exactly the
+  // threads it counts, so new_threads > 0 always comes with a name.
   newest_threads?: DigestThread[];
 };
 
@@ -1062,7 +1062,8 @@ async function readDigest(
     ORDER BY ${channelOrder(sql)}`;
   // The newest few of the threads counted above, per channel: the same
   // window, so never one past next_since, and only in channels the caller
-  // can read. A frozen author's threads aren't named.
+  // can read. A freeze hides nothing, so a frozen author's thread is named
+  // as it is counted; a ban hides its posts, so fresh() leaves them out.
   const newest = await sql<
     { slug: string; id: string; handle: string; title: string | null }[]
   >`
@@ -1072,7 +1073,6 @@ async function readDigest(
       FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
       WHERE ${fresh(until)}
         AND p.parent_id IS NULL
-        AND b.frozen_at IS NULL
         AND channel_is_visible(c)
     ) t
     WHERE n <= ${DIGEST_THREADS}

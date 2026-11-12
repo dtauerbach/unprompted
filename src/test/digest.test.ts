@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
-import { hidePost, setChannelHidden, setFrozen } from "@/lib/admin";
+import {
+  banBot,
+  hidePost,
+  setChannelHidden,
+  setFrozen,
+  setTestMark,
+} from "@/lib/admin";
 import { DIGEST_PAGE, DIGEST_THREADS } from "@/lib/board";
 import { db } from "@/lib/db";
 import { syncWelcome } from "@/lib/house";
@@ -376,7 +382,7 @@ type CompactChannel = {
   channel: string;
   threads: number;
   replies: number;
-  newest?: Named[];
+  newest?: { id: number; by: string; untrusted_title?: string }[];
 };
 
 function channel(body: { channels: FullChannel[] }, slug: string) {
@@ -416,7 +422,7 @@ describe("the new threads the digest names", () => {
     expect(channel(res.body, "meta")).not.toHaveProperty("newest_threads");
   });
 
-  it("names a thread with no title, its title null", async () => {
+  it("names a thread with no title: null in full, left out in compact", async () => {
     const wren = await register("wren");
     await register("moss");
     const t = await titled("moss", "meta", null);
@@ -430,7 +436,7 @@ describe("the new threads the digest names", () => {
         channel: "meta",
         threads: 1,
         replies: 0,
-        newest: [{ id: t, by: "moss", untrusted_title: null }],
+        newest: [{ id: t, by: "moss" }],
       },
     ]);
   });
@@ -438,12 +444,23 @@ describe("the new threads the digest names", () => {
   it("names a teammate's new thread when nothing else is for you", async () => {
     const wren = await register("wren");
     await register("moss");
+    // With nothing new, the digest says nothing is waiting.
+    const quiet = await digest(wren.key, "0");
+    expect(quiet.body.start).toMatch(/^Nothing is waiting for you\./);
     const t = await titled("moss", "research", "Plan for tonight");
     const res = await digest(wren.key, "0");
     expect(res.body.for_you).toEqual([]);
     expect(channel(res.body, "research").newest_threads).toEqual([
       { id: t, by: "moss", untrusted_title: "Plan for tonight" },
     ]);
+    // A named thread is something new: no "Nothing is waiting", in either
+    // view or on the connector's surface.
+    expect(res.body).not.toHaveProperty("start");
+    expect((await compact(wren.key, "0")).body).not.toHaveProperty("start");
+    expect(JSON.stringify(res.body)).not.toContain("Nothing is waiting");
+    // Past it, nothing is new again.
+    const after = await digest(wren.key, String(res.body.next_since));
+    expect(after.body.start).toMatch(/^Nothing is waiting for you\./);
   });
 
   it("gives a title that carries an instruction only as untrusted_title, beside the notice", async () => {
@@ -505,24 +522,75 @@ describe("the new threads the digest names", () => {
     }
   });
 
-  it("never names a frozen author's thread", async () => {
+  it("names a frozen author's thread; a banned author's is neither counted nor named", async () => {
     const wren = await register("wren");
     await register("moss");
     await register("lark");
-    const kept = await titled("moss", "meta", "From moss");
-    await titled("lark", "meta", "From lark");
+    await register("crow");
+    const fromMoss = await titled("moss", "meta", "From moss");
+    const fromLark = await titled("lark", "meta", "From lark");
+    await titled("crow", "meta", "From crow");
+    // A freeze hides nothing: the thread is still on the board, so it's
+    // counted and named, never a count with no name beside it.
     await setFrozen(db(), "lark", true, "testing");
+    const frozen = await digest(wren.key, "0");
+    expect(channel(frozen.body, "meta")).toMatchObject({
+      new_threads: 3,
+      newest_threads: [
+        { by: "crow", untrusted_title: "From crow" },
+        { id: fromLark, by: "lark", untrusted_title: "From lark" },
+        { id: fromMoss, by: "moss", untrusted_title: "From moss" },
+      ],
+    });
+    // A ban hides its posts, so the thread leaves the count and the names.
+    await banBot(db(), "crow", "spam");
+    for (const res of [
+      await digest(wren.key, "0"),
+      await compact(wren.key, "0"),
+    ])
+      expect(JSON.stringify(res.body)).not.toContain("From crow");
+    const banned = await digest(wren.key, "0");
+    expect(channel(banned.body, "meta")).toEqual({
+      slug: "meta",
+      new_threads: 2,
+      new_replies: 0,
+      newest_threads: [
+        { id: fromLark, by: "lark", untrusted_title: "From lark" },
+        { id: fromMoss, by: "moss", untrusted_title: "From moss" },
+      ],
+    });
+  });
+
+  it("names a thread in a channel archived since, as it counts it", async () => {
+    const wren = await register("wren");
+    await register("moss");
+    const t = await titled("moss", "small-talk", "Before the archive");
+    await db()`UPDATE channels SET archived_at = now() WHERE slug = 'small-talk'`;
     const res = await digest(wren.key, "0");
-    expect(channel(res.body, "meta").newest_threads).toEqual([
-      { id: kept, by: "moss", untrusted_title: "From moss" },
-    ]);
-    expect(JSON.stringify(res.body)).not.toContain("From lark");
-    // Unfrozen, it's named again.
-    await setFrozen(db(), "lark", false, "testing");
-    const back = await digest(wren.key, "0");
-    expect(channel(back.body, "meta").newest_threads?.map((n) => n.by)).toEqual(
-      ["lark", "moss"],
-    );
+    expect(channel(res.body, "small-talk")).toEqual({
+      slug: "small-talk",
+      new_threads: 1,
+      new_replies: 0,
+      newest_threads: [
+        { id: t, by: "moss", untrusted_title: "Before the archive" },
+      ],
+    });
+  });
+
+  it("names a test bot's thread, as it counts it", async () => {
+    const wren = await register("wren");
+    await register("moss");
+    const t = await titled("moss", "meta", "From the test fleet");
+    await setTestMark(db(), "moss", true, "Eval fleet.");
+    const res = await digest(wren.key, "0");
+    expect(channel(res.body, "meta")).toEqual({
+      slug: "meta",
+      new_threads: 1,
+      new_replies: 0,
+      newest_threads: [
+        { id: t, by: "moss", untrusted_title: "From the test fleet" },
+      ],
+    });
   });
 
   it("never names your own threads, or the house's", async () => {
@@ -583,9 +651,18 @@ describe("the new threads the digest names", () => {
         channel: c.slug,
         threads: c.new_threads,
         replies: c.new_replies,
-        ...(c.newest_threads ? { newest: c.newest_threads } : {}),
+        // The same threads in the same order; compact leaves a null title
+        // out, as it does a post's.
+        ...(c.newest_threads
+          ? {
+              newest: c.newest_threads.map((n) =>
+                n.untrusted_title === null ? { id: n.id, by: n.by } : n,
+              ),
+            }
+          : {}),
       }));
     expect(expected.length).toBe(3);
+    expect(JSON.stringify(expected)).not.toContain('"untrusted_title":null');
     expect(small.body.channels).toEqual(expected);
     expect(
       (small.body.channels as CompactChannel[]).every(
