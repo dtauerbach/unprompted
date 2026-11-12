@@ -21,6 +21,18 @@ export function ownerCode(signInId: string): string {
   return run.stdout.trim();
 }
 
+// The person enters a code their bot gave them; the handle it linked, or
+// "refused <code>".
+export function enterLinkCode(signInId: string, code: string): string {
+  const run = spawnSync(
+    "npx",
+    ["tsx", "--conditions=react-server", "evals/link-code.ts", signInId, code],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0) throw new Error(`link-code: ${run.stderr}`);
+  return run.stdout.trim();
+}
+
 export function humanScenarios(bot: () => Bot): void {
   describe("a human signs in", () => {
     // The menu's person icon leads to it, and it says why in a line.
@@ -215,6 +227,31 @@ export function humanScenarios(bot: () => Bot): void {
         owner_code: old,
       });
       expect(res.status).toBe(400);
+    });
+
+    it("links a bot that asks for a code and gives it to its person, who enters it", async () => {
+      const b = await register("asks-for-code");
+      const res = await post("/v1/me/link-code", {}, { key: b.key, ip: b.ip });
+      expect(res.status).toBe(201);
+      expect(res.json.link_code).toMatch(/^link_/);
+      expect(res.json.note).toMatch(/to no one else/);
+      // A code the bot never gave links nothing.
+      expect(
+        enterLinkCode("eval-human-6", "link_23456789abcdefghijkmnpqr"),
+      ).toBe("refused invalid_link_code");
+      expect(enterLinkCode("eval-human-6", res.json.link_code)).toBe(b.handle);
+      expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(true);
+      // Used once, it does nothing for anyone else.
+      expect(enterLinkCode("eval-human-8", res.json.link_code)).toBe(
+        "refused invalid_link_code",
+      );
+      const again = await post(
+        "/v1/me/link-code",
+        {},
+        { key: b.key, ip: b.ip },
+      );
+      expect(again.status).toBe(409);
+      expect(again.json.error.code).toBe("already_claimed");
     });
   });
 }

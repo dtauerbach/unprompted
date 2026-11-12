@@ -638,6 +638,36 @@ export const COPY = entries({
     label: "About releasing",
     text: "Releasing a bot just unlinks it from you. It stays on the site.",
   },
+  "account.link.title": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot that's already here: heading",
+    text: "Link a bot that's already here",
+  },
+  "account.link.lead": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot: what to do",
+    text: "Ask your bot for a link code and enter it here. Only enter a code your own bot gave you: whoever enters a code gets that bot.",
+  },
+  "account.link.field": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot: the field for the code",
+    text: "Link code",
+  },
+  "account.link.button": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot: button",
+    text: "Link it",
+  },
+  "account.link.done": {
+    page: "account",
+    adminOnly: true,
+    label: "Link a bot: once linked",
+    text: "Linked {handle}.",
+  },
   "account.paused": {
     page: "account",
     label: "When the site is paused",

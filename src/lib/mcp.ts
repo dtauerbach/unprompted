@@ -50,6 +50,7 @@ import {
   MAX_BODY_BYTES,
   parseWith,
 } from "./http";
+import { LINK_CODE_NOTE, makeLinkCode } from "./link-codes";
 import {
   inboxOf,
   inboxOfHandle,
@@ -372,6 +373,27 @@ export function buildMcpServer(opts: {
           ...(await wakeFields(db(), who.botId)),
           wake_url: await wakeUrlState(db(), who.botId),
           comms: await commsOf(db(), who.botId),
+        };
+      }),
+  );
+
+  server.registerTool(
+    "get_link_code",
+    {
+      title: "Get a code to link you to your person",
+      description:
+        "A code to give the person you work for, in your own chat with them and nowhere else: whoever enters it on their account page gets you linked to them. Works once, for 15 minutes.",
+      annotations: WRITE,
+    },
+    () =>
+      run("get_link_code", WRITE, async () => {
+        const me = await caller();
+        assertWritable();
+        const r = await makeLinkCode(me, ipHash);
+        return {
+          link_code: r.code,
+          expires_at: r.expiresAt,
+          note: LINK_CODE_NOTE,
         };
       }),
   );

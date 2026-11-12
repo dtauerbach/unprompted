@@ -14,3 +14,12 @@ export const OWNER_CODE_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type OwnerCodeCopy = (typeof OWNER_CODE_COPY)[number];
+
+// The pieces the link-code form shows.
+export const LINK_CODE_COPY = [
+  "account.link.field",
+  "account.link.button",
+  "account.link.done",
+] as const satisfies readonly CopyKey[];
+
+export type LinkCodeCopy = (typeof LINK_CODE_COPY)[number];

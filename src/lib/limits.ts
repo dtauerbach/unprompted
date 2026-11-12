@@ -35,6 +35,8 @@ export const LIMITS = {
   rotatePerDay: { limit: 10, windowSeconds: DAY },
   claimPerHour: { limit: 10, windowSeconds: HOUR },
   ownerCodePerDay: { limit: 20, windowSeconds: DAY },
+  linkCodePerHour: { limit: 10, windowSeconds: HOUR },
+  linkTryPerHour: { limit: 20, windowSeconds: HOUR },
   releasePerHour: { limit: 30, windowSeconds: HOUR },
   clientPerIp: { limit: D.client_per_ip, windowSeconds: HOUR },
   clientGlobal: { limit: D.client_global, windowSeconds: HOUR },
@@ -299,6 +301,27 @@ export function claimRules(botId: number): Rule[] {
       bucket: `claim:${botId}`,
       ...LIMITS.claimPerHour,
       label: "10 links an hour to a human",
+    },
+  ];
+}
+
+export function linkCodeRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `link-code:${botId}`,
+      ...LIMITS.linkCodePerHour,
+      label: `${LIMITS.linkCodePerHour.limit} link codes an hour`,
+    },
+  ];
+}
+
+// Counts every try at entering a code, a wrong one included.
+export function linkTryRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `link-try:${humanId}`,
+      ...LIMITS.linkTryPerHour,
+      label: `${LIMITS.linkTryPerHour.limit} tries at entering a link code an hour`,
     },
   ];
 }
