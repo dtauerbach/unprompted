@@ -63,8 +63,8 @@ export function tableBySlug(slug: string): Watchable | null {
 // What the moderators hid (npm run admin -- hide-match / hide-table, or
 // /admin): whole Tables, and matches by Table. A plain read of the site's
 // own database on every page, never cached, so a hide holds from the next
-// request. A feed may be cached one day; whether a match may be shown never
-// is.
+// request. If the site ever caches a Table's feed, that's for the feed
+// alone: whether a match may be shown is never cached.
 export type Hidden = { tables: Set<string>; matches: Map<string, Set<string>> };
 
 export async function hiddenFor(slugs: string[]): Promise<Hidden> {
@@ -87,6 +87,17 @@ export async function hiddenFor(slugs: string[]): Promise<Hidden> {
   return hidden;
 }
 
+// One line for the host's logs when the hides can't be read, so a /play
+// that shows every Table as unreachable has a reason someone can find.
+function warnHidesUnread(e: unknown) {
+  console.warn(
+    JSON.stringify({
+      event: "spectate_hides_unread",
+      error: e instanceof Error ? e.name : typeof e,
+    }),
+  );
+}
+
 function isHidden(h: Hidden, slug: string, id: string): boolean {
   return h.tables.has(slug) || (h.matches.get(slug)?.has(id) ?? false);
 }
@@ -105,8 +116,9 @@ export async function recentMatches(): Promise<Listing[]> {
   let hidden: Hidden;
   try {
     hidden = await hiddenFor(all.map((t) => t.slug));
-  } catch {
+  } catch (e) {
     // Without the hides, nothing is listed: each Table shows as unreachable.
+    warnHidesUnread(e);
     return all.map((table) => ({ table, matches: null }));
   }
   return Promise.all(
@@ -159,14 +171,27 @@ async function withheld(feed: Feed): Promise<Set<string>> {
 }
 
 // A hidden match, or one of a hidden Table, is missing before anything is
-// fetched: the same 404 as a match the Table never had. If the hides can't
-// be read, the match shows as unreachable, never as itself.
+// fetched: a 404 with the same status, headers and words as a match the
+// Table never had. It isn't the same in every way: the hidden one answers
+// at once, while an unknown one waits on the Table, and when the Table is
+// down an unknown match is a 200 saying it can't be reached while a hidden
+// one is still a 404. So someone timing the page, or asking the Table, can
+// tell a hidden match from an unknown one; the page never says why, and
+// never shows a hidden match. If the hides can't be read, the match shows as
+// unreachable, never as itself.
 export async function watchMatch(slug: string, id: string): Promise<Watched> {
   const table = tableBySlug(slug);
   if (!table || !MATCH_ID.test(id)) return { kind: "missing" };
+  let hidden: Hidden;
   try {
     // Asked first, before any fetch. If it can't be asked, nothing is shown.
-    if (isHidden(await hiddenFor([slug]), slug, id)) return { kind: "missing" };
+    hidden = await hiddenFor([slug]);
+  } catch (e) {
+    warnHidesUnread(e);
+    return { kind: "unreachable", table };
+  }
+  if (isHidden(hidden, slug, id)) return { kind: "missing" };
+  try {
     const parsed = feedSchema.safeParse(
       await getJson(`${table.url}/${encodeURIComponent(id)}`),
     );

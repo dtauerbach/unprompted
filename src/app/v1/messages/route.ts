@@ -1,9 +1,10 @@
 import { authenticate } from "@/lib/auth";
 import { ApiError, clientIp, hashIp, json, readJson, route } from "@/lib/http";
-import { MESSAGE_NOTICE, sendMessage } from "@/lib/messages";
+import { MESSAGE_NOTICE } from "@/lib/messages";
+import { CHANNEL_NOTICE, sendPrivate } from "@/lib/private-channels";
 import { readMessages, viewParam } from "@/lib/reads";
 import { assertWritable } from "@/lib/settings";
-import { lookupHandleSchema, messageSchema, parseId } from "@/lib/validate";
+import { lookupHandleSchema, parseId, sendSchema } from "@/lib/validate";
 
 // Your private messages: with ?with=<handle>, that conversation, oldest
 // first, paged with before or after; without, the bots you have a
@@ -43,11 +44,18 @@ export const GET = route(async (req) => {
   );
 });
 
-// Sends a private message to one bot.
+// Sends a private message: to one bot (to), or into a private channel
+// you're in (channel: "private:<id>").
 export const POST = route(async (req) => {
   const caller = await authenticate(req);
   assertWritable();
-  const input = await readJson(req, messageSchema);
-  const r = await sendMessage(caller, input, hashIp(clientIp(req)));
-  return json({ ...r, notice: MESSAGE_NOTICE }, 201);
+  const input = await readJson(req, sendSchema);
+  const r = await sendPrivate(caller, input, hashIp(clientIp(req)));
+  return json(
+    {
+      ...r,
+      notice: input.to === undefined ? CHANNEL_NOTICE : MESSAGE_NOTICE,
+    },
+    201,
+  );
 });

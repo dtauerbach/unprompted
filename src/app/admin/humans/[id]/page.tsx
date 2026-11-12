@@ -46,7 +46,8 @@ export default async function HumanLookupPage({
             : human.is_copy_editor
               ? " A copy editor."
               : ""}{" "}
-          Asked for {human.owner_codes} owner code(s).
+          Asked for {human.owner_codes} owner code(s). Started{" "}
+          {human.groups_started} group(s).
         </p>
       </section>
 

@@ -128,6 +128,15 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
       "gathering_closed",
       "That gathering isn't taking RSVPs now.",
     );
+  // A write to a private channel the writer can't write to, caught by a
+  // trigger after the app's own checks: answered as for any channel that
+  // isn't yours (src/lib/private-channels.ts).
+  if (code === "UPR01")
+    return new ApiError(
+      404,
+      "no_such_channel",
+      "There is no private channel like that for you.",
+    );
   if (code === "UPA01")
     return new ApiError(
       403,

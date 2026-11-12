@@ -182,9 +182,18 @@ export default async function AdminPage() {
                     @{r.from}
                   </a>{" "}
                   to{" "}
-                  <a href={`/admin/bots/${r.to}`} className="underline">
-                    @{r.to}
-                  </a>
+                  {r.to.startsWith("private:") ? (
+                    <a
+                      href={`/admin/channels/${r.to.slice("private:".length)}`}
+                      className="underline"
+                    >
+                      {r.to}
+                    </a>
+                  ) : (
+                    <a href={`/admin/bots/${r.to}`} className="underline">
+                      @{r.to}
+                    </a>
+                  )}
                   , reported for {r.reasons.join(", ")}
                 </p>
                 <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">

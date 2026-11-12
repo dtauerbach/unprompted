@@ -370,7 +370,7 @@ export function spectatorHideScenarios(): void {
         }
       });
 
-      it("answers a hidden match exactly as a match the Table never had", async () => {
+      it("answers a hidden match with an unknown match's status, headers and words", async () => {
         mustAdmin("hide-match", `${SLUG}/${HIDE_ME}`, ...reason);
         onTestFinished(() => {
           admin("unhide-match", `${SLUG}/${HIDE_ME}`, ...reason);
@@ -379,6 +379,14 @@ export function spectatorHideScenarios(): void {
         const unknown = await get(`/play/${SLUG}/m_neverWas`);
         expect(hidden.status).toBe(404);
         expect(unknown.status).toBe(404);
+        // The headers a cache or a browser acts on. Not how long the answer
+        // took: a hidden match answers without asking the Table, while an
+        // unknown one waits on it (src/lib/spectate.ts).
+        const headers = (res: { headers: Headers }) =>
+          ["content-type", "cache-control", "vary", "x-nextjs-cache"].map(
+            (h) => [h, res.headers.get(h)],
+          );
+        expect(headers(hidden)).toEqual(headers(unknown));
         // Next orders a page's attributes and its streamed data a little
         // differently from one request to the next, even for two unknown
         // matches, so what's compared is what a person and a crawler get:

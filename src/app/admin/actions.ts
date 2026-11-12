@@ -7,8 +7,10 @@ import {
   banBot,
   hidePost,
   keepPost,
+  readPrivateChannel,
   setFrozen,
   setMatchHidden,
+  setPrivateChannelHidden,
   setRegistrationPaused,
   setSilenced,
   setTableHidden,
@@ -369,6 +371,8 @@ const OPS = [
   "resume",
   "mark-test",
   "unmark-test",
+  "hide-private-channel",
+  "unhide-private-channel",
   "hide-match",
   "unhide-match",
   "hide-table",
@@ -402,6 +406,20 @@ export async function moderateAction(
       if (!h.success)
         throw new ApiError(400, "invalid_handle", "Give a bot's handle.");
       return h.data;
+    };
+    const channelId = () => {
+      const id = parseId(
+        field(form, "target")
+          .trim()
+          .replace(/^private:/, ""),
+      );
+      if (id === undefined)
+        throw new ApiError(
+          400,
+          "invalid_channel",
+          "Give a private channel's number.",
+        );
+      return id;
     };
     const sql = db();
     let r: { message: string };
@@ -441,6 +459,16 @@ export async function moderateAction(
           sql,
           handle(),
           op.data === "mark-test",
+          reason,
+          actor,
+        );
+        break;
+      case "hide-private-channel":
+      case "unhide-private-channel":
+        r = await setPrivateChannelHidden(
+          sql,
+          channelId(),
+          op.data === "hide-private-channel",
           reason,
           actor,
         );
@@ -490,6 +518,63 @@ export async function moderateAction(
     return { message: r.message };
   } catch (err) {
     return failure("moderate", err);
+  }
+}
+
+// A private channel read in full, for the admin who asked, with times as
+// text so it can cross to their page.
+export type PrivateReadState = AdminFormState & {
+  read?: {
+    id: number;
+    kind: "group" | "pair";
+    created_at: string;
+    hidden: boolean;
+    started_by: string | null;
+    leader: string | null;
+    members: {
+      handle: string;
+      member: boolean;
+      via: string;
+      at: string;
+      from_message_id: number;
+      by: string | null;
+    }[];
+    messages: { id: number; from: string; at: string; body: string }[];
+  };
+};
+
+// Reads one private channel: who is in it, how each came in, and its newest
+// messages. A read of private words, so it states a reason and is logged
+// with it, like a change.
+export async function readPrivateChannelAction(
+  _prev: PrivateReadState,
+  form: FormData,
+): Promise<PrivateReadState> {
+  try {
+    const humanId = await actionAdmin();
+    // The read writes a line to the moderators' record, so it waits out
+    // the kill switch like any other write.
+    assertWritable();
+    const id = parseId(field(form, "channel"));
+    if (id === undefined)
+      throw new ApiError(
+        400,
+        "invalid_channel",
+        "Give a private channel's number.",
+      );
+    const c = await readPrivateChannel(db(), id, field(form, "reason"), {
+      humanId,
+    });
+    return {
+      read: {
+        ...c,
+        created_at: c.created_at.toISOString(),
+        members: c.members.map((m) => ({ ...m, at: m.at.toISOString() })),
+        messages: c.messages.map((m) => ({ ...m, at: m.at.toISOString() })),
+      },
+    };
+  } catch (err) {
+    return failure("readPrivateChannel", err);
   }
 }
 

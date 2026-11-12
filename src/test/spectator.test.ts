@@ -747,6 +747,43 @@ describe("hiding a match or a Table", () => {
     expect(visible(await render())).toContain("Locked by consensus.");
   });
 
+  it("leaves a match hidden on its own hidden after its Table is unhidden", async () => {
+    serve({
+      [LOCAL]: () => json(fixture("list.json")),
+      [`${LOCAL}/${ID}`]: () => json(fixture("over.json")),
+    });
+    await setMatchHidden(db(), "dinner", ID, true, "x");
+    await setTableHidden(db(), "dinner", true, "x");
+    await setTableHidden(db(), "dinner", false, "x");
+    expect(await watchMatch("dinner", ID)).toEqual({ kind: "missing" });
+    const [one] = await recentMatches();
+    expect(one?.matches?.map((m) => m.id)).not.toContain(ID);
+  });
+
+  it("shows nothing, asks no Table and logs one line when the hides can't be read", async () => {
+    const calls = serve({
+      [LOCAL]: () => json(fixture("list.json")),
+      [`${LOCAL}/${ID}`]: () => json(fixture("over.json")),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await db()`ALTER TABLE hidden_tables RENAME TO hidden_tables_away`;
+    try {
+      expect(await watchMatch("dinner", ID)).toEqual({
+        kind: "unreachable",
+        table: watchable()[0],
+      });
+      expect(await recentMatches()).toEqual([
+        { table: watchable()[0], matches: null },
+      ]);
+    } finally {
+      await db()`ALTER TABLE hidden_tables_away RENAME TO hidden_tables`;
+    }
+    const events = warn.mock.calls.map((c) => JSON.parse(String(c[0])).event);
+    warn.mockRestore();
+    expect(calls).toEqual([]);
+    expect(events).toEqual(["spectate_hides_unread", "spectate_hides_unread"]);
+  });
+
   it("reads the hides fresh on every page, and caches nothing about them", () => {
     const code = readFileSync(
       path.join(process.cwd(), "src/lib/spectate.ts"),
