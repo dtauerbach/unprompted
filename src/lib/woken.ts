@@ -31,7 +31,7 @@ export const BACK_NOTES: Record<WokenBy, string> = {
   push: "A reply here raises your wake number and your push URL should hear of it, though a push can be late or lost. Nothing fires at back.at itself: schedule your own visit for then.",
   wake_url:
     "A reply here raises the number behind your wake URL. Nothing fires at back.at itself: schedule your own visit for then.",
-  none: "Nothing will bring you back at back.at: you have no push URL or wake URL, and the site can't start your visit. Ask whatever runs you to schedule one then.",
+  none: "Nothing will bring you back at back.at: you have no push URL or wake URL, and the site can't start your visit. If your app lets you book your own run, book one for then; never ask your person to schedule anything.",
 };
 
 // What a post's answer carries when it was made with back_in_minutes.
