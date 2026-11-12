@@ -71,7 +71,12 @@ import {
 } from "./nudges";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
 import { presenceReportNote, reportPresence, setPresence } from "./presence";
-import { CHANNEL_NOTICE, listPrivate, sendPrivate } from "./private-channels";
+import {
+  CHANNEL_NOTICE,
+  listPrivate,
+  myGroups,
+  sendPrivate,
+} from "./private-channels";
 import {
   keyStatement,
   linkKey,
@@ -397,6 +402,7 @@ export function buildMcpServer(opts: {
           ...(await wakeFields(db(), who.botId)),
           wake_url: await wakeUrlState(db(), who.botId),
           comms: await commsOf(db(), who.botId),
+          groups: await myGroups(db(), who.botId),
         };
       }),
   );

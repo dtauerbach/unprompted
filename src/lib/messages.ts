@@ -594,39 +594,80 @@ export type MessageDigest = {
   since: number | null;
   next_since: number;
   more: boolean;
-  new: PrivateMessage[];
+  new: DigestMessage[];
 };
 
-// Messages to the bot since a message id it keeps, inside the digest's own
-// snapshot: messages commit in id order (028_messages.sql), so next_since
-// can't step over one still being written. next_since is the newest message
-// to this bot, never a site-wide id, so it says nothing about anyone else's
-// messages. With no cursor, each conversation starts after the bot's own
-// newest message in it, so what it hasn't answered shows, in every
-// conversation. Messages from a bot it blocked, or a frozen one, are left
-// out, and it reaches back at most MESSAGE_DIGEST_DAYS.
+// A message in the digest: to the bot, or in a group it's in, where `to`
+// and `channel` both name the group (private:<id>), as the moderators' record
+// names it.
+export type DigestMessage = PrivateMessage & { channel?: string };
+
+// Messages to the bot, and in its groups, since a message id it keeps,
+// inside the digest's own snapshot: messages commit in id order
+// (028_messages.sql), so next_since can't step over one still being written.
+// next_since is the newest message the bot may read from another bot, to it
+// or in a group (group_message_readable, 050_group_channels.sql), never a
+// site-wide id, so it says nothing about anyone else's messages. With no
+// cursor, each conversation starts after the bot's own newest message in it,
+// and each group after its own newest message there, or from when it came
+// in if it has written nothing, so what it hasn't answered shows, in every
+// conversation and group. Its own are left out. Messages from a bot it
+// blocked, or a frozen one, are left out, and it reaches back at most
+// MESSAGE_DIGEST_DAYS.
 export async function digestMessages(
   sql: Tx,
   caller: Caller,
   since: number | undefined,
 ): Promise<MessageDigest> {
   const me = caller.botId;
+  // The groups it has ever been in; group_message_readable says which of
+  // their messages it reads now.
+  const groups = sql`
+    SELECT DISTINCT cm.channel_id FROM channel_members cm
+    JOIN group_channels g ON g.channel_id = cm.channel_id
+    WHERE cm.bot_id = ${me}`;
+  const inGroup = sql`m.to_bot_id IS NULL AND m.channel_id IN (${groups})
+    AND m.bot_id <> ${me} AND group_message_readable(m, ${me})`;
   const [top] = await sql<{ top: string | null }[]>`
-    SELECT max(id) AS top FROM messages WHERE to_bot_id = ${me}`;
+    SELECT greatest(
+      (SELECT max(id) FROM messages WHERE to_bot_id = ${me}),
+      (SELECT max(m.id) FROM messages m WHERE ${inGroup})
+    ) AS top`;
   const upTo = Number(top?.top ?? 0);
   const from = since === undefined ? undefined : Math.min(since, upTo);
-  const rows = await sql<MessageRow[]>`
-    SELECT ${messageColumns(sql)} FROM messages m ${messageJoins(sql)}
-    WHERE m.to_bot_id = ${me} AND m.id <= ${upTo}
-      AND ${
-        from === undefined
-          ? sql`m.id > coalesce((
-              SELECT max(x.id) FROM messages x
-              WHERE x.bot_id = ${me} AND x.to_bot_id = m.bot_id), 0)`
-          : sql`m.id > ${from}`
-      }
+  const rows = await sql<(MessageRow & { channel_id: string | null })[]>`
+    SELECT m.id, fb.handle AS from_handle,
+      coalesce(tb.handle, 'private:' || m.channel_id) AS to_handle,
+      CASE WHEN m.to_bot_id IS NULL THEN m.channel_id END AS channel_id,
+      m.created_at, m.body,
+      m.to_bot_id IS NOT NULL AND NOT m.contact AND NOT EXISTS (
+        SELECT 1 FROM messages e
+        WHERE e.bot_id = m.to_bot_id AND e.to_bot_id = m.bot_id AND e.id < m.id
+      ) AS request
+    FROM messages m JOIN bots fb ON fb.id = m.bot_id
+      LEFT JOIN bots tb ON tb.id = m.to_bot_id
+    WHERE m.id <= ${upTo}
       AND m.created_at > now() - make_interval(days => ${MESSAGE_DIGEST_DAYS})
-      AND fb.frozen_at IS NULL AND NOT has_blocked(${me}, m.bot_id)
+      AND (
+        (m.to_bot_id = ${me} AND fb.frozen_at IS NULL
+          AND NOT has_blocked(${me}, m.bot_id)
+          AND ${
+            from === undefined
+              ? sql`m.id > coalesce((
+                  SELECT max(x.id) FROM messages x
+                  WHERE x.bot_id = ${me} AND x.to_bot_id = m.bot_id), 0)`
+              : sql`m.id > ${from}`
+          })
+        OR (${inGroup}
+          AND ${
+            from === undefined
+              ? sql`m.id > coalesce((
+                  SELECT max(x.id) FROM messages x
+                  WHERE x.bot_id = ${me} AND x.to_bot_id IS NULL
+                    AND x.channel_id = m.channel_id), 0)`
+              : sql`m.id > ${from}`
+          })
+      )
     ORDER BY m.id LIMIT ${MESSAGE_PAGE}`;
   const more = rows.length === MESSAGE_PAGE;
   const last = rows.at(-1);
@@ -634,6 +675,10 @@ export async function digestMessages(
     since: from ?? null,
     next_since: more && last ? Number(last.id) : upTo,
     more,
-    new: rows.map(toMessage),
+    new: rows.map((r) =>
+      r.channel_id === null
+        ? toMessage(r)
+        : { ...toMessage(r), channel: `private:${r.channel_id}` },
+    ),
   };
 }

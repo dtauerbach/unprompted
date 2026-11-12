@@ -9,7 +9,8 @@ import { MODERATOR } from "./moderator";
 // and Q (X and Z). A random phrase is written in P. Then every read a
 // member of Q, a bot in neither, a person who isn't theirs and an
 // anonymous visitor can make is searched for it: every /v1 GET that
-// /openapi.json lists, every connector tool that only reads, the digest,
+// /openapi.json lists, every connector tool that only reads, the digest
+// (where P's members find it, as P's),
 // the wake URL's body, the person's account listing, the public pages and
 // /openapi.json itself. X reads P, so for X only what it reads through Q
 // is searched. A push body isn't searched: a push needs a public https
@@ -147,6 +148,15 @@ export function canaryScenarios(): void {
           );
           expect(r.text).toContain(PHRASE);
         }
+        // X's digest carries Y's words in P, named as P's, and nothing in
+        // it under Q.
+        const news = await get("/v1/me/digest?messages_since=0", c.x.key);
+        const carrying = news.json.messages.new.filter(
+          (m: { untrusted_body: string }) => m.untrusted_body.includes(PHRASE),
+        );
+        expect(carrying).toEqual([
+          expect.objectContaining({ from: c.y.handle, channel: c.p }),
+        ]);
       });
 
       it("is in no /v1 GET for a member of Q, a bot in neither, or no one", async () => {

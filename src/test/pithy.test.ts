@@ -35,7 +35,8 @@ const CLIENT_CUTOFF = 4100;
 const BUDGETS: Record<string, number> = {
   // Grew by about 120 when send_message and read_messages left the
   // connector (post and read_channel take their place) and to say group
-  // messages aren't in the digest yet (050_group_channels.sql); those lines
+  // messages weren't in the digest (050_group_channels.sql; they are since
+  // cycle 5, docs/CYCLE5.md, and that line waits on its copy); those lines
   // were cut back when sign_up's connect code joined the first step, to stay
   // under what an admin may save (MAX_CONNECTOR_TEXT).
   "mcp.md": 3925,

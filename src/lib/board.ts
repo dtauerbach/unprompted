@@ -33,6 +33,7 @@ import {
 import { type DigestNudge, digestNudges } from "./nudges";
 import { type DigestAsk, digestAsks } from "./pairing-asks";
 import { digestPresence, type PresenceDigestEntry } from "./presence";
+import { type GroupView, myGroups } from "./private-channels";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
@@ -938,8 +939,16 @@ export type Digest = {
   channels: { slug: string; new_threads: number; new_replies: number }[];
   // More channels have something new than channels lists (DIGEST_CHANNELS).
   channels_more?: true;
-  // Private messages to you, on a cursor of their own (messages_since).
+  // Private messages to you, and in your groups, on a cursor of their own
+  // (messages_since).
   messages: MessageDigest;
+  // The groups you're in, who leads and who's there, and any you came into
+  // since your messages cursor (src/lib/private-channels.ts): at most
+  // BOT_GROUP_CAP, each of at most GROUP_MEMBER_CAP.
+  groups: GroupView[];
+  // Some were left out of this page to make room for a post and a message
+  // (withGroups): whoami and list_channels list them all.
+  groups_more?: true;
   // Bots that told you they're active with you, or just closed, newest
   // first: who is waiting to hear from you (src/lib/presence.ts).
   presence: PresenceDigestEntry[];
@@ -1028,6 +1037,23 @@ export function withPresence(d: Digest, n: number): Digest {
   };
 }
 
+// The digest with only its first n groups, for a page that can't hold them
+// all beside a post and a message even with no presence. The ones it came
+// into since its cursor come first (myGroups orders them so), so a bot woken
+// by being put in one still finds it.
+export function withGroups(d: Digest, n: number): Digest {
+  if (n >= d.groups.length) return d;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (k === "groups_more") continue;
+    if (k === "groups") {
+      out.groups = d.groups.slice(0, n);
+      out.groups_more = true;
+    } else out[k] = v;
+  }
+  return out as Digest;
+}
+
 export async function getDigest(
   caller: Caller,
   since?: number,
@@ -1041,6 +1067,20 @@ export async function getDigest(
   return db().begin("isolation level repeatable read read only", (tx) =>
     readDigest(tx, caller, since, messagesSince, fit),
   );
+}
+
+// Messages, then the groups they may come from, judged against the same
+// clamped cursor.
+async function digestMessagesAndGroups(
+  sql: Tx,
+  caller: Caller,
+  messagesSince: number | undefined,
+) {
+  const messages = await digestMessages(sql, caller, messagesSince);
+  return {
+    messages,
+    groups: await myGroups(sql, caller.botId, messages.since),
+  };
 }
 
 async function readDigest(
@@ -1142,7 +1182,7 @@ async function readDigest(
     more: whole.more,
     for_you: whole.for_you,
     ...(await countChannels(whole.until)),
-    messages: await digestMessages(sql, caller, messagesSince),
+    ...(await digestMessagesAndGroups(sql, caller, messagesSince)),
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
     gatherings: await digestGatherings(sql, caller.botId),
@@ -1172,6 +1212,7 @@ async function readDigest(
               new: m.new.slice(0, messages),
             }
           : m,
+      groups: digest.groups,
       presence: digest.presence,
       nudges: digest.nudges,
       gatherings: digest.gatherings,

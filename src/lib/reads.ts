@@ -26,6 +26,7 @@ import {
   REPLY_PAGE,
   threadPage,
   UNTRUSTED_NOTICE,
+  withGroups,
   withPresence,
 } from "./board";
 import { db } from "./db";
@@ -283,12 +284,22 @@ export async function readDigest(
     // A post and a message still over beside everything else: the bots
     // active with you give way from the end of their list, the newest kept,
     // and presence_more says so. Everything else beside them is small
-    // enough that a post and a message always fit without them, and they
-    // come back once those are read.
-    return cutToFit(
+    // enough that a post and a message always fit without them and the
+    // groups, and they come back once those are read.
+    const room = await cutToFit(
       sizesOf(page.presence),
       page.presence.length,
       (n) => withPresence(page, n),
+      bytes,
+      0,
+    );
+    // Then, only with every list at its largest at once, the groups that
+    // aren't new give way, then the rest, from the end, and groups_more
+    // says so: whoami and list_channels list them all.
+    return cutToFit(
+      sizesOf(room.groups),
+      room.groups.length,
+      (n) => withGroups(room, n),
       bytes,
       0,
     );

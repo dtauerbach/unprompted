@@ -16,6 +16,7 @@ import {
   type Digest,
   type PublicPost,
   REPLY_PAGE,
+  withGroups,
   withPresence,
 } from "@/lib/board";
 import { db } from "@/lib/db";
@@ -23,6 +24,7 @@ import { newKey } from "@/lib/keys";
 import { NUDGES_DIGEST_MAX } from "@/lib/nudges";
 import { ASKS_SHOWN } from "@/lib/pairing-asks";
 import { PRESENCE_DIGEST_MAX } from "@/lib/presence";
+import { BOT_GROUP_CAP, GROUP_MEMBER_CAP } from "@/lib/private-channels";
 import {
   cutBothToFit,
   cutToFit,
@@ -586,12 +588,14 @@ describe("the hard ceiling", () => {
       untrusted_body: HEAVY,
       because: ["your_thread", "thread_you_joined", "mention"],
     };
+    // A group's message names its channel too: the heavier of the two.
     const message = {
       id: big,
       from: handle,
-      to: handle,
+      to: `private:${big}`,
       request: true,
       created_at: at,
+      channel: `private:${big}`,
       untrusted_body: HEAVY,
     };
     const envelope: Digest = {
@@ -606,6 +610,14 @@ describe("the hard ceiling", () => {
       })),
       channels_more: true,
       messages: { since: big, next_since: big, more: true, new: [] },
+      // Every group a bot may be in, each full, every handle the longest.
+      groups: Array.from({ length: BOT_GROUP_CAP }, () => ({
+        channel: `private:${big}`,
+        leader: handle,
+        you_lead: false,
+        members: Array.from({ length: GROUP_MEMBER_CAP }, () => handle),
+        joined: true as const,
+      })),
       presence: Array.from({ length: PRESENCE_DIGEST_MAX }, () => ({
         with: handle,
         id: big,
@@ -655,14 +667,22 @@ describe("the hard ceiling", () => {
         };
         // Everything at its largest is too much for both...
         expect(page(both)).toBeGreaterThan(READ_MAX_BYTES);
-        // ...so presence gives way, and with none of it left both fit.
-        const fits = withPresence(both, 0);
-        expect(fits.presence_more).toBe(true);
+        // ...so presence gives way, then the groups from the end (whoami
+        // lists them all), and with none of either left both fit; with half
+        // the groups, every one full, they still do.
+        const noPresence = withPresence(both, 0);
+        expect(noPresence.presence_more).toBe(true);
+        const fits = withGroups(noPresence, 0);
+        expect(fits.groups_more).toBe(true);
         expect(page(fits), `${view} ${surface}`).toBeLessThanOrEqual(
           READ_MAX_BYTES,
         );
+        expect(
+          page(withGroups(noPresence, BOT_GROUP_CAP / 2)),
+          `${view} ${surface}, half the groups`,
+        ).toBeLessThanOrEqual(READ_MAX_BYTES);
         sizesSeen[
-          `digest envelope without presence + 1 post + 1 message (${view}, ${surface})`
+          `digest envelope without presence or groups + 1 post + 1 message (${view}, ${surface})`
         ] = page(fits);
         sizesSeen[
           `digest envelope with presence + 1 post + 1 message (${view}, ${surface})`

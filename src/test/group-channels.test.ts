@@ -7,6 +7,7 @@ import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as commsRoute } from "@/app/v1/me/comms/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
+import { GET as meRoute } from "@/app/v1/me/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
 import { POST as makeUrlRoute } from "@/app/v1/me/wake/url/route";
 import { POST as reportRoute } from "@/app/v1/messages/[id]/report/route";
@@ -590,7 +591,7 @@ describe("writing and reading a group", () => {
     ).toEqual({ handle: "alice", you_blocked: true });
   });
 
-  it("never shows a group message in a pair's reads, the digest or the lookup's message counts", async () => {
+  it("never shows a group message in a pair's reads or the lookup's message counts, and shows it in the digest as the group's", async () => {
     const { a, b, g } = await three();
     await send(a, g, "group words");
     const list = await call(messagesRoute, { key: b.key });
@@ -601,12 +602,15 @@ describe("writing and reading a group", () => {
     });
     expect(JSON.stringify(conv.body)).not.toContain("group words");
     const digest = await call(digestRoute, { key: b.key });
-    expect(digest.body.messages.items ?? digest.body.messages).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ untrusted_body: "group words" }),
-      ]),
-    );
-    expect(JSON.stringify(digest.body)).not.toContain("group words");
+    expect(digest.body.messages.new).toEqual([
+      expect.objectContaining({
+        from: "alice",
+        to: g,
+        channel: g,
+        request: false,
+        untrusted_body: "group words",
+      }),
+    ]);
     const look = await lookupBot(db(), "alice");
     expect(look?.messages.sent).toBe(0);
     expect(look?.messages.conversations_started).toBe(0);
@@ -1558,6 +1562,45 @@ describe("a private channel past the read cap", () => {
     );
   });
 
+  it("pages heavy group and pair messages through the digest under the cap, each once, in order", async () => {
+    const { a, b, c, g } = await three();
+    for (const k of [a.key, b.key])
+      await call(inboxRoute, { key: k, body: { open: true } });
+    const pairTo = async (from: string, to: string) => {
+      const [r] = await db()<{ id: string }[]>`
+        INSERT INTO messages (bot_id, to_bot_id, key_id, body)
+        VALUES (${await idOf(from)}, ${await idOf(to)}, ${await keyOf(from)}, ${HEAVY})
+        RETURNING id`;
+      return Number(r?.id);
+    };
+    // alice asks and bob answers, so alice may write again; bob's own
+    // message isn't in his digest.
+    const made: number[] = [await pairTo("alice", "bob")];
+    await pairTo("bob", "alice");
+    for (let i = 1; i < 12; i++)
+      made.push(
+        i % 3 === 0
+          ? await pairTo("alice", "bob")
+          : await heavy(i % 2 ? "alice" : "cat", g),
+      );
+    const seen: number[] = [];
+    let since = 0;
+    for (let pages = 0; pages < 30; pages++) {
+      const res = await call(digestRoute, {
+        key: b.key,
+        path: `/v1/me/digest?messages_since=${since}`,
+      });
+      expect(bytes(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      expect(res.body.groups).toHaveLength(1);
+      seen.push(...res.body.messages.new.map((m: { id: number }) => m.id));
+      if (!res.body.messages.more) break;
+      expect(res.body.messages.new.length).toBeGreaterThan(0);
+      since = res.body.messages.next_since;
+    }
+    expect(seen).toEqual(made);
+    expect(c.handle).toBe("cat");
+  });
+
   it("pages a pair as read_messages pages it", async () => {
     const a = await bot("alice");
     const b = await bot("bob");
@@ -1641,6 +1684,267 @@ describe("a group member connected to a new agent", () => {
       "alice",
       "bob",
       "cat",
+    ]);
+  });
+});
+
+// What's new carries a bot's groups and their messages (docs/CYCLE5.md), so
+// a bot woken by being put in a group, or by a message there, finds why in
+// the read the guide sends it to first.
+describe("groups in what's new", () => {
+  const digest = (who: Bot, q = "") =>
+    call(digestRoute, { key: who.key, path: `/v1/me/digest${q}` });
+  const bodies = (d: { messages: { new: { untrusted_body: string }[] } }) =>
+    d.messages.new.map((m) => m.untrusted_body);
+
+  it("gives a member each group message once, in id order beside its pair messages, on its cursor", async () => {
+    const { a, b, c, g } = await three();
+    for (const k of [a.key, b.key])
+      await call(inboxRoute, { key: k, body: { open: true } });
+    const start = await digest(b, "?messages_since=0");
+    expect(start.body.messages.new).toEqual([]);
+    await send(a, g, "one");
+    await call(sendRoute, { key: a.key, body: { to: "bob", body: "two" } });
+    await send(c, g, "three");
+    await send(b, g, "mine");
+    const d = await digest(
+      b,
+      `?messages_since=${start.body.messages.next_since}`,
+    );
+    expect(bodies(d.body)).toEqual(["one", "two", "three"]);
+    expect(
+      d.body.messages.new.map((m: { channel?: string }) => m.channel),
+    ).toEqual([g, undefined, g]);
+    // On from where it stopped: nothing again.
+    const again = await digest(
+      b,
+      `?messages_since=${d.body.messages.next_since}`,
+    );
+    expect(again.body.messages.new).toEqual([]);
+    expect(again.body.messages.next_since).toBe(d.body.messages.next_since);
+    // The compact view and the connector say the same.
+    const compact = await digest(
+      b,
+      `?view=compact&messages_since=${start.body.messages.next_since}`,
+    );
+    expect(
+      compact.body.messages.new.map((m: { channel?: string }) => m.channel),
+    ).toEqual([g, undefined, g]);
+    const viaTool = await tool(b.key, "read_digest", {
+      messages_since: start.body.messages.next_since,
+    });
+    expect(bodies(viaTool.data)).toEqual(["one", "two", "three"]);
+    expect(viaTool.data.groups).toEqual(compact.body.groups);
+  });
+
+  it("with no cursor, gives a member that never wrote everything since it came in, and one that wrote what came after its own newest", async () => {
+    const { a, b, c, g } = await three();
+    // No pair messages at all: nothing to clamp the group's window to.
+    await send(a, g, "first");
+    await send(b, g, "bob says");
+    await send(a, g, "after bob");
+    const cat = await digest(c);
+    expect(bodies(cat.body)).toEqual(["first", "bob says", "after bob"]);
+    expect(cat.body.messages.since).toBeNull();
+    const bob = await digest(b);
+    expect(bodies(bob.body)).toEqual(["after bob"]);
+    expect(bob.body.messages.next_since).toBe(cat.body.messages.next_since);
+  });
+
+  it("leaves out what came before a bot came in, its own, a blocked sender's and a hidden group's", async () => {
+    const { a, b, c, g } = await three();
+    const d = await bot("dan");
+    await person("google-p", d);
+    await send(a, g, "before dan");
+    await setOwnBots(db(), "google-p", g, ["dan"], [], null);
+    expect(bodies((await digest(d, "?messages_since=0")).body)).toEqual([]);
+    expect(bodies((await digest(d)).body)).toEqual([]);
+    await send(d, g, "dan's own");
+    await send(a, g, "after dan");
+    expect(bodies((await digest(d)).body)).toEqual(["after dan"]);
+    // A guessed cursor below its way in gives nothing from before it.
+    expect(bodies((await digest(d, "?messages_since=1")).body)).toEqual([
+      "after dan",
+    ]);
+    // A huge one is clamped to the newest it may read.
+    const huge = await digest(d, "?messages_since=999999999");
+    expect(huge.body.messages.new).toEqual([]);
+    expect(huge.body.messages.since).toBe(huge.body.messages.next_since);
+    // Blocked: alice's group words leave cat's digest.
+    await call(inboxRoute, { key: c.key, body: { open: true } });
+    await call(blockRoute, { key: c.key, params: { handle: "alice" } });
+    expect(bodies((await digest(c, "?messages_since=0")).body)).not.toContain(
+      "after dan",
+    );
+    // Hidden: nothing of the group, and no group listed.
+    await setPrivateChannelHidden(db(), Number(num(g)), true, "test");
+    const hidden = await digest(b, "?messages_since=0");
+    expect(hidden.body.messages.new).toEqual([]);
+    expect(hidden.body.groups).toEqual([]);
+  });
+
+  it("leaves out a frozen sender's message, and gives it again once unfrozen to a bot asking from the same cursor", async () => {
+    const { a, b, c, g } = await three();
+    const start = await digest(b, "?messages_since=0");
+    const at = start.body.messages.next_since;
+    await send(a, g, "alice speaks");
+    await send(c, g, "cat speaks");
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'alice'`;
+    const frozen = await digest(b, `?messages_since=${at}`);
+    expect(bodies(frozen.body)).toEqual(["cat speaks"]);
+    expect(frozen.body.groups[0].members).toEqual(["bob", "cat"]);
+    await db()`UPDATE bots SET frozen_at = NULL WHERE handle = 'alice'`;
+    // At the cursor it had: alice's message is back.
+    expect(bodies((await digest(b, `?messages_since=${at}`)).body)).toEqual([
+      "alice speaks",
+      "cat speaks",
+    ]);
+    // A cursor moved past it by cat's later message doesn't go back for it.
+    expect(
+      bodies(
+        (await digest(b, `?messages_since=${frozen.body.messages.next_since}`))
+          .body,
+      ),
+    ).toEqual([]);
+  });
+
+  it("lists a bot's groups with their handles and leader, says when it came in since its cursor, and drops them when it's taken out or released", async () => {
+    const { a, b, c, g } = await three();
+    const fresh = await digest(c);
+    expect(fresh.body.groups).toEqual([
+      {
+        channel: g,
+        leader: "bob",
+        you_lead: false,
+        members: ["alice", "bob", "cat"],
+        joined: true,
+      },
+    ]);
+    expect((await digest(b)).body.groups[0].you_lead).toBe(true);
+    // Once it has written there, a read with no cursor doesn't say it again.
+    await send(c, g, "hello");
+    expect((await digest(c)).body.groups[0].joined).toBeUndefined();
+    // With a cursor: joined since that cursor's message, not since.
+    await call(inboxRoute, { key: c.key, body: { open: true } });
+    await call(sendRoute, { key: a.key, body: { to: "cat", body: "hi" } });
+    const before = await digest(c, "?messages_since=0");
+    const d = await bot("dan");
+    await person("google-p", d);
+    await setOwnBots(db(), "google-p", g, ["dan"], [], null);
+    const g2 = await group("google-p", [c, d], "dan");
+    const later = await digest(
+      c,
+      `?messages_since=${before.body.messages.next_since}`,
+    );
+    expect(
+      later.body.groups.map((x: { channel: string; joined?: true }) => [
+        x.channel,
+        x.joined,
+      ]),
+    ).toEqual([
+      // The one it just came into first.
+      [g2, true],
+      [g, undefined],
+    ]);
+    expect(later.body.groups[1].members).toEqual([
+      "alice",
+      "bob",
+      "cat",
+      "dan",
+    ]);
+    // Something new moves the cursor past the join: not joined any more.
+    await send(d, g2, "welcome");
+    const moved = await digest(
+      c,
+      `?messages_since=${later.body.messages.next_since}`,
+    );
+    expect(bodies(moved.body)).toEqual(["welcome"]);
+    const after = await digest(
+      c,
+      `?messages_since=${moved.body.messages.next_since}`,
+    );
+    expect(after.body.groups.every((x: { joined?: true }) => !x.joined)).toBe(
+      true,
+    );
+    // The person picks another leader, then that leader is frozen.
+    await pickLeader(db(), "google-p", g, "cat", null);
+    const ofG = (d: { groups: { channel: string }[] }) =>
+      d.groups.find((x) => x.channel === g);
+    expect(ofG((await digest(c)).body)).toMatchObject({
+      leader: "cat",
+      you_lead: true,
+    });
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'cat'`;
+    expect((await digest(a)).body.groups[0].leader).not.toBe("cat");
+    await db()`UPDATE bots SET frozen_at = NULL WHERE handle = 'cat'`;
+    // Taken out, then released: gone from the list.
+    await setOwnBots(db(), "google-p", g, [], ["cat"], null);
+    expect(
+      (await digest(c)).body.groups.map((x: { channel: string }) => x.channel),
+    ).toEqual([g2]);
+    await releaseBot(db(), "google-p", "dan", null);
+    expect((await digest(d)).body.groups).toEqual([]);
+    expect(b.handle).toBe("bob");
+  });
+
+  it("shows a bot of the same person outside the group nothing of it, and doesn't wake it", async () => {
+    const { a, g } = await three();
+    const e = await bot("eve");
+    await person("google-p", e);
+    const before = await wake(e);
+    await send(a, g, "team only");
+    const d = await digest(e, "?messages_since=0");
+    expect(d.body.groups).toEqual([]);
+    expect(JSON.stringify(d.body)).not.toContain("team only");
+    expect(await wake(e)).toBe(before);
+    const me = await call(meRoute, { key: e.key });
+    expect(me.body.groups).toEqual([]);
+  });
+
+  it("lists groups on /v1/me and whoami, for a frozen caller too", async () => {
+    const { a, b, g } = await three();
+    const me = await call(meRoute, { key: b.key });
+    expect(me.body.groups).toEqual([
+      {
+        channel: g,
+        leader: "bob",
+        you_lead: true,
+        members: ["alice", "bob", "cat"],
+      },
+    ]);
+    expect((await tool(a.key, "whoami", {})).data.groups).toEqual([
+      {
+        channel: g,
+        leader: "bob",
+        you_lead: false,
+        members: ["alice", "bob", "cat"],
+      },
+    ]);
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'alice'`;
+    const frozen = await call(meRoute, { key: a.key });
+    expect(frozen.status).toBe(200);
+    expect(frozen.body.groups).toEqual([
+      { channel: g, leader: "bob", you_lead: false, members: ["bob", "cat"] },
+    ]);
+  });
+
+  it("raises the wake number of a bot put in a group, whose digest then shows the group", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    await person("google-p", a, b);
+    const before = await wake(b);
+    const g = await group("google-p", [a, b], "alice");
+    expect(await wake(b)).toBe(before + 1);
+    const d = await digest(b);
+    expect(d.body.messages.new).toEqual([]);
+    expect(d.body.groups).toEqual([
+      {
+        channel: g,
+        leader: "alice",
+        you_lead: false,
+        members: ["alice", "bob"],
+        joined: true,
+      },
     ]);
   });
 });
