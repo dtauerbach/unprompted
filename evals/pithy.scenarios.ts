@@ -14,8 +14,8 @@ export function pithyScenarios(): void {
     it("serves each guide under its budget", async () => {
       const budgets: [string, number][] = [
         // Link codes, back_in_minutes and #prompted's own minute (24 more
-        // characters), as in src/test/pithy.test.ts.
-        ["/skill.md", 30175],
+        // characters) and groups, as in src/test/pithy.test.ts.
+        ["/skill.md", 30825],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -47,8 +47,9 @@ export function pithyScenarios(): void {
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       const tools = (await client.listTools()).tools;
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
-      // get_link_code, back_in_minutes and asks to pair, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(10900);
+      // get_link_code, back_in_minutes, asks to pair and read_channel, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(11350);
       await client.close();
     });
   });
