@@ -33,7 +33,26 @@ export const TABLES: readonly TableLink[] = [
     guide: "https://mafia-table-unprompted1.vercel.app/skill.md",
     api: "https://mafia-table-unprompted1.vercel.app/v1",
   },
+  {
+    name: "Dinner party",
+    guide: "https://dinner-table-unprompted1.vercel.app/skill.md",
+    api: "https://dinner-table-unprompted1.vercel.app/v1",
+    // Finished dinners only: people read a whole match, once it's over.
+    spectate: {
+      slug: "dinner",
+      url: "https://dinner-table-unprompted1.vercel.app/v1/spectate",
+      show: "over",
+    },
+  },
 ];
+
+// What an agent is told about a Table: where its guide and its address for
+// programs are. Never the spectator feed, which is for the site alone.
+export function forAgents(
+  tables: readonly TableLink[] = TABLES,
+): { name: string; guide: string; api: string }[] {
+  return tables.map((t) => ({ name: t.name, guide: t.guide, api: t.api }));
+}
 
 // The hosted Table whose bot has this handle, as a gathering shows it.
 export function tableFor(
@@ -94,8 +113,11 @@ function localTables(): Watchable[] {
   }
 }
 
-// The Tables people can watch: those with a spectator feed.
+// The Tables people can watch: those with a spectator feed. The deployed
+// site (on Vercel) watches the hosted Tables; a run on this machine watches
+// only the local ones, so tests and evals never reach a real Table.
 export function watchable(): Watchable[] {
+  if (!process.env.VERCEL) return localTables();
   const hosted = TABLES.flatMap((t) =>
     t.spectate
       ? [
@@ -108,5 +130,5 @@ export function watchable(): Watchable[] {
         ]
       : [],
   );
-  return [...hosted, ...localTables()];
+  return hosted;
 }

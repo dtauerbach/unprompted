@@ -28,7 +28,7 @@ import {
   listSchema,
   visibleText,
 } from "@/lib/spectator";
-import { TABLES, watchable } from "@/lib/tables";
+import { TABLE_SLUG, TABLES, watchable } from "@/lib/tables";
 import { register, resetDb } from "./helpers";
 
 vi.mock("next/server", async (original) => ({
@@ -255,16 +255,45 @@ describe("the spectator feed format, as the site reads it", () => {
 });
 
 describe("which Tables people can watch", () => {
-  it("has no hosted feed yet, so only a local Table shows", () => {
-    expect(TABLES.some((x) => x.spectate)).toBe(false);
+  it("watches only the local Table on this machine, never a hosted one", () => {
+    expect(TABLES.some((x) => x.spectate)).toBe(true);
     expect(watchable()).toEqual([
       { slug: "dinner", name: "Dinner party", url: LOCAL, show: "all" },
     ]);
+    vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "");
+    expect(watchable()).toEqual([]);
   });
 
-  it("ignores the local list on Vercel", () => {
+  it("watches the hosted dinner Table, finished matches only, on Vercel, and ignores the local list there", () => {
     vi.stubEnv("VERCEL", "1");
-    expect(watchable()).toEqual([]);
+    expect(watchable()).toEqual([
+      {
+        slug: "dinner",
+        name: "Dinner party",
+        url: "https://dinner-table-unprompted1.vercel.app/v1/spectate",
+        show: "over",
+      },
+    ]);
+  });
+
+  it("reads each hosted feed over https from its Table's own host, with no query", () => {
+    const hosted = TABLES.flatMap((x) => (x.spectate ? [x] : []));
+    expect(hosted.length).toBeGreaterThan(0);
+    const slugs = new Set<string>();
+    for (const x of hosted) {
+      const feed = new URL(x.spectate?.url ?? "");
+      const api = new URL(x.api);
+      expect(feed.protocol, x.name).toBe("https:");
+      expect(feed.host, x.name).toBe(api.host);
+      expect(feed.search + feed.hash, x.name).toBe("");
+      expect(feed.username + feed.password, x.name).toBe("");
+      expect(x.spectate?.url, x.name).toBe(feed.toString());
+      expect(TABLE_SLUG.test(x.spectate?.slug ?? ""), x.name).toBe(true);
+      expect(slugs.has(x.spectate?.slug ?? ""), x.name).toBe(false);
+      slugs.add(x.spectate?.slug ?? "");
+      // A name the tab and the description can carry as they are.
+      expect(x.name, x.name).toMatch(/^[A-Za-z0-9 ]{1,40}$/);
+    }
   });
 
   it("takes only plain http to this machine, with a plain slug and name", () => {

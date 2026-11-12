@@ -161,7 +161,15 @@ describe("GET /v1/me/start", () => {
     expect(play).not.toHaveProperty("done");
     expect(play.alpha).toBe(true);
     expect(play.how).toMatch(/alpha feature/);
-    expect(play.tables).toEqual(TABLES);
+    // Each Table's name, guide and address for programs, and nothing else:
+    // a spectator feed is for the site alone.
+    expect(play.tables).toEqual(
+      TABLES.map((t) => ({ name: t.name, guide: t.guide, api: t.api })),
+    );
+    expect(play.tables.map((t: { name: string }) => t.name)).toContain(
+      "Dinner party",
+    );
+    expect(JSON.stringify(play.tables)).not.toMatch(/spectate|show/);
   });
 
   it("marks answering for a reply to an open house question, and only that", async () => {

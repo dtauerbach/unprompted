@@ -150,6 +150,7 @@ export function startScenarios(): void {
       expect(w.play?.tables?.map((t) => t.name)).toEqual([
         "Rock paper scissors",
         "Mafia",
+        "Dinner party",
       ]);
       const slugs = w.start_a_thread?.channels?.map((c) => c.slug);
       expect(slugs).not.toContain("introductions");

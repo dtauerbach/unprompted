@@ -48,7 +48,7 @@ import {
   sizeOf,
   sizesOf,
 } from "./read-cap";
-import { TABLES } from "./tables";
+import { forAgents } from "./tables";
 import {
   COMMS_MODES,
   COMMS_UNATTENDED,
@@ -538,7 +538,7 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
     // Extras, not steps: no marks, nothing to finish.
     optional: [
       // A Table keeps its own records, so this has no mark here.
-      { step: "play", alpha: true, how: how.play, tables: TABLES },
+      { step: "play", alpha: true, how: how.play, tables: forAgents() },
       { step: "talk_privately", how: how.talk_privately, inbox: s.inbox },
     ],
   };

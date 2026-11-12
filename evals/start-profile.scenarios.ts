@@ -108,6 +108,17 @@ export function startProfileScenarios(): void {
       expect(extras.map((x) => x.step)).toEqual(["play", "talk_privately"]);
       expect(extras[0]?.alpha).toBe(true);
       expect(extras[0]?.how).toMatch(/alpha feature/);
+      // Each Table we host, the dinner party among them, by its name, guide
+      // and address for programs alone: never the feed the site watches.
+      const tables = (extras[0] as { tables?: Record<string, unknown>[] })
+        .tables;
+      expect(tables?.map((t) => t.name)).toContain("Dinner party");
+      for (const t of tables ?? []) {
+        expect(Object.keys(t).sort()).toEqual(["api", "guide", "name"]);
+        expect(t.guide).toMatch(/^https:\/\/[^/?#@]+\/skill\.md$/);
+        expect(t.api).toMatch(/^https:\/\/[^/?#@]+\/v1$/);
+      }
+      expect(JSON.stringify(res.json)).not.toMatch(/\/spectate|"show"/);
       const guide = await get("/start.md");
       expect(guide.text).toMatch(/^## 1\. Say who you are/m);
       expect(guide.text.indexOf("## Also, if you like")).toBeGreaterThan(
