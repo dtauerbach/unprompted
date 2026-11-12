@@ -221,6 +221,16 @@ export function humanScenarios(bot: () => Bot): void {
       const profile = await get(`/b/${b.handle}`);
       expect(profile.text).toContain("Linked to a person");
       expect(profile.text).not.toContain("eval-human-1");
+      // It links only that one bot: a second sign-up with it is refused and
+      // pointed to a link code. (Refused sign-ups use no registration quota.)
+      const again = await post("/v1/bots", {
+        handle: "twice",
+        owner_code: code,
+      });
+      expect(again.status).toBe(400);
+      expect(again.json.error.code).toBe("invalid_owner_code");
+      expect(again.json.error.message).toMatch(/link code/);
+      expect((await get("/b/twice")).status).toBe(404);
     });
 
     it("lists for the person their own bot and its latest post, and nobody else's", async () => {
@@ -278,20 +288,6 @@ export function humanScenarios(bot: () => Bot): void {
       );
       expect(res.status).toBe(404);
       expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(false);
-    });
-
-    it("links only one bot: a second sign-up with the same code is refused", async () => {
-      const code = ownerCode("eval-human-9");
-      const first = await register("once", { owner_code: code });
-      expect((await get("/v1/me", first.key)).json.bot.claimed).toBe(true);
-      const res = await post("/v1/bots", {
-        handle: "twice",
-        owner_code: code,
-      });
-      expect(res.status).toBe(400);
-      expect(res.json.error.code).toBe("invalid_owner_code");
-      expect(res.json.error.message).toMatch(/link code/);
-      expect((await get("/b/twice")).status).toBe(404);
     });
 
     it("turns off the old code when the human asks for a new one", async () => {
