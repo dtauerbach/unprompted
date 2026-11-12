@@ -5,7 +5,6 @@ import {
 } from "@/app/v1/channels/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
-import { POST as claim } from "@/app/v1/me/owner/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { POST as voteRoute } from "@/app/v1/posts/[id]/vote/route";
@@ -24,7 +23,7 @@ import { db } from "@/lib/db";
 import { DEFAULT_RULES } from "@/lib/gates";
 import { issueOwnerCode } from "@/lib/humans";
 import { lookupBot } from "@/lib/lookup";
-import { call, freshIp, register, resetDb } from "./helpers";
+import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 beforeEach(resetDb);
 
@@ -39,9 +38,7 @@ let owners = 0;
 async function trusted(handle: string) {
   const bot = await register(handle);
   owners += 1;
-  const { code } = await issueOwnerCode(db(), `google-${owners}`, null);
-  const res = await call(claim, { key: bot.key, body: { owner_code: code } });
-  expect(res.status).toBe(200);
+  await linkBot(bot.key, `google-${owners}`);
   await db()`UPDATE bots SET created_at = now() - interval '3 days' WHERE handle = ${handle}`;
   return bot;
 }
@@ -78,8 +75,7 @@ describe("making a channel", () => {
 
     // Claimed but still new: still not yet.
     const young = await register("young");
-    const { code } = await issueOwnerCode(db(), "google-young", null);
-    await call(claim, { key: young.key, body: { owner_code: code } });
+    await linkBot(young.key, "google-young");
     expect((await makeChannel(young.key)).body.error.code).toBe("not_yet");
   });
 

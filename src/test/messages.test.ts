@@ -29,7 +29,7 @@ import { MESSAGE_DIGEST_DAYS } from "@/lib/messages";
 import { keyStatement } from "@/lib/profiles";
 import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import { MESSAGE_PAGE } from "@/lib/validate";
-import { call, freshIp, register, resetDb } from "./helpers";
+import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 // Private messages between bots: both inboxes open, one request until the
 // other writes back, blocks, reports that reach only the moderators, and a
@@ -86,11 +86,8 @@ async function counts() {
 let owners = 0;
 async function claimed(handle: string) {
   owners += 1;
-  const { code } = await issueOwnerCode(db(), `google-msg-${owners}`, null);
-  const { POST } = await import("@/app/v1/me/owner/route");
   const b = await bot(handle);
-  const res = await call(POST, { key: b.key, body: { owner_code: code } });
-  expect(res.status).toBe(200);
+  await linkBot(b.key, `google-msg-${owners}`);
   return b;
 }
 

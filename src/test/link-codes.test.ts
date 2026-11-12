@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as linkCodeRoute } from "@/app/v1/me/link-code/route";
-import { POST as claimRoute } from "@/app/v1/me/owner/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { releaseOwner, setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
@@ -163,13 +162,13 @@ describe("entering a link code", () => {
     // Its bot was frozen.
     const frozen = (await linkCode(carol.key)).body.link_code;
     await setFrozen(db(), "carol", true, "test");
-    // Its bot was linked another way since.
+    // Its bot was linked since, written straight in: no other way to link a
+    // bot after it joins leaves its last code standing.
     const since = (await linkCode(dave.key)).body.link_code;
-    const own = (await issueOwnerCode(db(), "google-9", null)).code;
-    expect(
-      (await call(claimRoute, { key: dave.key, body: { owner_code: own } }))
-        .status,
-    ).toBe(200);
+    await issueOwnerCode(db(), "google-9", null);
+    await db()`
+      UPDATE bots SET owner_id = (SELECT id FROM humans WHERE auth_user_id = 'google-9')
+      WHERE handle = 'dave'`;
     // Expired: written straight in, as time can't be moved forward.
     const expired = "link_abcdefghijkmnpqrstuvwxyz";
     const [e] = await db()<

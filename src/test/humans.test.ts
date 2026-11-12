@@ -1,6 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
-import { POST as claimRoute } from "@/app/v1/me/owner/route";
 import { GET as me } from "@/app/v1/me/route";
 import { setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
@@ -12,6 +12,8 @@ import {
   releaseBot,
 } from "@/lib/humans";
 import { hashKey, OWNER_CODE_RE } from "@/lib/keys";
+import { OPERATIONS } from "@/lib/openapi";
+import { PASTE_LINES } from "@/lib/paste-lines";
 import {
   awayFromWindowEdge,
   call,
@@ -214,128 +216,16 @@ describe("registering with an owner code", () => {
   });
 });
 
-describe("a bot linking itself", () => {
-  it("links an unlinked bot, and says so again if asked twice", async () => {
-    const a = await register("alice");
-    const c = await code();
-    const first = await call(claimRoute, {
-      key: a.key,
-      body: { owner_code: c },
-    });
-    expect(first.status).toBe(200);
-    expect(first.body.claimed).toBe(true);
-    expect(await ownerOf("alice")).toBe(await findHuman(db(), "google-1"));
-    const again = await call(claimRoute, {
-      key: a.key,
-      body: { owner_code: c },
-    });
-    expect(again.status).toBe(200);
-    expect(again.body.note).toMatch(/already/);
-    const logs =
-      await db()`SELECT 1 FROM action_log WHERE action = 'bot.claim'`;
-    expect(logs).toHaveLength(1);
-  });
-
-  it("can't be moved to another human with their code", async () => {
-    const a = await register("alice");
-    await call(claimRoute, { key: a.key, body: { owner_code: await code() } });
-    const other = await code("google-2");
-    const res = await call(claimRoute, {
-      key: a.key,
-      body: { owner_code: other },
-    });
-    expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe("already_claimed");
-    expect(await ownerOf("alice")).toBe(await findHuman(db(), "google-1"));
-  });
-
-  it("refuses a code that doesn't work", async () => {
-    const a = await register("alice");
-    const res = await call(claimRoute, {
-      key: a.key,
-      body: { owner_code: "own_AAAAAAAAAAAAAAAAAAAAAA" },
-    });
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe("invalid_owner_code");
-    expect(await ownerOf("alice")).toBeNull();
-  });
-
-  it("refuses anything but an owner code", async () => {
-    const a = await register("alice");
-    for (const body of [
-      {},
-      { owner_code: "own_AAAAAAAAAAAAAAAAAAAAAA", human: "google-1" },
-      { owner_id: 1 },
-    ]) {
-      const res = await call(claimRoute, { key: a.key, body });
-      expect(res.status, JSON.stringify(body)).toBe(400);
-    }
-  });
-
-  it("is refused for a frozen bot", async () => {
-    const a = await register("alice");
-    await setFrozen(db(), "alice", true, "Testing.");
-    const res = await call(claimRoute, {
-      key: a.key,
-      body: { owner_code: await code() },
-    });
-    expect(res.status).toBe(403);
-    expect(await ownerOf("alice")).toBeNull();
-  });
-
-  it("is refused in read-only mode", async () => {
-    const a = await register("alice");
-    const c = await code();
-    process.env.UNPROMPTED_READ_ONLY = "1";
-    const res = await call(claimRoute, { key: a.key, body: { owner_code: c } });
-    expect(res.status).toBe(503);
-    expect(await ownerOf("alice")).toBeNull();
-  });
-
-  it("respects the cap", async () => {
-    const c = await code();
-    for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++)
-      await call(registerRoute, {
-        body: { handle: `bot-${i}`, owner_code: c },
-      });
-    const a = await register("alice");
-    const res = await call(claimRoute, { key: a.key, body: { owner_code: c } });
-    expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe("owner_full");
-    // A bot already linked to that human is told so, cap or not.
-    const linked = await call(registerRoute, { body: { handle: "spare" } });
-    expect(linked.status).toBe(201);
-    await releaseBot(db(), "google-1", "bot-0", null);
-    await call(claimRoute, {
-      key: linked.body.api_key,
-      body: { owner_code: c },
-    });
-    const again = await call(claimRoute, {
-      key: linked.body.api_key,
-      body: { owner_code: c },
-    });
-    expect(again.status).toBe(200);
-    expect(again.body.note).toMatch(/already/);
-  });
-
-  // A refused try rolls back like any refused write, so it uses no quota.
-  // Guessing is no use anyway: a code is 128 random bits.
-  it("is limited to 10 an hour, and a refused try doesn't count", async () => {
-    await awayFromWindowEdge(3600);
-    const a = await register("alice");
-    for (let i = 0; i < 20; i++)
-      await call(claimRoute, {
-        key: a.key,
-        body: { owner_code: "own_AAAAAAAAAAAAAAAAAAAAAA" },
-      });
-    const c = await code();
-    for (let i = 0; i < 10; i++)
-      expect(
-        (await call(claimRoute, { key: a.key, body: { owner_code: c } }))
-          .status,
-      ).toBe(200);
-    const res = await call(claimRoute, { key: a.key, body: { owner_code: c } });
-    expect(res.status).toBe(429);
+// A bot used to link itself by sending an owner code after it joined, so a
+// code planted on the board could tie it to a stranger. Now only its person
+// links it, by entering the link code the bot gave them (link-codes.test.ts).
+describe("a bot can't link itself after joining", () => {
+  it("has no route, documented path or tool for it", async () => {
+    expect(existsSync("src/app/v1/me/owner")).toBe(false);
+    expect(Object.keys(OPERATIONS)).not.toContain("/v1/me/owner");
+    for (const f of ["content/skill.md", "content/mcp.md", "content/start.md"])
+      expect(readFileSync(f, "utf8"), f).not.toMatch(/\/v1\/me\/owner/);
+    expect(PASTE_LINES).not.toHaveProperty("link");
   });
 });
 

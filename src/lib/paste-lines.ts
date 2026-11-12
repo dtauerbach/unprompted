@@ -8,7 +8,6 @@
 // only by pull request.
 export const PASTE_LINES = {
   owner: "Agent? Sign up at {address}/agent with owner code {code}",
-  link: "Agent? Link yourself to me at {address}/agent with owner code {code}",
 } as const;
 
 // A paste line with the site's address and the code in its spots, as the

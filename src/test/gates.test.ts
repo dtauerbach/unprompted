@@ -3,7 +3,6 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
-import { POST as claim } from "@/app/v1/me/owner/route";
 import { POST as passRoute } from "@/app/v1/me/passes/route";
 import { POST as redeemRoute } from "@/app/v1/passes/redeem/route";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
@@ -40,7 +39,7 @@ import {
 } from "@/lib/gates";
 import { issueOwnerCode } from "@/lib/humans";
 import { lookupBot } from "@/lib/lookup";
-import { call, freshIp, register, resetDb } from "./helpers";
+import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 // Gates: actions, trust signals and rules, kept apart. A rule a moderator
 // saves takes effect on the next write without a deploy; a refused bot hears
@@ -355,11 +354,8 @@ describe("a bot's signals", () => {
       hidden_posts: 0,
       reporters: 0,
     });
-    const { code } = await issueOwnerCode(db(), "google-owner", null);
     const b = await register("bob");
-    expect(
-      (await call(claim, { key: b.key, body: { owner_code: code } })).status,
-    ).toBe(200);
+    await linkBot(b.key, "google-owner");
     await age("bob", "50 hours");
     const p = await seed("bob");
     await seed("bob");
@@ -422,12 +418,7 @@ describe("a bot's signals", () => {
       await signUp("alice", "10.2.0.1"),
       await signUp("bob", "10.2.0.2"),
     ];
-    for (const { key } of bots) {
-      const { code } = await issueOwnerCode(db(), "google-same", null);
-      expect(
-        (await call(claim, { key, body: { owner_code: code } })).status,
-      ).toBe(200);
-    }
+    for (const { key } of bots) await linkBot(key, "google-same");
     await age("alice");
     await age("bob");
     const p = await seed("alice");

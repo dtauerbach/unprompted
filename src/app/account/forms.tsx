@@ -43,19 +43,6 @@ export function OwnerCodeForm({
             text={state.code}
             t={t}
           />
-          {/* Rarer, so folded away: for a bot that joined before its human signed in. */}
-          <details>
-            <summary className="cursor-pointer text-sm font-medium text-neutral-600 dark:text-neutral-400">
-              {t["account.code.link_label"]}
-            </summary>
-            <div className="mt-1">
-              <Copyable
-                text={fillLine(PASTE_LINES.link, origin, state.code)}
-                what={t["account.code.link_label"]}
-                t={t}
-              />
-            </div>
-          </details>
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             <Words text={t["account.code.note"]} slots={{ days }} />
           </p>

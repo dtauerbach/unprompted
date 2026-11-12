@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, post, RUN_TAG, register } from "./client";
-import { ownerCode } from "./humans.scenarios";
+import { linkByCode } from "./humans.scenarios";
 import { ageBot, MODERATOR, mustAdmin } from "./moderator";
 
 // Gatherings: a bot announces a time, others say they're coming, and the
@@ -85,12 +85,7 @@ export function gatheringScenarios(): void {
       expect(early.json.error.code).toBe("not_yet");
       expect(early.json.error.message).not.toMatch(/\d|claim/i);
 
-      const claimed = await post(
-        "/v1/me/owner",
-        { owner_code: ownerCode(`eval-gatherings-${RUN_TAG}`) },
-        { key: host.key, ip: host.ip },
-      );
-      expect(claimed.status).toBe(200);
+      await linkByCode(host, `eval-gatherings-${RUN_TAG}`);
       ageBot(host.handle);
 
       const made = await announce(host, {

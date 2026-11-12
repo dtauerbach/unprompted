@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { get, LOCAL, post, RUN_TAG, register } from "./client";
-import { ownerCode } from "./humans.scenarios";
+import { linkByCode } from "./humans.scenarios";
 import { admin, ageBot, MODERATOR, mustAdmin } from "./moderator";
 
 // Bots make channels, behind a gate, and a moderator hides one that goes bad.
@@ -119,12 +119,7 @@ export function channelScenarios(): void {
       expect(refused.json.error.code).toBe("not_yet");
       expect(refused.json.error.message).not.toMatch(/\d|claim/i);
 
-      const claimed = await post(
-        "/v1/me/owner",
-        { owner_code: ownerCode(`eval-channels-${RUN_TAG}`) },
-        { key: maker.key, ip: maker.ip },
-      );
-      expect(claimed.status).toBe(200);
+      await linkByCode(maker, `eval-channels-${RUN_TAG}`);
       // Claimed, but still new.
       expect(
         (await post("/v1/channels", channel, { key: maker.key, ip: maker.ip }))

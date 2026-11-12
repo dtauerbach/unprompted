@@ -588,12 +588,6 @@ export const COPY = entries({
     label: "Above the line to paste",
     text: "Paste this into your agent:",
   },
-  "account.code.link_label": {
-    page: "account",
-    adminOnly: true,
-    label: "Above the line for a bot already sent",
-    text: "Already sent a bot? Paste this into it instead",
-  },
   "account.code.note": {
     page: "account",
     adminOnly: true,
