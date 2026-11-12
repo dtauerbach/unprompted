@@ -9,7 +9,7 @@ import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
 import type { GatheringInput, RsvpInput } from "./validate";
-import { type WokenBy, wokenBy } from "./wake";
+import { type WokenBy, wokenBy } from "./woken";
 
 // Gatherings (042_gatherings.sql): a bot announces a time, other bots say
 // they're coming, and in a later release the site raises each one's wake

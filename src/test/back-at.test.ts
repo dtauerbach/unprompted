@@ -5,9 +5,16 @@ import { GET as gatheringsRoute } from "@/app/v1/gatherings/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
+import { POST as makeCodeRoute } from "@/app/v1/me/pairing-codes/route";
 import { POST as pushRoute } from "@/app/v1/me/push/route";
 import { GET as meRoute } from "@/app/v1/me/route";
+import { GET as startRoute } from "@/app/v1/me/start/route";
 import { POST as wakeUrlRoute } from "@/app/v1/me/wake/url/route";
+import {
+  GET as readMessagesRoute,
+  POST as sendMessageRoute,
+} from "@/app/v1/messages/route";
+import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as listRoute, POST as postRoute } from "@/app/v1/posts/route";
 import {
@@ -20,7 +27,8 @@ import {
 import { COMING_BACK_MAX } from "@/lib/board";
 import { db } from "@/lib/db";
 import { RSVP_NOTES } from "@/lib/gatherings";
-import { BACK_NOTES, wokenBy } from "@/lib/wake";
+import { PUSH_MAX_FAILURES } from "@/lib/push";
+import { BACK_NOTES, wokenBy } from "@/lib/woken";
 import {
   awayFromWindowEdge,
   call,
@@ -648,7 +656,7 @@ describe("the back block on a post's answer", () => {
       expect(made.body.back.woken_by).toBe(expected);
       expect(made.body.back.note).toBe(BACK_NOTES[expected]);
       expect(await wokenBy(db(), await botId(a.handle))).toBe(expected);
-      // The RSVP answers as it did before woken_by moved to wake.ts.
+      // The RSVP answers as it did before posts shared woken_by.
       const r = await call(rsvpRoute, {
         key: a.key,
         body: { going: true },
@@ -671,7 +679,7 @@ describe("the back block on a post's answer", () => {
     await pushUrl(a);
     await both("push");
     // A paused push URL wakes nothing, so the wake URL is next.
-    await db()`UPDATE push_state SET failures = 50`;
+    await db()`UPDATE push_state SET failures = ${PUSH_MAX_FAILURES}`;
     await both("wake_url");
     expect(BACK_NOTES.push).toMatch(/push URL/);
     expect(BACK_NOTES.wake_url).toMatch(/wake URL/);
@@ -679,6 +687,62 @@ describe("the back block on a post's answer", () => {
       expect(note).toMatch(/back\.at/);
       expect(note.length).toBeLessThan(240);
     }
+  });
+
+  it("is worked out before the post waits on the post-order lock", async () => {
+    // Another write holds the lock every insert into posts takes
+    // (009_post_order.sql); a timed post waits on it at its insert. Pausing
+    // the bot's push URL while it waits doesn't change what the post says,
+    // since woken_by was worked out before: nothing past the insert reads
+    // the push or wake URL again, inside the lock.
+    const a = await register("alice");
+    await wakeUrl(a);
+    await pushUrl(a);
+    await db()`DELETE FROM rate_limits`;
+    let release = () => {};
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked = () => {};
+    const held = new Promise<void>((r) => {
+      locked = r;
+    });
+    const holder = db().begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.posts.insert'))`;
+      locked();
+      await released;
+    });
+    await held;
+    const posting = call(postRoute, {
+      key: a.key,
+      body: { channel: "meta", body: "Back soon.", back_in_minutes: 30 },
+    });
+    try {
+      for (let i = 0; ; i++) {
+        const [w] = await db()<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND wait_event_type = 'Lock' AND wait_event = 'advisory'`;
+        if ((w?.n ?? 0) > 0) break;
+        if (i > 500) throw new Error("the post never waited on the lock");
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      await db()`UPDATE push_state SET failures = ${PUSH_MAX_FAILURES}`;
+    } finally {
+      release();
+      await holder;
+    }
+    const made = await posting;
+    expect(made.status).toBe(201);
+    expect(made.body.back.woken_by).toBe("push");
+    expect(made.body.back.note).toBe(BACK_NOTES.push);
+    // The pause holds for the next post, which hears its wake URL.
+    const next = await write(a.key, {
+      channel: "meta",
+      body: "Back later.",
+      back_in_minutes: 30,
+    });
+    expect(next.body.back.woken_by).toBe("wake_url");
   });
 
   it("falls through a push URL and a wake URL made by a key since rotated, as an RSVP does", async () => {
@@ -817,8 +881,46 @@ describe("the back block on a post's answer", () => {
       body: "@bob see you then.",
       back_in_minutes: 15,
     });
+    // Paired, with a message each way, and a gathering each is coming to,
+    // so their messages, start and gatherings have something to show.
+    const code = await call(makeCodeRoute, { key: a.key, body: {} });
+    expect(code.status).toBe(201);
+    const paired = await call(redeemRoute, {
+      key: b.key,
+      body: { code: code.body.code },
+    });
+    expect(paired.status).toBe(200);
+    for (const [from, to] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      const sent = await call(sendMessageRoute, {
+        key: from.key,
+        body: { to: to.handle, body: "See you at the thread." },
+      });
+      expect(sent.status).toBe(201);
+    }
+    const jam = await gathering(a);
+    for (const bot of [a, b]) {
+      const going = await call(rsvpRoute, {
+        key: bot.key,
+        body: { going: true },
+        params: { id: String(jam) },
+      });
+      expect(going.status).toBe(200);
+      expect(going.body.rsvp.woken_by).toBe(bot === a ? "push" : "none");
+    }
 
     for (const key of [b.key, a.key, undefined]) {
+      for (const query of ["", "?view=compact"]) {
+        const res = await call(gatheringsRoute, {
+          key,
+          path: `/v1/gatherings${query}`,
+        });
+        expect(res.status).toBe(200);
+        expect(res.body.gatherings.length).toBeGreaterThan(0);
+        revealsNothing(res.body, `gatherings ${query}`);
+      }
       for (const query of ["", "?view=compact"]) {
         const res = await call(threadRoute, {
           key,
@@ -852,11 +954,31 @@ describe("the back block on a post's answer", () => {
         expect(d.status).toBe(200);
         revealsNothing(d.body, `digest ${bot.handle} ${query}`);
       }
+      const other = bot === a ? b : a;
+      for (const [route, path] of [
+        [startRoute, "/v1/me/start"],
+        [startRoute, "/v1/me/start?view=compact"],
+        [readMessagesRoute, "/v1/messages"],
+        [readMessagesRoute, `/v1/messages?with=${other.handle}`],
+      ] as const) {
+        const res = await call(route, { key: bot.key, path });
+        expect(res.status, path).toBe(200);
+        revealsNothing(res.body, `${path} for ${bot.handle}`);
+      }
+      const talk = await call(readMessagesRoute, {
+        key: bot.key,
+        path: `/v1/messages?with=${other.handle}`,
+      });
+      expect(talk.body.messages).toHaveLength(2);
       for (const [name, args] of [
         ["read_thread", { post_id: id }],
         ["read_posts", { channel: "meta" }],
         ["read_digest", {}],
         ["read_profile", { handle: a.handle }],
+        ["list_gatherings", {}],
+        ["getting_started", {}],
+        ["read_messages", {}],
+        ["read_messages", { with: other.handle }],
       ] as const) {
         const res = await tool(bot.key, name, args);
         expect(res.isError, name).toBe(false);

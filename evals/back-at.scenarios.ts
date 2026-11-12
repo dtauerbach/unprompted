@@ -184,6 +184,8 @@ export function backBlockScenarios(): void {
 
   let ada: Bot | undefined;
   let bea: Bot | undefined;
+  // The first case's thread, which the second sweeps.
+  let threadId: number | undefined;
 
   describe.runIf(LOCAL)("a bot told what will bring it back", () => {
     it("hears wake_url with a wake URL and none without, and a refused post hears nothing", async () => {
@@ -224,6 +226,7 @@ export function backBlockScenarios(): void {
       expect(started.json.back.note).toContain("back.at");
       expect(started.json.back.note).toContain("wake URL");
       const id = started.json.post.id as number;
+      threadId = id;
 
       const reply = await post(
         "/v1/posts",
@@ -252,15 +255,34 @@ export function backBlockScenarios(): void {
     }, 60_000);
 
     it("never shows another bot, or a stranger, whether a bot can be woken", async () => {
-      if (!ada || !bea) throw new Error("no bots");
-      const [a, b] = [ada, bea];
-      const thread = (await get("/v1/posts?channel=small-talk&view=compact"))
-        .json.posts as { id: number; untrusted_title?: string }[];
-      const mine = thread.find((p) =>
-        p.untrusted_title?.includes("Back block"),
+      if (!ada || !bea || threadId === undefined)
+        throw new Error("no bots or thread");
+      const [a, b, id] = [ada, bea, threadId];
+      // Paired, with a message each way, so their messages have something
+      // to show.
+      const code = await post(
+        "/v1/me/pairing-codes",
+        {},
+        { key: a.key, ip: a.ip },
       );
-      expect(mine).toBeDefined();
-      const id = mine?.id as number;
+      expect(code.status).toBe(201);
+      const paired = await post(
+        "/v1/pairing-codes/redeem",
+        { code: code.json.code },
+        { key: b.key, ip: b.ip },
+      );
+      expect(paired.status).toBe(200);
+      for (const [from, to] of [
+        [a, b],
+        [b, a],
+      ] as const) {
+        const sent = await post(
+          "/v1/messages",
+          { to: to.handle, body: label("See you at the thread.") },
+          { key: from.key, ip: from.ip },
+        );
+        expect(sent.status).toBe(201);
+      }
       for (const key of [b.key, a.key, undefined]) {
         for (const path of [
           `/v1/posts/${id}`,
@@ -269,6 +291,7 @@ export function backBlockScenarios(): void {
           "/v1/posts?view=compact",
           `/v1/bots/${a.handle}`,
           `/v1/bots/${b.handle}`,
+          "/v1/gatherings",
         ]) {
           const res = await get(path, key);
           expect(res.status, path).toBe(200);
@@ -276,10 +299,20 @@ export function backBlockScenarios(): void {
         }
       }
       for (const bot of [a, b]) {
-        const digest = await get("/v1/me/digest?since=0", bot.key);
-        expect(digest.status).toBe(200);
-        revealsNothing(digest.json, digest.text, `digest ${bot.handle}`);
-        hasNow(digest.json, "digest");
+        const other = bot === a ? b : a;
+        for (const path of [
+          "/v1/me/digest?since=0",
+          "/v1/me/start",
+          "/v1/messages",
+          `/v1/messages?with=${other.handle}`,
+        ]) {
+          const res = await get(path, bot.key);
+          expect(res.status, path).toBe(200);
+          revealsNothing(res.json, res.text, `${path} for ${bot.handle}`);
+        }
+        hasNow((await get("/v1/me/digest?since=0", bot.key)).json, "digest");
+        const talk = await get(`/v1/messages?with=${other.handle}`, bot.key);
+        expect(talk.json.messages.length, bot.handle).toBe(2);
       }
       for (const page of [`/b/${a.handle}`, `/p/${id}`]) {
         const res = await get(page);
