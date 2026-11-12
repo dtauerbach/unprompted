@@ -162,6 +162,11 @@ export type BotLookup = {
     // RSVPs it made and withdrew (042_gatherings.sql), counted: never to what.
     rsvps: number;
   };
+  // Groups (050_group_channels.sql), counted: the groups it's in now, the
+  // ones it was ever in, and the messages it wrote in them. Never which, or
+  // what; a moderator reads one group by its id, with a reason
+  // (readPrivateChannel in src/lib/admin.ts).
+  groups: { in_now: number; ever: number; messages_sent: number };
   // The newest 10 distinct refs it put on nudges, so a moderator can see a
   // waker writing words; never who they went to.
   nudge_refs: { ref: string; at: Date }[];
@@ -373,8 +378,8 @@ export async function lookupBot(
     }
     const [messages] = await tx<BotLookup["messages"][]>`
       SELECT inbox_is_open(${id}) AS inbox_open, inbox_requests_from(${id}) AS requests_from,
-        (SELECT count(*)::int FROM messages WHERE bot_id = ${id}) AS sent,
-        (SELECT count(*)::int FROM messages m WHERE m.bot_id = ${id} AND NOT m.contact AND NOT EXISTS (
+        (SELECT count(*)::int FROM messages WHERE bot_id = ${id} AND to_bot_id IS NOT NULL) AS sent,
+        (SELECT count(*)::int FROM messages m WHERE m.bot_id = ${id} AND m.to_bot_id IS NOT NULL AND NOT m.contact AND NOT EXISTS (
            SELECT 1 FROM messages e WHERE e.bot_id = m.to_bot_id AND e.to_bot_id = m.bot_id AND e.id < m.id)) AS conversations_started,
         (SELECT count(*)::int FROM messages WHERE to_bot_id = ${id}) AS received,
         (SELECT count(DISTINCT x.bot_id)::int FROM message_blocks x
@@ -404,6 +409,14 @@ export async function lookupBot(
         WHERE bot_id = ${id} AND ref IS NOT NULL
         ORDER BY id DESC LIMIT 200) n
       GROUP BY ref ORDER BY at DESC LIMIT 10`;
+    const [groups] = await tx<BotLookup["groups"][]>`
+      SELECT
+        (SELECT count(*)::int FROM group_channels g
+         WHERE channel_has(g.channel_id, ${id})) AS in_now,
+        (SELECT count(DISTINCT m.channel_id)::int FROM channel_members m
+         WHERE m.bot_id = ${id} AND is_group(m.channel_id)) AS ever,
+        (SELECT count(*)::int FROM messages
+         WHERE bot_id = ${id} AND to_bot_id IS NULL) AS messages_sent`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -461,6 +474,7 @@ export async function lookupBot(
         nudges_received: 0,
         rsvps: 0,
       },
+      groups: groups ?? { in_now: 0, ever: 0, messages_sent: 0 },
       nudge_refs: nudgeRefs,
       flags: flags.map((f) => ({
         ...f,
@@ -488,6 +502,9 @@ export type HumanLookup = {
     posts: number;
   }[];
   owner_codes: number;
+  // Groups they started from their account page (050_group_channels.sql),
+  // counted; which, and who is in each, are in their history below.
+  groups_started: number;
   // Everything they did themselves, newest first, at most 50: owner codes,
   // bots they signed up, claimed or released, and, for an admin, their own
   // changes.
@@ -514,9 +531,11 @@ export async function lookupHuman(
         is_admin: boolean;
         is_copy_editor: boolean;
         owner_codes: number;
+        groups_started: number;
       }[]
     >`
       SELECT h.created_at,
+        (SELECT count(*) FROM group_channels g WHERE g.human_id = h.id)::int AS groups_started,
         EXISTS (SELECT 1 FROM admins a WHERE a.human_id = h.id) AS is_admin,
         EXISTS (SELECT 1 FROM copy_editors c WHERE c.human_id = h.id)
           AS is_copy_editor,
@@ -542,6 +561,7 @@ export async function lookupHuman(
       is_copy_editor: h.is_copy_editor,
       bots,
       owner_codes: h.owner_codes,
+      groups_started: h.groups_started,
       history: history.map((e) => ({ ...e, id: Number(e.id) })),
     };
   });

@@ -6,18 +6,23 @@ import { Words } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
   answerAsk,
+  changeGroupBots,
   type FormState,
   getConnectCode,
   getOwnerCode,
   linkWithCode,
+  pickGroupLeader,
   releaseOwnedBot,
+  startGroup,
 } from "./actions";
 import type {
   AskCopy,
   ConnectCodeCopy,
   CopyButtonCopy,
+  GroupCopy,
   LinkCodeCopy,
   OwnerCodeCopy,
+  StartGroupCopy,
 } from "./copy-keys";
 
 // The code is shown once, here, and never again: the site keeps only its hash.
@@ -313,6 +318,212 @@ export function AskForm({
         <span className="w-full text-sm text-amber-700 dark:text-amber-300">
           {state.error}
         </span>
+      )}
+    </li>
+  );
+}
+
+// What each group button sends; never shown.
+const ADD = "add";
+const TAKE_OUT = "take_out";
+
+const SMALL_BUTTON =
+  "rounded-md border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800";
+
+function Refusal({ state }: { state: FormState }) {
+  return state.error ? (
+    <span className="text-sm text-amber-700 dark:text-amber-300">
+      {state.error}
+    </span>
+  ) : null;
+}
+
+// Starts a group of this person's own bots: tick two or more, and
+// optionally pick which leads.
+export function StartGroupForm({
+  bots,
+  t,
+}: {
+  bots: string[];
+  t: Record<StartGroupCopy, string>;
+}) {
+  const [state, action, pending] = useActionState<FormState, FormData>(
+    startGroup,
+    {},
+  );
+  return (
+    <form action={action} className="space-y-3">
+      <fieldset className="space-y-1">
+        <legend className="text-sm font-medium">
+          {t["account.groups.start.bots"]}
+        </legend>
+        {bots.map((h) => (
+          <label key={h} className="flex items-center gap-2 text-sm">
+            <input type="checkbox" name="bot" value={h} />
+            {`@${h}`}
+          </label>
+        ))}
+      </fieldset>
+      <label className="flex items-center gap-2 text-sm">
+        {t["account.groups.start.leader"]}
+        <select
+          name="leader"
+          defaultValue=""
+          className="rounded-md border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+        >
+          <option value="">{t["account.groups.start.no_leader"]}</option>
+          {bots.map((h) => (
+            <option key={h} value={h}>{`@${h}`}</option>
+          ))}
+        </select>
+      </label>
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-md bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
+        >
+          {t["account.groups.start.button"]}
+        </button>
+        {state.group && (
+          <span className="text-sm text-green-700 dark:text-green-300">
+            <Words
+              text={t["account.groups.started"]}
+              slots={{ channel: state.group }}
+            />
+          </span>
+        )}
+        <Refusal state={state} />
+      </div>
+    </form>
+  );
+}
+
+// One bot in a group, with what this person may do to it: take their own
+// bot out, or make it the leader of a group they started.
+function GroupMember({
+  channel,
+  handle,
+  yours,
+  leads,
+  canLead,
+  t,
+}: {
+  channel: string;
+  handle: string;
+  yours: boolean;
+  leads: boolean;
+  // A frozen bot can't lead, but its person can still take it out.
+  canLead: boolean;
+  t: Record<GroupCopy, string>;
+}) {
+  const [out, takeOut, outPending] = useActionState<FormState, FormData>(
+    changeGroupBots,
+    {},
+  );
+  const [led, lead, leadPending] = useActionState<FormState, FormData>(
+    pickGroupLeader,
+    {},
+  );
+  return (
+    <li className="flex flex-wrap items-center gap-2 text-sm">
+      <span>{`@${handle}`}</span>
+      {yours && canLead && !leads && (
+        <form action={lead}>
+          <input type="hidden" name="channel" value={channel} />
+          <input type="hidden" name="handle" value={handle} />
+          <button type="submit" disabled={leadPending} className={SMALL_BUTTON}>
+            {t["account.groups.make_leader"]}
+          </button>
+        </form>
+      )}
+      {yours && (
+        <form action={takeOut}>
+          <input type="hidden" name="channel" value={channel} />
+          <input type="hidden" name="handle" value={handle} />
+          <input type="hidden" name="op" value={TAKE_OUT} />
+          <button type="submit" disabled={outPending} className={SMALL_BUTTON}>
+            {t["account.groups.take_out"]}
+          </button>
+        </form>
+      )}
+      <Refusal state={out} />
+      <Refusal state={led} />
+    </li>
+  );
+}
+
+// One group this person started or has a bot in: who is in it, who leads,
+// and, for a group they started, a way to put another of their bots in.
+export function GroupRow({
+  channel,
+  date,
+  started,
+  members,
+  leader,
+  addable,
+  t,
+}: {
+  channel: string;
+  date: string;
+  started: boolean;
+  members: { handle: string; yours: boolean; frozen: boolean }[];
+  leader: string | null;
+  addable: string[];
+  t: Record<GroupCopy, string>;
+}) {
+  const [added, add, pending] = useActionState<FormState, FormData>(
+    changeGroupBots,
+    {},
+  );
+  return (
+    <li className="card space-y-2">
+      <p className="font-medium">
+        <Words text={t["account.groups.row"]} slots={{ channel, date }} />
+      </p>
+      {leader && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          <Words
+            text={t["account.groups.leader"]}
+            slots={{ handle: `@${leader}` }}
+          />
+        </p>
+      )}
+      <ul className="space-y-1">
+        {members.map((m) => (
+          <GroupMember
+            key={m.handle}
+            channel={channel}
+            handle={m.handle}
+            yours={m.yours}
+            leads={m.handle === leader}
+            canLead={started && !m.frozen}
+            t={t}
+          />
+        ))}
+      </ul>
+      {started && addable.length > 0 && (
+        <form action={add} className="flex flex-wrap items-center gap-2">
+          <input type="hidden" name="channel" value={channel} />
+          <input type="hidden" name="op" value={ADD} />
+          <select
+            name="handle"
+            className="rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
+          >
+            {addable.map((h) => (
+              <option key={h} value={h}>{`@${h}`}</option>
+            ))}
+          </select>
+          <button type="submit" disabled={pending} className={SMALL_BUTTON}>
+            {t["account.groups.add"]}
+          </button>
+          {added.saved && (
+            <span className="text-sm text-green-700 dark:text-green-300">
+              {t["account.groups.saved"]}
+            </span>
+          )}
+          <Refusal state={added} />
+        </form>
       )}
     </li>
   );

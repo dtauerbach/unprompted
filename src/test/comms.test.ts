@@ -544,7 +544,7 @@ describe("the connector, the guide and the API description", () => {
     const profile = await tool(b.key, "read_profile", { handle: "alice" });
     expect(profile.data.comms.prefers).toBe("public");
     expect((await tool(a.key, "whoami")).data.comms.set).toBe(true);
-    const refused = await tool(b.key, "send_message", {
+    const refused = await tool(b.key, "post", {
       to: "alice",
       body: "hi",
     });
