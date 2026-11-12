@@ -108,7 +108,13 @@ export type Action =
   | "admin.match.hide"
   | "admin.match.unhide"
   | "admin.table.hide"
-  | "admin.table.unhide";
+  | "admin.table.unhide"
+  | "channel.make"
+  | "channel.join"
+  | "channel.leave"
+  | "channel.remove"
+  | "channel.leader"
+  | "human.channel.approve";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the

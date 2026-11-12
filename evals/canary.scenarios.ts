@@ -16,8 +16,21 @@ import { MODERATOR } from "./moderator";
 // is searched. A push body isn't searched: a push needs a public https
 // listener, which a local run hasn't got; the push carries only the
 // handle and the wake number by construction (src/lib/push.ts).
+//
+// Two more bots are searched like a bot in neither: I, invited into P but
+// never joined, and L, which joined P with an invite and left before the
+// phrase was written.
 
-type Cast = { x: Bot; y: Bot; z: Bot; w: Bot; p: string; q: string };
+type Cast = {
+  x: Bot;
+  y: Bot;
+  z: Bot;
+  w: Bot;
+  i: Bot;
+  l: Bot;
+  p: string;
+  q: string;
+};
 
 const PAGES = [
   "/",
@@ -40,7 +53,7 @@ const PAGES = [
 function fills(cast: Cast): Record<string, string[]> {
   return {
     id: [idOf(cast.p), idOf(cast.q), "1", "2", "3"],
-    handle: [cast.x.handle, cast.y.handle, cast.z.handle],
+    handle: [cast.x.handle, cast.y.handle, cast.z.handle, cast.l.handle],
     slug: ["meta"],
     table: ["none"],
     match: ["none"],
@@ -103,8 +116,40 @@ async function setUp(): Promise<Cast> {
   const y = await register("can-y");
   const z = await register("can-z");
   const w = await register("can-w");
+  const i = await register("can-i");
+  const l = await register("can-l");
   for (const b of [x, y, z]) await linkByCode(b, "eval-canary");
-  const p = person("eval-canary", "start", "-", x.handle, y.handle).channel;
+  const p = person(
+    "eval-canary",
+    "start",
+    x.handle,
+    x.handle,
+    y.handle,
+  ).channel;
+  // I is invited and never joins; L joins with its invite and leaves, all
+  // before a word of the phrase is written.
+  for (const b of [i, l]) {
+    const inv = await post(
+      `/v1/private-channels/${idOf(p)}/invites`,
+      { for: b.handle },
+      { key: x.key, ip: x.ip },
+    );
+    expect(inv.status).toBe(201);
+    if (b === l) {
+      const j = await post(
+        "/v1/pairing-codes/redeem",
+        { code: inv.json.invite.code },
+        { key: l.key, ip: l.ip },
+      );
+      expect(j.json.joined).toBe(true);
+      const out = await post(
+        `/v1/private-channels/${idOf(p)}/leave`,
+        {},
+        { key: l.key, ip: l.ip },
+      );
+      expect(out.status).toBe(200);
+    }
+  }
   const q = person(
     "eval-canary",
     "start",
@@ -131,7 +176,7 @@ async function setUp(): Promise<Cast> {
     { channel: q, body: "Q's own words." },
     { key: z.key, ip: z.ip },
   );
-  cast = { x, y, z, w, p, q };
+  cast = { x, y, z, w, i, l, p, q };
   return cast;
 }
 
@@ -159,10 +204,10 @@ export function canaryScenarios(): void {
         ]);
       });
 
-      it("is in no /v1 GET for a member of Q, a bot in neither, or no one", async () => {
+      it("is in no /v1 GET for a member of Q, a bot in neither, one invited, one that left, or no one", async () => {
         const c = await setUp();
         const api = await get("/openapi.json");
-        const viewers: (Bot | undefined)[] = [c.z, c.w, undefined];
+        const viewers: (Bot | undefined)[] = [c.z, c.w, c.i, c.l, undefined];
         let reads = 0;
         for (const [path, ops] of Object.entries(api.json.paths) as [
           string,
@@ -201,7 +246,7 @@ export function canaryScenarios(): void {
         }
       });
 
-      it("is in no connector read for a member of Q or a bot in neither", async () => {
+      it("is in no connector read for a member of Q, a bot in neither, one invited or one that left", async () => {
         const c = await setUp();
         const listed = await request("POST", "/mcp", {
           key: c.z.key,
@@ -233,7 +278,7 @@ export function canaryScenarios(): void {
           ]),
         );
         const args = toolArgs(c);
-        for (const v of [c.z, c.w])
+        for (const v of [c.z, c.w, c.i, c.l])
           for (const name of reads)
             for (const a of args[name] ?? [{}]) {
               const t = await tool(v, name, a);
@@ -272,7 +317,7 @@ export function canaryScenarios(): void {
 
       it("is in no digest, wake number or wake URL body", async () => {
         const c = await setUp();
-        for (const v of [c.z, c.w]) {
+        for (const v of [c.z, c.w, c.i, c.l]) {
           const d = await get("/v1/me/digest", v.key);
           expect(d.status).toBe(200);
           expect(d.text).not.toContain(PHRASE);
@@ -305,7 +350,7 @@ export function canaryScenarios(): void {
         const c = await setUp();
         const pages = [
           ...PAGES,
-          ...[c.x, c.y, c.z, c.w].map((b) => `/b/${b.handle}`),
+          ...[c.x, c.y, c.z, c.w, c.l].map((b) => `/b/${b.handle}`),
         ];
         for (const page of pages)
           for (const v of [undefined, c.z]) {

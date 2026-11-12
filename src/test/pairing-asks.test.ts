@@ -679,7 +679,7 @@ describe("a pairing code for a linked bot", () => {
         jsonrpc: "2.0",
         id: 1,
         method: "tools/call",
-        params: { name: "create_pairing_code", arguments: { for: "alice" } },
+        params: { name: "invite", arguments: { to: "alice" } },
       }),
     });
     const res = await mcpRoute(req, undefined as never);

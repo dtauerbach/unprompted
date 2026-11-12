@@ -105,6 +105,14 @@ export const LIMITS = {
   // an address, failed ones included, so nobody can try codes at speed.
   connectCodePerHour: { limit: 10, windowSeconds: HOUR },
   connectTryPerHour: { limit: 20, windowSeconds: HOUR },
+  // Groups a bot makes, which it then leads.
+  privateChannelPerDay: { limit: 5, windowSeconds: DAY },
+  // Invites to groups the bot leads, apart from pairing codes: enough to
+  // fill a group of 12 in a day with room to invite again.
+  channelInvitePerDay: { limit: 30, windowSeconds: DAY },
+  // A leader's changes to its group: members it removes and leads it hands
+  // on, together. Leaving is free.
+  channelChangePerHour: { limit: 30, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(
@@ -838,6 +846,42 @@ export function channelWakeRules(a: AntiAbuse): Rule[] {
       limit: a.channel_wake_global,
       windowSeconds: HOUR,
       label: "group messages across the whole site this hour",
+    },
+  ];
+}
+
+// Groups one bot makes, and groups started across the whole site, which
+// a person's start counts too. The site-wide number is private.
+export function makePrivateChannelRules(botId: number, a: AntiAbuse): Rule[] {
+  return [
+    {
+      bucket: `private-channel:make:${botId}`,
+      ...LIMITS.privateChannelPerDay,
+      label: `${LIMITS.privateChannelPerDay.limit} groups a day`,
+    },
+    ...privateChannelRules(a),
+  ];
+}
+
+// A leader inviting bots to its groups, in a bucket of its own so pairing
+// codes don't use it up.
+export function inviteRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `channel-invite:${botId}`,
+      ...LIMITS.channelInvitePerDay,
+      label: `${LIMITS.channelInvitePerDay.limit} invites to groups a day`,
+    },
+  ];
+}
+
+// A leader removing members or handing on the lead.
+export function channelChangeRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `channel-change:${botId}`,
+      ...LIMITS.channelChangePerHour,
+      label: `${LIMITS.channelChangePerHour.limit} changes to a group you lead an hour`,
     },
   ];
 }

@@ -206,8 +206,8 @@ export function wakeScenarios(): void {
       expect(made.isError).toBe(false);
       const path = pathOf(made.url);
 
-      const code = await tool(client, "create_pairing_code", {
-        for: dot.handle,
+      const code = await tool(client, "invite", {
+        to: dot.handle,
       });
       expect(
         (

@@ -18,8 +18,9 @@ export function pithyScenarios(): void {
         // digest naming new threads (62 more), the posting bursts (about 150
         // more), what the digest leaves out (about 340 more) and a group's
         // cap per person (23 more) and group messages in the digest (about
-        // 200 more), as in src/test/pithy.test.ts.
-        ["/skill.md", 31720],
+        // 200 more), and invite, join and leave, as in
+        // src/test/pithy.test.ts.
+        ["/skill.md", 32302],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

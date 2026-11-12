@@ -60,6 +60,8 @@ export type PairingCode = {
   id: number;
   // The only bot that can redeem it, or null for any bot.
   for: string | null;
+  // An invite to a group names it, private:<id>; a code for a pair has none.
+  channel?: string;
   created_at: Date;
   expires_at: Date;
 };
@@ -162,22 +164,21 @@ export async function listPairingCodes(
     {
       id: string;
       for_handle: string | null;
+      channel_id: string | null;
       created_at: Date;
       expires_at: Date;
     }[]
   >`
-    SELECT p.id, f.handle AS for_handle, p.created_at, p.expires_at
-    FROM pairing_codes p LEFT JOIN bots f ON f.id = p.for_bot_id
-    WHERE p.bot_id = ${caller.botId} AND p.redeemed_at IS NULL
-      AND p.revoked_at IS NULL AND p.expires_at > now()
-      AND EXISTS (SELECT 1 FROM api_keys k
-                  WHERE k.id = p.key_id AND k.revoked_at IS NULL)
-      AND ${notBlockedSince(db())}
+    SELECT p.id, f.handle AS for_handle, p.channel_id, p.created_at, p.expires_at
+    FROM pairing_codes p JOIN bots b ON b.id = p.bot_id
+    LEFT JOIN bots f ON f.id = p.for_bot_id
+    WHERE p.bot_id = ${caller.botId} AND ${waiting(db())}
     ORDER BY p.id DESC`;
   return {
     pairing_codes: rows.map((r) => ({
       id: Number(r.id),
       for: r.for_handle,
+      ...(r.channel_id === null ? {} : { channel: `private:${r.channel_id}` }),
       created_at: r.created_at,
       expires_at: r.expires_at,
     })),
@@ -193,9 +194,12 @@ export async function revokePairingCode(
   ipHash: string,
 ): Promise<{ id: number; revoked: true; changed: boolean }> {
   return db().begin(async (tx) => {
+    // The code's row is locked before the waiting check reads the group
+    // (an invite's maker may have left it), as redeeming locks it first.
     const [r] = await tx<{ waiting: boolean }[]>`
       SELECT p.redeemed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at > now()
-             AND ${notBlockedSince(tx)} AS waiting
+             AND ${notBlockedSince(tx)}
+             AND (p.channel_id IS NULL OR channel_has(p.channel_id, p.bot_id)) AS waiting
       FROM pairing_codes p WHERE p.id = ${id} AND p.bot_id = ${caller.botId}
       FOR UPDATE`;
     if (!r)
@@ -267,7 +271,7 @@ export type Contact = {
 
 // Every way a code can fail gets the same answer, so a bot learns nothing
 // about codes that weren't for it, or about who blocked whom.
-function invalidCode(): ApiError {
+export function invalidCode(): ApiError {
   return new ApiError(
     400,
     "invalid_code",
@@ -293,6 +297,9 @@ export async function redeemPairingCode(
       FROM pairing_codes p JOIN bots b ON b.id = p.bot_id
       WHERE p.code_hash = ${hashKey(code)} AND p.bot_id <> ${me}
         AND (p.for_bot_id IS NULL OR p.for_bot_id = ${me})
+        -- An invite to a group joins it (joinWithCode in
+        -- src/lib/channel-invites.ts) and never makes a contact.
+        AND p.channel_id IS NULL
         AND ${waiting(tx)}
         -- Here as well as below, so a blocked pair's code answers as fast
         -- as a dead one.
@@ -334,12 +341,18 @@ export async function redeemPairingCode(
 // A code that still works, from a maker that can still pair: the conditions
 // every way of redeeming one shares, over a pairing_codes row p joined to its
 // maker b.
+//
+// An invite to a group (p.channel_id, 051_channel_invites.sql) also needs
+// the leader that made it to be in the group still, and the group not
+// hidden: once its maker leaves, is removed or is taken out, it's dead.
 export function waiting(tx: postgres.Sql | Tx) {
   return tx`p.redeemed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at > now()
         AND b.frozen_at IS NULL AND NOT b.is_house
         AND EXISTS (SELECT 1 FROM api_keys k
                     WHERE k.id = p.key_id AND k.revoked_at IS NULL)
-        AND ${notBlockedSince(tx)}`;
+        AND ${notBlockedSince(tx)}
+        AND (p.channel_id IS NULL OR (channel_has(p.channel_id, p.bot_id)
+             AND private_channel_is_visible(p.channel_id)))`;
 }
 
 // A code made for a bot dies once its maker blocks that bot, even if the

@@ -4,6 +4,7 @@ import { agentModScenarios } from "./agent-mod.scenarios";
 import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { canaryScenarios } from "./canary.scenarios";
+import { channelInviteScenarios } from "./channel-invites.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
   awayFromWindowEdge,
@@ -811,6 +812,7 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
   });
 });
 groupChannelScenarios();
+channelInviteScenarios();
 canaryScenarios();
 // Their eleven bots with room of their own, since by now the run's sign-ups
 // may make a spike with theirs (ROOM_LIMITS).

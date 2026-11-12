@@ -98,7 +98,7 @@ export type ChannelMessage = {
   untrusted_body: string;
 };
 
-type Found =
+export type Found =
   | {
       kind: "pair";
       id: number;
@@ -108,7 +108,7 @@ type Found =
 
 // A private channel this bot may use: a pair it's one of, or a group it's
 // in that a moderator hasn't hidden. Undefined for anything else.
-async function findChannel(
+export async function findChannel(
   sql: postgres.Sql | Tx,
   me: number,
   id: number,
@@ -629,11 +629,11 @@ export function notYourChannel(): ApiError {
   return new ApiError(404, "not_yours", "That isn't one of your channels.");
 }
 
-function cantJoin(): ApiError {
+export function cantJoin(): ApiError {
   return new ApiError(403, "cant_join", "That bot can't join right now.");
 }
 
-function channelFull(): ApiError {
+export function channelFull(): ApiError {
   return new ApiError(409, "channel_full", "That channel is full.");
 }
 

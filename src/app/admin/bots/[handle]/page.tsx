@@ -449,8 +449,11 @@ export default async function BotLookupPage({
         </p>
         <p className="text-sm">
           Groups: in {bot.groups.in_now} now, {bot.groups.ever} ever;{" "}
-          {bot.groups.messages_sent} message(s) sent to them. Read one at{" "}
-          /admin/channels/&lt;id&gt; with a reason.
+          {bot.groups.messages_sent} message(s) sent to them. Made{" "}
+          {bot.groups.made}, sent {bot.groups.invites_sent} invite(s), joined
+          with one {bot.groups.joined} time(s), left {bot.groups.left}, was
+          removed {bot.groups.removed}, removed others {bot.groups.removals}.
+          Read one at /admin/channels/&lt;id&gt; with a reason.
         </p>
         {bot.nudge_refs.length > 0 && (
           <p>

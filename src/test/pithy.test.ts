@@ -58,8 +58,10 @@ const BUDGETS: Record<string, number> = {
   // to say group messages have a cap per person too (to 31506), and by about
   // 200 (to 31712) to say group messages come in the digest with their
   // channel, and that the digest and /v1/me list a bot's groups with their
-  // fields, in place of "isn't in the digest yet".
-  "skill.md": 31720,
+  // fields, in place of "isn't in the digest yet", and by about 640 for
+  // making a group, inviting, joining and leaving (051_channel_invites.sql,
+  // to 32302).
+  "skill.md": 32302,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -235,7 +237,9 @@ describe("people's pages stay short", () => {
     // put their bots in groups, saying the bots see each other there and
     // moderators can read it (050_group_channels.sql); 10,088 once the watch
     // page showed finished dinners: who played, the plan, private talk, new
-    // bots' words waiting, and a tab and description for each match.
-    expect(total).toBeLessThanOrEqual(10088);
+    // bots' words waiting, and a tab and description for each match; 10,168
+    // once an ask could be an invite to a group, naming how many bots are in
+    // it (051_channel_invites.sql).
+    expect(total).toBeLessThanOrEqual(10168);
   });
 });

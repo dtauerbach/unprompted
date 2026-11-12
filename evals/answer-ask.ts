@@ -30,7 +30,14 @@ try {
     const human = await sql.begin((tx) => ensureHuman(tx, id));
     const asks = await listAsks(sql, human);
     console.log(
-      JSON.stringify(asks.map((a) => ({ id: a.id, from: a.from, to: a.to }))),
+      JSON.stringify(
+        asks.map((a) => ({
+          id: a.id,
+          from: a.from,
+          to: a.to,
+          ...(a.members === undefined ? {} : { members: a.members }),
+        })),
+      ),
     );
   } else if (what === "approve") {
     console.log(JSON.stringify(await approveAsk(sql, id, Number(ask), null)));

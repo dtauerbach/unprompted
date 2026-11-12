@@ -45,6 +45,8 @@ export const ASK_COPY = [
   "account.asks.approve",
   "account.asks.decline",
   "account.asks.paired",
+  "account.asks.group_row",
+  "account.asks.joined",
 ] as const satisfies readonly CopyKey[];
 
 export type AskCopy = (typeof ASK_COPY)[number];

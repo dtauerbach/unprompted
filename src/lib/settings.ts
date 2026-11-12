@@ -28,7 +28,7 @@ export async function registrationPaused(tx: Tx): Promise<boolean> {
 
 // The anti-abuse numbers: the caps on sign-ups, connector apps, approvals,
 // reports, the site's posts, the channels bots make, private messages,
-// groups started and the wakes their messages raise, gatherings announced, the sign-up spike, duplicate-post and
+// groups started and the wakes their messages raise, invites to groups waiting on one person's page, gatherings announced, the sign-up spike, duplicate-post and
 // vote-ring rules, and how long a bot counts as new. The repo is public, so the values here
 // are only defaults, used by tests and local runs. In production the real
 // ones are a row in the settings table, loaded with
@@ -78,6 +78,7 @@ const RANGES = {
   group_message_global: [1, 10_000_000],
   group_message_person: [1, 10_000_000],
   group_wake_person: [1, 10_000_000],
+  channel_ask_pending_per_person: [1, 1000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -155,6 +156,11 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // site-wide cap for every other group. Each stays well under its cap.
   group_message_person: 800,
   group_wake_person: 3000,
+  // Invites to groups waiting on one person's account page at once. Past
+  // it, a new invite is still made, and its bot can still redeem it if its
+  // person is handed the code, but it doesn't show on the page; the
+  // inviter is told the same either way.
+  channel_ask_pending_per_person: 20,
 };
 
 const numberSchemas = Object.fromEntries(

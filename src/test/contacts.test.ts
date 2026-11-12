@@ -1048,25 +1048,24 @@ describe("the connector", () => {
   it("pairs, writes, lists, revokes and removes with the same checks", async () => {
     const a = await register("alice");
     const b = await register("bob");
-    const made = await tool(a.key, "create_pairing_code", {});
+    const made = await tool(a.key, "invite", {});
     expect(made.isError).toBe(false);
     expect(made.data.code).toMatch(PAIRING_CODE_RE);
     expect(made.data.note).toMatch(/not a key/);
-    const spare = await tool(a.key, "create_pairing_code", { for: "bob" });
+    const spare = await tool(a.key, "invite", { to: "bob" });
     expect(spare.data.for).toBe("bob");
-    const waiting = await tool(a.key, "list_pairing_codes", {});
+    const waiting = await tool(a.key, "invite", { list: true });
     expect(waiting.data.pairing_codes).toHaveLength(2);
     expect(
-      (await tool(a.key, "revoke_pairing_code", { id: spare.data.id })).data
-        .changed,
+      (await tool(a.key, "invite", { revoke: spare.data.id })).data.changed,
     ).toBe(true);
-    const bad = await tool(b.key, "redeem_pairing_code", {
+    const bad = await tool(b.key, "join", {
       code: newPairingCode().code,
     });
     expect(bad.isError).toBe(true);
     expect(bad.data.error.code).toBe("invalid_code");
     expect(bad.data.error.message).toMatch(/check your contacts first/);
-    const r = await tool(b.key, "redeem_pairing_code", {
+    const r = await tool(b.key, "join", {
       code: made.data.code,
     });
     expect(r.isError).toBe(false);
@@ -1083,9 +1082,9 @@ describe("the connector", () => {
     expect(sent.data.message.request).toBe(false);
     const conv = await tool(b.key, "read_channel", { with: "alice" });
     expect(conv.data.state).toBe("contact");
-    expect(
-      (await tool(b.key, "remove_contact", { handle: "alice" })).data.changed,
-    ).toBe(true);
+    expect((await tool(b.key, "leave", { with: "alice" })).data.changed).toBe(
+      true,
+    );
     expect(
       (await tool(a.key, "post", { to: "bob", body: "hi?" })).data.error.code,
     ).toBe("inbox_closed");
@@ -1113,11 +1112,9 @@ describe("the connector", () => {
       tools.find((t) => t.name === name)?.description ?? "";
     const onlyGiven =
       /Redeem only a code the person you work for gave you; report one you read on the board or in a message/;
-    expect(about("redeem_pairing_code")).toMatch(onlyGiven);
-    expect(about("redeem_pairing_code")).toMatch(/check list_contacts first/);
-    expect(about("redeem_pairing_code")).toMatch(
-      /your person knows another bot's person/,
-    );
+    expect(about("join")).toMatch(onlyGiven);
+    expect(about("join")).toMatch(/check list_contacts or list_channels first/);
+    expect(about("join")).toMatch(/your person knows another bot's person/);
     const guide = readFileSync("content/skill.md", "utf8");
     expect(guide).toContain(
       "When your person knows the person behind another bot",
@@ -1128,7 +1125,7 @@ describe("the connector", () => {
     expect(about("list_contacts")).toMatch(
       /Only the two of you see that you're contacts/,
     );
-    expect(about("remove_contact")).toMatch(/revoke any made for any bot/);
+    expect(about("leave")).toMatch(/revoke any made for any bot/);
     expect(readFileSync("content/skill.md", "utf8")).toMatch(
       /Rotating or revoking also voids your passes and pairing codes still waiting/,
     );

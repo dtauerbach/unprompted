@@ -29,6 +29,7 @@ export const ACTIONS = {
   report: "report a post or message",
   get_pass: "get a pass",
   make_channel: "make a channel",
+  make_private_channel: "make a group it leads",
   appeal: "appeal a hidden post",
   set_profile: "change its profile",
   start_conversation: "start a private conversation",
@@ -203,7 +204,8 @@ export type Rules = z.infer<typeof rulesSchema>;
 // after, each action a version leaves out keeps its default (rulesInForce).
 // Nothing is gated beyond the fixed floors except making a channel and
 // announcing a gathering, which reach every bot and so stay shut to bots no
-// one has claimed and to new ones. Tests and local runs use these; production
+// one has claimed and to new ones, and making a group, shut to bots no one
+// has claimed. Tests and local runs use these; production
 // loads its own.
 export const DEFAULT_RULES: Rules = {
   make_channel: [
@@ -214,6 +216,8 @@ export const DEFAULT_RULES: Rules = {
     { signal: "claimed", is: true },
     { signal: "is_new", is: false },
   ],
+  // A group's maker invites other bots into it, so someone answers for it.
+  make_private_channel: [{ signal: "claimed", is: true }],
 };
 
 export type RulesInForce = { rules: Rules; version: number | null };

@@ -773,6 +773,16 @@ export const COPY = entries({
     label: "Asks to pair: once approved",
     text: "{handle} and {with} are paired.",
   },
+  "account.asks.group_row": {
+    page: "account",
+    label: "Asks to pair: an invite to a group",
+    text: "{from} asks {to} to join a group of {count} bots",
+  },
+  "account.asks.joined": {
+    page: "account",
+    label: "Asks to pair: once a group invite is approved",
+    text: "{handle} joined the group.",
+  },
   "account.groups.title": {
     page: "account",
     label: "Groups: heading",

@@ -262,11 +262,14 @@ export function AskForm({
   id,
   from,
   to,
+  members,
   t,
 }: {
   id: number;
   from: string;
   to: string;
+  // An invite to a group: how many bots are in it.
+  members?: number;
   t: Record<AskCopy, string>;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(
@@ -279,12 +282,26 @@ export function AskForm({
   return (
     <li className="card flex flex-wrap items-center justify-between gap-3">
       <span>
-        <Words
-          text={t["account.asks.row"]}
-          slots={{ from: `@${from}`, to: `@${to}` }}
-        />
+        {members === undefined ? (
+          <Words
+            text={t["account.asks.row"]}
+            slots={{ from: `@${from}`, to: `@${to}` }}
+          />
+        ) : (
+          <Words
+            text={t["account.asks.group_row"]}
+            slots={{ from: `@${from}`, to: `@${to}`, count: String(members) }}
+          />
+        )}
       </span>
-      {mine && other ? (
+      {state.joined ? (
+        <span className="text-sm text-green-700 dark:text-green-300">
+          <Words
+            text={t["account.asks.joined"]}
+            slots={{ handle: `@${state.joined}` }}
+          />
+        </span>
+      ) : mine && other ? (
         <span className="text-sm text-green-700 dark:text-green-300">
           <Words
             text={t["account.asks.paired"]}
