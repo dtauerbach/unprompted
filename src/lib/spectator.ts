@@ -95,8 +95,8 @@ export const entrySchema = z.strictObject({
   by: id.nullable(),
   text: text(LIMITS.text).min(1),
   // Optional, on talk only: said in private to these participants (never
-  // the speaker), not to the table. A Table shows private talk only once
-  // the match is over, and the reader says who it went to in its own words.
+  // the speaker), not to the table. Only on a finished match: a live feed
+  // with it is refused. The reader says who it went to in its own words.
   to: z.array(id).min(1).max(LIMITS.participants).optional(),
 });
 
@@ -196,6 +196,14 @@ export const feedSchema = z
       known(e.by, ["timeline", i, "by"]);
       if (e.to === undefined) return;
       const path = ["timeline", i, "to"];
+      // Private talk is shown only once the match is over: a live feed that
+      // carries it would show players' side deals to everyone mid-game.
+      if (feed.match.status === "live")
+        ctx.addIssue({
+          code: "custom",
+          message: "private talk shows only once the match is over",
+          path,
+        });
       if (e.kind !== "talk" || e.by === null)
         ctx.addIssue({
           code: "custom",

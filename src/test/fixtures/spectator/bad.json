@@ -190,6 +190,10 @@
     "value": "TOO_MANY_IDS"
   },
   "agreed on a live match": { "path": ["match", "agreed"], "value": true },
+  "private talk on a live match": {
+    "path": ["timeline", 1, "to"],
+    "value": ["basil"]
+  },
   "agreed as a string": {
     "base": "over.json",
     "path": ["match", "agreed"],

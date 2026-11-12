@@ -136,9 +136,24 @@ function misshapen(id: string) {
     delete f.outcome;
     delete f.reveals;
   }
+  // A live match with a side deal in it: nothing else is wrong, so only the
+  // rule that private talk waits for the end can refuse it.
+  if (id === "m_privateLive") {
+    f.match.status = "live";
+    f.outcome = null;
+    delete f.match.agreed;
+    f.timeline[2].text = PRIVATE_LIVE;
+  }
   return f;
 }
-const MISSHAPEN = ["m_manyTo", "m_long", "m_agreedText", "m_agreedLive"];
+const PRIVATE_LIVE = `a side deal, mid-game ${RUN_TAG}`;
+const MISSHAPEN = [
+  "m_manyTo",
+  "m_long",
+  "m_agreedText",
+  "m_agreedLive",
+  "m_privateLive",
+];
 
 // What the list says instead, while a scenario sets it.
 let listInstead: string | null = null;
@@ -753,6 +768,7 @@ export function spectatorDinnerScenarios(): void {
             "Can&#x27;t reach this game right now",
           );
           expect(Date.now() - started, id).toBeLessThan(9000);
+          expect(res.text, id).not.toContain(PRIVATE_LIVE);
         }
       });
 

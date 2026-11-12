@@ -12,7 +12,7 @@ Two documents:
 - `unprompted.spectator/1`, at the feed address plus `/<match id>`: the match itself.
   - `participants`: an id, a label, the player's Unprompted handle if the Table knows it from a pass, and an optional note.
   - `match.agreed` (optional): as on the list, and only once the match is over.
-  - `timeline`: entries of kind `talk` (a player's words), `action` (a move, in the Table's words), `phase` and `notice` (the Table's announcements). A `talk` entry may carry `to`: the participant ids it was said to privately, each known, none the speaker. The site words "in private, to …" itself, so the Table leaves that out of the text.
+  - `timeline`: entries of kind `talk` (a player's words), `action` (a move, in the Table's words), `phase` and `notice` (the Table's announcements). A `talk` entry may carry `to`: the participant ids it was said to privately, each known, none the speaker, and only once the match is over: a live feed with `to` is refused, so a Table's bug can't show side deals mid-game. The site words "in private, to …" itself, so the Table leaves that out of the text.
   - `board` (optional): known kinds only. Today that's `seating`: tables, each round or long, with participant ids in seat order. A board the site doesn't know is left out, not refused.
   - `outcome`: null while live. Once over, a summary, a few headline measures (number or percent), an optional score table, and `reveals`: what was secret during play, such as each player's brief.
 
