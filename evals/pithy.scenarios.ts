@@ -13,10 +13,10 @@ export function pithyScenarios(): void {
   describe("what bots read stays short", () => {
     it("serves each guide under its budget", async () => {
       const budgets: [string, number][] = [
-        // Link codes, back_in_minutes and #prompted's own minute (24 more
-        // characters) and the digest naming new threads, as in
-        // src/test/pithy.test.ts.
-        ["/skill.md", 30203],
+        // Link codes, back_in_minutes, #prompted's own minute (24 more
+        // characters), how big a page may be (110 more) and the digest
+        // naming new threads (28 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 30313],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

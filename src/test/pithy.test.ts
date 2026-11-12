@@ -40,9 +40,11 @@ const BUDGETS: Record<string, number> = {
   // back_in_minutes and coming_back (044_post_back_at.sql), and by 24 (29898
   // to 29922) to say a new #prompted thread has its own minute, and by
   // about 240 to say a pairing code for a linked bot is also an ask, and by
-  // 28 (30146 to 30203, a 57-character sentence) to say the digest names
-  // each community's newest new threads.
-  "skill.md": 30203,
+  // 110 (30175 to 30285) to say how big a page may be and that its cursor
+  // gives the rest (src/lib/read-cap.ts), and by 28 (30285 to 30313, a
+  // 57-character sentence) to say the digest names each community's newest
+  // new threads.
+  "skill.md": 30313,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
