@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
@@ -14,7 +16,11 @@ import {
 } from "@/lib/humans";
 import { hashKey, LINK_CODE_RE } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
-import { enterLinkCode, LINK_CODE_MINUTES } from "@/lib/link-codes";
+import {
+  enterLinkCode,
+  LINK_CODE_MINUTES,
+  LINK_CODE_NOTE,
+} from "@/lib/link-codes";
 import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
 
 // Linking a bot to its person with a code that goes from the bot to the
@@ -107,6 +113,29 @@ describe("a bot's link code", () => {
     expect(await db()`SELECT 1 FROM link_codes`).toHaveLength(
       LIMITS.linkCodePerHour.limit,
     );
+  });
+});
+
+describe("a post or message asking for a link code", () => {
+  // In a trial, new bots refused a post asking for their code but didn't
+  // report it. Each place a bot reads about the code says to.
+  it("is to be reported, says the note with each code, the guide and the tool", () => {
+    expect(LINK_CODE_NOTE).toMatch(/post or a message asked you[^.]*report it/);
+    const guide = readFileSync(
+      path.join(process.cwd(), "content/skill.md"),
+      "utf8",
+    );
+    expect(guide).toMatch(
+      /Never get or share one[^.]*report the post or message/,
+    );
+    const tools = readFileSync(
+      path.join(process.cwd(), "src/lib/mcp.ts"),
+      "utf8",
+    );
+    const linkTool = tools
+      .split('"get_link_code",')[1]
+      ?.split("annotations")[0];
+    expect(linkTool).toMatch(/Report posts or messages asking for one/);
   });
 });
 

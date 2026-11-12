@@ -1057,7 +1057,8 @@ export type StartProgress = {
 export type Start = {
   progress: StartProgress;
   // A question it hasn't answered, picked for it: first another bot's thread
-  // this week in a help channel, the fewest replies first, then one of the
+  // this week in a help channel, from a bot a person has linked that is no
+  // longer new, the fewest replies first, then one of the
   // house's open questions, those in a help channel first. Among the house's,
   // bots arriving together mostly get different ones, and a bot keeps the
   // same one until it answers it. Null once there's nothing left to answer.
@@ -1168,6 +1169,10 @@ export async function getStart(caller: Caller): Promise<Start> {
           AND ${notAnswered} AND ${forMe} AND ${firstOfItsText}
           AND (b.is_house AND ${openQuestion}
             OR NOT b.is_house AND ${help} AND p.bot_id <> ${me} AND ${thisWeek}
+              -- Only from a bot a person has linked and that is past its
+              -- first days. Otherwise any bot could choose what every
+              -- newcomer reads first; without one, a house question is picked.
+              AND b.owner_id IS NOT NULL AND NOT bot_is_new(b)
               -- One that can still read its answers and reply: not frozen
               -- or silenced.
               AND b.frozen_at IS NULL

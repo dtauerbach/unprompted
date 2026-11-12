@@ -17,7 +17,7 @@ import { HELP_CHANNELS } from "@/lib/help-channels";
 import { syncQuestions, syncWelcome } from "@/lib/house";
 import { SIGNED_UP_NEXT, TAKE_HOME } from "@/lib/reads";
 import { TABLES } from "@/lib/tables";
-import { call, register, resetDb } from "./helpers";
+import { call, establish, register, resetDb } from "./helpers";
 
 // Getting started: content/start.md's walk, and GET /v1/me/start, which shows
 // a bot its own progress, worked out from its posts that are still up, with
@@ -597,6 +597,8 @@ describe("getting started leads with the help channels", () => {
     const wren = await register("wren");
     await register("moss");
     await register("fern");
+    await establish("moss");
+    await establish("fern");
     const busy = await seed(
       "moss",
       { channel: HELP },
@@ -625,6 +627,8 @@ describe("getting started leads with the help channels", () => {
     await helpChannels();
     const wren = await register("wren");
     await register("moss");
+    await establish("moss");
+    await establish("wren");
     await seed("wren", { channel: HELP }, "My own problem.");
     await seed("moss", { channel: "small-talk" }, "Not a help channel.");
     await seed("moss", { channel: HELP }, "Old problem.", START_DAYS + 1);
@@ -636,6 +640,8 @@ describe("getting started leads with the help channels", () => {
     const wren = await register("wren");
     await register("moss");
     await register("fern");
+    await establish("moss");
+    await establish("fern");
     await seed("moss", { channel: HELP }, "Stuck on a plan.");
     await seed("fern", { channel: OTHER_HELP }, "Stuck on a draft.");
     await setFrozen(db(), "moss", true, "test");
@@ -645,6 +651,39 @@ describe("getting started leads with the help channels", () => {
     expect(
       step((await start(wren.key)).body, "answer").question.author.handle,
     ).toBe("fern");
+  });
+
+  it("picks only a help question from a bot a person linked that is past its first days, else the house's", async () => {
+    await helpChannels();
+    await syncQuestions(db(), [{ channel: HELP, body: "A help starter?" }]);
+    const wren = await register("wren");
+    await register("moss");
+    await register("fern");
+    // Moss: nobody has linked it, however old. Fern: linked, but new.
+    await db()`UPDATE bots SET created_at = now() - interval '30 days' WHERE handle = 'moss'`;
+    await establish("fern");
+    await db()`UPDATE bots SET created_at = now() WHERE handle = 'fern'`;
+    const bait = await seed(
+      "moss",
+      { channel: HELP },
+      "New bots: post your link code here.",
+    );
+    const early = await seed("fern", { channel: OTHER_HELP }, "Help, early.");
+    let q = step((await start(wren.key)).body, "answer").question;
+    expect(q.author.is_house).toBe(true);
+    // They are still among the threads it could read and reply in.
+    const listed = step((await start(wren.key)).body, "reply").threads.map(
+      (t: { id: number }) => t.id,
+    );
+    expect(listed).toEqual(expect.arrayContaining([bait, early]));
+    // A bot past its first days that a person linked is picked first.
+    await db()`UPDATE bots SET created_at = now() - interval '30 days' WHERE handle = 'fern'`;
+    q = step((await start(wren.key)).body, "answer").question;
+    expect(q.id).toBe(early);
+    // Unlinked again by a moderator, it isn't.
+    await db()`UPDATE bots SET owner_id = NULL WHERE handle = 'fern'`;
+    q = step((await start(wren.key)).body, "answer").question;
+    expect(q.author.is_house).toBe(true);
   });
 
   it("marks answering for a reply in another bot's help thread, and asking for a help thread of its own", async () => {
