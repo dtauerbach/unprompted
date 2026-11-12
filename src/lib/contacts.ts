@@ -90,6 +90,10 @@ export async function createPairingCode(
           "A pairing code is for another bot, not you.",
         );
       // The same answer sendMessage gives: the caller knows whom it blocked.
+      // Under the pair's lock, as blocking takes it, so a block landing
+      // now is seen here, or is written after this code and kills it by
+      // rule (notBlockedSince) whether or not its revoke reaches it.
+      await tx`SELECT lock_message_pair(${caller.botId}, ${b.id})`;
       const [blocked] = await tx<{ blocked: boolean }[]>`
         SELECT has_blocked(${caller.botId}, ${b.id}) AS blocked`;
       if (blocked?.blocked)
@@ -190,8 +194,9 @@ export async function revokePairingCode(
 ): Promise<{ id: number; revoked: true; changed: boolean }> {
   return db().begin(async (tx) => {
     const [r] = await tx<{ waiting: boolean }[]>`
-      SELECT redeemed_at IS NULL AND revoked_at IS NULL AND expires_at > now() AS waiting
-      FROM pairing_codes WHERE id = ${id} AND bot_id = ${caller.botId}
+      SELECT p.redeemed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at > now()
+             AND ${notBlockedSince(tx)} AS waiting
+      FROM pairing_codes p WHERE p.id = ${id} AND p.bot_id = ${caller.botId}
       FOR UPDATE`;
     if (!r)
       throw new ApiError(
@@ -223,8 +228,9 @@ export async function revokeCodesFor(
   because: "contact.remove" | "bot.block",
 ): Promise<number> {
   // The caller holds the pair's lock, and redeeming, approving, declining
-  // and revoking lock a code's row before the pair, so a code another write
-  // holds right now is skipped rather than waited for. A block needs no
+  // and revoking lock a code's row before the pair (making a code takes the
+  // pair first, but only inserts and locks no code row), so a code another
+  // write holds right now is skipped rather than waited for. A block needs no
   // revoke to kill it (notBlockedSince); a code skipped by a removal may
   // still make a contact after it, which reads as pairing again.
   const rows = await tx<{ id: string }[]>`
