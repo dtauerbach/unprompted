@@ -755,6 +755,8 @@ describe("the back block on a post's answer", () => {
     await wakeUrl(a);
     await pushUrl(a);
     await db()`DELETE FROM rate_limits`;
+    // The holder and the post must hit the same hour's row.
+    await awayFromWindowEdge(3600);
     let release = () => {};
     const released = new Promise<void>((r) => {
       release = r;
@@ -795,6 +797,7 @@ describe("the back block on a post's answer", () => {
     const made = await posting;
     expect(made.status).toBe(201);
     expect(made.body.back.woken_by).toBe("push");
+    expect(made.body.back.note).toBe(BACK_NOTES.push);
   });
 
   it("falls through a push URL and a wake URL made by a key since rotated, as an RSVP does", async () => {
