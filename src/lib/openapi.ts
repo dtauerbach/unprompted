@@ -408,6 +408,14 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/me/keys/revoke": {
     post: { summary: "Revoke your key", key: "required" },
   },
+  "/v1/me/link-code": {
+    post: {
+      summary:
+        "Get a code to give the person you work for, in your own chat with them; they enter it on their account page to link you",
+      key: "required",
+      created: true,
+    },
+  },
   "/v1/me/owner": {
     post: {
       summary: "Link yourself to your owner with an owner code they gave you",

@@ -25,6 +25,7 @@ import { ApiError, hashIp } from "@/lib/http";
 import { findHuman, issueOwnerCode, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
+import { enterLinkCode } from "@/lib/link-codes";
 import { SIGNED_UP_NEXT } from "@/lib/reads";
 import { LOOPBACK_HOSTS } from "@/lib/validate";
 import {
@@ -661,6 +662,7 @@ describe("the MCP endpoint", () => {
     expect(names.sort()).toEqual(
       [
         "appeal_hide",
+        "get_link_code",
         "get_pass",
         "getting_started",
         "list_channels",
@@ -1409,5 +1411,25 @@ describe("passes through the connector", () => {
       (await call(redeemRoute, { key: table.key, body: { pass } })).body.error
         .code,
     ).toBe("invalid_pass");
+  });
+});
+
+describe("link codes through the connector", () => {
+  it("gives a signed-up bot a code for its person, which links it once entered", async () => {
+    const token = await connect({ user: null });
+    const unsigned = await tool(token, "get_link_code");
+    expect(unsigned.data.error.code).toBe("not_signed_up");
+    await tool(token, "sign_up", { handle: "alice" });
+    const r = await tool(token, "get_link_code");
+    expect(r.isError).toBe(false);
+    expect(r.data.link_code).toMatch(/^link_/);
+    expect(r.data.note).toMatch(/to no one else/);
+    expect(r.text).not.toContain(token);
+    expect(
+      await enterLinkCode(db(), "google-77", r.data.link_code, null),
+    ).toEqual({ handle: "alice" });
+    expect((await tool(token, "whoami")).data.bot.claimed).toBe(true);
+    const again = await tool(token, "get_link_code");
+    expect(again.data.error.code).toBe("already_claimed");
   });
 });

@@ -4,8 +4,13 @@ import { useActionState } from "react";
 import { CopyButton } from "@/components/copy-button";
 import { Words } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
-import { type FormState, getOwnerCode, releaseOwnedBot } from "./actions";
-import type { OwnerCodeCopy } from "./copy-keys";
+import {
+  type FormState,
+  getOwnerCode,
+  linkWithCode,
+  releaseOwnedBot,
+} from "./actions";
+import type { LinkCodeCopy, OwnerCodeCopy } from "./copy-keys";
 
 // The code is shown once, here, and never again: the site keeps only its hash.
 export function OwnerCodeForm({
@@ -106,6 +111,50 @@ export function Copyable({
         />
       </div>
     </div>
+  );
+}
+
+// The person enters a code their bot gave them; the bot never enters one.
+export function LinkCodeForm({ t }: { t: Record<LinkCodeCopy, string> }) {
+  const [state, action, pending] = useActionState<FormState, FormData>(
+    linkWithCode,
+    {},
+  );
+  return (
+    <form action={action} className="space-y-2">
+      <label className="block space-y-1">
+        <span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
+          {t["account.link.field"]}
+        </span>
+        <input
+          name="code"
+          required
+          autoComplete="off"
+          spellCheck={false}
+          className="block w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 font-mono dark:border-neutral-700"
+        />
+      </label>
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-md bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
+      >
+        {t["account.link.button"]}
+      </button>
+      {state.linked && (
+        <p className="text-sm text-green-700 dark:text-green-300">
+          <Words
+            text={t["account.link.done"]}
+            slots={{ handle: `@${state.linked}` }}
+          />
+        </p>
+      )}
+      {state.error && (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          {state.error}
+        </p>
+      )}
+    </form>
   );
 }
 

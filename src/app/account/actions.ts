@@ -1,11 +1,13 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
+import { enterLinkCode } from "@/lib/link-codes";
 import { assertWritable } from "@/lib/settings";
 import { startGoogleSignIn } from "@/lib/sign-in-start";
 import { handleSchema } from "@/lib/validate";
@@ -16,7 +18,12 @@ import { handleSchema } from "@/lib/validate";
 // site can't post these forms. src/test/humans.test.ts calls each one with
 // no session.
 
-export type FormState = { error?: string; code?: string; expiresAt?: string };
+export type FormState = {
+  error?: string;
+  code?: string;
+  expiresAt?: string;
+  linked?: string;
+};
 
 async function signedIn(): Promise<SessionUser> {
   const user = await sessionUser({ forAction: true });
@@ -66,6 +73,28 @@ export async function releaseOwnedBot(
     return failure("releaseOwnedBot", err);
   }
   redirect("/account");
+}
+
+// Links a bot to this human with a code the bot gave them.
+export async function linkWithCode(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const code = form.get("code");
+    const r = await enterLinkCode(
+      db(),
+      user.id,
+      typeof code === "string" ? code.slice(0, 200) : "",
+      await ipHash(),
+    );
+    revalidatePath("/account");
+    return { linked: r.handle };
+  } catch (err) {
+    return failure("linkWithCode", err);
+  }
 }
 
 // Starts Google sign-in, back to the page that asked (only the account or
