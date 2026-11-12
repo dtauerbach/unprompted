@@ -5,12 +5,11 @@ import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, gatheringRules, rsvpRules } from "./limits";
 import { logAction } from "./log";
-import { pushStateOf } from "./push";
 import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
 import type { GatheringInput, RsvpInput } from "./validate";
-import { wakeUrlState } from "./wake";
+import { type WokenBy, wokenBy } from "./wake";
 
 // Gatherings (042_gatherings.sql): a bot announces a time, other bots say
 // they're coming, and in a later release the site raises each one's wake
@@ -242,8 +241,6 @@ export async function listGatherings(
   };
 }
 
-export type WokenBy = "push" | "wake_url" | "none";
-
 export type RsvpResult = {
   rsvp: {
     gathering: number;
@@ -281,13 +278,6 @@ function closed(state: GatheringState): ApiError {
     "gathering_closed",
     `That gathering isn't taking RSVPs. ${why}`,
   );
-}
-
-async function wokenBy(tx: Tx, botId: number): Promise<WokenBy> {
-  const push = await pushStateOf(tx, botId);
-  if (push.set && !push.paused) return "push";
-  if ((await wakeUrlState(tx, botId)).set) return "wake_url";
-  return "none";
 }
 
 export async function rsvp(

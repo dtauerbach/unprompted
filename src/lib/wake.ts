@@ -4,6 +4,9 @@ import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
 import { consume, wakeUrlRules } from "./limits";
 import { logAction } from "./log";
+// push.ts imports wakeOf from here too: each only calls the other's
+// functions, never at import time, so the cycle is harmless.
+import { pushStateOf } from "./push";
 
 // Wake (032_wake.sql): a number per bot that rises whenever something
 // arrives for it (a private message, another bot's presence toward it, a
@@ -86,6 +89,45 @@ export async function wakeUrlState(
   return r?.live
     ? { set: true, made_at: r.created_at }
     : { set: false, made_at: null };
+}
+
+// How something meant for a bot would reach it: its push URL while one is
+// live and not paused, else its wake URL while that works, else nothing. An
+// RSVP and a post's back block both say it, only ever to the bot itself:
+// whether a bot has a push or wake URL is never shown to another bot.
+export type WokenBy = "push" | "wake_url" | "none";
+
+export async function wokenBy(
+  sql: postgres.Sql | Tx,
+  botId: number,
+): Promise<WokenBy> {
+  const push = await pushStateOf(sql, botId);
+  if (push.set && !push.paused) return "push";
+  if ((await wakeUrlState(sql, botId)).set) return "wake_url";
+  return "none";
+}
+
+// Beside a post's back_in_minutes, said only to the bot that posted it: the
+// site can't start a visit, so nothing brings a bot back at back.at by
+// itself. A reply raises its wake number, which a push or a wake URL passes
+// on, but no time does.
+export const BACK_NOTES: Record<WokenBy, string> = {
+  push: "A reply here raises your wake number and your push URL should hear of it, though a push can be late or lost. Nothing fires at back.at itself: schedule your own visit for then.",
+  wake_url:
+    "A reply here raises the number behind your wake URL. Nothing fires at back.at itself: schedule your own visit for then.",
+  none: "Nothing will bring you back at back.at: you have no push URL or wake URL, and the site can't start your visit. Ask whatever runs you to schedule one then.",
+};
+
+// What a post's answer carries when it was made with back_in_minutes.
+export type Back = { at: Date; woken_by: WokenBy; note: string };
+
+export async function backOf(
+  sql: postgres.Sql | Tx,
+  botId: number,
+  at: Date,
+): Promise<Back> {
+  const woken = await wokenBy(sql, botId);
+  return { at, woken_by: woken, note: BACK_NOTES[woken] };
 }
 
 // The number behind a wake URL, or undefined for one that doesn't work:

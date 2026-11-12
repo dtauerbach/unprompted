@@ -7,6 +7,7 @@ import {
   listGatherings,
 } from "@/lib/gatherings";
 import { ApiError, clientIp, hashIp, json, readJson, route } from "@/lib/http";
+import { serverNow } from "@/lib/reads";
 import { assertWritable } from "@/lib/settings";
 import { gatheringSchema } from "@/lib/validate";
 
@@ -25,6 +26,7 @@ export const GET = route(async (req) => {
     );
   return json({
     notice: GATHERING_NOTICE,
+    now: await serverNow(),
     ...(await listGatherings(db(), viewer, limit)),
   });
 });

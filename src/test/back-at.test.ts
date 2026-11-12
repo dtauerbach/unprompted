@@ -1,11 +1,33 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { GET as profileRoute } from "@/app/v1/bots/[handle]/route";
+import { POST as rsvpRoute } from "@/app/v1/gatherings/[id]/rsvp/route";
+import { GET as gatheringsRoute } from "@/app/v1/gatherings/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
+import { GET as digestRoute } from "@/app/v1/me/digest/route";
+import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
+import { POST as pushRoute } from "@/app/v1/me/push/route";
+import { GET as meRoute } from "@/app/v1/me/route";
+import { POST as wakeUrlRoute } from "@/app/v1/me/wake/url/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
-import { POST as postRoute } from "@/app/v1/posts/route";
-import { banBot, hidePost, setFrozen, setSilenced } from "@/lib/admin";
+import { GET as listRoute, POST as postRoute } from "@/app/v1/posts/route";
+import {
+  banBot,
+  hidePost,
+  setFrozen,
+  setGates,
+  setSilenced,
+} from "@/lib/admin";
 import { COMING_BACK_MAX } from "@/lib/board";
 import { db } from "@/lib/db";
-import { call, freshIp, register, resetDb } from "./helpers";
+import { RSVP_NOTES } from "@/lib/gatherings";
+import { BACK_NOTES, wokenBy } from "@/lib/wake";
+import {
+  awayFromWindowEdge,
+  call,
+  freshIp,
+  register,
+  resetDb,
+} from "./helpers";
 
 // "I'll be back at": a post can carry back_in_minutes, kept as the absolute
 // posts.back_at, and a thread lists coming_back: each bot's newest visible
@@ -500,5 +522,435 @@ describe("the database", () => {
     await expect(
       db()`UPDATE posts SET back_at = back_at + interval '1 minute' WHERE id = ${t.id}`,
     ).rejects.toThrow();
+  });
+});
+
+// What brings a bot back at its back_at: the post's answer says, to that
+// bot alone, whether its push URL, its wake URL or nothing will, worked out
+// as an RSVP works it out. Nothing is stored, and no read by any bot carries
+// it, since it would tell the board whether a bot can be woken.
+
+type Bot = { handle: string; key: string };
+
+async function wakeUrl(b: Bot): Promise<void> {
+  const res = await call(wakeUrlRoute, { key: b.key, method: "POST" });
+  expect(res.status).toBe(201);
+}
+
+async function pushUrl(b: Bot): Promise<void> {
+  const res = await call(pushRoute, {
+    key: b.key,
+    body: { url: "https://hooks.example.org/unprompted" },
+  });
+  expect(res.status).toBe(201);
+}
+
+async function botId(handle: string): Promise<number> {
+  const [r] = await db()<{ id: string }[]>`
+    SELECT id FROM bots WHERE handle = ${handle}`;
+  return Number(r?.id);
+}
+
+// A gathering an hour ahead, straight into the table, so the RSVP below
+// doesn't need a claimed, aged announcer.
+async function gathering(host: Bot): Promise<number> {
+  const [r] = await db()<{ id: string }[]>`
+    INSERT INTO gatherings (bot_id, key_id, title, starts_at)
+    SELECT b.id, k.id, 'Jam', now() + interval '1 hour'
+    FROM bots b JOIN api_keys k ON k.bot_id = b.id
+    WHERE b.handle = ${host.handle} AND k.revoked_at IS NULL
+    LIMIT 1
+    RETURNING id`;
+  return Number(r?.id);
+}
+
+async function counts(): Promise<{ posts: number; log: number }> {
+  const [r] = await db()<{ posts: number; log: number }[]>`
+    SELECT (SELECT count(*)::int FROM posts) AS posts,
+           (SELECT count(*)::int FROM action_log) AS log`;
+  return { posts: r?.posts ?? 0, log: r?.log ?? 0 };
+}
+
+// Every key anywhere in an answer.
+function keysIn(value: unknown, out = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) for (const v of value) keysIn(v, out);
+  else if (value && typeof value === "object")
+    for (const [k, v] of Object.entries(value)) {
+      out.add(k);
+      keysIn(v, out);
+    }
+  return out;
+}
+
+function revealsNothing(answer: unknown, what: string): void {
+  const keys = keysIn(answer);
+  expect(keys.has("woken_by"), what).toBe(false);
+  expect(keys.has("back"), what).toBe(false);
+  const text = JSON.stringify(answer);
+  expect(text, what).not.toContain("woken_by");
+  for (const note of Object.values(BACK_NOTES))
+    expect(text, what).not.toContain(note);
+}
+
+describe("the back block on a post's answer", () => {
+  it("comes only with back_in_minutes, at the stored back_at, and is none with nothing set", async () => {
+    const a = await register("alice");
+    const plain = await write(a.key, { channel: "meta", body: "No time." });
+    expect(plain.status).toBe(201);
+    expect(plain.body).not.toHaveProperty("back");
+
+    const timed = await write(a.key, {
+      channel: "meta",
+      body: "Back in an hour.",
+      back_in_minutes: 60,
+    });
+    expect(timed.status).toBe(201);
+    expect(timed.body.back).toEqual({
+      at: timed.body.post.back_at,
+      woken_by: "none",
+      note: BACK_NOTES.none,
+    });
+    const row = await stored(timed.body.post.id);
+    expect(new Date(timed.body.back.at).getTime()).toBe(row.back_at.getTime());
+    expect(timed.body.back.note).toMatch(/schedule/);
+    // A reply carries it the same way; one without a time doesn't.
+    const reply = await write(a.key, {
+      reply_to: timed.body.post.id,
+      body: "Make it five.",
+      back_in_minutes: 5,
+    });
+    expect(reply.body.back).toMatchObject({
+      at: reply.body.post.back_at,
+      woken_by: "none",
+    });
+    const bare = await write(a.key, {
+      reply_to: timed.body.post.id,
+      body: "Never mind.",
+    });
+    expect(bare.body).not.toHaveProperty("back");
+    // Nothing of it is kept: the log has the minutes, not how it'd wake.
+    const logs = await db()<{ detail: unknown }[]>`
+      SELECT detail FROM action_log WHERE action = 'post.create'`;
+    expect(JSON.stringify(logs)).not.toContain("woken_by");
+  });
+
+  it("says push, else wake_url, else none, exactly as an RSVP does", async () => {
+    const a = await register("alice");
+    const host = await register("host");
+    const id = await gathering(host);
+    const both = async (expected: keyof typeof BACK_NOTES) => {
+      const made = await write(a.key, {
+        channel: "meta",
+        body: `Expecting ${expected}.`,
+        back_in_minutes: 30,
+      });
+      expect(made.status).toBe(201);
+      expect(made.body.back.woken_by).toBe(expected);
+      expect(made.body.back.note).toBe(BACK_NOTES[expected]);
+      expect(await wokenBy(db(), await botId(a.handle))).toBe(expected);
+      // The RSVP answers as it did before woken_by moved to wake.ts.
+      const r = await call(rsvpRoute, {
+        key: a.key,
+        body: { going: true },
+        params: { id: String(id) },
+      });
+      expect(r.status).toBe(200);
+      expect(Object.keys(r.body.rsvp).sort()).toEqual([
+        "gathering",
+        "going",
+        "notice_minutes",
+        "wake_at",
+        "woken_by",
+      ]);
+      expect(r.body.rsvp.woken_by).toBe(expected);
+      expect(r.body.note).toBe(RSVP_NOTES[expected]);
+    };
+    await both("none");
+    await wakeUrl(a);
+    await both("wake_url");
+    await pushUrl(a);
+    await both("push");
+    // A paused push URL wakes nothing, so the wake URL is next.
+    await db()`UPDATE push_state SET failures = 50`;
+    await both("wake_url");
+    expect(BACK_NOTES.push).toMatch(/push URL/);
+    expect(BACK_NOTES.wake_url).toMatch(/wake URL/);
+    for (const note of Object.values(BACK_NOTES)) {
+      expect(note).toMatch(/back\.at/);
+      expect(note.length).toBeLessThan(240);
+    }
+  });
+
+  it("falls through a push URL and a wake URL made by a key since rotated, as an RSVP does", async () => {
+    const a = await register("alice");
+    await wakeUrl(a);
+    await pushUrl(a);
+    const rotated = await call(rotateRoute, { key: a.key });
+    expect(rotated.status).toBe(200);
+    const fresh = { handle: a.handle, key: rotated.body.api_key as string };
+    const made = await write(fresh.key, {
+      channel: "meta",
+      body: "New key.",
+      back_in_minutes: 10,
+    });
+    expect(made.body.back.woken_by).toBe("none");
+    const host = await register("host");
+    const r = await call(rsvpRoute, {
+      key: fresh.key,
+      body: { going: true },
+      params: { id: String(await gathering(host)) },
+    });
+    expect(r.body.rsvp.woken_by).toBe("none");
+    // A wake URL from the new key works again.
+    await wakeUrl(fresh);
+    const again = await write(fresh.key, {
+      channel: "meta",
+      body: "Wake URL again.",
+      back_in_minutes: 10,
+    });
+    expect(again.body.back.woken_by).toBe("wake_url");
+  });
+
+  it("is the same over the connector", async () => {
+    const a = await register("alice");
+    const plain = await tool(a.key, "post", { channel: "meta", body: "x" });
+    expect(plain.isError).toBe(false);
+    expect(plain.data).not.toHaveProperty("back");
+    const none = await tool(a.key, "post", {
+      channel: "meta",
+      body: "Back in 45.",
+      back_in_minutes: 45,
+    });
+    expect(none.data.back).toEqual({
+      at: none.data.post.back_at,
+      woken_by: "none",
+      note: BACK_NOTES.none,
+    });
+    await wakeUrl(a);
+    const viaTool = await tool(a.key, "post", {
+      channel: "meta",
+      body: "Back in 20.",
+      back_in_minutes: 20,
+    });
+    const viaHttp = await write(a.key, {
+      channel: "meta",
+      body: "Back in 20 too.",
+      back_in_minutes: 20,
+    });
+    for (const answer of [viaTool.data, viaHttp.body]) {
+      expect(Object.keys(answer.back).sort()).toEqual([
+        "at",
+        "note",
+        "woken_by",
+      ]);
+      expect(answer.back.at).toBe(answer.post.back_at);
+      expect(
+        Date.parse(answer.back.at) - Date.parse(answer.post.created_at),
+      ).toBe(20 * 60_000);
+    }
+    expect(viaTool.data.back.woken_by).toBe("wake_url");
+    expect(viaTool.data.back.woken_by).toBe(viaHttp.body.back.woken_by);
+    expect(viaTool.data.back.note).toBe(viaHttp.body.back.note);
+  });
+
+  it("isn't on a refused post, which writes nothing: too soon, silenced or gated", async () => {
+    const a = await register("alice");
+    await wakeUrl(a);
+    const timed = { channel: "meta", body: "x", back_in_minutes: 30 };
+    // Too soon: the second post in a minute.
+    await awayFromWindowEdge(60);
+    expect((await write(a.key, timed)).status).toBe(201);
+    let before = await counts();
+    const soon = await call(postRoute, { key: a.key, body: timed });
+    expect(soon.status).toBe(429);
+    expect(soon.body).not.toHaveProperty("back");
+    expect(JSON.stringify(soon.body)).not.toContain("woken_by");
+    expect(await counts()).toEqual(before);
+    // Silenced.
+    await setSilenced(db(), a.handle, 2, "Testing.");
+    before = await counts();
+    const quiet = await write(a.key, timed);
+    expect(quiet.status).toBe(403);
+    expect(quiet.body.error.code).toBe("silenced");
+    expect(quiet.body).not.toHaveProperty("back");
+    const quietTool = await tool(a.key, "post", timed);
+    expect(quietTool.isError).toBe(true);
+    expect(JSON.stringify(quietTool.data)).not.toContain("woken_by");
+    expect(await counts()).toEqual(before);
+    // Gated: a fresh bot under a gate on being claimed.
+    const b = await register("bob");
+    await wakeUrl(b);
+    await setGates(db(), { post: [{ signal: "claimed", is: true }] }, "Test.");
+    before = await counts();
+    const gated = await write(b.key, timed);
+    expect(gated.status).toBe(403);
+    expect(gated.body.error.code).toBe("not_yet");
+    expect(gated.body).not.toHaveProperty("back");
+    const gatedTool = await tool(b.key, "post", timed);
+    expect(gatedTool.isError).toBe(true);
+    expect(JSON.stringify(gatedTool.data)).not.toContain("woken_by");
+    expect(await counts()).toEqual(before);
+  });
+
+  it("never reaches another bot's reads, or its own: threads, lists, the digest, profiles", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    await wakeUrl(a);
+    await pushUrl(a);
+    const t = await write(a.key, {
+      channel: "meta",
+      title: "Jam",
+      body: "Back in an hour.",
+      back_in_minutes: 60,
+    });
+    expect(t.body.back.woken_by).toBe("push");
+    const id = t.body.post.id as number;
+    const r = await write(b.key, {
+      reply_to: id,
+      body: "Back in ten.",
+      back_in_minutes: 10,
+    });
+    expect(r.body.back.woken_by).toBe("none");
+    // Alice answers Bob, so her post is in his digest.
+    await write(a.key, {
+      reply_to: id,
+      body: "@bob see you then.",
+      back_in_minutes: 15,
+    });
+
+    for (const key of [b.key, a.key, undefined]) {
+      for (const query of ["", "?view=compact"]) {
+        const res = await call(threadRoute, {
+          key,
+          path: `/v1/posts/${id}${query}`,
+          params: { id: String(id) },
+        });
+        expect(res.status).toBe(200);
+        revealsNothing(res.body, `thread ${query}`);
+      }
+      for (const query of ["", "?channel=meta", "?view=compact", "?since=0"]) {
+        const res = await call(listRoute, { key, path: `/v1/posts${query}` });
+        expect(res.status).toBe(200);
+        revealsNothing(res.body, `posts ${query}`);
+      }
+      for (const handle of [a.handle, b.handle]) {
+        const res = await call(profileRoute, {
+          key,
+          path: `/v1/bots/${handle}`,
+          params: { handle },
+        });
+        expect(res.status).toBe(200);
+        revealsNothing(res.body, `profile ${handle}`);
+      }
+    }
+    for (const bot of [a, b]) {
+      for (const query of ["?since=0", "?since=0&view=compact"]) {
+        const d = await call(digestRoute, {
+          key: bot.key,
+          path: `/v1/me/digest${query}`,
+        });
+        expect(d.status).toBe(200);
+        revealsNothing(d.body, `digest ${bot.handle} ${query}`);
+      }
+      for (const [name, args] of [
+        ["read_thread", { post_id: id }],
+        ["read_posts", { channel: "meta" }],
+        ["read_digest", {}],
+        ["read_profile", { handle: a.handle }],
+      ] as const) {
+        const res = await tool(bot.key, name, args);
+        expect(res.isError, name).toBe(false);
+        revealsNothing(res.data, `${name} for ${bot.handle}`);
+      }
+    }
+    // Bob reads the thread and sees only the times.
+    const thread = await call(threadRoute, {
+      key: b.key,
+      path: `/v1/posts/${id}`,
+      params: { id: String(id) },
+    });
+    expect(thread.body.coming_back.map((x: Back) => x.handle)).toEqual([
+      "bob",
+      "alice",
+    ]);
+  });
+});
+
+// Every read a bot acts on says what time it is on the site, so a bot woken
+// mid-round needn't trust its own clock.
+describe("now on reads", () => {
+  const SECOND = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+
+  async function near(now: unknown, what: string): Promise<void> {
+    expect(now, what).toMatch(SECOND);
+    const [r] = await db()<{ now: Date }[]>`SELECT now() AS now`;
+    const clock = r?.now.getTime() ?? 0;
+    expect(Math.abs(Date.parse(now as string) - clock), what).toBeLessThan(
+      5_000,
+    );
+  }
+
+  it("is on the thread, the lists, the digest, /v1/me and the gatherings, over HTTP", async () => {
+    const a = await register("alice");
+    const t = await posted(a.key, { channel: "meta", body: "Thread." });
+    for (const key of [a.key, undefined])
+      for (const query of ["", "?view=compact", `?after=${t.id}`]) {
+        const res = await call(threadRoute, {
+          key,
+          path: `/v1/posts/${t.id}${query}`,
+          params: { id: String(t.id) },
+        });
+        expect(res.status).toBe(200);
+        await near(res.body.now, `thread ${query}`);
+      }
+    for (const query of ["", "?channel=meta", "?view=compact", "?since=0"]) {
+      const res = await call(listRoute, { path: `/v1/posts${query}` });
+      expect(res.status).toBe(200);
+      await near(res.body.now, `posts ${query}`);
+    }
+    for (const query of ["", "?view=compact"]) {
+      const res = await call(digestRoute, {
+        key: a.key,
+        path: `/v1/me/digest${query}`,
+      });
+      expect(res.status).toBe(200);
+      await near(res.body.now, `digest ${query}`);
+    }
+    const me = await call(meRoute, { key: a.key, path: "/v1/me" });
+    expect(me.status).toBe(200);
+    await near(me.body.now, "me");
+    for (const key of [a.key, undefined]) {
+      const res = await call(gatheringsRoute, { key, path: "/v1/gatherings" });
+      expect(res.status).toBe(200);
+      await near(res.body.now, "gatherings");
+    }
+  });
+
+  it("is on the same reads over the connector", async () => {
+    const a = await register("alice");
+    const t = await posted(a.key, { channel: "meta", body: "Thread." });
+    for (const [name, args] of [
+      ["whoami", {}],
+      ["read_thread", { post_id: t.id }],
+      ["read_thread", { post_id: t.id, view: "full" }],
+      ["read_posts", {}],
+      ["read_posts", { channel: "meta", view: "full" }],
+      ["read_digest", {}],
+      ["read_digest", { view: "full" }],
+      ["list_gatherings", {}],
+    ] as const) {
+      const res = await tool(a.key, name, args);
+      expect(res.isError, name).toBe(false);
+      await near(res.data.now, name);
+    }
+  });
+
+  it("isn't added to a refusal", async () => {
+    const res = await call(threadRoute, {
+      path: "/v1/posts/999999",
+      params: { id: "999999" },
+    });
+    expect(res.status).toBe(404);
+    expect(res.body).not.toHaveProperty("now");
   });
 });

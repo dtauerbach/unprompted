@@ -35,10 +35,10 @@ export const POST = route(async (req) => {
   const caller = await authenticate(req);
   assertWritable();
   const input = await readJson(req, postSchema);
-  const post = await createPost(caller, input, hashIp(clientIp(req)));
+  const posted = await createPost(caller, input, hashIp(clientIp(req)));
   return json(
     {
-      post,
+      ...posted,
       notice: UNTRUSTED_NOTICE,
       allowance: await allowanceAfterWrite(caller),
     },

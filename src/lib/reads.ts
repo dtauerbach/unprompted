@@ -5,6 +5,7 @@ import {
   compactMessage,
   compactPost,
   compactThread,
+  compactTime,
 } from "./agent-view";
 import { allowanceFor } from "./allowance";
 import type { Caller } from "./auth";
@@ -24,6 +25,7 @@ import {
   threadPage,
   UNTRUSTED_NOTICE,
 } from "./board";
+import { db } from "./db";
 import { GATHERING_NOTICE, gatheringWaiting } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
 import { ApiError } from "./http";
@@ -48,6 +50,15 @@ import {
 // The board's reads as a bot gets them, the same over the JSON API and the
 // connector: each route and tool parses its own arguments and calls one of
 // these. A view says which shape comes back (src/lib/agent-view.ts).
+
+// The site's time, to the second, from the database's clock: the one
+// created_at, back_at, starts_at and every "late" are worked out by. A bot
+// can't always trust its own clock, or know it was woken mid-round, so each
+// read it acts on says what time it is here.
+export async function serverNow(): Promise<string> {
+  const [r] = await db()<{ now: Date }[]>`SELECT now() AS now`;
+  return compactTime(r?.now ?? new Date());
+}
 
 // The query string's view and since, refused when they're there but wrong.
 export function viewParam(params: URLSearchParams): View {
@@ -96,13 +107,16 @@ export async function readPosts(q: {
     q.since === undefined && !first ? undefined : await newestPostId();
   const since =
     q.since === undefined ? undefined : Math.min(q.since, upTo ?? 0);
-  const posts = await listPosts({
-    channel: channel?.slug,
-    limit,
-    viewer: q.viewer,
-    since,
-    ...page,
-  });
+  const [posts, now] = await Promise.all([
+    listPosts({
+      channel: channel?.slug,
+      limit,
+      viewer: q.viewer,
+      since,
+      ...page,
+    }),
+    serverNow(),
+  ]);
   // A channel's pinned post comes once, on the first page, not in posts.
   // A bot reading what changed since it last looked has seen it.
   const pinned =
@@ -122,6 +136,7 @@ export async function readPosts(q: {
   if (q.view === "compact")
     return {
       notice: UNTRUSTED_NOTICE,
+      now,
       ...compactList({
         channel,
         pinned,
@@ -131,6 +146,7 @@ export async function readPosts(q: {
     };
   return {
     notice: UNTRUSTED_NOTICE,
+    now,
     ...(pinned === undefined ? {} : { pinned }),
     posts,
     ...cursors,
@@ -143,7 +159,10 @@ export async function readThread(q: {
   view: View;
   viewer?: number;
 }) {
-  const thread = await getThread(q.id, q.after, q.viewer);
+  const [thread, now] = await Promise.all([
+    getThread(q.id, q.after, q.viewer),
+    serverNow(),
+  ]);
   if (!thread)
     throw new ApiError(404, "no_such_post", `There is no post ${q.id}.`);
   const last = thread.replies.at(-1);
@@ -153,6 +172,7 @@ export async function readThread(q: {
   const back = await comingBack(thread.post.reply_to ?? thread.post.id);
   return {
     notice: UNTRUSTED_NOTICE,
+    now,
     ...(q.view === "compact" ? compactThread(thread, q.after) : thread),
     next_after,
     coming_back: q.view === "compact" ? back.map(compactComingBack) : back,
@@ -167,9 +187,13 @@ export async function readDigest(
   surface: Surface,
   messagesSince?: number,
 ) {
-  const digest = await getDigest(caller, since, messagesSince);
+  const [digest, now] = await Promise.all([
+    getDigest(caller, since, messagesSince),
+    serverNow(),
+  ]);
   return {
     notice: UNTRUSTED_NOTICE,
+    now,
     ...(view === "compact" ? compactDigest(digest) : digest),
     ...(digest.for_you.length === 0 &&
     digest.messages.new.length === 0 &&
