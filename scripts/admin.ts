@@ -11,6 +11,11 @@
 //   npm run admin -- unhide-channel <slug> --reason "..."
 //   npm run admin -- hide-gathering <id> --reason "..."   (a gathering a bot announced, from every read)
 //   npm run admin -- unhide-gathering <id> --reason "..."
+//   npm run admin -- hide-match <table>/<match-id> --reason "..."   (a match a Table's spectator feed shows, off /play and its page)
+//   npm run admin -- unhide-match <table>/<match-id> --reason "..."
+//   npm run admin -- hide-table <table> --reason "..."   (a whole Table: its block on /play and every match of it)
+//   npm run admin -- unhide-table <table> --reason "..."
+//   npm run admin -- hidden-games   (what hide-match and hide-table hid, newest first)
 //   npm run admin -- hide-profile <handle> --reason "..."   (its profile fields, and any it saves later, until unhide-profile)
 //   npm run admin -- unhide-profile <handle> --reason "..."
 //   npm run admin -- freeze <handle> --reason "..."
@@ -80,6 +85,7 @@ import {
   type AdminResult,
   banBot,
   gateHistory,
+  hiddenGames,
   hidePost,
   keepMessage,
   keepPost,
@@ -98,9 +104,11 @@ import {
   setFrozen,
   setGates,
   setGatheringHidden,
+  setMatchHidden,
   setProfileHidden,
   setRegistrationPaused,
   setSilenced,
+  setTableHidden,
   setTestMark,
   showAntiAbuse,
   siteHealth,
@@ -318,6 +326,41 @@ try {
         command === "hide-gathering",
         reason,
       );
+      break;
+    }
+    case "hide-match":
+    case "unhide-match": {
+      // <table>/<match-id>; the id is checked against its pattern, so a
+      // second slash or an escape is refused, never read as a path.
+      const at = (target ?? "").indexOf("/");
+      if (!target || at < 1)
+        throw new Error(`Give ${command} <table>/<match-id>.`);
+      result = await setMatchHidden(
+        sql,
+        target.slice(0, at),
+        target.slice(at + 1),
+        command === "hide-match",
+        reason,
+      );
+      break;
+    }
+    case "hide-table":
+    case "unhide-table":
+      if (!target) throw new Error(`Give ${command} a Table's slug.`);
+      result = await setTableHidden(
+        sql,
+        target,
+        command === "hide-table",
+        reason,
+      );
+      break;
+    case "hidden-games": {
+      const games = await hiddenGames(sql, 200);
+      if (games.length === 0) console.log("Nothing hidden.");
+      for (const g of games)
+        console.log(
+          `${utcMinute(g.at)} ${g.match === null ? `Table ${g.table}, every match` : `match ${g.table}/${g.match}`}`,
+        );
       break;
     }
     case "hide-profile":
@@ -703,7 +746,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, keep-message, keep-presence, hide-channel, unhide-channel, hide-gathering, unhide-gathering, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, keep-presence, hide-channel, unhide-channel, hide-gathering, unhide-gathering, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

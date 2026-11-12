@@ -8,6 +8,7 @@ import PlayPage from "@/app/play/page";
 import { currentTab } from "@/components/nav";
 import { Refresh } from "@/components/refresh";
 import { MatchView, shown } from "@/components/spectator";
+import { setMatchHidden, setTableHidden } from "@/lib/admin";
 import { COPY, type Copy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { MAX_FEED_BYTES, recentMatches, watchMatch } from "@/lib/spectate";
@@ -576,5 +577,189 @@ describe("the play page with a Table to watch", () => {
       [LOCAL]: () => json({ ...fixture("list.json"), matches: [] }),
     });
     expect(visible(await render())).toContain("No games yet.");
+  });
+});
+
+// The moderators' lever (050_hidden_matches.sql): a match or a whole Table
+// taken off /play and its pages, logged with its reason, read fresh on
+// every page, and never asking the Table.
+describe("hiding a match or a Table", () => {
+  beforeEach(resetDb);
+  const ID = "m_AbCdEfGhIjKl";
+  const REASON = "Hid-for-reason-h5m: a player's owner named.";
+  const logged = () =>
+    db()<{ action: string; subject: string; reason: string; bot_id: null }[]>`
+      SELECT action, subject, detail->>'reason' AS reason, bot_id
+      FROM action_log WHERE action LIKE 'admin.%' ORDER BY id`;
+  const rows = async () => {
+    const [r] = await db()<{ matches: number; tables: number }[]>`
+      SELECT (SELECT count(*) FROM hidden_matches)::int AS matches,
+             (SELECT count(*) FROM hidden_tables)::int AS tables`;
+    return r;
+  };
+  const render = async () =>
+    renderToStaticMarkup(await PlayPage()).replace(/<!-- -->/g, "");
+  const page = async (match: string) =>
+    renderToStaticMarkup(
+      await MatchPage({ params: Promise.resolve({ table: "dinner", match }) }),
+    );
+
+  it("hides and unhides a match, each logged once with its reason", async () => {
+    expect(await setMatchHidden(db(), "dinner", ID, true, REASON)).toEqual({
+      changed: true,
+      message: `Hid match dinner/${ID}.`,
+    });
+    // A second hide changes nothing and logs nothing.
+    expect(
+      (await setMatchHidden(db(), "dinner", ID, true, "Again.")).changed,
+    ).toBe(false);
+    expect(await setMatchHidden(db(), "dinner", ID, false, "Back.")).toEqual({
+      changed: true,
+      message: `Put match dinner/${ID} back.`,
+    });
+    expect(
+      (await setMatchHidden(db(), "dinner", ID, false, "Again.")).changed,
+    ).toBe(false);
+    expect(await logged()).toEqual([
+      {
+        action: "admin.match.hide",
+        subject: `match:dinner/${ID}`,
+        reason: REASON,
+        bot_id: null,
+      },
+      {
+        action: "admin.match.unhide",
+        subject: `match:dinner/${ID}`,
+        reason: "Back.",
+        bot_id: null,
+      },
+    ]);
+  });
+
+  it("hides and unhides a whole Table, each logged once with its reason", async () => {
+    expect(await setTableHidden(db(), "dinner", true, REASON)).toEqual({
+      changed: true,
+      message: "Hid Table dinner and all its matches.",
+    });
+    expect((await setTableHidden(db(), "dinner", true, "Again.")).changed).toBe(
+      false,
+    );
+    expect((await setTableHidden(db(), "dinner", false, "Back.")).changed).toBe(
+      true,
+    );
+    expect((await logged()).map((e) => [e.action, e.subject])).toEqual([
+      ["admin.table.hide", "table:dinner"],
+      ["admin.table.unhide", "table:dinner"],
+    ]);
+  });
+
+  it("refuses an unknown Table, an odd id or no reason, writing nothing", async () => {
+    const refusals: [string, () => Promise<unknown>][] = [
+      ["unknown table", () => setMatchHidden(db(), "chess", ID, true, "x")],
+      ["unknown table", () => setTableHidden(db(), "chess", true, "x")],
+      ["odd slug", () => setTableHidden(db(), "../dinner", true, "x")],
+      ["odd slug", () => setMatchHidden(db(), "Dinner", ID, true, "x")],
+      ["no reason", () => setMatchHidden(db(), "dinner", ID, true, "")],
+      ["no reason", () => setTableHidden(db(), "dinner", true, " ")],
+    ];
+    for (const id of ["../x", "a%2fb", "a/b", "", "a".repeat(65), "m x"])
+      refusals.push([
+        `id ${id}`,
+        () => setMatchHidden(db(), "dinner", id, true, "x"),
+      ]);
+    for (const [name, run] of refusals)
+      await expect(run(), name).rejects.toThrow();
+    expect(await rows()).toEqual({ matches: 0, tables: 0 });
+    expect(await logged()).toEqual([]);
+  });
+
+  it("works while the Table is down, and still lets go of a Table no longer listed", async () => {
+    const calls = serve({});
+    await setMatchHidden(db(), "dinner", ID, true, "x");
+    await setTableHidden(db(), "dinner", true, "x");
+    expect(calls).toEqual([]);
+    vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "[]");
+    await expect(
+      setMatchHidden(db(), "dinner", "m_other", true, "x"),
+    ).rejects.toThrow("There is no Table dinner.");
+    expect((await setMatchHidden(db(), "dinner", ID, false, "x")).changed).toBe(
+      true,
+    );
+    expect((await setTableHidden(db(), "dinner", false, "x")).changed).toBe(
+      true,
+    );
+    await expect(setTableHidden(db(), "dinner", false, "x")).rejects.toThrow(
+      "There is no Table dinner.",
+    );
+  });
+
+  it("makes a hidden match missing without asking the Table", async () => {
+    const calls = serve({
+      [`${LOCAL}/${ID}`]: () => json(fixture("over.json")),
+    });
+    expect((await watchMatch("dinner", ID)).kind).toBe("feed");
+    expect(calls).toHaveLength(1);
+    await setMatchHidden(db(), "dinner", ID, true, "x");
+    expect(await watchMatch("dinner", ID)).toEqual({ kind: "missing" });
+    await expect(page(ID)).rejects.toThrow("not found");
+    expect(calls).toHaveLength(1);
+    await setMatchHidden(db(), "dinner", ID, false, "x");
+    expect((await watchMatch("dinner", ID)).kind).toBe("feed");
+    // A hidden Table's matches are missing too, again unasked.
+    await setTableHidden(db(), "dinner", true, "x");
+    expect(await watchMatch("dinner", ID)).toEqual({ kind: "missing" });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("leaves a hidden match off the list, however the Table lists it", async () => {
+    const other = {
+      ...fixture("list.json").matches[0],
+      id: "m_stillShown",
+      summary: "Another dinner.",
+    };
+    // The Table lists the hidden match first, and again.
+    const list = {
+      ...fixture("list.json"),
+      matches: [
+        fixture("list.json").matches[0],
+        other,
+        fixture("list.json").matches[0],
+      ],
+    };
+    serve({ [LOCAL]: () => json(list) });
+    await setMatchHidden(db(), "dinner", ID, true, "x");
+    const [one] = await recentMatches();
+    expect(one?.matches?.map((m) => m.id)).toEqual(["m_stillShown"]);
+    const html = await render();
+    expect(html).not.toContain(ID);
+    expect(html).toContain("/play/dinner/m_stillShown");
+  });
+
+  it("takes a hidden Table off the play page, unfetched, until it's unhidden", async () => {
+    const calls = serve({ [LOCAL]: () => json(fixture("list.json")) });
+    await setTableHidden(db(), "dinner", true, "x");
+    expect(await recentMatches()).toEqual([]);
+    const html = visible(await render());
+    expect(html).toContain("nothing here for people to watch");
+    expect(html).not.toContain("Dinner party");
+    expect(calls).toEqual([]);
+    await setTableHidden(db(), "dinner", false, "x");
+    expect(visible(await render())).toContain("Locked by consensus.");
+  });
+
+  it("reads the hides fresh on every page, and caches nothing about them", () => {
+    const code = readFileSync(
+      path.join(process.cwd(), "src/lib/spectate.ts"),
+      "utf8",
+    );
+    expect(code).not.toMatch(/unstable_cache|"use cache"|cacheTag|cacheLife/);
+    for (const f of [
+      "src/app/play/page.tsx",
+      "src/app/play/[table]/[match]/page.tsx",
+    ]) {
+      const page = readFileSync(path.join(process.cwd(), f), "utf8");
+      expect(page, f).toContain("await connection()");
+      expect(page, f).not.toMatch(/revalidate\s*=|"use cache"|force-static/);
+    }
   });
 });

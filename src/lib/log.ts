@@ -97,7 +97,11 @@ export type Action =
   | "gathering.cancel"
   | "gathering.rsvp"
   | "admin.gathering.hide"
-  | "admin.gathering.unhide";
+  | "admin.gathering.unhide"
+  | "admin.match.hide"
+  | "admin.match.unhide"
+  | "admin.table.hide"
+  | "admin.table.unhide";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the

@@ -1,9 +1,16 @@
 import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { get, LOCAL, RUN_TAG, register } from "./client";
-import { MODERATOR, mustAdmin, setLimits } from "./moderator";
+import {
+  afterAll,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+} from "vitest";
+import { get, LOCAL, RUN_TAG, register, request } from "./client";
+import { admin, MODERATOR, mustAdmin, setLimits } from "./moderator";
 
 // A person watches a game a Table sends the site as a spectator feed
 // (docs/SPECTATOR.md). The Table here is a fake one this run serves, hostile
@@ -40,6 +47,18 @@ function hostile(id = "m_hostile") {
   return f;
 }
 
+// A finished match the moderators hide and unhide. The Table lists it first
+// and serves it throughout, as a Table that disagreed with the hide would.
+const HIDE_ME = "m_hideMe";
+const HIDE_WORDS = `a canary only this match holds ${RUN_TAG}`;
+
+function hideMe() {
+  const f = fixture("over.json");
+  f.match.id = HIDE_ME;
+  f.timeline[1].text = HIDE_WORDS;
+  return f;
+}
+
 // The handle the Table gives Ada in m_stopped, and what Ada says there.
 let stoppedHandle = "nobody";
 const STOPPED_WORDS = `seat me by the window ${RUN_TAG}`;
@@ -49,6 +68,14 @@ function fakeTable(): Server {
   const list = {
     ...fixture("list.json"),
     matches: [
+      {
+        id: HIDE_ME,
+        status: "over",
+        started_at: "2026-11-10T04:00:00.000Z",
+        updated_at: "2026-11-10T04:06:00.000Z",
+        players: 4,
+        summary: "The match the moderators hide.",
+      },
       {
         id: "m_hostile",
         status: "live",
@@ -69,6 +96,7 @@ function fakeTable(): Server {
     if (url === "/v1/spectate") return send(res, list);
     if (url === "/v1/spectate/m_hostile") return send(res, hostile());
     if (url === `/v1/spectate/${over.match.id}`) return send(res, over);
+    if (url === `/v1/spectate/${HIDE_ME}`) return send(res, hideMe());
     if (url === "/v1/spectate/m_slow") {
       setTimeout(() => send(res, hostile()), 10_000);
       return;
@@ -261,6 +289,192 @@ export function spectatorModerationScenarios(): void {
         hidden(await page());
         mustAdmin("unsilence", bot.handle, ...reason);
         shown(await page());
+      });
+    },
+  );
+}
+
+// The moderators' lever over what people watch (npm run admin -- hide-match,
+// hide-table): gone from /play and its page at the very next request,
+// whatever the Table keeps serving; a 404 like any unknown match's; and
+// pulled only from the command line or /admin, never over HTTP.
+export function spectatorHideScenarios(): void {
+  describe.runIf(LOCAL && configured && MODERATOR)(
+    "the moderators hide a game people can watch",
+    () => {
+      servingFakeTable();
+      const reason = ["--reason", `eval: hide a game ${RUN_TAG}`];
+      const listed = async () => {
+        const res = await get("/play");
+        expect(res.status).toBe(200);
+        return res.text.includes(`href="/play/${SLUG}/${HIDE_ME}"`);
+      };
+      const page = () => get(`/play/${SLUG}/${HIDE_ME}`);
+      const hiddenNow = () =>
+        mustAdmin("hidden-games").includes(`${SLUG}/${HIDE_ME}`);
+      // Its one sign-up comes after the site-wide cap is used up (see
+      // spectatorModerationScenarios), so it makes room and puts the
+      // defaults back.
+      beforeAll(() => {
+        setLimits(
+          {
+            register_global: 500,
+            register_tightened: 500,
+            spike_sign_ups: 100_000,
+          },
+          "Eval: room for the hide-a-game scenario's bot.",
+        );
+      });
+      afterAll(() => {
+        setLimits({}, "Eval: defaults back.");
+        // Leave nothing hidden for a later run on the same database.
+        admin("unhide-match", `${SLUG}/${HIDE_ME}`, ...reason);
+        admin("unhide-table", SLUG, ...reason);
+      });
+
+      it("hides a match from the next request on, and puts it back", async () => {
+        // Warm anything that could cache the list or the page.
+        for (let i = 0; i < 3; i++) {
+          expect(await listed()).toBe(true);
+          const res = await page();
+          expect(res.status).toBe(200);
+          expect(res.text).toContain(HIDE_WORDS);
+        }
+        expect(
+          mustAdmin("hide-match", `${SLUG}/${HIDE_ME}`, ...reason),
+        ).toContain(`Hid match ${SLUG}/${HIDE_ME}.`);
+        // The very next requests, though the Table still lists it first and
+        // serves it.
+        expect(await listed()).toBe(false);
+        const gone = await page();
+        expect(gone.status).toBe(404);
+        expect(gone.text).not.toContain(HIDE_WORDS);
+        expect(
+          (await fetch(`http://127.0.0.1:${PORT}/v1/spectate/${HIDE_ME}`))
+            .status,
+        ).toBe(200);
+        // The rest of the Table's matches stay.
+        expect((await get("/play")).text).toContain(
+          `href="/play/${SLUG}/m_hostile"`,
+        );
+        mustAdmin("unhide-match", `${SLUG}/${HIDE_ME}`, ...reason);
+        expect(await listed()).toBe(true);
+        expect((await page()).text).toContain(HIDE_WORDS);
+      });
+
+      it("lets no shared cache keep the list or a page", async () => {
+        for (const res of [await get("/play"), await page()]) {
+          const cc = res.headers.get("cache-control") ?? "";
+          expect(cc).not.toMatch(/s-maxage|public|stale-while-revalidate/);
+          expect(res.headers.get("x-nextjs-cache") ?? "").not.toMatch(/HIT/);
+        }
+      });
+
+      it("answers a hidden match exactly as a match the Table never had", async () => {
+        mustAdmin("hide-match", `${SLUG}/${HIDE_ME}`, ...reason);
+        onTestFinished(() => {
+          admin("unhide-match", `${SLUG}/${HIDE_ME}`, ...reason);
+        });
+        const hidden = await page();
+        const unknown = await get(`/play/${SLUG}/m_neverWas`);
+        expect(hidden.status).toBe(404);
+        expect(unknown.status).toBe(404);
+        // Next orders a page's attributes and its streamed data a little
+        // differently from one request to the next, even for two unknown
+        // matches, so what's compared is what a person and a crawler get:
+        // the status, the title and every word of the page.
+        const seen = (html: string, id: string) => ({
+          title: /<title>([^<]*)<\/title>/.exec(html)?.[1],
+          text: html
+            .replaceAll(id, "ID")
+            .replace(/<script[\s\S]*?<\/script>/g, "")
+            .replace(/<[^>]+>/g, " ")
+            .replace(/\s+/g, " "),
+        });
+        expect(seen(hidden.text, HIDE_ME)).toEqual(
+          seen(unknown.text, "m_neverWas"),
+        );
+        expect(hidden.text).not.toContain(HIDE_WORDS);
+        for (const res of [hidden, await get("/play")]) {
+          expect(res.text).not.toContain("eval: hide a game");
+          expect(res.text).not.toMatch(/match\.hide|hidden by the moderators/i);
+        }
+      });
+
+      it("hides a whole Table, unasked, and puts it back", async () => {
+        mustAdmin("hide-table", SLUG, ...reason);
+        onTestFinished(() => {
+          admin("unhide-table", SLUG, ...reason);
+        });
+        const play = await get("/play");
+        expect(play.text).not.toContain(`/play/${SLUG}/`);
+        expect(play.text).not.toContain("Eval table");
+        expect(play.text).toContain("nothing here for people to watch");
+        expect((await get(`/play/${SLUG}/m_hostile`)).status).toBe(404);
+        expect((await page()).status).toBe(404);
+        mustAdmin("unhide-table", SLUG, ...reason);
+        expect(await listed()).toBe(true);
+        expect((await get(`/play/${SLUG}/m_hostile`)).status).toBe(200);
+      });
+
+      it("refuses an odd id or an unknown Table, writing nothing", () => {
+        const before = mustAdmin("hidden-games");
+        for (const target of [
+          `${SLUG}/../x`,
+          `${SLUG}/a%2fb`,
+          `${SLUG}/${"a".repeat(65)}`,
+          `${SLUG}/`,
+          `/${HIDE_ME}`,
+          `nosuchtable/${HIDE_ME}`,
+          SLUG,
+        ]) {
+          const run = admin("hide-match", target, ...reason);
+          expect(run.ok, target).toBe(false);
+        }
+        expect(admin("hide-table", "nosuchtable", ...reason).ok).toBe(false);
+        expect(admin("hide-match", `${SLUG}/${HIDE_ME}`).ok).toBe(false);
+        expect(mustAdmin("hidden-games")).toBe(before);
+        expect(hiddenNow()).toBe(false);
+      });
+
+      it("can't be pulled over the API, the connector or with a moderator key", async () => {
+        const key = mustAdmin(
+          "mod-key",
+          "add",
+          "moderator",
+          `eval-hide-${RUN_TAG}`,
+          ...reason,
+        )
+          .split("\n")
+          .find((l) => l.startsWith("unpmod_"));
+        expect(key).toBeTruthy();
+        const bot = await register("hider");
+        const tries: [string, string, string | undefined][] = [];
+        for (const path of [
+          `/mod/v1/matches/${SLUG}/${HIDE_ME}/hide`,
+          `/mod/v1/tables/${SLUG}/hide`,
+          `/mod/v1/play/${SLUG}/${HIDE_ME}/hide`,
+          `/v1/matches/${SLUG}/${HIDE_ME}/hide`,
+          `/v1/spectate/${SLUG}/${HIDE_ME}/hide`,
+        ])
+          for (const k of [undefined, key, bot.key])
+            tries.push(["POST", path, k]);
+        for (const [method, path, k] of tries) {
+          const res = await request(method, path, {
+            key: k,
+            body: { reason: "x", hidden: true },
+          });
+          expect(res.status, `${method} ${path}`).toBeGreaterThanOrEqual(400);
+        }
+        // The connector has no such tool; its list is the same with a
+        // bot's token as ever.
+        const tools = await request("POST", "/mcp", {
+          key: bot.key,
+          body: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        });
+        expect(tools.text).not.toMatch(/hide_match|hide_table|hidden_match/);
+        expect(hiddenNow()).toBe(false);
+        expect(await listed()).toBe(true);
       });
     },
   );

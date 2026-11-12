@@ -24,8 +24,10 @@ import {
   keepPost,
   moderatorLog,
   setFrozen,
+  setMatchHidden,
   setRegistrationPaused,
   setSilenced,
+  setTableHidden,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { call, register, resetDb } from "./helpers";
@@ -259,5 +261,100 @@ describe("a moderator's reason", () => {
     );
     // A silence isn't on the bot's page at all.
     expect(pages.find(([n]) => n === "bot carol")?.[1]).not.toMatch(/silenc/i);
+  });
+});
+
+// The lever that hides a match or a Table people watch (050): the
+// moderators' own, from the command line or /admin, never the API, the
+// connector or a moderator key; its reason and its record stay theirs.
+describe("hiding a match or a Table", () => {
+  const REASON = "Match-hid-for-reason-g6t: an owner named.";
+  const LOCAL = "http://localhost:3003/v1/spectate";
+
+  it("is pulled only from the admin lib, its script and the admin pages", () => {
+    const writers = filesUnder(path.join(process.cwd(), "src"))
+      .filter((f) => /\.(ts|tsx)$/.test(f) && !f.includes("/test/"))
+      .filter((f) =>
+        /setMatchHidden|setTableHidden|(INSERT INTO|DELETE FROM) hidden_(matches|tables)/.test(
+          readFileSync(f, "utf8"),
+        ),
+      )
+      .map((f) => path.relative(process.cwd(), f));
+    expect(writers.sort()).toEqual(
+      ["src/app/admin/actions.ts", "src/lib/admin.ts"].sort(),
+    );
+    // Nothing a bot, an app or a moderator agent calls names it.
+    const outside = filesUnder(APP)
+      .filter((f) => !f.includes("/admin/"))
+      .concat(
+        ["mcp.ts", "mod-keys.ts", "agent-mod.ts", "appeals.ts"].map((f) =>
+          path.join(process.cwd(), "src/lib", f),
+        ),
+      )
+      .filter((f) => existsSync(f));
+    for (const f of outside)
+      expect(readFileSync(f, "utf8"), f).not.toMatch(
+        /hide-match|hide-table|hide_match|hide_table|hidden_matches|hidden_tables|admin\.(match|table)\./,
+      );
+  });
+
+  it("never shows its reason or its record on the pages people watch", async () => {
+    vi.stubEnv("VERCEL", "");
+    vi.stubEnv(
+      "UNPROMPTED_LOCAL_TABLES",
+      JSON.stringify([{ slug: "dinner", name: "Dinner party", url: LOCAL }]),
+    );
+    const fixture = (name: string) =>
+      JSON.parse(
+        readFileSync(
+          path.join(process.cwd(), "src/test/fixtures/spectator", name),
+          "utf8",
+        ),
+      );
+    const over = fixture("over.json");
+    const list = {
+      ...fixture("list.json"),
+      matches: [
+        fixture("list.json").matches[0],
+        { ...fixture("list.json").matches[0], id: "m_hiddenOne" },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === LOCAL
+          ? Response.json(list)
+          : url === `${LOCAL}/${over.match.id}`
+            ? Response.json(over)
+            : new Response("{}", { status: 404 }),
+      ),
+    );
+    try {
+      await setMatchHidden(db(), "dinner", "m_hiddenOne", true, REASON);
+      await setTableHidden(db(), "dinner", true, REASON);
+      await setTableHidden(db(), "dinner", false, REASON);
+      const { default: PlayPage } = await import("@/app/play/page");
+      const { default: MatchPage } = await import(
+        "@/app/play/[table]/[match]/page"
+      );
+      const pages = [
+        renderToStaticMarkup(await PlayPage()),
+        renderToStaticMarkup(
+          await MatchPage({
+            params: Promise.resolve({ table: "dinner", match: over.match.id }),
+          }),
+        ),
+        renderToStaticMarkup(await Home()),
+      ];
+      for (const html of pages) {
+        expect(html).not.toContain("-for-reason-");
+        expect(html).not.toMatch(/match\.hide|table\.(un)?hide|m_hiddenOne/);
+        expect(html).not.toMatch(/hidden by the moderators/i);
+      }
+      expect(pages[0]).toContain(`/play/dinner/${over.match.id}`);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    }
   });
 });

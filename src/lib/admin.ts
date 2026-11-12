@@ -26,6 +26,7 @@ import {
   REGISTRATION_PAUSED,
 } from "./settings";
 import { SILENCE_MAX_HOURS } from "./silence";
+import { MATCH_ID, TABLE_SLUG, watchable } from "./tables";
 import { moderatorReasonSchema } from "./validate";
 
 // Moderator actions. They run from scripts/admin.ts, by a human with database
@@ -250,6 +251,165 @@ export async function setGatheringHidden(
       message: hidden ? `Hid gathering ${id}.` : `Put gathering ${id} back.`,
     };
   });
+}
+
+// A match a Table's spectator feed shows, or a whole Table: hiding takes it
+// off /play and its pages here at the next request (src/lib/spectate.ts reads
+// these rows fresh, before any fetch); unhiding puts it back. The Table is
+// never asked, so a hide works while it's down or hostile. Only a Table the
+// site lists can be hidden; a row for one it no longer lists can still be
+// taken away. The site keeps nothing else about the match (docs/GAMES.md).
+function checkTableSlug(slug: string): string {
+  if (!TABLE_SLUG.test(slug))
+    throw new ApiError(400, "no_such_table", `There is no Table ${slug}.`);
+  return slug;
+}
+
+function checkMatchId(id: string): string {
+  if (!MATCH_ID.test(id))
+    throw new ApiError(
+      400,
+      "invalid_match",
+      "A match's id is 1 to 64 letters, digits, - or _.",
+    );
+  return id;
+}
+
+async function knownTable(
+  slug: string,
+  hidden: boolean,
+  hasRow: () => PromiseLike<readonly unknown[]>,
+) {
+  if (watchable().some((t) => t.slug === slug)) return;
+  if (!hidden && (await hasRow()).length > 0) return;
+  throw new ApiError(404, "no_such_table", `There is no Table ${slug}.`);
+}
+
+export async function setMatchHidden(
+  sql: postgres.Sql,
+  slug: string,
+  matchId: string,
+  hidden: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  checkTableSlug(slug);
+  checkMatchId(matchId);
+  const name = `${slug}/${matchId}`;
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    await knownTable(
+      slug,
+      hidden,
+      () => tx`
+        SELECT 1 FROM hidden_matches
+        WHERE table_slug = ${slug} AND match_id = ${matchId}`,
+    );
+    const rows = hidden
+      ? await tx`
+          INSERT INTO hidden_matches (table_slug, match_id)
+          VALUES (${slug}, ${matchId})
+          ON CONFLICT (table_slug, match_id) DO NOTHING RETURNING match_id`
+      : await tx`
+          DELETE FROM hidden_matches
+          WHERE table_slug = ${slug} AND match_id = ${matchId}
+          RETURNING match_id`;
+    if (rows.length === 0)
+      return {
+        changed: false,
+        message: hidden
+          ? `Match ${name} was already hidden.`
+          : `Match ${name} wasn't hidden.`,
+      };
+    await logAction(tx, {
+      action: hidden ? "admin.match.hide" : "admin.match.unhide",
+      botId: null,
+      keyId: null,
+      ...who,
+      subject: `match:${name}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: hidden ? `Hid match ${name}.` : `Put match ${name} back.`,
+    };
+  });
+}
+
+export async function setTableHidden(
+  sql: postgres.Sql,
+  slug: string,
+  hidden: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  checkTableSlug(slug);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    await knownTable(
+      slug,
+      hidden,
+      () => tx`SELECT 1 FROM hidden_tables WHERE table_slug = ${slug}`,
+    );
+    const rows = hidden
+      ? await tx`
+          INSERT INTO hidden_tables (table_slug) VALUES (${slug})
+          ON CONFLICT (table_slug) DO NOTHING RETURNING table_slug`
+      : await tx`
+          DELETE FROM hidden_tables WHERE table_slug = ${slug}
+          RETURNING table_slug`;
+    if (rows.length === 0)
+      return {
+        changed: false,
+        message: hidden
+          ? `Table ${slug} was already hidden.`
+          : `Table ${slug} wasn't hidden.`,
+      };
+    await logAction(tx, {
+      action: hidden ? "admin.table.hide" : "admin.table.unhide",
+      botId: null,
+      keyId: null,
+      ...who,
+      subject: `table:${slug}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: hidden
+        ? `Hid Table ${slug} and all its matches.`
+        : `Put Table ${slug} back.`,
+    };
+  });
+}
+
+export type HiddenGame = {
+  table: string;
+  match: string | null;
+  at: Date;
+};
+
+// What the moderators have hidden from /play, newest first, for /admin.
+export async function hiddenGames(
+  sql: postgres.Sql,
+  limit = 50,
+): Promise<HiddenGame[]> {
+  const rows = await sql<
+    { table_slug: string; match_id: string | null; hidden_at: Date }[]
+  >`
+    SELECT table_slug, NULL::text AS match_id, hidden_at FROM hidden_tables
+    UNION ALL
+    SELECT table_slug, match_id, hidden_at FROM hidden_matches
+    ORDER BY hidden_at DESC, table_slug, match_id
+    LIMIT ${limit}`;
+  return rows.map((r) => ({
+    table: r.table_slug,
+    match: r.match_id,
+    at: r.hidden_at,
+  }));
 }
 
 // A bot's profile fields: hiding takes them off its page and the API, and

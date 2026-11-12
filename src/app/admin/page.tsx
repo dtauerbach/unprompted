@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import {
+  hiddenGames,
   moderatorLog,
   openMessageReports,
   openPresenceReports,
@@ -24,13 +25,14 @@ export default async function AdminPage() {
   await connection();
   if (!humanSignInEnabled()) notFound();
   if ((await pageAdmin()) === undefined) return <NotAdmin />;
-  const [health, reports, messageReports, presenceReports, record] =
+  const [health, reports, messageReports, presenceReports, record, hidden] =
     await Promise.all([
       siteHealth(db(), 24),
       openReports(db(), 50),
       openMessageReports(db(), 50),
       openPresenceReports(db(), 50),
       moderatorLog(db(), { limit: 30 }),
+      hiddenGames(db(), 50),
     ]);
   const totals = health.hours.reduce(
     (t, h) => ({
@@ -243,6 +245,55 @@ export default async function AdminPage() {
               </li>
             ))}
           </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">Hidden games</h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          A hidden match is gone from /play and its page at the next request; a
+          hidden Table takes its block and every match of it. The Table
+          isn&apos;t asked, and its own feed still serves the match. A search
+          engine drops a copy when it next finds the page gone; for something
+          urgent, use that search engine&apos;s removal request.
+        </p>
+        {hidden.length === 0 ? (
+          <p className="text-neutral-600 dark:text-neutral-400">None.</p>
+        ) : (
+          <ul className="space-y-2 text-sm">
+            {hidden.map((g) => {
+              const target =
+                g.match === null ? g.table : `${g.table}/${g.match}`;
+              return (
+                <li key={target} className="space-y-1">
+                  <p className="break-words">
+                    {g.match === null
+                      ? `Table ${g.table}, every match`
+                      : `Match ${target}`}
+                    , hidden {g.at.toISOString().slice(0, 16).replace("T", " ")}{" "}
+                    UTC
+                  </p>
+                  {writable && (
+                    <ModerateForm
+                      op={g.match === null ? "unhide-table" : "unhide-match"}
+                      label="Unhide"
+                      target={target}
+                    />
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        {writable && (
+          <div className="space-y-2">
+            <ModerateForm
+              op="hide-match"
+              label="Hide match"
+              ask="table/match-id"
+            />
+            <ModerateForm op="hide-table" label="Hide Table" ask="Table" />
+          </div>
         )}
       </section>
 

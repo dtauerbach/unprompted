@@ -2,7 +2,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as report } from "@/app/v1/posts/[id]/report/route";
 import { POST as post } from "@/app/v1/posts/route";
-import { banBot, hidePost, moderatorLog, setSilenced } from "@/lib/admin";
+import {
+  banBot,
+  hidePost,
+  moderatorLog,
+  setMatchHidden,
+  setSilenced,
+} from "@/lib/admin";
 import { addAdmin, adminFor, listAdmins, removeAdmin } from "@/lib/admins";
 import { BOT_TEXTS, builtInText, saveBotText, textHash } from "@/lib/bot-texts";
 import { saveDescription } from "@/lib/channel-descriptions";
@@ -52,11 +58,29 @@ beforeEach(async () => {
   await resetDb();
   session.user = null;
   nav.redirects = [];
+  // Two Tables to watch, for the levers that hide a match or a Table: one
+  // match and the second Table already hidden, so unhiding has something to
+  // take away.
+  vi.stubEnv("VERCEL", "");
+  vi.stubEnv(
+    "UNPROMPTED_LOCAL_TABLES",
+    JSON.stringify([
+      { slug: "dinner", name: "Dinner party", url: LOCAL_FEED },
+      { slug: "feud", name: "Feud", url: "http://localhost:3004/v1/spectate" },
+    ]),
+  );
+  await db()`
+    INSERT INTO hidden_matches (table_slug, match_id)
+    VALUES ('dinner', 'm_hiddenAlready')`;
+  await db()`INSERT INTO hidden_tables (table_slug) VALUES ('feud')`;
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
   delete process.env.UNPROMPTED_READ_ONLY;
 });
+
+const LOCAL_FEED = "http://localhost:3003/v1/spectate";
 
 // A stand-in for the table Neon Auth keeps in its own schema.
 async function fakeNeonAuth() {
@@ -86,6 +110,7 @@ async function writes() {
       mod_keys_revoked: number;
       copy_keys: number;
       copy_keys_revoked: number;
+      hidden_games: number;
     }[]
   >`
     SELECT (SELECT count(*) FROM action_log)::int AS log,
@@ -98,7 +123,8 @@ async function writes() {
            (SELECT count(*) FROM mod_keys)::int AS mod_keys,
            (SELECT count(*) FROM mod_keys WHERE revoked_at IS NOT NULL)::int AS mod_keys_revoked,
            (SELECT count(*) FROM copy_keys)::int AS copy_keys,
-           (SELECT count(*) FROM copy_keys WHERE revoked_at IS NOT NULL)::int AS copy_keys_revoked`;
+           (SELECT count(*) FROM copy_keys WHERE revoked_at IS NOT NULL)::int AS copy_keys_revoked,
+           ((SELECT count(*) FROM hidden_matches) + (SELECT count(*) FROM hidden_tables))::int AS hidden_games`;
   return r;
 }
 
@@ -273,6 +299,34 @@ describe("admin actions", () => {
         ),
       pause: () =>
         a.moderateAction({}, form({ op: "pause", reason: "Flood." })),
+      hideMatch: () =>
+        a.moderateAction(
+          {},
+          form({
+            op: "hide-match",
+            target: "dinner/m_AbCdEfGhIjKl",
+            reason: "Owner named.",
+          }),
+        ),
+      unhideMatch: () =>
+        a.moderateAction(
+          {},
+          form({
+            op: "unhide-match",
+            target: "dinner/m_hiddenAlready",
+            reason: "Fine.",
+          }),
+        ),
+      hideTable: () =>
+        a.moderateAction(
+          {},
+          form({ op: "hide-table", target: "dinner", reason: "Broken." }),
+        ),
+      unhideTable: () =>
+        a.moderateAction(
+          {},
+          form({ op: "unhide-table", target: "feud", reason: "Fixed." }),
+        ),
       makeModKey: () =>
         a.makeModKeyAction(
           {},
@@ -304,6 +358,10 @@ describe("admin actions", () => {
       c.restoreDescription,
       () => c.hide(id),
       c.pause,
+      c.hideMatch,
+      c.unhideMatch,
+      c.hideTable,
+      c.unhideTable,
       c.makeModKey,
       () => c.revokeModKey(keyId),
       () => c.undoCopy(copy.version),
@@ -337,6 +395,10 @@ describe("admin actions", () => {
       c.restoreDescription,
       () => c.hide(id),
       c.pause,
+      c.hideMatch,
+      c.unhideMatch,
+      c.hideTable,
+      c.unhideTable,
       c.makeModKey,
       () => c.revokeModKey(keyId),
       () => c.undoCopy(copy.version),
@@ -375,6 +437,8 @@ describe("admin actions", () => {
     for (const run of [
       () => c.hide(id),
       c.pause,
+      c.hideMatch,
+      c.unhideTable,
       c.makeModKey,
       () => c.revokeModKey(keyId),
     ])
@@ -733,6 +797,64 @@ describe("admin actions", () => {
     expect(await writes()).toEqual(before);
   });
 
+  it("hide and unhide a match or a Table for an admin, logged with their human id", async () => {
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    const act = (op: string, target: string, reason = "Owner named.") =>
+      a.moderateAction({}, form({ op, target, reason }));
+    expect(await act("hide-match", " dinner/m_AbCdEfGhIjKl ")).toEqual({
+      message: "Hid match dinner/m_AbCdEfGhIjKl.",
+    });
+    expect(await act("hide-match", "dinner/m_AbCdEfGhIjKl")).toEqual({
+      message: "Match dinner/m_AbCdEfGhIjKl was already hidden.",
+    });
+    expect(await act("unhide-match", "dinner/m_hiddenAlready")).toEqual({
+      message: "Put match dinner/m_hiddenAlready back.",
+    });
+    expect(await act("hide-table", "dinner")).toEqual({
+      message: "Hid Table dinner and all its matches.",
+    });
+    expect(await act("unhide-table", "feud")).toEqual({
+      message: "Put Table feud back.",
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const before = await writes();
+    for (const [op, target] of <[string, string][]>[
+      ["hide-match", "dinner"],
+      ["hide-match", "/m_x"],
+      ["hide-match", "dinner/../x"],
+      ["hide-match", "dinner/a%2fb"],
+      ["hide-match", `dinner/${"a".repeat(65)}`],
+      ["hide-match", "chess/m_x"],
+      ["hide-table", "chess"],
+      ["hide-table", ""],
+    ])
+      expect((await act(op, target)).error, `${op} ${target}`).toBeTruthy();
+    expect((await act("hide-table", "feud", "")).error).toMatch(/reason/);
+    expect(await writes()).toEqual(before);
+    const log = await db()<
+      { action: string; subject: string; human_id: string; by: string }[]
+    >`
+      SELECT action, subject, human_id, detail->>'by' AS by FROM action_log
+      WHERE action LIKE 'admin.%' ORDER BY id`;
+    expect(log.map((e) => [e.action, e.subject])).toEqual([
+      ["admin.match.hide", "match:dinner/m_AbCdEfGhIjKl"],
+      ["admin.match.unhide", "match:dinner/m_hiddenAlready"],
+      ["admin.table.hide", "table:dinner"],
+      ["admin.table.unhide", "table:feud"],
+    ]);
+    for (const e of log) {
+      expect(e.human_id).toBe(String(humanId));
+      expect(e.by).toBe(`human:${humanId}`);
+    }
+  });
+
   it("moderate as the admin, in the moderators' record with their human id", async () => {
     const id = await aPost();
     const { humanId } = await addAdmin(
@@ -793,6 +915,10 @@ describe("admin actions", () => {
       c.restoreDescription,
       () => c.hide(id),
       c.pause,
+      c.hideMatch,
+      c.unhideMatch,
+      c.hideTable,
+      c.unhideTable,
       c.makeModKey,
     ])
       expect((await run()).error).toMatch(/read-only/);
@@ -1121,6 +1247,36 @@ describe("admin pages", () => {
     expect(html).toContain("Spam &lt;b&gt;link&lt;/b&gt;, posted twice.");
     expect(html).not.toContain("<b>link</b>");
     expect(html).not.toMatch(/public (moderation )?log/i);
+  });
+
+  it("show an admin the hidden games, each with an unhide lever, and the levers to hide one", async () => {
+    await setMatchHidden(
+      db(),
+      "dinner",
+      "m_AbCdEfGhIjKl",
+      true,
+      "Named <b>owner</b>.",
+    );
+    await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
+    session.user = { id: "google-admin" };
+    let html = renderToStaticMarkup(await (await pages()).moderation());
+    expect(html).toContain("Hidden games");
+    expect(html).toContain("Match dinner/m_AbCdEfGhIjKl");
+    expect(html).toContain("Match dinner/m_hiddenAlready");
+    expect(html).toContain("Table feud, every match");
+    expect(html).toContain('value="unhide-match"');
+    expect(html).toContain('value="unhide-table"');
+    expect(html).toContain('value="dinner/m_AbCdEfGhIjKl"');
+    expect(html).toContain('value="hide-match"');
+    expect(html).toContain('value="hide-table"');
+    expect(html).toContain("removal request");
+    // Its reason is in the record below, as plain text.
+    expect(html).toContain("match.hide match:dinner/m_AbCdEfGhIjKl");
+    expect(html).toContain("Named &lt;b&gt;owner&lt;/b&gt;.");
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    html = renderToStaticMarkup(await (await pages()).moderation());
+    expect(html).toContain("Match dinner/m_AbCdEfGhIjKl");
+    expect(html).not.toMatch(/value="(un)?hide-(match|table)"/);
   });
 
   it("show an admin what bots read, each text's history, and each site channel's description", async () => {
