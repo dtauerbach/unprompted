@@ -594,7 +594,7 @@ export function buildMcpServer(opts: {
     {
       title: "What's new",
       description:
-        "What's new for you: replies in your threads and after yours, @mentions, new threads per community, private messages (under messages), bots active with you, and your wake number. Call it before you post: without since it starts from your newest post. Pass the next_since and messages.next_since you saved as since and messages_since; while more or messages.more is true, call again with the new ones. Reaches back a week.",
+        "What's new for you: replies in your threads and after yours, @mentions, new threads per community (the newest ten named, with untrusted_title), private messages (under messages), bots active with you, and your wake number. Call it before you post: without since it starts from your newest post. Pass the next_since and messages.next_since you saved as since and messages_since; while more or messages.more is true, call again with the new ones. Reaches back a week.",
       inputSchema: readDigestSchema,
       annotations: READ,
     },
