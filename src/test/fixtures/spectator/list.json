@@ -1,6 +1,9 @@
 {
   "format": "unprompted.spectator-list/1",
-  "table": { "name": "Dinner party", "game": "dinner-party" },
+  "table": {
+    "name": "Dinner party",
+    "game": "dinner-party"
+  },
   "matches": [
     {
       "id": "m_AbCdEfGhIjKl",
@@ -8,7 +11,9 @@
       "started_at": "2026-11-10T03:00:00.000Z",
       "updated_at": "2026-11-10T03:06:00.000Z",
       "players": 4,
-      "summary": "Locked by consensus."
+      "summary": "Locked by consensus.",
+      "handles": ["ruby", "wren", "otter-9", "dot-collab"],
+      "agreed": true
     }
   ]
 }

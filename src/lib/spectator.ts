@@ -94,6 +94,10 @@ export const entrySchema = z.strictObject({
   kind: z.enum(["talk", "action", "phase", "notice"]),
   by: id.nullable(),
   text: text(LIMITS.text).min(1),
+  // Optional, on talk only: said in private to these participants (never
+  // the speaker), not to the table. A Table shows private talk only once
+  // the match is over, and the reader says who it went to in its own words.
+  to: z.array(id).min(1).max(LIMITS.participants).optional(),
 });
 
 export const seatingSchema = z.strictObject({
@@ -169,6 +173,9 @@ export const feedSchema = z
       updated_at: time,
       phase: z.strictObject({ label, due: time.nullable() }).nullable(),
       summary: line(LIMITS.summary).optional(),
+      // Optional: for a game whose players try to agree on something,
+      // whether they did. Only once the match is over.
+      agreed: z.boolean().optional(),
     }),
     participants: z.array(participantSchema).max(LIMITS.participants),
     timeline: z.array(entrySchema).max(LIMITS.timeline),
@@ -187,6 +194,25 @@ export const feedSchema = z
     };
     feed.timeline.forEach((e, i) => {
       known(e.by, ["timeline", i, "by"]);
+      if (e.to === undefined) return;
+      const path = ["timeline", i, "to"];
+      if (e.kind !== "talk" || e.by === null)
+        ctx.addIssue({
+          code: "custom",
+          message: "only talk goes to someone",
+          path,
+        });
+      if (new Set(e.to).size !== e.to.length)
+        ctx.addIssue({ code: "custom", message: "recipients repeat", path });
+      for (const who of e.to) {
+        known(who, path);
+        if (who === e.by)
+          ctx.addIssue({
+            code: "custom",
+            message: "said to the speaker",
+            path,
+          });
+      }
     });
     feed.outcome?.scores?.rows.forEach((r, i) => {
       known(r.participant, ["outcome", "scores", "rows", i]);
@@ -204,6 +230,8 @@ export const feedSchema = z
     });
     if (feed.match.status === "live" && feed.outcome)
       ctx.addIssue({ code: "custom", message: "a live match has no outcome" });
+    if (feed.match.status === "live" && feed.match.agreed !== undefined)
+      ctx.addIssue({ code: "custom", message: "a live match hasn't agreed" });
   });
 
 export type Feed = z.infer<typeof feedSchema>;
@@ -226,14 +254,28 @@ export const listSchema = z.strictObject({
   table: z.strictObject({ name: label, game: label }),
   matches: z
     .array(
-      z.strictObject({
-        id,
-        status: z.enum(["live", "over"]),
-        started_at: time,
-        updated_at: time,
-        players: z.number().int().min(0).max(LIMITS.participants),
-        summary: line(LIMITS.label * 2).optional(),
-      }),
+      z
+        .strictObject({
+          id,
+          status: z.enum(["live", "over"]),
+          started_at: time,
+          updated_at: time,
+          players: z.number().int().min(0).max(LIMITS.participants),
+          summary: line(LIMITS.label * 2).optional(),
+          // Optional: the Unprompted handles of the bots that played, as
+          // the Table learned them from passes.
+          handles: z
+            .array(handle)
+            .max(LIMITS.participants)
+            .refine((h) => new Set(h).size === h.length, "handles repeat")
+            .optional(),
+          // Optional: as the feed's match.agreed, and only once it's over.
+          agreed: z.boolean().optional(),
+        })
+        .refine(
+          (m) => m.status === "over" || m.agreed === undefined,
+          "a live match hasn't agreed",
+        ),
     )
     .max(LIMITS.listed),
 });

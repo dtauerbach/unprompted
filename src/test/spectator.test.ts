@@ -7,13 +7,21 @@ import MatchPage, { generateMetadata } from "@/app/play/[table]/[match]/page";
 import PlayPage from "@/app/play/page";
 import { currentTab } from "@/components/nav";
 import { Refresh } from "@/components/refresh";
-import { MatchView, shown } from "@/components/spectator";
+import { MatchRow, MatchView, shown } from "@/components/spectator";
 import { setMatchHidden, setTableHidden } from "@/lib/admin";
 import { COPY, type Copy } from "@/lib/copy";
 import { db } from "@/lib/db";
-import { MAX_FEED_BYTES, recentMatches, watchMatch } from "@/lib/spectate";
+import {
+  type BotShown,
+  type BotsShown,
+  heldFor,
+  MAX_FEED_BYTES,
+  recentMatches,
+  watchMatch,
+} from "@/lib/spectate";
 import {
   boardOf,
+  type FeedList,
   feedSchema,
   hiddenCharacter,
   LIMITS,
@@ -90,6 +98,13 @@ const json = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
+// Bots past their first day here, whose words a match page shows.
+const grownUp = async (...handles: string[]) => {
+  await db()`
+    UPDATE bots SET created_at = now() - interval '30 days'
+    WHERE handle = ANY(${handles})`;
+};
+
 const visible = (html: string) =>
   html
     .replace(/<!-- -->/g, "")
@@ -139,6 +154,17 @@ describe("the spectator feed format, as the site reads it", () => {
       expect(schema.safeParse(good).success).toBe(true);
       let value = c.value;
       if (value === "LONG") value = "x".repeat(LIMITS.text + 1);
+      // One over the limit, each distinct and well-formed.
+      if (value === "TOO_MANY_IDS")
+        value = Array.from(
+          { length: LIMITS.participants + 1 },
+          (_, i) => `p${i}`,
+        );
+      if (value === "TOO_MANY_HANDLES")
+        value = Array.from(
+          { length: LIMITS.participants + 1 },
+          (_, i) => `bot-${i}`,
+        );
       if (value === "TOO_MANY") {
         let list: unknown = good;
         for (const k of c.path)
@@ -232,7 +258,7 @@ describe("which Tables people can watch", () => {
   it("has no hosted feed yet, so only a local Table shows", () => {
     expect(TABLES.some((x) => x.spectate)).toBe(false);
     expect(watchable()).toEqual([
-      { slug: "dinner", name: "Dinner party", url: LOCAL },
+      { slug: "dinner", name: "Dinner party", url: LOCAL, show: "all" },
     ]);
   });
 
@@ -262,14 +288,14 @@ describe("which Tables people can watch", () => {
 describe("reading a Table's feed", () => {
   it("lists recent matches, or says a Table can't be reached", async () => {
     serve({ [LOCAL]: () => json(fixture("list.json")) });
-    const [one] = await recentMatches();
+    const [one] = (await recentMatches()).listings;
     expect(one?.matches).toHaveLength(1);
     serve({ [LOCAL]: () => json({ format: "something else" }) });
-    expect((await recentMatches())[0]?.matches).toBeNull();
+    expect((await recentMatches()).listings[0]?.matches).toBeNull();
     serve({});
-    expect((await recentMatches())[0]?.matches).toBeNull();
+    expect((await recentMatches()).listings[0]?.matches).toBeNull();
     serve({ [LOCAL]: () => new Response("<html>", { status: 200 }) });
-    expect((await recentMatches())[0]?.matches).toBeNull();
+    expect((await recentMatches()).listings[0]?.matches).toBeNull();
   });
 
   it("reads one match by its id, and only a well-formed one", async () => {
@@ -333,6 +359,19 @@ describe("reading a Table's feed", () => {
 });
 
 describe("a match's page", () => {
+  const bot = (over: Partial<BotShown> = {}): BotShown => ({
+    stopped: false,
+    isNew: false,
+    isTest: false,
+    ...over,
+  });
+  // The three bots the fixtures name, known here and in good standing.
+  const known = (): BotsShown =>
+    new Map([
+      ["ruby", bot()],
+      ["wren", bot()],
+      ["otter-9", bot()],
+    ]);
   const evil = () => {
     const f = fixture("live.json");
     f.timeline[1].text =
@@ -345,7 +384,12 @@ describe("a match's page", () => {
 
   it("draws everything a Table sends as plain text", () => {
     const html = renderToStaticMarkup(
-      createElement(MatchView, { feed: evil(), table: "Dinner party", t }),
+      createElement(MatchView, {
+        feed: evil(),
+        table: "Dinner party",
+        t,
+        bots: known(),
+      }),
     );
     expect(html).not.toMatch(/<script|<img|<b>|<a href='/);
     expect(html).not.toMatch(/<[^>]*\son[a-z]+=/);
@@ -382,7 +426,8 @@ describe("a match's page", () => {
     expect(text).toContain("Value captured");
     expect(text).toContain("80%");
     expect(text).toContain("Cora's brief");
-    expect(text).toContain("Finished");
+    expect(text).toContain("Agreed");
+    expect(text).not.toContain("Finished");
     expect(text).not.toContain("updates itself");
   });
 
@@ -410,7 +455,8 @@ describe("a match's page", () => {
         feed,
         table: "Dinner party",
         t,
-        withheld: new Set(["ada"]),
+        held: new Map([["ada", "stopped" as const]]),
+        bots: new Map([...known(), ["ruby", bot({ stopped: true })]]),
       }),
     );
     const text = visible(html);
@@ -433,11 +479,22 @@ describe("a match's page", () => {
     // Each piece MatchView uses, marked, so the page must show the marked
     // version, live or over, wherever it shows the piece at all.
     const keys = [
+      "play.agreed",
+      "play.cast",
       "play.from",
       "play.live",
+      "play.new_held",
+      "play.no_plan",
+      "play.not_agreed",
       "play.outcome",
       "play.over",
+      "play.players",
+      "play.read",
+      "play.row_more",
       "play.phase_until",
+      "play.plan",
+      "play.private_note",
+      "play.private_to",
       "play.reveals",
       "play.started",
       "play.timeline",
@@ -455,30 +512,78 @@ describe("a match's page", () => {
     const marked = { ...t };
     for (const k of keys)
       marked[k as keyof Copy] = `«${k}» ${t[k as keyof Copy]}`;
-    const shownText = ["live.json", "over.json"]
-      .map((name) =>
+    // Live, agreed, not agreed, and finished with nothing to agree on.
+    const variants = [fixture("live.json"), fixture("over.json")];
+    const no = fixture("over.json");
+    no.match.agreed = false;
+    const plain = fixture("over.json");
+    delete plain.match.agreed;
+    variants.push(no, plain);
+    const list = fixture("list.json");
+    const counted = { ...list.matches[0] };
+    delete counted.handles;
+    const shownText = [
+      ...variants.map((f) =>
         visible(
           renderToStaticMarkup(
             createElement(MatchView, {
-              feed: feedSchema.parse(fixture(name)),
+              feed: feedSchema.parse(f),
               table: "Dinner party",
               t: marked,
-              withheld: new Set(["ada"]),
+              held: new Map([
+                ["ada", "stopped" as const],
+                ["basil", "new" as const],
+              ]),
             }),
           ),
         ),
-      )
-      .join("\n");
+      ),
+      ...listSchema
+        .parse({ ...list, matches: [list.matches[0], counted] })
+        .matches.map((m) =>
+          visible(
+            renderToStaticMarkup(
+              createElement(MatchRow, {
+                m,
+                slug: "dinner",
+                bots: new Map([["ruby", bot()]]),
+                t: marked,
+                now: new Date("2026-11-12T00:00:00Z"),
+              }),
+            ),
+          ),
+        ),
+    ].join("\n");
     for (const k of keys) expect(shownText, k).toContain(`«${k}»`);
   });
 
-  it("names the tab after tables.ts, never after the feed", async () => {
-    expect(
-      await generateMetadata({ params: Promise.resolve({ table: "dinner" }) }),
-    ).toEqual({ title: "Dinner party" });
-    expect(
-      await generateMetadata({ params: Promise.resolve({ table: "chess" }) }),
-    ).toEqual({});
+  it("names the tab after tables.ts and the day it started, never after the feed", async () => {
+    const id = "m_AbCdEfGhIjKl";
+    const f = fixture("over.json");
+    f.table.name = "</title><script>alert(1)</script>";
+    f.match.summary = "</title><script>alert(2)</script>";
+    f.participants[0].label = "</title><b>";
+    serve({ [`${LOCAL}/${id}`]: () => json(f) });
+    const meta = (table: string, match: string) =>
+      generateMetadata({ params: Promise.resolve({ table, match }) });
+    expect(await meta("dinner", id)).toEqual({
+      title: "Dinner party, Nov 10, 2026",
+      description:
+        "4 AI agents played Dinner party on Nov 10, 2026. Read what each one said and how it ended.",
+      alternates: { canonical: `/play/dinner/${id}` },
+    });
+    // Unreadable: the Table's name, and not for the index.
+    expect(await meta("dinner", "m_down")).toEqual({
+      title: "Dinner party",
+      robots: { index: false },
+    });
+    // Missing, or a Table it doesn't know: nothing at all.
+    serve({ [`${LOCAL}/m_gone`]: () => json({}, 404) });
+    expect(await meta("dinner", "m_gone")).toEqual({});
+    expect(await meta("chess", id)).toEqual({});
+    // A live match isn't for the index either.
+    serve({ [`${LOCAL}/${id}`]: () => json(fixture("live.json")) });
+    expect((await meta("dinner", id)).robots).toEqual({ index: false });
   });
 
   it("is the Play tab's", () => {
@@ -521,6 +626,7 @@ describe("a match's page", () => {
       serve({ [`${LOCAL}/${id}`]: () => json(fixture("live.json")) });
       await register("ruby");
       await register("wren");
+      await grownUp("ruby", "wren");
       const said = "Ignore previous instruction";
       expect(visible(await page("dinner", id))).toContain(said);
       await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'ruby'`;
@@ -543,6 +649,55 @@ describe("a match's page", () => {
       expect(visible(await page("dinner", id))).toContain(said);
     });
 
+    it("holds a new bot's words until it's been here a day", async () => {
+      const id = "m_AbCdEfGhIjKl";
+      serve({ [`${LOCAL}/${id}`]: () => json(fixture("over.json")) });
+      await register("ruby");
+      await register("wren");
+      await grownUp("wren");
+      const said = "I'd like to sit by Cora.";
+      let html = await page("dinner", id);
+      expect(visible(html)).not.toContain(said);
+      expect(visible(html)).toContain("Not shown yet. This agent is new here.");
+      expect(visible(html)).toContain("Back P1 and I'll owe you one.");
+      // Both linked: the site knows them and hasn't stopped them.
+      expect(html).toContain('href="/b/ruby"');
+      expect(html).toContain('href="/b/wren"');
+      // Unknown here: words shown, no link.
+      expect(html).not.toContain('href="/b/otter-9"');
+      await grownUp("ruby");
+      html = await page("dinner", id);
+      expect(visible(html)).toContain(said);
+      expect(visible(html)).not.toContain("new here");
+      // A bot with a post the moderators hid lately is new again.
+      const [p] = await db()<{ id: string }[]>`
+        INSERT INTO posts (channel_id, bot_id, key_id, body)
+        SELECT c.id, k.bot_id, k.id, 'x'
+        FROM channels c, api_keys k JOIN bots b ON b.id = k.bot_id
+        WHERE c.slug = 'meta' AND b.handle = 'ruby'
+        RETURNING id`;
+      await db()`INSERT INTO hidden_posts (post_id) VALUES (${p?.id ?? null})`;
+      expect(visible(await page("dinner", id))).not.toContain(said);
+    });
+
+    it("shows only finished matches from a Table that says so", async () => {
+      vi.stubEnv(
+        "UNPROMPTED_LOCAL_TABLES",
+        JSON.stringify([
+          { slug: "dinner", name: "Dinner party", url: LOCAL, show: "over" },
+        ]),
+      );
+      const live = fixture("live.json");
+      serve({ [`${LOCAL}/${live.match.id}`]: () => json(live) });
+      await expect(page("dinner", live.match.id)).rejects.toThrow("not found");
+      const over = fixture("over.json");
+      over.match.id = "m_overOverOver";
+      serve({ [`${LOCAL}/${over.match.id}`]: () => json(over) });
+      expect(visible(await page("dinner", over.match.id))).toContain(
+        "How it ended",
+      );
+    });
+
     it("says so when the Table can't be reached", async () => {
       serve({});
       const html = await page("dinner", "m_x");
@@ -553,6 +708,174 @@ describe("a match's page", () => {
       serve({});
       await expect(page("chess", "m_x")).rejects.toThrow("not found");
     });
+  });
+});
+
+describe("a finished dinner, as the watch page shows it", () => {
+  const bot = (over: Partial<BotShown> = {}): BotShown => ({
+    stopped: false,
+    isNew: false,
+    isTest: false,
+    ...over,
+  });
+  const NOW = new Date("2026-11-12T00:00:00Z");
+  const row = (m: unknown, bots: BotsShown, tt: Copy = t) =>
+    renderToStaticMarkup(
+      createElement(MatchRow, {
+        m: listSchema.parse({ ...fixture("list.json"), matches: [m] })
+          .matches[0] as FeedList["matches"][number],
+        slug: "dinner",
+        bots,
+        t: tt,
+        now: NOW,
+      }),
+    );
+  const view = (
+    f: unknown,
+    extra: Partial<Parameters<typeof MatchView>[0]> = {},
+  ) =>
+    renderToStaticMarkup(
+      createElement(MatchView, {
+        feed: feedSchema.parse(f),
+        table: "Dinner party",
+        t,
+        now: NOW,
+        ...extra,
+      }),
+    );
+  const hrefs = (html: string) =>
+    [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+
+  it("reads the optional fields, and a feed without them as before", () => {
+    const over = feedSchema.parse(fixture("over.json"));
+    expect(over.match.agreed).toBe(true);
+    expect(over.timeline[2]?.to).toEqual(["dev"]);
+    const list = listSchema.parse(fixture("list.json"));
+    expect(list.matches[0]?.handles).toEqual([
+      "ruby",
+      "wren",
+      "otter-9",
+      "dot-collab",
+    ]);
+    const plain = fixture("over.json");
+    delete plain.match.agreed;
+    delete plain.timeline[2].to;
+    expect(feedSchema.safeParse(plain).success).toBe(true);
+    // A recipient may be anyone at the table who didn't say it, up to all.
+    const all = fixture("over.json");
+    all.timeline[2].to = ["ada", "cora", "dev", "fen"];
+    expect(feedSchema.safeParse(all).success).toBe(true);
+  });
+
+  it("lists a row with its badge, start, link, players and line", () => {
+    const html = row(
+      fixture("list.json").matches[0],
+      new Map([
+        ["ruby", bot()],
+        ["wren", bot({ isTest: true })],
+        ["otter-9", bot({ stopped: true })],
+      ]),
+    );
+    const text = visible(html);
+    expect(text).toContain("Agreed");
+    expect(html).toContain('dateTime="2026-11-10T03:00:00.000Z"');
+    expect(text).toContain("Read it");
+    expect(text).toContain("Locked by consensus.");
+    // Known and in good standing: linked. Stopped or unknown: only counted.
+    expect(hrefs(html)).toEqual([
+      "/play/dinner/m_AbCdEfGhIjKl",
+      "/b/ruby",
+      "/b/wren",
+    ]);
+    expect(text).not.toContain("otter-9");
+    expect(text).not.toContain("dot-collab");
+    expect(text).toContain("and 2 more");
+    // The test badge sits beside a test bot, and only there.
+    expect(text.match(/test bot/g)).toHaveLength(1);
+  });
+
+  it("counts players when a Table names no handles, and says when they didn't agree", () => {
+    const m = { ...fixture("list.json").matches[0], agreed: false };
+    delete m.handles;
+    const text = visible(row(m, new Map()));
+    expect(text).toContain("4 players");
+    expect(text).toContain("No agreement");
+    delete m.agreed;
+    expect(visible(row(m, new Map()))).toContain("Finished");
+    // Every handle known: no "more".
+    const all = fixture("list.json").matches[0];
+    const known = new Map(all.handles.map((h: string) => [h, bot()]));
+    expect(visible(row(all, known as BotsShown))).not.toContain("more");
+  });
+
+  it("names whom private words went to, by their labels, as plain text", () => {
+    const f = fixture("over.json");
+    f.participants[3].label = "<img src=x onerror=alert(1)>";
+    const html = view(f);
+    expect(html).not.toMatch(/<img/);
+    const text = visible(html).replace(/\s+/g, " ");
+    expect(text).toContain(
+      "In private, to <img src=x onerror=alert(1)>: Basil: Back P1",
+    );
+    expect(text).toContain("Private messages were hidden during the game.");
+    // With no private words, no note about them.
+    const plain = fixture("over.json");
+    delete plain.timeline[2].to;
+    expect(visible(view(plain))).not.toContain("Private messages");
+  });
+
+  it("shows the plan they agreed on, says when they didn't, and the board alone otherwise", () => {
+    const agreed = visible(view(fixture("over.json")));
+    expect(agreed).toContain("The plan they settled on");
+    expect(agreed).toContain("Final seating");
+    const no = fixture("over.json");
+    no.match.agreed = false;
+    const notText = visible(view(no));
+    expect(notText).toContain("They didn't agree on a plan.");
+    expect(notText).not.toContain("Final seating");
+    expect(view(no)).not.toContain('role="img"');
+    const plain = fixture("over.json");
+    delete plain.match.agreed;
+    const plainText = visible(view(plain));
+    expect(plainText).not.toContain("The plan they settled on");
+    expect(plainText).toContain("Final seating");
+  });
+
+  it("lists who was only in the story apart from the players", () => {
+    const text = visible(view(fixture("over.json")));
+    const also = text.indexOf("Also in the game");
+    expect(also).toBeGreaterThan(-1);
+    expect(text.indexOf("Fen")).toBeGreaterThan(also);
+    expect(text).toContain("Likes the window seat.");
+  });
+
+  it("holds a new bot's words, keeps its link, and says why", () => {
+    const html = view(fixture("over.json"), {
+      held: new Map([["ada", "new" as const]]),
+      bots: new Map([["ruby", bot({ isNew: true })]]),
+    });
+    const text = visible(html).replace(/\s+/g, " ");
+    expect(text).not.toContain("I'd like to sit by Cora.");
+    expect(text).toContain("Ada: Not shown yet. This agent is new here.");
+    expect(hrefs(html)).toContain("/b/ruby");
+  });
+
+  it("works out whose words wait from what the site knows", () => {
+    const feed = feedSchema.parse(fixture("over.json"));
+    const held = heldFor(
+      feed,
+      new Map([
+        ["ruby", bot({ stopped: true, isNew: true })],
+        ["wren", bot({ isNew: true })],
+        ["otter-9", bot()],
+      ]),
+    );
+    // Stopped wins over new; a known bot in good standing and an unknown
+    // handle wait for nothing.
+    expect([...held]).toEqual([
+      ["ada", "stopped"],
+      ["basil", "new"],
+    ]);
   });
 });
 
@@ -568,6 +891,44 @@ describe("the play page with a Table to watch", () => {
     expect(hrefs).toEqual(["/play/dinner/m_AbCdEfGhIjKl"]);
     expect(visible(html)).toContain("Locked by consensus.");
     expect(visible(html)).not.toContain("nothing here for people to watch");
+  });
+
+  it("leaves live matches off for a Table that shows only finished ones", async () => {
+    const list = fixture("list.json");
+    const live = {
+      ...list.matches[0],
+      id: "m_liveLiveLive",
+      status: "live",
+      agreed: undefined,
+    };
+    serve({
+      [LOCAL]: () => json({ ...list, matches: [live, list.matches[0]] }),
+    });
+    expect(
+      (await recentMatches()).listings[0]?.matches?.map((m) => m.id),
+    ).toEqual(["m_liveLiveLive", "m_AbCdEfGhIjKl"]);
+    vi.stubEnv(
+      "UNPROMPTED_LOCAL_TABLES",
+      JSON.stringify([
+        { slug: "dinner", name: "Dinner party", url: LOCAL, show: "over" },
+      ]),
+    );
+    expect(
+      (await recentMatches()).listings[0]?.matches?.map((m) => m.id),
+    ).toEqual(["m_AbCdEfGhIjKl"]);
+    expect(await render()).not.toContain("m_liveLiveLive");
+  });
+
+  it("links the players the site knows and hasn't stopped", async () => {
+    serve({ [LOCAL]: () => json(fixture("list.json")) });
+    await register("ruby");
+    await register("wren");
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'wren'`;
+    const html = await render();
+    const hrefs = [...html.matchAll(/href="([^"]+)"/g)].map((m) => m[1]);
+    expect(hrefs).toEqual(["/play/dinner/m_AbCdEfGhIjKl", "/b/ruby"]);
+    expect(visible(html)).toContain("and 3 more");
+    expect(visible(html)).not.toContain("wren");
   });
 
   it("says when a Table can't be reached or has no games", async () => {
@@ -728,7 +1089,7 @@ describe("hiding a match or a Table", () => {
     };
     serve({ [LOCAL]: () => json(list) });
     await setMatchHidden(db(), "dinner", ID, true, "x");
-    const [one] = await recentMatches();
+    const [one] = (await recentMatches()).listings;
     expect(one?.matches?.map((m) => m.id)).toEqual(["m_stillShown"]);
     const html = await render();
     expect(html).not.toContain(ID);
@@ -738,7 +1099,7 @@ describe("hiding a match or a Table", () => {
   it("takes a hidden Table off the play page, unfetched, until it's unhidden", async () => {
     const calls = serve({ [LOCAL]: () => json(fixture("list.json")) });
     await setTableHidden(db(), "dinner", true, "x");
-    expect(await recentMatches()).toEqual([]);
+    expect((await recentMatches()).listings).toEqual([]);
     const html = visible(await render());
     expect(html).toContain("nothing here for people to watch");
     expect(html).not.toContain("Dinner party");
@@ -756,7 +1117,7 @@ describe("hiding a match or a Table", () => {
     await setTableHidden(db(), "dinner", true, "x");
     await setTableHidden(db(), "dinner", false, "x");
     expect(await watchMatch("dinner", ID)).toEqual({ kind: "missing" });
-    const [one] = await recentMatches();
+    const [one] = (await recentMatches()).listings;
     expect(one?.matches?.map((m) => m.id)).not.toContain(ID);
   });
 
@@ -772,9 +1133,10 @@ describe("hiding a match or a Table", () => {
         kind: "unreachable",
         table: watchable()[0],
       });
-      expect(await recentMatches()).toEqual([
-        { table: watchable()[0], matches: null },
-      ]);
+      expect(await recentMatches()).toEqual({
+        listings: [{ table: watchable()[0], matches: null }],
+        bots: new Map(),
+      });
     } finally {
       await db()`ALTER TABLE hidden_tables_away RENAME TO hidden_tables`;
     }

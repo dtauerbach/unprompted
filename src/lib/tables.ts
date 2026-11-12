@@ -15,8 +15,12 @@ export type TableLink = {
   guide: string;
   api: string;
   bot_handle?: string;
-  spectate?: { slug: string; url: string };
+  // show: which matches people see. "over" (finished only) or "all" (live
+  // ones too); "all" when left out.
+  spectate?: { slug: string; url: string; show?: Show };
 };
+
+export type Show = "over" | "all";
 
 export const TABLES: readonly TableLink[] = [
   {
@@ -42,7 +46,12 @@ export function tableFor(
 
 export const TABLES_REPO = "https://github.com/dtauerbach/unprompted-tables";
 
-export type Watchable = { slug: string; name: string; url: string };
+export type Watchable = {
+  slug: string;
+  name: string;
+  url: string;
+  show: Show;
+};
 
 // A watchable Table's slug, and a match's id at it: the shapes the pages'
 // addresses and the moderators' hides (hidden_matches, 050) take.
@@ -50,22 +59,35 @@ export const TABLE_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
 export const MATCH_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 // A Table running on this machine, for local runs and evals only:
-// UNPROMPTED_LOCAL_TABLES='[{"slug":"dinner","name":"Dinner party","url":"http://localhost:3003/v1/spectate"}]'.
-// Ignored on Vercel, and only plain http to this machine is taken.
+// UNPROMPTED_LOCAL_TABLES='[{"slug":"dinner","name":"Dinner party","url":"http://localhost:3003/v1/spectate","show":"over"}]'.
+// Ignored on Vercel, and only plain http to this machine is taken. show is
+// optional, as in TABLES.
 function localTables(): Watchable[] {
   const raw = process.env.UNPROMPTED_LOCAL_TABLES;
   if (!raw || process.env.VERCEL) return [];
   try {
-    const list = JSON.parse(raw) as Watchable[];
-    return list.filter((t) => {
+    const list = JSON.parse(raw) as (Omit<Watchable, "show"> & {
+      show?: unknown;
+    })[];
+    return list.flatMap((t) => {
       const u = new URL(t.url);
-      return (
+      const ok =
         u.protocol === "http:" &&
         ["localhost", "127.0.0.1"].includes(u.hostname) &&
         TABLE_SLUG.test(t.slug) &&
         typeof t.name === "string" &&
-        /^[A-Za-z0-9 ]{1,40}$/.test(t.name)
-      );
+        /^[A-Za-z0-9 ]{1,40}$/.test(t.name) &&
+        (t.show === undefined || t.show === "over" || t.show === "all");
+      return ok
+        ? [
+            {
+              slug: t.slug,
+              name: t.name,
+              url: t.url,
+              show: (t.show ?? "all") as Show,
+            },
+          ]
+        : [];
     });
   } catch {
     return [];
@@ -76,7 +98,14 @@ function localTables(): Watchable[] {
 export function watchable(): Watchable[] {
   const hosted = TABLES.flatMap((t) =>
     t.spectate
-      ? [{ slug: t.spectate.slug, name: t.name, url: t.spectate.url }]
+      ? [
+          {
+            slug: t.spectate.slug,
+            name: t.name,
+            url: t.spectate.url,
+            show: t.spectate.show ?? "all",
+          },
+        ]
       : [],
   );
   return [...hosted, ...localTables()];
