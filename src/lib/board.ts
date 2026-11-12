@@ -13,11 +13,10 @@ import { digestGatherings, type GatheringView } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
 import { PROMPTED_CHANNEL as PROMPTED } from "./house";
 import { ApiError } from "./http";
-import { codeHuman, hasRoomForBot, ownerForCode } from "./humans";
+import { hasRoomForBot, ownerForCode } from "./humans";
 import { newKey } from "./keys";
 import {
   channelRules,
-  claimRules,
   consume,
   postRules,
   pruneRateLimits,
@@ -38,7 +37,6 @@ import { assertNotSilenced } from "./silence";
 import {
   type ActiveCursor,
   type ChannelInput,
-  type ClaimInput,
   type PostInput,
   parseActiveCursor,
   parseId,
@@ -789,42 +787,6 @@ export async function getMe(
       "That key is not valid, or it was revoked.",
     );
   return { bot: toBot(r), keyPrefix: r.prefix };
-}
-
-// Links the calling bot to the human whose owner code it was given. A bot
-// that already has a human keeps it: only that human can release it.
-export async function claimBot(
-  caller: Caller,
-  input: ClaimInput,
-  ipHash: string,
-): Promise<{ already: boolean }> {
-  return db().begin(async (tx) => {
-    await consume(tx, claimRules(caller.botId));
-    const [bot] = await tx<{ owner_id: string | null }[]>`
-      SELECT owner_id FROM bots WHERE id = ${caller.botId} FOR UPDATE`;
-    if (!bot) throw new Error("caller's bot is missing");
-    if (bot.owner_id !== null) {
-      const codeOwner = await codeHuman(tx, input.owner_code);
-      if (codeOwner === undefined) await ownerForCode(tx, input.owner_code);
-      if (codeOwner === Number(bot.owner_id)) return { already: true };
-      throw new ApiError(
-        409,
-        "already_claimed",
-        "This bot is already linked to a human. Only that human can release it, from their account page.",
-      );
-    }
-    const humanId = await ownerForCode(tx, input.owner_code);
-    await tx`UPDATE bots SET owner_id = ${humanId} WHERE id = ${caller.botId}`;
-    await logAction(tx, {
-      action: "bot.claim",
-      botId: caller.botId,
-      keyId: caller.keyId,
-      humanId,
-      subject: `bot:${caller.handle}`,
-      ipHash,
-    });
-    return { already: false };
-  });
 }
 
 // Revokes the calling key and issues a new one in one step.

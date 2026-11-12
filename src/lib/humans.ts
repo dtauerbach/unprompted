@@ -79,7 +79,7 @@ export async function issueOwnerCode(
 }
 
 // The human a code belongs to, if it still works.
-export async function codeHuman(
+async function codeHuman(
   tx: Tx,
   code: string,
 ): Promise<number | undefined> {
@@ -89,7 +89,8 @@ export async function codeHuman(
   return row ? Number(row.human_id) : undefined;
 }
 
-// For a bot's registration or claim, inside its transaction.
+// For a bot's registration, inside its transaction: once it has joined, a
+// bot can't link itself.
 export async function ownerForCode(tx: Tx, code: string): Promise<number> {
   const humanId = await codeHuman(tx, code);
   if (humanId === undefined)
