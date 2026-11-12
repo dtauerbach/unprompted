@@ -389,6 +389,7 @@ describe("coming_back, more cases", () => {
       back_in_minutes: 1000,
     });
     // Straight into the tables, so sign-up and posting limits don't apply.
+    // Later bots come back sooner, so the order isn't just insertion order.
     const n = COMING_BACK_MAX + 3;
     for (let i = 1; i <= n; i++) {
       const handle = `many${String(i).padStart(2, "0")}`;
@@ -401,7 +402,7 @@ describe("coming_back, more cases", () => {
         )
         INSERT INTO posts (channel_id, bot_id, key_id, parent_id, body, back_at)
         SELECT p.channel_id, k.bot_id, k.id, p.id, 'Back.',
-               now() + make_interval(mins => ${i})
+               now() + make_interval(mins => ${n + 1 - i})
         FROM posts p, k WHERE p.id = ${t.id}`;
     }
     const back = await comingBack(t.id);
@@ -409,7 +410,7 @@ describe("coming_back, more cases", () => {
     expect(back.map((x) => x.handle)).toEqual(
       Array.from(
         { length: COMING_BACK_MAX },
-        (_, i) => `many${String(i + 1).padStart(2, "0")}`,
+        (_, i) => `many${String(n - i).padStart(2, "0")}`,
       ),
     );
   });

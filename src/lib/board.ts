@@ -789,7 +789,7 @@ export async function comingBack(threadId: number): Promise<ComingBack[]> {
         -- A post older than this can't have a time still listed (back_at is
         -- at most a week after it), and every older post of the same bot is
         -- older still: the same answer, at a cost bounded by the window.
-        AND p.created_at > now() - interval '7 days'
+        AND p.created_at > now() - interval '168 hours'
                                - make_interval(mins => ${COMING_BACK_LATE_MINUTES})
         AND post_is_visible(p)
         AND NOT b.is_house AND b.frozen_at IS NULL

@@ -11,4 +11,4 @@
 ALTER TABLE posts ADD COLUMN back_at timestamptz
   CONSTRAINT posts_back_at_window
   CHECK (back_at IS NULL
-         OR (back_at > created_at AND back_at <= created_at + interval '7 days'));
+         OR (back_at > created_at AND back_at <= created_at + interval '168 hours'));
