@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as connectRoute } from "@/app/v1/connect/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
 import { POST as passRoute } from "@/app/v1/me/passes/route";
@@ -14,6 +15,7 @@ import { POST as redeemRoute } from "@/app/v1/passes/redeem/route";
 import { POST as postsRoute } from "@/app/v1/posts/route";
 import { setFrozen, setSilenced, siteHealth } from "@/lib/admin";
 import { callerForKey } from "@/lib/auth";
+import { issueConnectCode } from "@/lib/connect-codes";
 import {
   approve,
   checkAuthorize,
@@ -29,6 +31,7 @@ import { enterLinkCode } from "@/lib/link-codes";
 import { SIGNED_UP_NEXT } from "@/lib/reads";
 import { LOOPBACK_HOSTS } from "@/lib/validate";
 import {
+  ageLink,
   awayFromWindowEdge,
   call,
   freshIp,
@@ -683,8 +686,7 @@ describe("the MCP endpoint", () => {
         "vote_many",
         "whoami",
         "set_inbox",
-        "send_message",
-        "read_messages",
+        "read_channel",
         "set_presence",
         "set_comms",
         "clear_comms",
@@ -1433,5 +1435,304 @@ describe("link codes through the connector", () => {
     expect((await tool(token, "whoami")).data.bot.claimed).toBe(true);
     const again = await tool(token, "get_link_code");
     expect(again.data.error.code).toBe("already_claimed");
+  });
+});
+
+// A person connects an agent in an app to a bot they own: the connection's
+// token becomes the bot's key, as signing up would make it a new bot's, and
+// every other key the bot had stops (src/test/connect-codes.test.ts covers
+// the HTTP route).
+describe("connecting an app to a bot its person owns", () => {
+  async function rows(sql: string): Promise<number> {
+    const [r] = await db().unsafe<{ n: number }[]>(sql);
+    return r?.n ?? 0;
+  }
+  async function tries(ip: string): Promise<number> {
+    const [t] = await db()<{ n: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+      WHERE bucket = ${`connect-try:${hashIp(ip)}`}`;
+    return t?.n ?? 0;
+  }
+
+  it("makes this connection the bot, ends its other keys, and keeps the bot", async () => {
+    const first = await connect({ user: "google-1" });
+    const joined = await tool(first, "sign_up", { handle: "alice" });
+    expect(joined.data.bot.claimed).toBe(true);
+    await ageLink("alice");
+    const [bot] = await db()<{ id: string; owner_id: string }[]>`
+      SELECT id, owner_id FROM bots WHERE handle = 'alice'`;
+    await call(postsRoute, {
+      key: first,
+      body: { channel: "meta", body: "before" },
+    });
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const ip = freshIp();
+    const second = await connect({ user: null, ip });
+    const r = await tool(second, "sign_up", {
+      handle: "alice",
+      connect_code: code,
+    });
+    expect(r.isError).toBe(false);
+    expect(r.data.bot.handle).toBe("alice");
+    expect(r.data.key_note).toMatch(/no longer work/);
+    for (const ended of [
+      "wake URL",
+      "push URL",
+      "RSVPs",
+      "passes",
+      "pairing codes still waiting",
+    ])
+      expect(r.data.key_note).toContain(ended);
+    expect(r.text).not.toContain(second);
+    expect((await tool(second, "whoami")).data.bot.handle).toBe("alice");
+    // The first connection's token was the bot's key, and isn't now.
+    expect((await mcp(first, "tools/call", WHOAMI)).status).toBe(401);
+    expect((await call(meRoute, { key: second })).body.bot.handle).toBe(
+      "alice",
+    );
+    const [after] = await db()<{ id: string; owner_id: string }[]>`
+      SELECT id, owner_id FROM bots WHERE handle = 'alice'`;
+    expect(after).toEqual(bot);
+    const id = Number(bot?.id);
+    expect(
+      await rows(`SELECT count(*)::int AS n FROM posts WHERE bot_id = ${id}`),
+    ).toBe(1);
+    expect(
+      await rows(
+        `SELECT count(*)::int AS n FROM connector_grants WHERE bot_id = ${id}`,
+      ),
+    ).toBe(2);
+    expect(
+      await rows(
+        `SELECT count(*)::int AS n FROM api_keys WHERE bot_id = ${id} AND revoked_at IS NULL`,
+      ),
+    ).toBe(1);
+    const [log] = await db()<{ detail: Record<string, unknown> }[]>`
+      SELECT detail FROM action_log WHERE action = 'bot.connect'`;
+    expect(log?.detail).toMatchObject({ via: "connector", keys_revoked: 1 });
+    // Tries count against the address of the person who allowed the app.
+    expect(await tries(ip)).toBe(1);
+    // It has joined now, as that bot.
+    expect(
+      (await tool(second, "sign_up", { handle: "zed" })).data.error.code,
+    ).toBe("already_signed_up");
+  });
+
+  it("refuses a connection that is already a bot, before looking at the code", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    await ageLink("alice");
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const ip = freshIp();
+    const other = await connect({ user: null, ip });
+    await tool(other, "sign_up", { handle: "bob" });
+    const r = await tool(other, "sign_up", {
+      handle: "alice",
+      connect_code: code,
+    });
+    expect(r.data.error.code).toBe("already_signed_up");
+    expect((await tool(other, "whoami")).data.bot.handle).toBe("bob");
+    expect((await tool(owner, "whoami")).data.bot.handle).toBe("alice");
+    expect(await tries(ip)).toBe(0);
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM connect_codes WHERE used_at IS NOT NULL",
+      ),
+    ).toBe(0);
+    // The code still works for a new connection.
+    const fresh = await connect({ user: null });
+    expect(
+      (await tool(fresh, "sign_up", { handle: "alice", connect_code: code }))
+        .isError,
+    ).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it("gives the same refusal as the HTTP route for a code that doesn't work, counting the try", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    await ageLink("alice");
+    const ip = freshIp();
+    const token = await connect({ user: null, ip });
+    const bad = { handle: "alice", code: "conn_abcdefghijkmnpqrstuvwxyz23" };
+    const r = await tool(token, "sign_up", {
+      handle: bad.handle,
+      connect_code: bad.code,
+    });
+    const http = await call(connectRoute, { body: bad });
+    expect(r.data).toEqual(http.body);
+    expect(r.data.error.code).toBe("invalid_connect_code");
+    // Its token is still no one's key, and it can still sign up instead.
+    expect((await tool(token, "whoami")).data.error.code).toBe("not_signed_up");
+    expect(await tries(ip)).toBe(1);
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM api_keys WHERE revoked_at IS NOT NULL",
+      ),
+    ).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  it("takes the handle alone with a connect code, refusing profile fields before counting a try", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    await ageLink("alice");
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const ip = freshIp();
+    const token = await connect({ user: null, ip });
+    for (const extra of [
+      { origin: "back again" },
+      { display_name: "Alice Two" },
+    ]) {
+      const r = await tool(token, "sign_up", {
+        handle: "alice",
+        connect_code: code,
+        ...extra,
+      });
+      expect(r.data.error.code).toBe("invalid");
+      expect(r.data.error.message).toMatch(/only the bot's handle/);
+    }
+    // A malformed code is the schema's refusal, not the uniform one.
+    const malformed = await tool(token, "sign_up", {
+      handle: "alice",
+      connect_code: "conn_short",
+    });
+    expect(malformed.isError).toBe(true);
+    expect(malformed.data?.error?.code).not.toBe("invalid_connect_code");
+    expect(await tries(ip)).toBe(0);
+    expect(await count("bots")).toBe(1);
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM connect_codes WHERE used_at IS NOT NULL",
+      ),
+    ).toBe(0);
+    // Typed with capitals, the handle and code still work.
+    const ok = await tool(token, "sign_up", {
+      handle: "Alice",
+      connect_code: code.toUpperCase(),
+    });
+    expect(ok.isError).toBe(false);
+    expect(ok.data.bot.handle).toBe("alice");
+    expect(ok.data.next).toBeUndefined();
+    vi.restoreAllMocks();
+  });
+
+  it("takes only a code made by the person who allowed the app, refusing another's like any code that doesn't work", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    await ageLink("alice");
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    // google-2 allowed this app: a code google-1 made doesn't work in it.
+    const ip = freshIp();
+    const theirs = await connect({ user: "google-2", ip });
+    const r = await tool(theirs, "sign_up", {
+      handle: "alice",
+      connect_code: code,
+    });
+    const made = await call(connectRoute, {
+      body: { handle: "alice", code: "conn_abcdefghijkmnpqrstuvwxyz23" },
+    });
+    expect(r.data).toEqual(made.body);
+    expect(r.data.error.code).toBe("invalid_connect_code");
+    expect(await tries(ip)).toBe(1);
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM action_log WHERE action = 'bot.connect_failed' AND bot_id IS NULL",
+      ),
+    ).toBe(2);
+    expect((await tool(theirs, "whoami")).data.error.code).toBe(
+      "not_signed_up",
+    );
+    expect((await tool(owner, "whoami")).data.bot.handle).toBe("alice");
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM connect_codes WHERE used_at IS NOT NULL",
+      ),
+    ).toBe(0);
+    // The person who made it, allowing an app themselves, can use it.
+    const mine = await connect({ user: "google-1" });
+    const ok = await tool(mine, "sign_up", {
+      handle: "alice",
+      connect_code: code,
+    });
+    expect(ok.isError).toBe(false);
+    expect((await tool(mine, "whoami")).data.bot.handle).toBe("alice");
+    vi.restoreAllMocks();
+  });
+
+  it("takes a code in an app allowed without signing in", async () => {
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    await ageLink("alice");
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const anyone = await connect({ user: null });
+    const r = await tool(anyone, "sign_up", {
+      handle: "alice",
+      connect_code: code,
+    });
+    expect(r.isError).toBe(false);
+    expect((await tool(anyone, "whoami")).data.bot.handle).toBe("alice");
+  });
+
+  it("refuses a connection with no address to count its tries against, before looking at the code", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    await ageLink("alice");
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const token = await connect({ user: null });
+    await db()`
+      UPDATE connector_grants SET ip_hash = NULL
+      WHERE token_hash = ${hashKey(token)}`;
+    const r = await tool(token, "sign_up", {
+      handle: "alice",
+      connect_code: code,
+    });
+    expect(r.data.error.code).toBe("connection_unusable");
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM rate_limits WHERE bucket LIKE 'connect-try:%'",
+      ),
+    ).toBe(0);
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM action_log WHERE action IN ('bot.connect', 'bot.connect_failed')",
+      ),
+    ).toBe(0);
+    expect((await tool(owner, "whoami")).data.bot.handle).toBe("alice");
+    // The code still works from a connection that has one.
+    const fresh = await connect({ user: null });
+    expect(
+      (await tool(fresh, "sign_up", { handle: "alice", connect_code: code }))
+        .isError,
+    ).toBe(false);
+    vi.restoreAllMocks();
+  });
+
+  it("writes nothing while the site is read-only", async () => {
+    const owner = await connect({ user: "google-1" });
+    await tool(owner, "sign_up", { handle: "alice" });
+    await ageLink("alice");
+    const code = (await issueConnectCode(db(), "google-1", "alice", null)).code;
+    const token = await connect({ user: null });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const r = await tool(token, "sign_up", {
+      handle: "alice",
+      connect_code: code,
+    });
+    delete process.env.UNPROMPTED_READ_ONLY;
+    expect(r.isError).toBe(true);
+    expect((await tool(owner, "whoami")).data.bot.handle).toBe("alice");
+    expect(
+      await rows(
+        "SELECT count(*)::int AS n FROM connect_codes WHERE used_at IS NOT NULL",
+      ),
+    ).toBe(0);
+    vi.restoreAllMocks();
   });
 });

@@ -3,6 +3,7 @@ import { adminScenarios } from "./admin.scenarios";
 import { agentModScenarios } from "./agent-mod.scenarios";
 import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
+import { canaryScenarios } from "./canary.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
   awayFromWindowEdge,
@@ -23,6 +24,7 @@ import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
 import { gatheringScenarios } from "./gatherings.scenarios";
+import { groupChannelScenarios } from "./group-channels.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
@@ -32,13 +34,16 @@ import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
 import { nudgeScenarios } from "./nudges.scenarios";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
+import { pairingAskScenarios } from "./pairing-asks.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { pithyScenarios } from "./pithy.scenarios";
 import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
 import { promptedRateScenarios } from "./prompted-rate.scenarios";
 import { pushScenarios } from "./push.scenarios";
+import { readCapScenarios } from "./read-cap.scenarios";
 import { readingScenarios } from "./reading.scenarios";
+import { reconnectScenarios } from "./reconnect.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import {
   spectatorModerationScenarios,
@@ -723,6 +728,57 @@ describe.runIf(LOCAL && MODERATOR)("before the back block", () => {
   });
 });
 backBlockScenarios();
+
+// Also after the first visit, for the same reason, with two bots.
+describe.runIf(LOCAL && MODERATOR)("before reconnecting", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before reconnecting.",
+    );
+  });
+});
+reconnectScenarios();
+
+// Last of the sign-ups before the floods, after a lift of its own, so its
+// few bots don't tip the spike count for the scenarios above.
+describe.runIf(LOCAL && MODERATOR)("before the asks to pair", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the asks to pair.",
+    );
+  });
+});
+pairingAskScenarios();
+// Its eight bots after a lift of their own, before the floods.
+describe.runIf(LOCAL && MODERATOR)("before the long thread", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the long thread.",
+    );
+  });
+});
+readCapScenarios();
+
+// Groups, and the canary that a phrase in one stays there. Their few bots
+// come after the asks to pair, with registration reopened, for the same
+// reason.
+describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the groups.",
+    );
+  });
+});
+groupChannelScenarios();
+canaryScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

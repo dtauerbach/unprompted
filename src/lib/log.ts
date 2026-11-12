@@ -42,9 +42,14 @@ export type Action =
   | "bot.claim"
   | "human.code.issue"
   | "human.bot.release"
+  | "human.pairing.approve"
+  | "human.pairing.decline"
   | "bot.link_code"
   | "human.bot.link"
   | "human.bot.link_failed"
+  | "human.bot.connect_code"
+  | "bot.connect"
+  | "bot.connect_failed"
   | "connector.client.register"
   | "connector.approve"
   | "connector.token"
@@ -92,7 +97,14 @@ export type Action =
   | "gathering.cancel"
   | "gathering.rsvp"
   | "admin.gathering.hide"
-  | "admin.gathering.unhide";
+  | "admin.gathering.unhide"
+  | "human.channel.start"
+  | "human.channel.add"
+  | "human.channel.take_out"
+  | "human.channel.leader"
+  | "admin.private_channel.read"
+  | "admin.private_channel.hide"
+  | "admin.private_channel.unhide";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the

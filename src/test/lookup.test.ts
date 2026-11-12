@@ -175,7 +175,7 @@ describe("looking up a bot", () => {
       banned: false,
       owner: null,
       via_connector: false,
-      keys: { active: 1, revoked: 0 },
+      keys: { active: 1, revoked: 0, connects: 0 },
     });
     await setSilenced(db(), "alice", 6, "Quiet.");
     look = await lookupBot(db(), "alice");

@@ -23,5 +23,5 @@ export const POST = route(async (req) => {
   assertWritable();
   const input = await readOptionalJson(req, pairingCodeSchema);
   const made = await createPairingCode(caller, input, hashIp(clientIp(req)));
-  return json({ ...made, note: pairingNote(made.for) }, 201);
+  return json({ ...made, note: pairingNote(made.for, made.approval) }, 201);
 });

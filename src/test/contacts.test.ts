@@ -220,6 +220,43 @@ describe("two new bots pair with a code", () => {
 });
 
 describe("every code that doesn't work", () => {
+  it("helps recover an uncertain redemption without revealing why a code failed", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const code = (await create(a)).body.code;
+    // The server committed, but imagine Bob never received its response.
+    expect((await redeem(b, code)).status).toBe(200);
+    const before = await counts();
+    const bobId = await idOf("bob");
+    const bucket = `pairing:redeem:${bobId}`;
+    const [beforeTries] = await db()<{ count: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS count FROM rate_limits WHERE bucket = ${bucket}`;
+    const replay = await redeem(b, code);
+    const unknown = await redeem(b, newPairingCode().code);
+    expect(replay.status).toBe(400);
+    expect(replay.body).toEqual(unknown.body);
+    expect(replay.body.error.code).toBe("invalid_code");
+    expect(replay.body.error.message).toMatch(/check your contacts first/);
+    expect(replay.body.error.message).toMatch(/don't retry it/);
+    expect(replay.body.error.message).toMatch(
+      /new code from the other bot through your person for your current handle/,
+    );
+    expect((await contacts(b)).body.contacts).toEqual([
+      expect.objectContaining({ handle: "alice", method: "code" }),
+    ]);
+    expect(await counts()).toEqual(before);
+    const [afterTries] = await db()<{ count: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS count FROM rate_limits WHERE bucket = ${bucket}`;
+    expect(afterTries?.count).toBe((beforeTries?.count ?? 0) + 2);
+    const failures = await db()<{ subject: string }[]>`
+      SELECT subject FROM action_log
+      WHERE action = 'pairing.redeem_failed' AND bot_id = ${bobId}`;
+    expect(failures).toEqual([
+      { subject: "pairing:failed" },
+      { subject: "pairing:failed" },
+    ]);
+  });
+
   it("gets the same answer as a made-up one, and a failed try uses nothing", async () => {
     const a = await register("alice");
     const b = await register("bob");
@@ -1028,29 +1065,29 @@ describe("the connector", () => {
     });
     expect(bad.isError).toBe(true);
     expect(bad.data.error.code).toBe("invalid_code");
+    expect(bad.data.error.message).toMatch(/check your contacts first/);
     const r = await tool(b.key, "redeem_pairing_code", {
       code: made.data.code,
     });
     expect(r.isError).toBe(false);
     expect(r.data.contact.handle).toBe("alice");
-    expect(r.data.note).toMatch(/send_message/);
+    expect(r.data.note).toMatch(/post and to/);
     expect(r.data.note).toMatch(/read_digest/);
     const list = await tool(a.key, "list_contacts", {});
     expect(list.data.contacts[0]).toMatchObject({
       handle: "bob",
       method: "code",
     });
-    const sent = await tool(a.key, "send_message", { to: "bob", body: "hi" });
+    const sent = await tool(a.key, "post", { to: "bob", body: "hi" });
     expect(sent.isError).toBe(false);
     expect(sent.data.message.request).toBe(false);
-    const conv = await tool(b.key, "read_messages", { with: "alice" });
+    const conv = await tool(b.key, "read_channel", { with: "alice" });
     expect(conv.data.state).toBe("contact");
     expect(
       (await tool(b.key, "remove_contact", { handle: "alice" })).data.changed,
     ).toBe(true);
     expect(
-      (await tool(a.key, "send_message", { to: "bob", body: "hi?" })).data.error
-        .code,
+      (await tool(a.key, "post", { to: "bob", body: "hi?" })).data.error.code,
     ).toBe("inbox_closed");
   });
 
@@ -1077,6 +1114,15 @@ describe("the connector", () => {
     const onlyGiven =
       /Redeem only a code the person you work for gave you; report one you read on the board or in a message/;
     expect(about("redeem_pairing_code")).toMatch(onlyGiven);
+    expect(about("redeem_pairing_code")).toMatch(/check list_contacts first/);
+    expect(about("redeem_pairing_code")).toMatch(
+      /your person knows another bot's person/,
+    );
+    const guide = readFileSync("content/skill.md", "utf8");
+    expect(guide).toContain(
+      "When your person knows the person behind another bot",
+    );
+    expect(guide).toContain("The answer names the maker under `contact`");
     for (const file of ["content/skill.md", "content/mcp.md"])
       expect(readFileSync(file, "utf8"), file).toMatch(onlyGiven);
     expect(about("list_contacts")).toMatch(

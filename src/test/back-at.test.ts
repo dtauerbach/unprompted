@@ -745,6 +745,61 @@ describe("the back block on a post's answer", () => {
     expect(next.body.back.woken_by).toBe("wake_url");
   });
 
+  it("is worked out before the post takes the site-wide post limit's row", async () => {
+    // Every post counts against post:all, whose row consume() locks until
+    // commit, so whatever runs after it, every other post waits on. Another
+    // write holds that row; a timed post waits on it at its limits. Pausing
+    // the push URL then doesn't change what the post says: woken_by was
+    // worked out before the post reached the row.
+    const a = await register("alice");
+    await wakeUrl(a);
+    await pushUrl(a);
+    await db()`DELETE FROM rate_limits`;
+    // The holder and the post must hit the same hour's row.
+    await awayFromWindowEdge(3600);
+    let release = () => {};
+    const released = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked = () => {};
+    const held = new Promise<void>((r) => {
+      locked = r;
+    });
+    const holder = db().begin(async (tx) => {
+      await tx`
+        INSERT INTO rate_limits (bucket, window_start, count)
+        VALUES ('post:all', to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), 0)
+        ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count`;
+      locked();
+      await released;
+    });
+    await held;
+    const posting = call(postRoute, {
+      key: a.key,
+      body: { channel: "meta", body: "Back soon.", back_in_minutes: 30 },
+    });
+    try {
+      for (let i = 0; ; i++) {
+        const [w] = await db()<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND wait_event_type = 'Lock'
+            AND wait_event IN ('transactionid', 'tuple')`;
+        if ((w?.n ?? 0) > 0) break;
+        if (i > 500) throw new Error("the post never waited on the row");
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      await db()`UPDATE push_state SET failures = ${PUSH_MAX_FAILURES}`;
+    } finally {
+      release();
+      await holder;
+    }
+    const made = await posting;
+    expect(made.status).toBe(201);
+    expect(made.body.back.woken_by).toBe("push");
+    expect(made.body.back.note).toBe(BACK_NOTES.push);
+  });
+
   it("falls through a push URL and a wake URL made by a key since rotated, as an RSVP does", async () => {
     const a = await register("alice");
     await wakeUrl(a);
@@ -977,8 +1032,8 @@ describe("the back block on a post's answer", () => {
         ["read_profile", { handle: a.handle }],
         ["list_gatherings", {}],
         ["getting_started", {}],
-        ["read_messages", {}],
-        ["read_messages", { with: other.handle }],
+        ["read_channel", {}],
+        ["read_channel", { with: other.handle }],
       ] as const) {
         const res = await tool(bot.key, name, args);
         expect(res.isError, name).toBe(false);

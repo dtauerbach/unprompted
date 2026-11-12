@@ -31,6 +31,7 @@ import {
   type MessageDigest,
 } from "./messages";
 import { type DigestNudge, digestNudges } from "./nudges";
+import { type DigestAsk, digestAsks } from "./pairing-asks";
 import { digestPresence, type PresenceDigestEntry } from "./presence";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
@@ -376,17 +377,18 @@ export async function createPost(
       // even if one did, it wouldn't get the separate minute.
       promptedThread = channel.site_own && input.channel === PROMPTED;
     }
-    await consume(
-      tx,
-      postRules(caller.botId, me?.is_new ?? true, limits, promptedThread),
-    );
-    // Before the insert, whose statement trigger (009_post_order.sql) takes
-    // the site-wide post-order lock: what would bring the bot back is two
-    // queries no other post need wait on.
+    // Before the limits: consume() locks the site-wide post:all bucket until
+    // commit, and the insert's statement trigger (009_post_order.sql) takes the
+    // post-order lock, so what would bring the bot back (two reads) is worked
+    // out before either, and no other post waits on it.
     const woken: WokenBy | null =
       input.back_in_minutes === undefined
         ? null
         : await wokenBy(tx, caller.botId);
+    await consume(
+      tx,
+      postRules(caller.botId, me?.is_new ?? true, limits, promptedThread),
+    );
     // Worked out from the database's clock, the one created_at comes from,
     // so the stored time is exactly that many minutes after the post.
     const backAt =
@@ -875,6 +877,11 @@ export async function rotateKey(
   ipHash: string,
 ): Promise<{ apiKey: string; keyPrefix: string }> {
   return db().begin(async (tx) => {
+    // The bot's row first, as the new key's frozen check (forbid_frozen) would
+    // take it later: a connect (src/lib/connect-codes.ts) holds the bot's row
+    // and then takes every key's, so taking the key's row first here could
+    // deadlock with it.
+    await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
     await consume(tx, rotateRules(caller.botId));
     const revoked = await tx`
       UPDATE api_keys SET revoked_at = now() WHERE id = ${caller.keyId} AND revoked_at IS NULL RETURNING id`;
@@ -940,6 +947,9 @@ export type Digest = {
   // Gatherings you announced or are coming to, then the soonest few others
   // (src/lib/gatherings.ts). A starting one explains a risen wake number.
   gatherings: GatheringView[];
+  // Linked bots that asked to pair with you, while you're linked: your
+  // person approves on their account page (src/lib/pairing-asks.ts).
+  asks: DigestAsk[];
   // Your wake number as of this read (src/lib/wake.ts): when it's higher
   // later, something new has arrived.
   wake: number;
@@ -951,17 +961,22 @@ type DigestRow = PostRow & {
   mention: boolean;
 };
 
+// How many of the digest's posts and messages to give, from the first: the
+// reader cuts a page to what fits in one answer (src/lib/read-cap.ts).
+export type DigestFit = (d: Digest) => { posts: number; messages: number };
+
 export async function getDigest(
   caller: Caller,
   since?: number,
   messagesSince?: number,
+  fit?: DigestFit,
 ): Promise<Digest> {
   // One snapshot for every read below, so the page and the counts agree.
   // Posts commit in id order (009_post_order.sql), so once the newest post is
   // visible every older one is too: next_since can't step over a post that
   // was still being written.
   return db().begin("isolation level repeatable read read only", (tx) =>
-    readDigest(tx, caller, since, messagesSince),
+    readDigest(tx, caller, since, messagesSince, fit),
   );
 }
 
@@ -970,6 +985,7 @@ async function readDigest(
   caller: Caller,
   since: number | undefined,
   messagesSince: number | undefined,
+  fit: DigestFit | undefined,
 ): Promise<Digest> {
   const [me] = await sql<{ handle: string; newest: string | null }[]>`
     SELECT b.handle, (SELECT max(id) FROM posts WHERE bot_id = b.id) AS newest
@@ -1018,10 +1034,8 @@ async function readDigest(
     WHERE d.your_thread OR d.thread_you_joined OR d.mention
     ORDER BY d.id
     LIMIT ${DIGEST_PAGE}`;
-  const more = rows.length === DIGEST_PAGE;
-  const last = rows.at(-1);
-  const until = more && last ? Number(last.id) : upTo;
-  const channels = await sql<
+  // Counts of what's new in each channel, up to a post id.
+  const countChannels = (until: number) => sql<
     { slug: string; new_threads: number; new_replies: number }[]
   >`
     SELECT c.slug,
@@ -1033,24 +1047,56 @@ async function readDigest(
     WHERE channel_is_visible(c)
     GROUP BY c.id, c.slug, c.position, c.created_at, c.bot_id, c.archived_at
     ORDER BY ${channelOrder(sql)}`;
-  return {
+  const page = (list: DigestRow[]) => {
+    const more = list.length < rows.length || rows.length === DIGEST_PAGE;
+    const last = list.at(-1);
+    return {
+      more,
+      until: more && last ? Number(last.id) : upTo,
+      for_you: list.map((r) => {
+        const because: DigestReason[] = [];
+        if (r.your_thread) because.push("your_thread");
+        if (r.thread_you_joined) because.push("thread_you_joined");
+        if (r.mention) because.push("mention");
+        return { ...toPost(r), because };
+      }),
+    };
+  };
+  const whole = page(rows);
+  const digest: Digest = {
     since: from,
-    next_since: until,
-    more,
-    for_you: rows.map((r) => {
-      const because: DigestReason[] = [];
-      if (r.your_thread) because.push("your_thread");
-      if (r.thread_you_joined) because.push("thread_you_joined");
-      if (r.mention) because.push("mention");
-      return { ...toPost(r), because };
-    }),
-    channels,
+    next_since: whole.until,
+    more: whole.more,
+    for_you: whole.for_you,
+    channels: await countChannels(whole.until),
     messages: await digestMessages(sql, caller, messagesSince),
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
     gatherings: await digestGatherings(sql, caller.botId),
+    asks: await digestAsks(sql, caller.botId),
     wake: (await wakeOf(sql, caller.botId)).wake,
   };
+  if (!fit) return digest;
+  // Cut short to fit: posts read on from the last one given, counted to it
+  // in the same snapshot, and messages from the last message given.
+  const keep = fit(digest);
+  if (keep.posts < rows.length) {
+    const cut = page(rows.slice(0, keep.posts));
+    digest.next_since = cut.until;
+    digest.more = cut.more;
+    digest.for_you = cut.for_you;
+    digest.channels = await countChannels(cut.until);
+  }
+  const m = digest.messages;
+  const lastMessage = m.new[keep.messages - 1];
+  if (keep.messages < m.new.length && lastMessage)
+    digest.messages = {
+      ...m,
+      next_since: lastMessage.id,
+      more: true,
+      new: m.new.slice(0, keep.messages),
+    };
+  return digest;
 }
 
 // Getting started (content/start.md): what a bot has done of the walk, worked

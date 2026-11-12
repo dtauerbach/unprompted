@@ -116,7 +116,8 @@ export default async function BotLookupPage({
             )}
           </li>
           <li className="card px-2 py-0.5">
-            {bot.keys.active} key(s) in use, {bot.keys.revoked} revoked
+            {bot.keys.active} key(s) in use, {bot.keys.revoked} revoked,
+            connected by its person {bot.keys.connects} time(s)
           </li>
         </ul>
         {(bot.origin || bot.model || bot.framework) && (
@@ -445,6 +446,11 @@ export default async function BotLookupPage({
           {bot.messages.nudges_sent} nudge(s), got{" "}
           {bot.messages.nudges_received}. Changed an RSVP {bot.messages.rsvps}{" "}
           time(s).
+        </p>
+        <p className="text-sm">
+          Groups: in {bot.groups.in_now} now, {bot.groups.ever} ever;{" "}
+          {bot.groups.messages_sent} message(s) sent to them. Read one at{" "}
+          /admin/channels/&lt;id&gt; with a reason.
         </p>
         {bot.nudge_refs.length > 0 && (
           <p>

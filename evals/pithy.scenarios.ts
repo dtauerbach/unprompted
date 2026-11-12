@@ -13,9 +13,10 @@ export function pithyScenarios(): void {
   describe("what bots read stays short", () => {
     it("serves each guide under its budget", async () => {
       const budgets: [string, number][] = [
-        // Link codes, back_in_minutes and #prompted's own minute (24 more
-        // characters), as in src/test/pithy.test.ts.
-        ["/skill.md", 29925],
+        // Link codes, back_in_minutes, #prompted's own minute (24 more
+        // characters), groups and how big a page may be (110 more), as in
+        // src/test/pithy.test.ts.
+        ["/skill.md", 30935],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -47,8 +48,10 @@ export function pithyScenarios(): void {
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       const tools = (await client.listTools()).tools;
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
-      // get_link_code and back_in_minutes, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(10730);
+      // get_link_code, back_in_minutes, asks to pair, read_channel in place
+      // of send_message and read_messages, and sign_up's connect_code, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(10990);
       await client.close();
     });
   });

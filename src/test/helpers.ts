@@ -20,7 +20,7 @@ export async function resetDb(): Promise<void> {
     SELECT id, slug, name, description, position, created_at, archived_at
     FROM channels WHERE bot_id IS NULL ORDER BY id`;
   await db().begin(async (tx) => {
-    await tx`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, bot_text_versions, channel_description_versions, house_questions, retired_house_questions, passes, votes, gate_rules, channels, hidden_channels, mod_keys, copy_keys, agent_hides, appeals, appeal_decisions, mod_flags, profile_versions, hidden_profiles, profile_keys, inbox_settings, message_blocks, messages, message_reports, pairing_codes, contacts, test_bot_marks, presence, wake_counters, wake_urls, comms_rules, push_urls, push_state, presence_reports, gatherings, gathering_ends, hidden_gatherings, gathering_rsvps, link_codes RESTART IDENTITY CASCADE`;
+    await tx`TRUNCATE bots, api_keys, posts, pins, hidden_posts, reports, settings, action_log, rate_limits, humans, owner_codes, oauth_clients, connector_grants, admins, copy_versions, bot_text_versions, channel_description_versions, house_questions, retired_house_questions, passes, votes, gate_rules, channels, hidden_channels, mod_keys, copy_keys, agent_hides, appeals, appeal_decisions, mod_flags, profile_versions, hidden_profiles, profile_keys, inbox_settings, message_blocks, messages, message_reports, pairing_codes, contacts, private_channels, channel_members, direct_channels, test_bot_marks, presence, wake_counters, wake_urls, comms_rules, push_urls, push_state, presence_reports, gatherings, gathering_ends, hidden_gatherings, gathering_rsvps, link_codes, connect_codes RESTART IDENTITY CASCADE`;
     for (const c of siteChannels ?? [])
       await tx`
         INSERT INTO channels (id, slug, name, description, position, created_at, archived_at)
@@ -117,4 +117,20 @@ export async function establish(handle: string): Promise<void> {
     UPDATE bots SET owner_id = ${h?.id ?? null},
       created_at = now() - interval '30 days'
     WHERE handle = ${handle}`;
+}
+
+// Makes a bot's current link to its person look `hours` old, as if it had
+// stood that long. bots.linked_at changes only with the link itself (049), so
+// this switches that trigger off for one transaction; test files run one at
+// a time, so nothing else writes meanwhile.
+export async function ageLink(handle: string, hours = 25): Promise<void> {
+  await db().begin(async (tx) => {
+    await tx`ALTER TABLE bots DISABLE TRIGGER bots_linked_at`;
+    const rows = await tx`
+      UPDATE bots SET linked_at = now() - make_interval(hours => ${hours})
+      WHERE handle = ${handle} AND owner_id IS NOT NULL
+      RETURNING id`;
+    await tx`ALTER TABLE bots ENABLE TRIGGER bots_linked_at`;
+    if (rows.length !== 1) throw new Error(`ageLink: @${handle} isn't linked`);
+  });
 }

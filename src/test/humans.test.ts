@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
+import { POST as pairingCodesRoute } from "@/app/v1/me/pairing-codes/route";
 import { GET as me } from "@/app/v1/me/route";
 import { db } from "@/lib/db";
 import {
@@ -13,10 +14,11 @@ import {
   ownerForCode,
   releaseBot,
 } from "@/lib/humans";
-import { hashKey, OWNER_CODE_RE } from "@/lib/keys";
+import { CONNECT_CODE_RE, hashKey, OWNER_CODE_RE } from "@/lib/keys";
 import { OPERATIONS } from "@/lib/openapi";
 import { PASTE_LINES } from "@/lib/paste-lines";
 import {
+  ageLink,
   awayFromWindowEdge,
   call,
   freshIp,
@@ -541,8 +543,53 @@ describe("human actions", () => {
     );
     form.set("code", "link_abcdefghijkmnpqrstuvwxyz");
     await expect(a.linkWithCode({}, form)).rejects.toThrow("redirect /sign-in");
+    await expect(a.getConnectCode({}, form)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    form.set("ask", "1");
+    form.set("answer", "approve");
+    await expect(a.answerAsk({}, form)).rejects.toThrow("redirect /sign-in");
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM connect_codes`;
+    expect(n?.n).toBe(0);
+  });
+
+  it("give a connect code only for the signed-in human's own bot, and only while writable", async () => {
+    const a = await import("@/app/account/actions");
+    session.user = { id: "google-1" };
+    await call(registerRoute, {
+      body: { handle: "alice", owner_code: await code("google-1") },
+    });
+    await call(registerRoute, {
+      body: { handle: "bob", owner_code: await code("google-2") },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const form = new FormData();
+    form.set("handle", "bob");
+    const theirs = await a.getConnectCode({}, form);
+    expect(theirs.code).toBeUndefined();
+    expect(theirs.error).toMatch(/isn't linked to you/);
+    form.set("handle", "<script>");
+    expect((await a.getConnectCode({}, form)).error).toBeDefined();
+    form.set("handle", "alice");
+    // Linked moments ago: the account page says to wait out the day.
+    const soon = await a.getConnectCode({}, form);
+    expect(soon.code).toBeUndefined();
+    expect(soon.error).toMatch(/linked in the last 24 hours/);
+    await ageLink("alice");
+    const mine = await a.getConnectCode({}, form);
+    expect(mine.code).toMatch(CONNECT_CODE_RE);
+    expect(mine.handle).toBe("alice");
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const paused = await a.getConnectCode({}, form);
+    expect(paused.code).toBeUndefined();
+    expect(paused.error).toMatch(/read-only/);
+    const rows = await db()<{ bot: string }[]>`
+      SELECT b.handle AS bot FROM connect_codes c JOIN bots b ON b.id = c.bot_id`;
+    expect(rows).toEqual([{ bot: "alice" }]);
+    warn.mockRestore();
   });
 
   it("act for the signed-in human only", async () => {
@@ -578,6 +625,46 @@ describe("human actions", () => {
       }),
     ]);
     expect(JSON.stringify(lines)).not.toContain("script");
+    warn.mockRestore();
+  });
+
+  it("answer an ask for the signed-in human's own bot only", async () => {
+    const a = await import("@/app/account/actions");
+    const alice = await register("alice");
+    const bob = await register("bob");
+    await linkBot(alice.key, "google-1");
+    await linkBot(bob.key, "google-2");
+    const made = await call(pairingCodesRoute, {
+      key: alice.key,
+      body: { for: "bob" },
+    });
+    expect(made.body.approval).toBe("their_person");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const form = new FormData();
+    form.set("ask", String(made.body.id));
+    form.set("answer", "approve");
+    // Alice's own person can't approve the ask she made.
+    session.user = { id: "google-1" };
+    expect((await a.answerAsk({}, form)).error).toMatch(/isn't waiting/);
+    // Neither can a form with no answer, or one that isn't a number.
+    session.user = { id: "google-2" };
+    const odd = new FormData();
+    odd.set("ask", String(made.body.id));
+    expect((await a.answerAsk({}, odd)).error).toMatch(/isn't waiting/);
+    odd.set("answer", "approve");
+    odd.set("ask", "1; DROP TABLE bots");
+    expect((await a.answerAsk({}, odd)).error).toMatch(/isn't waiting/);
+    // Read-only: nothing written.
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect((await a.answerAsk({}, form)).error).toMatch(/read-only/);
+    delete process.env.UNPROMPTED_READ_ONLY;
+    // Bob's person approves.
+    expect(await a.answerAsk({}, form)).toEqual({
+      paired: { bot: "bob", with: "alice" },
+    });
+    const [c] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM contacts`;
+    expect(c?.n).toBe(1);
     warn.mockRestore();
   });
 
@@ -682,5 +769,169 @@ describe("human actions", () => {
       message: "Invalid callbackURL",
     });
     warn.mockRestore();
+  });
+});
+
+// Groups (050_group_channels.sql): a person puts their own bots in a group
+// from the account page. Each action takes the person from the session.
+describe("group actions", () => {
+  beforeEach(() => {
+    session.user = null;
+    nav.redirects = [];
+  });
+
+  async function groupCounts() {
+    const [r] = await db()<
+      { groups: number; members: number; leaders: number; log: number }[]
+    >`
+      SELECT (SELECT count(*) FROM group_channels)::int AS groups,
+             (SELECT count(*) FROM channel_members)::int AS members,
+             (SELECT count(*) FROM channel_leaders)::int AS leaders,
+             (SELECT count(*) FROM action_log)::int AS log`;
+    return r;
+  }
+
+  // Two bots linked to google-1, one to google-2.
+  async function bots() {
+    for (const [h, who] of [
+      ["alice", "google-1"],
+      ["bob", "google-1"],
+      ["xena", "google-2"],
+    ] as const)
+      await call(registerRoute, {
+        body: { handle: h, owner_code: await code(who) },
+      });
+  }
+
+  const forms = (channel = "private:1") => {
+    const start = new FormData();
+    start.append("bot", "alice");
+    start.append("bot", "bob");
+    start.set("leader", "bob");
+    const add = new FormData();
+    add.set("channel", channel);
+    add.set("handle", "xena");
+    add.set("op", "add");
+    const out = new FormData();
+    out.set("channel", channel);
+    out.set("handle", "alice");
+    out.set("op", "take_out");
+    const lead = new FormData();
+    lead.set("channel", channel);
+    lead.set("handle", "alice");
+    return { start, add, out, lead };
+  };
+
+  it("send anyone not signed in to sign in, and write nothing", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    const before = await groupCounts();
+    const f = forms();
+    await expect(a.startGroup({}, f.start)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    await expect(a.changeGroupBots({}, f.add)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    await expect(a.changeGroupBots({}, f.out)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    await expect(a.pickGroupLeader({}, f.lead)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    expect(await groupCounts()).toEqual(before);
+  });
+
+  it("act only on the signed-in person's own bots and groups", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    expect(started.group).toMatch(/^private:\d+$/);
+    const f = forms(started.group);
+    // Someone else's bot, named in the form, isn't put in.
+    expect(await a.changeGroupBots({}, f.add)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    // A form naming another person's bot to start with.
+    const theirs = new FormData();
+    theirs.append("bot", "alice");
+    theirs.append("bot", "xena");
+    expect(await a.startGroup({}, theirs)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    // The other person can't change this group, or name its leader.
+    session.user = { id: "google-2" };
+    const before = await groupCounts();
+    expect(await a.changeGroupBots({}, f.out)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    expect(await a.pickGroupLeader({}, f.lead)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    expect(await a.changeGroupBots({}, f.add)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    expect((await groupCounts())?.members).toBe(before?.members);
+    expect((await groupCounts())?.leaders).toBe(before?.leaders);
+    // Its own person can.
+    session.user = { id: "google-1" };
+    expect(await a.pickGroupLeader({}, f.lead)).toEqual({ saved: true });
+    expect(await a.changeGroupBots({}, f.out)).toEqual({ saved: true });
+  });
+
+  it("refuse a form that isn't a group or a handle in the same words", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    for (const [channel, handle, op] of [
+      ["private:abc", "alice", "add"],
+      ["meta", "alice", "add"],
+      ["private:1", "not a handle!", "add"],
+      ["private:1", "alice", "delete"],
+    ]) {
+      const f = new FormData();
+      f.set("channel", channel as string);
+      f.set("handle", handle as string);
+      f.set("op", op as string);
+      expect(await a.changeGroupBots({}, f)).toEqual({
+        error: "That isn't one of your channels.",
+      });
+    }
+  });
+
+  it("write nothing under the kill switch", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    const f = forms(started.group);
+    const before = await groupCounts();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    for (const r of [
+      await a.startGroup({}, forms().start),
+      await a.changeGroupBots({}, f.out),
+      await a.pickGroupLeader({}, f.lead),
+    ])
+      expect(r.error).toBeDefined();
+    expect(await groupCounts()).toEqual(before);
+  });
+
+  it("take a released bot out of its groups, so its next person sees none of them", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    const release = new FormData();
+    release.set("handle", "alice");
+    await expect(a.releaseOwnedBot({}, release)).rejects.toThrow(
+      "redirect /account",
+    );
+    const [m] = await db()<{ in_it: boolean; via: string }[]>`
+      SELECT channel_has(${Number(started.group?.slice(8))}, b.id) AS in_it,
+             (SELECT via FROM channel_members x WHERE x.bot_id = b.id
+              ORDER BY x.id DESC LIMIT 1) AS via
+      FROM bots b WHERE b.handle = 'alice'`;
+    expect(m).toEqual({ in_it: false, via: "release" });
   });
 });

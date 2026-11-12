@@ -1605,3 +1605,136 @@ describe("the lookup screen", () => {
     expect(bot).toContain(`href="/admin/humans/${humanId}"`);
   });
 });
+
+// Groups (050_group_channels.sql): an admin reads one in full, with a
+// reason the record keeps, and hides or unhides it.
+describe("an admin and a private channel", () => {
+  async function aGroup(): Promise<number> {
+    const { startChannel } = await import("@/lib/private-channels");
+    const a = await register("alice");
+    const b = await register("bob");
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-owner') RETURNING id`;
+    await db()`UPDATE bots SET owner_id = ${h?.id ?? null} WHERE handle IN (${a.handle}, ${b.handle})`;
+    const g = await startChannel(
+      db(),
+      "google-owner",
+      [a.handle, b.handle],
+      undefined,
+      null,
+    );
+    return Number(g.channel.replace("private:", ""));
+  }
+  const privateCalls = async (id: number) => {
+    const a = await import("@/app/admin/actions");
+    return [
+      () =>
+        a.readPrivateChannelAction(
+          {},
+          form({ channel: String(id), reason: "A report." }),
+        ),
+      () =>
+        a.moderateAction(
+          {},
+          form({
+            op: "hide-private-channel",
+            target: String(id),
+            reason: "Abuse.",
+          }),
+        ),
+      () =>
+        a.moderateAction(
+          {},
+          form({
+            op: "unhide-private-channel",
+            target: `private:${id}`,
+            reason: "Fine.",
+          }),
+        ),
+    ];
+  };
+  const hidden = async () => {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM hidden_private_channels`;
+    return r?.n;
+  };
+
+  it("sends anyone with no session to sign in, and refuses a non-admin, writing nothing", async () => {
+    const id = await aGroup();
+    const before = await writes();
+    for (const run of await privateCalls(id))
+      await expect(run()).rejects.toThrow("redirect /sign-in");
+    await issueOwnerCode(db(), "google-someone", null);
+    session.user = { id: "google-someone" };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const after = await writes();
+    for (const run of await privateCalls(id))
+      expect(await run()).toEqual({ error: "Only admins can do that." });
+    expect(await writes()).toEqual(after);
+    expect(await hidden()).toBe(0);
+    expect(before?.log).toBeLessThanOrEqual(after?.log ?? 0);
+    warn.mockRestore();
+  });
+
+  it("reads one for an admin with a reason, logged, and hides and unhides a group", async () => {
+    const id = await aGroup();
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Admin.",
+      "x",
+    );
+    session.user = { id: "google-admin" };
+    const a = await import("@/app/admin/actions");
+    const noReason = await a.readPrivateChannelAction(
+      {},
+      form({ channel: String(id), reason: "" }),
+    );
+    expect(noReason.error).toBeTruthy();
+    const got = await a.readPrivateChannelAction(
+      {},
+      form({ channel: String(id), reason: "A report." }),
+    );
+    expect(got.read).toMatchObject({
+      id,
+      kind: "group",
+      members: [
+        expect.objectContaining({ handle: "alice", via: "person" }),
+        expect.objectContaining({ handle: "bob", via: "person" }),
+      ],
+      messages: [],
+    });
+    const [log] = await db()<{ human: string; detail: { reason: string } }[]>`
+      SELECT human_id::text AS human, detail FROM action_log
+      WHERE action = 'admin.private_channel.read'`;
+    expect(log).toEqual({
+      human: String(humanId),
+      detail: expect.objectContaining({ reason: "A report." }),
+    });
+    const [, hide, unhide] = await privateCalls(id);
+    expect((await hide?.())?.error).toBeUndefined();
+    expect(await hidden()).toBe(1);
+    expect((await unhide?.())?.error).toBeUndefined();
+    expect(await hidden()).toBe(0);
+    const bad = await a.moderateAction(
+      {},
+      form({ op: "hide-private-channel", target: "nope", reason: "x" }),
+    );
+    expect(bad.error).toBeTruthy();
+    // The read writes a line to the record, so the kill switch holds it.
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const [{ n: reads = 0 } = {}] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM action_log
+      WHERE action = 'admin.private_channel.read'`;
+    const off = await a.readPrivateChannelAction(
+      {},
+      form({ channel: String(id), reason: "A report." }),
+    );
+    expect(off.error).toBeTruthy();
+    expect(off.read).toBeUndefined();
+    const [after] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM action_log
+      WHERE action = 'admin.private_channel.read'`;
+    expect(after?.n).toBe(reads);
+  });
+});
