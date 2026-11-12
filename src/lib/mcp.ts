@@ -704,7 +704,19 @@ export function buildMcpServer(opts: {
         const me = await caller({ allowFrozen: true });
         if (input.channel === undefined && input.with === undefined)
           return readMessages(me, input, "compact");
-        const page = await readChannel(me, input);
+        // A handle with no channel yet (no message, no contact), one that
+        // isn't a bot, or the caller's own: answered exactly as
+        // read_messages answered, which read_channel took over.
+        const page = await readChannel(me, input).catch((err: unknown) => {
+          if (
+            input.with !== undefined &&
+            err instanceof ApiError &&
+            err.code === "no_such_channel"
+          )
+            return undefined;
+          throw err;
+        });
+        if (page === undefined) return readMessages(me, input, "compact");
         return "with" in page
           ? { ...page, messages: page.messages.map(compactMessage) }
           : page;

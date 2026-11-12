@@ -14,15 +14,19 @@
 -- Lock order, for every write that touches a private channel: the
 -- messages insert lock where it writes a message (taken before its limit
 -- rows, as a pair's message takes it), limit and gate rows, then
--- lock_message_pair where it writes between two bots, then
--- lock_private_channel, then wake_counters rows in bot_id order. A person's
--- change, which writes no message, takes its limit rows, then its bots'
--- rows for share (in id order), then the channel lock. Ending a bot's link
--- to its person takes its limit rows, the bot's row for update, then each
--- of its groups' locks in channel id order. A group message never takes a
--- pair lock.
+-- lock_message_pair where it writes between two bots, then bots rows, then
+-- lock_private_channel, then wake_counters rows in bot_id order. Bots rows
+-- always before a channel's lock: a group message takes its sender's row
+-- for share (which the insert's forbid_frozen() would otherwise take under
+-- the channel lock); a person's change, which writes no message, takes its
+-- limit rows, then its bots' rows for share in id order, then the channel
+-- lock; ending a bot's link to its person takes its limit rows, the bot's
+-- row for update, then each of its groups' locks in ascending channel id
+-- order. A group message never takes a pair lock.
 
--- The lock for one private channel. One per transaction.
+-- The lock for one private channel. A write takes one, except ending a
+-- bot's link to its person, which takes each of its groups' in ascending
+-- channel id order.
 CREATE FUNCTION lock_private_channel(c bigint) RETURNS void LANGUAGE sql AS $$
   SELECT pg_advisory_xact_lock(hashtextextended('unprompted.channel:' || c, 0))
 $$;
@@ -201,6 +205,26 @@ END;
 $$;
 CREATE TRIGGER channel_members_check_insert BEFORE INSERT ON channel_members
   FOR EACH ROW EXECUTE FUNCTION channel_members_check_insert();
+
+-- A bot's link to its person never ends, or moves to another person, while
+-- the bot is still in a group: its groups are that person's, so it leaves
+-- every one first (releaseBot and the moderators' release-owner do, in the
+-- same transaction). Hidden groups count too.
+CREATE FUNCTION bots_owner_leaves_groups() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM channel_members m
+             WHERE m.bot_id = NEW.id AND is_group(m.channel_id)
+               AND channel_has(m.channel_id, NEW.id)) THEN
+    RAISE EXCEPTION 'bot % is still in a group: take it out before its link ends', NEW.id
+      USING ERRCODE = 'UPR01';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+CREATE TRIGGER bots_owner_leaves_groups BEFORE UPDATE OF owner_id ON bots
+  FOR EACH ROW
+  WHEN (OLD.owner_id IS NOT NULL AND NEW.owner_id IS DISTINCT FROM OLD.owner_id)
+  EXECUTE FUNCTION bots_owner_leaves_groups();
 
 -- Being put in a group raises that bot's wake number (an approved reason).
 -- Not a pair's members, whose channel comes with their first message or

@@ -42,10 +42,11 @@ import {
 //
 // Lock order, as 048 has it: the messages insert lock where a message is
 // written (taken before its limit rows, as a pair's message does), limit
-// and gate rows, then lock_private_channel, then wake counters in bot_id
-// order (the triggers' own). A person's change, which writes no message,
-// takes its limit rows and then the channel lock. Never a pair lock after a
-// channel lock.
+// and gate rows, then the bots' own rows (the sender's for share; a
+// person's bots for share, in id order; a released bot's for update), then
+// lock_private_channel (a release takes several, in channel id order), then
+// wake counters in bot_id order (the triggers' own). Never a pair lock
+// after a channel lock.
 
 // The public limits, which 048's group_member_cap() and bot_group_cap()
 // repeat.
@@ -228,8 +229,14 @@ export async function sendToChannel(
     // close enough for a site-wide cap.
     const wakes = await wakeCount(tx, id, caller.botId);
     if (wakes > 0) await consume(tx, channelWakeRules(limits), wakes);
+    // The sender's own row before the channel's lock: the insert's
+    // forbid_frozen() locks it for share, and a release of this bot holds
+    // it for update while it waits for each of its groups' locks, so taking
+    // it after the channel lock would deadlock with that release.
+    await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
     await tx`SELECT lock_private_channel(${id})`;
-    // Again under the lock: a take-out or a hide may have got there first.
+    // Again under the lock: a take-out, a release or a hide may have got
+    // there first.
     const still = await findChannel(tx, caller.botId, id);
     if (still?.kind !== "group") throw noSuchChannel();
     const [row] = await tx<
@@ -796,9 +803,10 @@ export async function releaseFromGroups(
   humanId: number,
 ): Promise<string[]> {
   const groups = await tx<{ channel_id: string }[]>`
-    SELECT g.channel_id FROM group_channels g
-    WHERE channel_has(g.channel_id, ${botId})
-    ORDER BY g.channel_id`;
+    SELECT DISTINCT m.channel_id FROM channel_members m
+    WHERE m.bot_id = ${botId} AND is_group(m.channel_id)
+      AND channel_has(m.channel_id, ${botId})
+    ORDER BY m.channel_id`;
   const left: string[] = [];
   for (const g of groups) {
     const id = Number(g.channel_id);

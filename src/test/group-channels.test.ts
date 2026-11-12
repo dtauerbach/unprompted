@@ -1278,3 +1278,123 @@ describe("the community list with a key that doesn't work", () => {
     }
   });
 });
+
+describe("a release racing the bot's own group message", () => {
+  for (const how of ["person", "moderator"] as const)
+    it(`doesn't deadlock (${how === "person" ? "its person releases it" : "release-owner"})`, async () => {
+      for (let round = 0; round < 6; round++) {
+        await resetDb();
+        const { a, g } = await three();
+        const d = await bot("dan");
+        await person("google-p", d);
+        const g2 = await group("google-p", [a, d]);
+        const res = await Promise.all([
+          send(a, g, "one"),
+          send(a, g2, "two"),
+          (how === "person"
+            ? releaseBot(db(), "google-p", "alice", null)
+            : releaseOwner(db(), "alice", "linked by mistake")
+          ).then(() => ({ status: 200 })),
+          send(a, g2, "three"),
+          send(a, g, "four"),
+        ]);
+        for (const r of res) expect([200, 201, 404]).toContain(r.status);
+        expect(res[2]?.status).toBe(200);
+        // Out of both, whatever got in before the release.
+        for (const ch of [g, g2]) expect((await read(a, ch)).status).toBe(404);
+      }
+    });
+});
+
+describe("a group message waiting on its sender's row", () => {
+  // A release holds the bot's row for update while it takes its groups'
+  // locks, so a group message must take that row before the channel's
+  // lock, never under it. Held here, as a release would hold it, the
+  // waiting message must leave the channel's lock free.
+  it("doesn't hold the channel's lock while it waits", async () => {
+    const { a, g } = await three();
+    const sql = db();
+    const held = await sql.reserve();
+    try {
+      await held`BEGIN`;
+      await held`SELECT 1 FROM bots WHERE handle = ${a.handle} FOR UPDATE`;
+      const sent = send(a, g, "waits on its row");
+      let waiting = false;
+      for (let i = 0; i < 100 && !waiting; i++) {
+        const [w] = await sql<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+        waiting = (w?.n ?? 0) > 0;
+        if (!waiting) await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(waiting).toBe(true);
+      const key = `unprompted.channel:${num(g)}`;
+      // A transaction's lock, so it goes with the transaction whichever of
+      // the pool's connections runs it.
+      const free = await sql.begin(async (tx) => {
+        const [t] = await tx<{ free: boolean }[]>`
+          SELECT pg_try_advisory_xact_lock(hashtextextended(${key}, 0)) AS free`;
+        return t?.free;
+      });
+      expect(free).toBe(true);
+      await held`COMMIT`;
+      expect((await sent).status).toBe(201);
+    } finally {
+      await held`ROLLBACK`.catch(() => {});
+      held.release();
+    }
+  });
+});
+
+describe("the database keeps a bot's groups with its person", () => {
+  it("refuses to end or move a link while the bot is in a group, hidden or not", async () => {
+    const { a, g } = await three();
+    const other = await person("google-q");
+    for (const hidden of [false, true]) {
+      if (hidden)
+        await setPrivateChannelHidden(db(), Number(num(g)), true, "spam");
+      for (const to of [null, other]) {
+        const err = await db()`
+          UPDATE bots SET owner_id = ${to} WHERE handle = ${a.handle}`.catch(
+          (e: { code?: string }) => e,
+        );
+        expect((err as { code?: string }).code).toBe("UPR01");
+      }
+    }
+    // Both release paths leave first, so they pass.
+    await releaseBot(db(), "google-p", "alice", null);
+    const [r] = await db()<{ owner: string | null }[]>`
+      SELECT owner_id AS owner FROM bots WHERE handle = 'alice'`;
+    expect(r?.owner).toBeNull();
+  });
+});
+
+describe("read_channel with a handle and no channel", () => {
+  it("answers exactly as read_messages did: no channel yet, no such bot, or itself", async () => {
+    const a = await bot("alice");
+    await bot("bob");
+    const caller = {
+      botId: await idOf("alice"),
+      keyId: 0,
+      handle: "alice",
+    } as Parameters<typeof readMessages>[0];
+    const asBefore = async (w: string) => {
+      try {
+        return JSON.parse(
+          JSON.stringify(await readMessages(caller, { with: w }, "compact")),
+        );
+      } catch (err) {
+        const e = err as { code: string; message: string };
+        return { error: { code: e.code, message: e.message } };
+      }
+    };
+    for (const w of ["bob", "nobody-here", "alice"]) {
+      const now = await tool(a.key, "read_channel", { with: w });
+      const was = await asBefore(w);
+      if ("error" in was) {
+        expect(now.isError, w).toBe(true);
+        expect(now.data.error, w).toMatchObject(was.error);
+      } else expect(now.data, w).toEqual(was);
+    }
+  });
+});
