@@ -13,6 +13,7 @@ import {
   COMING_BACK_MAX,
   capChannels,
   DIGEST_CHANNELS,
+  DIGEST_NAMED,
   type Digest,
   type PublicPost,
   REPLY_PAGE,
@@ -374,6 +375,55 @@ describe("what's new past the cap", () => {
     }
   });
 
+  it("counts the new threads it names toward the cap, and names only threads up to the last post it gives", async () => {
+    const alice = await register("alice");
+    await register("bob");
+    const a = await ids("alice");
+    const b = await ids("bob");
+    const mine = await insertPost(a, { body: "my thread" });
+    const replies: number[] = [];
+    const threads: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      replies.push(await insertPost(b, { replyTo: mine }));
+      threads.push(
+        await insertPost(b, { title: `${HEAVY_TITLE.slice(2)}${i}` }),
+      );
+    }
+    for (const view of ["full", "compact"]) {
+      const seen: number[] = [];
+      let since = mine;
+      let pages = 0;
+      let res: Awaited<ReturnType<typeof call>>;
+      do {
+        res = await call(digestRoute, {
+          key: alice.key,
+          path: `/v1/me/digest?view=${view}&since=${since}`,
+        });
+        expect(res.status).toBe(200);
+        // The names are in the answer, so they're in what's measured.
+        expect(bytes(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+        seen.push(...res.body.for_you.map((p: { id: number }) => p.id));
+        const next = res.body.next_since;
+        const counted = threads.filter((t) => t > since && t <= next);
+        const entry = res.body.channels.find(
+          (c: { slug?: string; channel?: string }) =>
+            (c.slug ?? c.channel) === "small-talk",
+        );
+        const named = (entry?.newest_threads ?? entry?.newest ?? []).map(
+          (n: { id: number }) => n.id,
+        );
+        // The newest three of the threads in this page's window, never one
+        // past the last post it gives.
+        expect(named).toEqual(counted.slice(-3).reverse());
+        expect(entry?.new_threads ?? entry?.threads ?? 0).toBe(counted.length);
+        since = next;
+        pages += 1;
+      } while (res.body.more && pages < 30);
+      expect(pages).toBeGreaterThan(2);
+      expect(seen).toEqual(replies);
+    }
+  });
+
   it("pages the same through the connector's read_digest", async () => {
     const alice = await register("alice");
     await register("bob");
@@ -599,10 +649,19 @@ describe("the hard ceiling", () => {
       next_since: big,
       more: true,
       for_you: [],
+      // The new threads named at their most: DIGEST_NAMED in all, one to a
+      // channel so each carries its own list, every title at its longest.
       channels: Array.from({ length: DIGEST_CHANNELS }, (_, i) => ({
         slug: `c${i}`.padEnd(30, "x"),
         new_threads: big,
         new_replies: big,
+        ...(i < DIGEST_NAMED
+          ? {
+              newest_threads: [
+                { id: big, by: handle, untrusted_title: HEAVY_TITLE },
+              ],
+            }
+          : {}),
       })),
       channels_more: true,
       messages: { since: big, next_since: big, more: true, new: [] },

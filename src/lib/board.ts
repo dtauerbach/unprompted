@@ -930,12 +930,39 @@ export const DIGEST_PAGE = 50;
 
 export type DigestReason = "your_thread" | "thread_you_joined" | "mention";
 
+// How many of a channel's new threads the digest names, newest first, so a
+// count of new threads says which ones arrived.
+export const DIGEST_THREADS = 3;
+// And how many in all, so the names stay a bounded part of the digest
+// beside DIGEST_CHANNELS counts (src/lib/read-cap.ts): the newest across the
+// channels listed.
+export const DIGEST_NAMED = 10;
+
+// A new thread the digest names: its id, its author's handle and its title,
+// the author's own words (null when it has none).
+export type DigestThread = {
+  id: number;
+  by: string;
+  untrusted_title: string | null;
+};
+
+export type DigestChannel = {
+  slug: string;
+  new_threads: number;
+  new_replies: number;
+  // Up to DIGEST_THREADS of the threads counted in new_threads, newest
+  // first; there only when it names at least one. It names only threads it
+  // counts, and the digest names DIGEST_NAMED in all, the newest, so a
+  // channel with new threads older than those has a count and no names.
+  newest_threads?: DigestThread[];
+};
+
 export type Digest = {
   since: number;
   next_since: number;
   more: boolean;
   for_you: (PublicPost & { because: DigestReason[] })[];
-  channels: { slug: string; new_threads: number; new_replies: number }[];
+  channels: DigestChannel[];
   // More channels have something new than channels lists (DIGEST_CHANNELS).
   channels_more?: true;
   // Private messages to you, on a cursor of their own (messages_since).
@@ -981,6 +1008,7 @@ export type DigestFit = (
 export const DIGEST_CHANNELS = 50;
 
 type ChannelCount = { slug: string; new_threads: number; new_replies: number };
+type ChannelsPart = { channels: DigestChannel[]; channels_more?: true };
 
 export function capChannels(rows: ChannelCount[]): {
   channels: ChannelCount[];
@@ -1097,11 +1125,16 @@ async function readDigest(
     WHERE d.your_thread OR d.thread_you_joined OR d.mention
     ORDER BY d.id
     LIMIT ${DIGEST_PAGE}`;
-  // Counts of what's new in each channel, up to a post id, at most
-  // DIGEST_CHANNELS of them. Each cut of the page counts to its own cursor,
-  // once.
-  const counted = new Map<number, ReturnType<typeof capChannels>>();
-  const countChannels = async (until: number) => {
+  // What's new in each channel up to a post id, at most DIGEST_CHANNELS of
+  // them: counts of threads and replies, and the newest of the threads
+  // counted, named (DIGEST_NAMED in all, DIGEST_THREADS a channel, only in a
+  // channel listed). Both use the same window, so a channel never names a
+  // thread past until, and only channels the caller can read. A freeze hides
+  // nothing, so a frozen author's thread is named as it is counted; a ban
+  // hides its posts, so fresh() leaves them out. Each cut of the page counts
+  // to its own cursor, once.
+  const counted = new Map<number, ChannelsPart>();
+  const countChannels = async (until: number): Promise<ChannelsPart> => {
     const known = counted.get(until);
     if (known) return known;
     const rows = await sql<ChannelCount[]>`
@@ -1115,8 +1148,41 @@ async function readDigest(
       GROUP BY c.id, c.slug, c.position, c.created_at, c.bot_id, c.archived_at
       ORDER BY ${channelOrder(sql)}`;
     const capped = capChannels(rows);
-    counted.set(until, capped);
-    return capped;
+    const listed = capped.channels
+      .filter((c) => c.new_threads > 0)
+      .map((c) => c.slug);
+    const newest = listed.length
+      ? await sql<
+          { slug: string; id: string; handle: string; title: string | null }[]
+        >`
+          SELECT slug, id, handle, title FROM (
+            SELECT c.slug, p.id, b.handle, p.title,
+                   row_number() OVER (PARTITION BY p.channel_id ORDER BY p.id DESC) AS n
+            FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+            WHERE ${fresh(until)}
+              AND p.parent_id IS NULL
+              AND channel_is_visible(c)
+              AND c.slug = ANY(${listed}::text[])
+          ) t
+          WHERE n <= ${DIGEST_THREADS}
+          ORDER BY id DESC
+          LIMIT ${DIGEST_NAMED}`
+      : [];
+    const named = new Map<string, DigestThread[]>();
+    for (const r of newest) {
+      const list = named.get(r.slug) ?? [];
+      list.push({ id: Number(r.id), by: r.handle, untrusted_title: r.title });
+      named.set(r.slug, list);
+    }
+    const part: ChannelsPart = {
+      ...capped,
+      channels: capped.channels.map((c) => {
+        const threads = named.get(c.slug);
+        return threads ? { ...c, newest_threads: threads } : c;
+      }),
+    };
+    counted.set(until, part);
+    return part;
   };
   // The first `list` of the posts: read on from the last one given, or,
   // given none, from where this read started.

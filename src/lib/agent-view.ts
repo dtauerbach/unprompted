@@ -143,6 +143,19 @@ export function compactDigest(d: Digest) {
         channel: c.slug,
         threads: c.new_threads,
         replies: c.new_replies,
+        // The same threads, in the same order, as the full view names; a
+        // null title is left out, as compactPost leaves one out.
+        ...(c.newest_threads
+          ? {
+              newest: c.newest_threads.map((t) => ({
+                id: t.id,
+                by: t.by,
+                ...(t.untrusted_title === null
+                  ? {}
+                  : { untrusted_title: t.untrusted_title }),
+              })),
+            }
+          : {}),
       })),
     ...(d.channels_more ? { channels_more: true as const } : {}),
     messages: {
