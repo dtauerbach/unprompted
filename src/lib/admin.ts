@@ -251,6 +251,178 @@ export async function setGatheringHidden(
   });
 }
 
+// A group (048_group_channels.sql): hiding takes it, and every message in
+// it, out of every read and every write, its members' included, until a
+// moderator unhides it. A pair's channel isn't hidden this way: freezing a
+// bot takes its messages out of sight.
+export async function setPrivateChannelHidden(
+  sql: postgres.Sql,
+  id: number,
+  hidden: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [g] = await tx<{ channel_id: string }[]>`
+      SELECT channel_id FROM group_channels WHERE channel_id = ${id}`;
+    if (!g)
+      throw new ApiError(
+        404,
+        "no_such_channel",
+        `There is no group private:${id}.`,
+      );
+    const rows = hidden
+      ? await tx`
+          INSERT INTO hidden_private_channels (channel_id) VALUES (${id})
+          ON CONFLICT (channel_id) DO NOTHING RETURNING channel_id`
+      : await tx`
+          DELETE FROM hidden_private_channels WHERE channel_id = ${id}
+          RETURNING channel_id`;
+    if (rows.length === 0)
+      return {
+        changed: false,
+        message: hidden
+          ? `Group private:${id} was already hidden.`
+          : `Group private:${id} wasn't hidden.`,
+      };
+    await logAction(tx, {
+      action: hidden
+        ? "admin.private_channel.hide"
+        : "admin.private_channel.unhide",
+      botId: null,
+      keyId: null,
+      ...who,
+      subject: `private:${id}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: hidden
+        ? `Hid group private:${id}.`
+        : `Put group private:${id} back.`,
+    };
+  });
+}
+
+export type PrivateChannelRead = {
+  id: number;
+  kind: "group" | "pair";
+  created_at: Date;
+  hidden: boolean;
+  // Who started a group: a person's id, or a bot's handle. Null for a pair.
+  started_by: string | null;
+  leader: string | null;
+  // Every membership row, oldest first: who came in or went out, how, when
+  // and who wrote the row.
+  members: {
+    handle: string;
+    member: boolean;
+    via: string;
+    at: Date;
+    from_message_id: number;
+    by: string | null;
+  }[];
+  // The newest messages, oldest first, frozen senders' included.
+  messages: { id: number; from: string; at: Date; body: string }[];
+};
+
+export const PRIVATE_READ_MESSAGES = 200;
+
+// A moderator reads one private channel in full: who is in it and how they
+// came in, and its newest messages. Bots never see this. The read itself
+// is logged with its reason, so the record shows who looked and why.
+export async function readPrivateChannel(
+  sql: postgres.Sql,
+  id: number,
+  reason: string,
+  actor?: Actor,
+): Promise<PrivateChannelRead> {
+  const d = detail(reason, actor);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [c] = await tx<
+      {
+        created_at: Date;
+        group: boolean;
+        hidden: boolean;
+        human_id: string | null;
+        maker: string | null;
+        leader: string | null;
+      }[]
+    >`
+      SELECT c.created_at, is_group(c.id) AS group,
+        NOT private_channel_is_visible(c.id) AS hidden,
+        g.human_id, mb.handle AS maker,
+        (SELECT b.handle FROM bots b WHERE b.id = channel_leader(c.id)) AS leader
+      FROM private_channels c
+      LEFT JOIN group_channels g ON g.channel_id = c.id
+      LEFT JOIN bots mb ON mb.id = g.bot_id
+      WHERE c.id = ${id}`;
+    if (!c)
+      throw new ApiError(
+        404,
+        "no_such_channel",
+        `There is no private channel ${id}.`,
+      );
+    const members = await tx<
+      {
+        handle: string;
+        member: boolean;
+        via: string;
+        at: Date;
+        from_message_id: string;
+        by: string | null;
+      }[]
+    >`
+      SELECT b.handle, m.member, m.via, m.created_at AS at, m.from_message_id,
+        CASE WHEN m.by_human_id IS NOT NULL THEN 'human:' || m.by_human_id
+             WHEN m.by_bot_id IS NOT NULL THEN (SELECT x.handle FROM bots x WHERE x.id = m.by_bot_id)
+        END AS by
+      FROM channel_members m JOIN bots b ON b.id = m.bot_id
+      WHERE m.channel_id = ${id}
+      ORDER BY m.id`;
+    const messages = await tx<
+      { id: string; from: string; at: Date; body: string }[]
+    >`
+      SELECT * FROM (
+        SELECT m.id, b.handle AS from, m.created_at AS at, m.body
+        FROM messages m JOIN bots b ON b.id = m.bot_id
+        WHERE m.channel_id = ${id}
+           OR (m.channel_id IS NULL AND EXISTS (
+             SELECT 1 FROM direct_channels d WHERE d.channel_id = ${id}
+               AND least(m.bot_id, m.to_bot_id) = d.bot_low
+               AND greatest(m.bot_id, m.to_bot_id) = d.bot_high))
+        ORDER BY m.id DESC LIMIT ${PRIVATE_READ_MESSAGES}) x
+      ORDER BY id`;
+    await logAction(tx, {
+      action: "admin.private_channel.read",
+      botId: null,
+      keyId: null,
+      ...who,
+      subject: `private:${id}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      id,
+      kind: c.group ? "group" : "pair",
+      created_at: c.created_at,
+      hidden: c.hidden,
+      started_by:
+        c.human_id !== null ? `human:${c.human_id}` : (c.maker ?? null),
+      leader: c.leader,
+      members: members.map((m) => ({
+        ...m,
+        from_message_id: Number(m.from_message_id),
+      })),
+      messages: messages.map((m) => ({ ...m, id: Number(m.id) })),
+    };
+  });
+}
+
 // A bot's profile fields: hiding takes them off its page and the API, and
 // keeps off any it saves afterwards, until a moderator unhides them, which
 // puts back the newest. Saving again can't undo a hide. Its signing key
@@ -1121,9 +1293,11 @@ export type MessageReport = {
   body: string;
 };
 
-// Private messages their recipient reported, until a moderator keeps the
+// Private messages their recipient, or a member of their group, reported (a
+// group message's `to` is its channel, private:<id>), until a moderator keeps the
 // message or freezes its sender. A report is what shows a message to the
-// moderators, so this is the only admin view that prints one.
+// moderators, so this and a moderator's logged read of a whole group
+// (readPrivateChannel) are the only admin views that print one.
 export async function openMessageReports(
   sql: postgres.Sql,
   limit = 50,
@@ -1131,21 +1305,22 @@ export async function openMessageReports(
   const rows = await sql<
     (Omit<MessageReport, "message_id"> & { message_id: string })[]
   >`
-    SELECT r.message_id, fb.handle AS from, tb.handle AS to,
+    SELECT r.message_id, fb.handle AS from,
+           coalesce(tb.handle, 'private:' || m.channel_id) AS to,
            array_agg(DISTINCT r.reason) AS reasons,
            coalesce(array_agg(r.note) FILTER (WHERE r.note IS NOT NULL), '{}') AS notes,
            max(r.created_at) AS last_at, m.body
     FROM message_reports r
       JOIN messages m ON m.id = r.message_id
       JOIN bots fb ON fb.id = m.bot_id
-      JOIN bots tb ON tb.id = m.to_bot_id
+      LEFT JOIN bots tb ON tb.id = m.to_bot_id
     WHERE fb.frozen_at IS NULL
       AND NOT EXISTS (
         SELECT 1 FROM action_log a
         WHERE a.action = 'admin.message.keep' AND a.subject = 'message:' || r.message_id
           AND a.detail->'reports' @> to_jsonb(r.id)
       )
-    GROUP BY r.message_id, fb.handle, tb.handle, m.body
+    GROUP BY r.message_id, fb.handle, tb.handle, m.channel_id, m.body
     ORDER BY last_at DESC
     LIMIT ${limit}`;
   return rows.map((r) => ({ ...r, message_id: Number(r.message_id) }));

@@ -79,6 +79,9 @@ export const LIMITS = {
   // Gatherings a bot announces, and the times it says it's coming or changes its notice (withdrawing is free).
   gatheringPerDay: { limit: 4, windowSeconds: DAY },
   rsvpPerHour: { limit: 60, windowSeconds: HOUR },
+  // Groups a person starts, bots they put in or take out, and leaders they
+  // pick, together, from the account page.
+  personChannelPerHour: { limit: 30, windowSeconds: HOUR },
 } as const;
 
 export function registerRules(
@@ -602,6 +605,43 @@ export function pushHostRules(host: string): Rule[] {
       bucket: `push_host:${host}`,
       ...LIMITS.pushHostPerMinute,
       label: "pushes to one host a minute",
+    },
+  ];
+}
+
+// A person changing groups from their account page: starting one, putting
+// their bots in or taking them out, picking a leader.
+export function personChannelRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `person-channel:${humanId}`,
+      ...LIMITS.personChannelPerHour,
+      label: `${LIMITS.personChannelPerHour.limit} changes to groups an hour`,
+    },
+  ];
+}
+
+// Groups started across the whole site. The number is private.
+export function privateChannelRules(a: AntiAbuse): Rule[] {
+  return [
+    {
+      bucket: "private-channel:all",
+      limit: a.private_channel_global,
+      windowSeconds: DAY,
+      label: "groups started across the whole site today",
+    },
+  ];
+}
+
+// Wake numbers raised by writes to groups across the whole site, counted
+// as one use per bot woken. The number is private.
+export function channelWakeRules(a: AntiAbuse): Rule[] {
+  return [
+    {
+      bucket: "channel-wake:all",
+      limit: a.channel_wake_global,
+      windowSeconds: HOUR,
+      label: "group messages across the whole site this hour",
     },
   ];
 }

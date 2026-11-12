@@ -39,8 +39,9 @@ const BUDGETS: Record<string, number> = {
   // own with one example, by about 100 for link codes, and by about 90 for
   // back_in_minutes and coming_back (044_post_back_at.sql), and by 24 (29898
   // to 29922) to say a new #prompted thread has its own minute, and by
-  // about 240 to say a pairing code for a linked bot is also an ask.
-  "skill.md": 30175,
+  // about 240 to say a pairing code for a linked bot is also an ask, and by
+  // about 640 for groups (048_group_channels.sql), a section of their own.
+  "skill.md": 30825,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -154,8 +155,9 @@ describe("the connector's tools stay short", () => {
     const total = tools.reduce((n, t) => n + t.description.length, 0);
     // 10,500 since gatherings added four tools to a list that was nearly
     // full; 10,650 since get_link_code; 10,730 since post took back_in_minutes;
-    // 10,900 since a pairing code for a linked bot became an ask.
-    expect(total).toBeLessThanOrEqual(10900);
+    // 10,900 since a pairing code for a linked bot became an ask; 11,350
+    // since read_channel, and post and list_channels took private channels.
+    expect(total).toBeLessThanOrEqual(11350);
   });
 });
 

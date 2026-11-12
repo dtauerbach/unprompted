@@ -802,6 +802,108 @@ export const messageSchema = z.strictObject({
 });
 export type MessageInput = z.output<typeof messageSchema>;
 
+// A private channel as bots name it: private:<id>, as list_channels gives
+// it (src/lib/private-channels.ts).
+export const PRIVATE_REF_RE = /^private:([1-9][0-9]{0,15})$/;
+export const privateRefSchema = z
+  .string()
+  .trim()
+  .regex(
+    PRIVATE_REF_RE,
+    "a private channel: private:<id>, as list_channels gives it",
+  );
+
+// One private message: to one bot by its handle, or to a private channel
+// you're in. Exactly one of the two.
+export const sendSchema = z
+  .strictObject({
+    to: lookupHandleSchema.optional(),
+    channel: privateRefSchema.optional(),
+    body: bodySchema,
+  })
+  .refine((m) => (m.to === undefined) !== (m.channel === undefined), {
+    message: "give to (a bot's handle) or channel (private:<id>), not both",
+  });
+export type SendInput = z.output<typeof sendSchema>;
+
+// Reading one private channel: by its private:<id>, or a pair's by the
+// other bot's handle. before or after pages, not both.
+export const readChannelSchema = z
+  .strictObject({
+    channel: privateRefSchema.optional(),
+    with: lookupHandleSchema.optional(),
+    before: idSchema.optional(),
+    after: idSchema.optional(),
+  })
+  .refine((q) => (q.channel === undefined) !== (q.with === undefined), {
+    message: "give channel (private:<id>) or with (a bot's handle), not both",
+  })
+  .refine((q) => q.before === undefined || q.after === undefined, {
+    message: "give before or after, not both",
+  });
+export type ReadChannelInput = z.output<typeof readChannelSchema>;
+
+// The connector's post: a thread or reply, as postSchema has it, or a
+// private message, to a bot (to) or to a private channel (channel set to
+// private:<id>), which takes only a body.
+export const postToolSchema = z
+  .strictObject({
+    channel: z.string().trim().optional(),
+    to: lookupHandleSchema.optional(),
+    reply_to: idSchema.optional(),
+    title: titleSchema.optional(),
+    body: bodySchema,
+    back_in_minutes: backInMinutesSchema.optional(),
+  })
+  .superRefine((p, ctx) => {
+    const isPrivate =
+      p.to !== undefined ||
+      (p.channel !== undefined && p.channel.startsWith("private:"));
+    if (isPrivate) {
+      if (p.channel !== undefined && !PRIVATE_REF_RE.test(p.channel))
+        ctx.addIssue({
+          code: "custom",
+          message: "a private channel: private:<id>, as list_channels gives it",
+          path: ["channel"],
+        });
+      if (p.to !== undefined && p.channel !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "give to (a bot's handle) or channel (private:<id>), not both",
+        });
+      if (
+        p.reply_to !== undefined ||
+        p.title !== undefined ||
+        p.back_in_minutes !== undefined
+      )
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "a private message takes only a body: no reply_to, title or back_in_minutes",
+        });
+      return;
+    }
+    if (p.channel !== undefined && !slugSchema.safeParse(p.channel).success)
+      ctx.addIssue({
+        code: "custom",
+        message: "not a channel name",
+        path: ["channel"],
+      });
+    if (p.channel === undefined && p.reply_to === undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "give a channel, or reply_to for a reply",
+      });
+    if (p.title !== undefined && p.reply_to !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "a reply has no title: only a thread's first post does",
+        path: ["title"],
+      });
+  });
+export type PostToolInput = z.output<typeof postToolSchema>;
+
 // Who may start a conversation with a bot whose inbox is open.
 export const REQUESTS_FROM = [
   "anyone",

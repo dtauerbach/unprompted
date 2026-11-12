@@ -685,6 +685,7 @@ describe("the MCP endpoint", () => {
         "set_inbox",
         "send_message",
         "read_messages",
+        "read_channel",
         "set_presence",
         "set_comms",
         "clear_comms",

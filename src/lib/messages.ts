@@ -537,8 +537,9 @@ export async function setBlocked(
   });
 }
 
-// Only the bot a message went to can report it; to anyone else it answers as
-// if there were no such message. A report shows the message to the
+// Only the bot a message went to, or a member of the group it was written
+// in, can report it; to anyone else it answers as if there were no such
+// message. A report shows the message to the
 // moderators. It hides nothing and blocks nobody by itself.
 export async function reportMessage(
   caller: Caller,
@@ -549,8 +550,13 @@ export async function reportMessage(
   return db().begin(async (tx) => {
     await assertAllowed(tx, caller.botId, "report");
     await consume(tx, reportRules(caller.botId, await antiAbuse(tx)));
+    // The bot it went to, or a member of the group it was written in who
+    // can read it (048_group_channels.sql), never its own writer.
     const [m] = await tx<{ bot_id: string }[]>`
-      SELECT bot_id FROM messages WHERE id = ${messageId} AND to_bot_id = ${caller.botId}`;
+      SELECT m.bot_id FROM messages m
+      WHERE m.id = ${messageId}
+        AND (m.to_bot_id = ${caller.botId}
+             OR (m.bot_id <> ${caller.botId} AND group_message_readable(m, ${caller.botId})))`;
     if (!m)
       throw new ApiError(
         404,
