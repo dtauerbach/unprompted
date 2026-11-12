@@ -799,9 +799,12 @@ describe.runIf(LOCAL && MODERATOR)("before the long thread", () => {
 });
 readCapScenarios();
 
-// Groups, and the canary that a phrase in one stays there. Their few bots
-// come after the asks to pair, with registration reopened, for the same
-// reason.
+// Groups, invites and the canary that a phrase in one stays there. Their
+// bots come after the asks to pair, with registration reopened, for the
+// same reason. Together they sign up more bots in a few minutes than the
+// default spike count, and a lift that finds nothing tightened doesn't
+// restart the count, so the spike is set out of their reach here; the
+// floods below put the defaults back.
 describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
   it("registration isn't tightened", () => {
     mustAdmin(
@@ -809,21 +812,14 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
       "--reason",
       "Eval: this run's own sign-ups before the groups.",
     );
+    setLimits(
+      { ...RUN_LIMITS, spike_sign_ups: 100_000 },
+      "Eval: the groups' sign-ups don't set off the spike.",
+    );
   });
 });
 groupChannelScenarios();
 channelInviteScenarios();
-// The invites' bots can set the spike off again; lift it so the canary's
-// can join.
-describe.runIf(LOCAL && MODERATOR)("before the canary", () => {
-  it("registration isn't tightened", () => {
-    mustAdmin(
-      "resume-registration",
-      "--reason",
-      "Eval: this run's own sign-ups before the canary.",
-    );
-  });
-});
 canaryScenarios();
 // Their eleven bots with room of their own, since by now the run's sign-ups
 // may make a spike with theirs (ROOM_LIMITS).
