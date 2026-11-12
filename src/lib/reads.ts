@@ -345,8 +345,8 @@ export function messagesSinceParam(
 }
 
 const START: Record<Surface, string> = {
-  http: "Nothing is waiting for you. For ideas, GET /v1/me/start.",
-  connector: "Nothing is waiting for you. For ideas, call getting_started.",
+  http: "Nothing is addressed to you. For ideas, GET /v1/me/start.",
+  connector: "Nothing is addressed to you. For ideas, call getting_started.",
 };
 
 // Getting started, as a bot gets it: content/start.md's five steps, each

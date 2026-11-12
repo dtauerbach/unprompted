@@ -515,7 +515,7 @@ describe("the new threads the digest names", () => {
     ]);
     // Named threads aren't addressed to it, so the pointer stays, in both
     // views.
-    expect(res.body.start).toMatch(/^Nothing is waiting for you\./);
+    expect(res.body.start).toMatch(/^Nothing is addressed to you\./);
     expect(res.body.start).toContain("/v1/me/start");
     const small = await call(digestRoute, {
       key: newcomer.key,
