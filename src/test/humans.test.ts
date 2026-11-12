@@ -8,7 +8,9 @@ import {
   issueOwnerCode,
   listOwnedBots,
   MAX_BOTS_PER_HUMAN,
+  markOwnerCodeUsed,
   OWNER_CODE_MINUTES,
+  ownerForCode,
   releaseBot,
 } from "@/lib/humans";
 import { hashKey, OWNER_CODE_RE } from "@/lib/keys";
@@ -255,16 +257,28 @@ describe("registering with an owner code", () => {
       SELECT round(extract(epoch FROM expires_at - created_at) / 60)::int AS mins
       FROM owner_codes`;
     expect(row?.mins).toBe(15);
+    // The guide says so, and what to do when one is refused.
+    const guide = readFileSync("content/skill.md", "utf8");
+    expect(guide).toMatch(/linked to them \(it works once, for 15 minutes\)/);
+    expect(guide).toMatch(/owner code \(then join without it\)/);
   });
 
-  it("stays unused when the sign-up is refused for another reason", async () => {
+  it("stays unused when the sign-up fails after marking it", async () => {
     const c = await code();
-    process.env.UNPROMPTED_READ_ONLY = "1";
-    const refused = await call(registerRoute, {
-      body: { handle: "alice", owner_code: c },
-    });
-    expect(refused.status).toBe(503);
-    delete process.env.UNPROMPTED_READ_ONLY;
+    const other = await register("other");
+    const [bot] = await db()<{ id: string }[]>`
+      SELECT id FROM bots WHERE handle = ${other.handle}`;
+    const failed = await db()
+      .begin(async (tx) => {
+        const { codeId } = await ownerForCode(tx, c);
+        await markOwnerCodeUsed(tx, codeId, Number(bot?.id));
+        throw new Error("a later step failed");
+      })
+      .catch((e: Error) => e);
+    expect(String(failed)).toMatch(/a later step failed/);
+    const [row] = await db()<{ used_at: Date | null }[]>`
+      SELECT used_at FROM owner_codes`;
+    expect(row?.used_at).toBeNull();
     const ok = await call(registerRoute, {
       body: { handle: "alice", owner_code: c },
     });
@@ -272,12 +286,51 @@ describe("registering with an owner code", () => {
     expect(ok.body.bot.claimed).toBe(true);
   });
 
-  it("can't be marked used without the bot it linked, or by two bots", async () => {
+  it("is refused when marking finds it already used, even without the lock", async () => {
+    const c = await code();
+    const first = await call(registerRoute, {
+      body: { handle: "alice", owner_code: c },
+    });
+    expect(first.status).toBe(201);
+    const other = await register("other");
+    const [ids] = await db()<{ code: string; bot: string }[]>`
+      SELECT (SELECT id FROM owner_codes) AS code,
+        (SELECT id FROM bots WHERE handle = ${other.handle}) AS bot`;
+    const err = await db()
+      .begin((tx) => markOwnerCodeUsed(tx, Number(ids?.code), Number(ids?.bot)))
+      .catch((e: { code?: string }) => e);
+    expect(err).toMatchObject({ code: "invalid_owner_code" });
+  });
+
+  it("holds a code made before the change to 15 minutes from when it was made", async () => {
+    const c = await code();
+    // As if the old deployment issued it for a week, 20 minutes ago.
+    await db()`
+      UPDATE owner_codes SET created_at = now() - interval '20 minutes',
+        expires_at = now() + interval '7 days'`;
+    const res = await call(registerRoute, {
+      body: { handle: "alice", owner_code: c },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("invalid_owner_code");
+  });
+
+  it("can't be marked used without the bot it linked, and a bot is linked by one code", async () => {
     await code();
     const err = await db()`UPDATE owner_codes SET used_at = now()`.catch(
       (e: Error) => e,
     );
     expect(String(err)).toMatch(/owner_codes_used_by_one_bot/);
+    const c = await code();
+    const res = await call(registerRoute, {
+      body: { handle: "alice", owner_code: c },
+    });
+    expect(res.status).toBe(201);
+    const twice = await db()`
+      UPDATE owner_codes SET used_at = now(),
+        bot_id = (SELECT id FROM bots WHERE handle = 'alice')
+      WHERE used_at IS NULL`.catch((e: Error) => e);
+    expect(String(twice)).toMatch(/owner_codes_bot/);
   });
 
   it("is refused in read-only mode like any registration", async () => {

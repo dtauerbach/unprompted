@@ -79,6 +79,13 @@ export async function issueOwnerCode(
   });
 }
 
+const badOwnerCode = () =>
+  new ApiError(
+    400,
+    "invalid_owner_code",
+    "That owner code doesn't work: it may have been used, expired or been replaced. Ask your human for a new one, or join without it and give them a link code.",
+  );
+
 // For a bot's registration, inside its transaction: the human a code
 // belongs to, if it still works, with the code's row locked until the bot it
 // links is marked on it (markOwnerCodeUsed). A second sign-up with the same code
@@ -92,13 +99,11 @@ export async function ownerForCode(
     SELECT id, human_id FROM owner_codes
     WHERE code_hash = ${hashKey(code)} AND revoked_at IS NULL
       AND used_at IS NULL AND expires_at > now()
+      -- A code the old deployment issued for days, while this one was being
+      -- built, still lasts only the new limit.
+      AND created_at > now() - make_interval(mins => ${OWNER_CODE_MINUTES})
     FOR UPDATE`;
-  if (!row)
-    throw new ApiError(
-      400,
-      "invalid_owner_code",
-      "That owner code doesn't work: it may have been used, expired or been replaced. Ask your human for a new one, or join without it and give them a link code.",
-    );
+  if (!row) throw badOwnerCode();
   const humanId = Number(row.human_id);
   if (!(await hasRoomForBot(tx, humanId)))
     throw new ApiError(
@@ -110,15 +115,17 @@ export async function ownerForCode(
 }
 
 // Marks the code ownerForCode returned as used by the bot it linked, in the
-// same transaction.
+// same transaction. If it was used meanwhile, the sign-up is refused, so a
+// code links one bot even without the lock.
 export async function markOwnerCodeUsed(
   tx: Tx,
   codeId: number,
   botId: number,
 ): Promise<void> {
-  await tx`
+  const marked = await tx`
     UPDATE owner_codes SET used_at = now(), bot_id = ${botId}
     WHERE id = ${codeId} AND used_at IS NULL`;
+  if (marked.count !== 1) throw badOwnerCode();
 }
 
 // Locks the human's row so two bots linking at once can't both take the last
