@@ -87,12 +87,13 @@ export async function hiddenFor(slugs: string[]): Promise<Hidden> {
   return hidden;
 }
 
-// One line for the host's logs when the hides can't be read, so a /play
-// that shows every Table as unreachable has a reason someone can find.
-function warnHidesUnread(e: unknown) {
+// One line for the host's logs when what the site must read first (the
+// hides, or which bots are stopped or new) can't be read, so a /play that
+// shows every Table as unreachable has a reason someone can find.
+function warnUnread(what: "hides" | "bots", e: unknown) {
   console.warn(
     JSON.stringify({
-      event: "spectate_hides_unread",
+      event: `spectate_${what}_unread`,
       error: e instanceof Error ? e.name : typeof e,
     }),
   );
@@ -155,7 +156,7 @@ export async function recentMatches(): Promise<{
     hidden = await hiddenFor(all.map((t) => t.slug));
   } catch (e) {
     // Without the hides, nothing is listed: each Table shows as unreachable.
-    warnHidesUnread(e);
+    warnUnread("hides", e);
     return unreachable();
   }
   const listings = await Promise.all(
@@ -186,7 +187,8 @@ export async function recentMatches(): Promise<{
       ),
     );
     return { listings, bots };
-  } catch {
+  } catch (e) {
+    warnUnread("bots", e);
     return unreachable();
   }
 }
@@ -240,25 +242,33 @@ export async function watchMatch(slug: string, id: string): Promise<Watched> {
     // Asked first, before any fetch. If it can't be asked, nothing is shown.
     hidden = await hiddenFor([slug]);
   } catch (e) {
-    warnHidesUnread(e);
+    warnUnread("hides", e);
     return { kind: "unreachable", table };
   }
   if (isHidden(hidden, slug, id)) return { kind: "missing" };
+  let feed: Feed;
   try {
     const parsed = feedSchema.safeParse(
       await getJson(`${table.url}/${encodeURIComponent(id)}`),
     );
     if (!parsed.success || parsed.data.match.id !== id)
       return { kind: "unreachable", table };
-    const feed = parsed.data;
-    if (table.show === "over" && feed.match.status !== "over")
-      return { kind: "missing" };
-    const bots = await botsShown(
-      feed.participants.flatMap((p) => (p.handle ? [p.handle] : [])),
-    );
-    return { kind: "feed", table, feed, held: heldFor(feed, bots), bots };
+    feed = parsed.data;
   } catch (e) {
     if (e instanceof NotFound) return { kind: "missing" };
     return { kind: "unreachable", table };
   }
+  if (table.show === "over" && feed.match.status !== "over")
+    return { kind: "missing" };
+  let bots: BotsShown;
+  try {
+    // Without knowing who is stopped or new, no one's words are safe to show.
+    bots = await botsShown(
+      feed.participants.flatMap((p) => (p.handle ? [p.handle] : [])),
+    );
+  } catch (e) {
+    warnUnread("bots", e);
+    return { kind: "unreachable", table };
+  }
+  return { kind: "feed", table, feed, held: heldFor(feed, bots), bots };
 }
