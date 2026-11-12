@@ -10,7 +10,7 @@ import {
   onTestFinished,
 } from "vitest";
 import { get, LOCAL, RUN_TAG, register, request } from "./client";
-import { admin, MODERATOR, mustAdmin, setLimits } from "./moderator";
+import { admin, ageBot, MODERATOR, mustAdmin, setLimits } from "./moderator";
 
 // A person watches a game a Table sends the site as a spectator feed
 // (docs/SPECTATOR.md). The Table here is a fake one this run serves, hostile
@@ -38,8 +38,19 @@ const fixture = (name: string) =>
     ),
   );
 
+// The fixtures name handles (ruby, wren) that other scenarios sign up, as new
+// bots whose words a match page holds. These matches are about other things,
+// so their players get handles no bot here has.
+function strangers<F extends { participants: { handle: string | null }[] }>(
+  f: F,
+): F {
+  for (const p of f.participants)
+    if (p.handle) p.handle = `nobody-${p.handle}`.slice(0, 30);
+  return f;
+}
+
 function hostile(id = "m_hostile") {
-  const f = fixture("live.json");
+  const f = strangers(fixture("live.json"));
   f.match.id = id;
   f.timeline[1].text =
     '<script>alert(1)</script><a href="https://evil.example">win</a> [x](https://evil.example)';
@@ -53,7 +64,7 @@ const HIDE_ME = "m_hideMe";
 const HIDE_WORDS = `a canary only this match holds ${RUN_TAG}`;
 
 function hideMe() {
-  const f = fixture("over.json");
+  const f = strangers(fixture("over.json"));
   f.match.id = HIDE_ME;
   f.timeline[1].text = HIDE_WORDS;
   return f;
@@ -63,9 +74,78 @@ function hideMe() {
 let stoppedHandle = "nobody";
 const STOPPED_WORDS = `seat me by the window ${RUN_TAG}`;
 
+// A finished dinner with every optional field (docs/SPECTATOR.md): who played
+// and that they agreed, on the list and the match; whom private words went
+// to. Its players are bots the dinner scenario signs up, plus one handle no
+// bot has. The Table's own name and line try to close the page's title.
+const DINNER = "m_dinner";
+const DINNER_START = "2026-11-09T19:30:00.000Z";
+const SAID = {
+  grown: `the grown one speaks ${RUN_TAG}`,
+  fresh: `the new one whispers ${RUN_TAG}`,
+  cold: `the frozen one speaks ${RUN_TAG}`,
+  stranger: `the stranger speaks ${RUN_TAG}`,
+};
+const dinnerBots = { grown: "", fresh: "", cold: "" };
+const STRANGER = `nobody-${RUN_TAG}`;
+
+function dinner() {
+  const f = fixture("over.json");
+  f.match.id = DINNER;
+  f.match.started_at = DINNER_START;
+  f.table.name = "</title><script>alert(5)</script>";
+  f.match.summary = "</title><script>alert(6)</script>";
+  f.participants[0].handle = dinnerBots.grown;
+  f.participants[1].handle = dinnerBots.fresh;
+  f.participants[2].handle = dinnerBots.cold;
+  f.participants[3].handle = STRANGER;
+  // The one Basil's private words went to.
+  f.participants[3].label = '<img src=x onerror="alert(4)">';
+  f.timeline[1].text = SAID.grown;
+  f.timeline[2].text = SAID.fresh;
+  f.timeline.splice(
+    3,
+    0,
+    {
+      at: "2026-11-10T03:02:30.000Z",
+      kind: "talk",
+      by: "cora",
+      text: SAID.cold,
+    },
+    {
+      at: "2026-11-10T03:02:45.000Z",
+      kind: "talk",
+      by: "dev",
+      text: SAID.stranger,
+    },
+  );
+  return f;
+}
+
+// Feeds a Table shouldn't send, each well-formed JSON but for one rule.
+function misshapen(id: string) {
+  const f = strangers(fixture("over.json"));
+  f.match.id = id;
+  if (id === "m_manyTo")
+    f.timeline[2].to = Array.from({ length: 65 }, (_, i) => `p${i}`);
+  if (id === "m_long")
+    f.timeline = Array.from({ length: 2001 }, () => f.timeline[1]);
+  if (id === "m_agreedText") f.match.agreed = "true";
+  if (id === "m_agreedLive") {
+    f.match.status = "live";
+    delete f.outcome;
+    delete f.reveals;
+  }
+  return f;
+}
+const MISSHAPEN = ["m_manyTo", "m_long", "m_agreedText", "m_agreedLive"];
+
+// What the list says instead, while a scenario sets it.
+let listInstead: string | null = null;
+
 function fakeTable(): Server {
-  const over = { ...fixture("over.json") };
-  const list = {
+  const over = strangers(fixture("over.json"));
+  const list = () => ({
     ...fixture("list.json"),
     matches: [
       {
@@ -85,15 +165,42 @@ function fakeTable(): Server {
         summary: "<b>click me</b>",
       },
       ...fixture("list.json").matches,
+      ...(dinnerBots.grown
+        ? [
+            {
+              id: DINNER,
+              status: "over",
+              started_at: DINNER_START,
+              updated_at: "2026-11-09T19:41:00.000Z",
+              players: 4,
+              summary: "Agreed on a seating.",
+              handles: [
+                dinnerBots.grown,
+                dinnerBots.fresh,
+                dinnerBots.cold,
+                STRANGER,
+              ],
+              agreed: true,
+            },
+          ]
+        : []),
     ],
-  };
+  });
   const send = (res: import("node:http").ServerResponse, body: unknown) => {
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(body));
   };
   return createServer((req, res) => {
     const url = req.url ?? "";
-    if (url === "/v1/spectate") return send(res, list);
+    if (url === "/v1/spectate") {
+      if (listInstead === null) return send(res, list());
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(listInstead);
+      return;
+    }
+    if (url === `/v1/spectate/${DINNER}`) return send(res, dinner());
+    for (const id of MISSHAPEN)
+      if (url === `/v1/spectate/${id}`) return send(res, misshapen(id));
     if (url === "/v1/spectate/m_hostile") return send(res, hostile());
     if (url === `/v1/spectate/${over.match.id}`) return send(res, over);
     if (url === `/v1/spectate/${HIDE_ME}`) return send(res, hideMe());
@@ -279,6 +386,13 @@ export function spectatorModerationScenarios(): void {
           expect(html).toContain("Hidden by the moderators.");
           expect(named(html)).toBe(seen);
         };
+        // New here: its seat, its row and its profile link stay, and its
+        // words wait until it's been here long enough.
+        const fresh = await page();
+        expect(fresh).not.toContain(STOPPED_WORDS);
+        expect(fresh).toContain("Not shown yet. This agent is new here.");
+        expect(fresh).toContain(`href="/b/${bot.handle}"`);
+        ageBot(bot.handle);
         shown(await page());
         const reason = ["--reason", "eval: spectator hide"];
         mustAdmin("freeze", bot.handle, ...reason);
@@ -483,6 +597,214 @@ export function spectatorHideScenarios(): void {
         expect(tools.text).not.toMatch(/hide_match|hide_table|hidden_match/);
         expect(hiddenNow()).toBe(false);
         expect(await listed()).toBe(true);
+      });
+    },
+  );
+}
+
+// A finished dinner, as the watch page shows it once the Table fills the
+// format's optional fields: found on /play by its date and its bots, read
+// from the plan down. A new bot's words wait, a frozen bot isn't named, a
+// handle no bot has gets no link, and nothing a Table or a player wrote
+// reaches the tab, a tag or a link. Feeds and lists of the wrong shape, or
+// too big, are "can't reach", fast.
+export function spectatorDinnerScenarios(): void {
+  describe.runIf(LOCAL && configured && MODERATOR)(
+    "a person reads a finished dinner",
+    () => {
+      servingFakeTable();
+      const reason = ["--reason", `eval: dinner ${RUN_TAG}`];
+      // Its sign-ups come after the site-wide cap is used up (see
+      // spectatorModerationScenarios), so it makes room and puts the
+      // defaults back.
+      beforeAll(async () => {
+        setLimits(
+          {
+            register_global: 500,
+            register_tightened: 500,
+            spike_sign_ups: 100_000,
+          },
+          "Eval: room for the dinner scenario's bots.",
+        );
+        dinnerBots.grown = (await register("diner-grown")).handle;
+        dinnerBots.fresh = (await register("diner-fresh")).handle;
+        dinnerBots.cold = (await register("diner-cold")).handle;
+        ageBot(dinnerBots.grown);
+        ageBot(dinnerBots.cold);
+        mustAdmin("freeze", dinnerBots.cold, ...reason);
+      });
+      afterAll(() => {
+        setLimits({}, "Eval: defaults back.");
+        listInstead = null;
+      });
+      const page = async () => {
+        const res = await get(`/play/${SLUG}/${DINNER}`);
+        expect(res.status).toBe(200);
+        return res.text;
+      };
+      const words = (html: string) =>
+        html
+          .replace(/<script[\s\S]*?<\/script>/g, "")
+          .replace(/<!-- -->/g, "")
+          .replace(/<[^>]+>/g, " ")
+          .replace(/&#x27;/g, "'")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, "&")
+          .replace(/\s+/g, " ");
+
+      it("finds it on /play by its date and its bots", async () => {
+        const res = await get("/play");
+        expect(res.status).toBe(200);
+        const row =
+          new RegExp(
+            `<li[^>]*>(?:(?!</li>)[\\s\\S])*/play/${SLUG}/${DINNER}(?:(?!</li>)[\\s\\S])*</li>`,
+          ).exec(res.text)?.[0] ?? "";
+        expect(row).not.toBe("");
+        expect(row).toContain(`dateTime="${DINNER_START}"`);
+        expect(words(row)).toContain("Agreed");
+        expect(words(row)).toContain("Read it");
+        expect(row).toContain(`href="/b/${dinnerBots.grown}"`);
+        expect(row).toContain(`href="/b/${dinnerBots.fresh}"`);
+        // The frozen bot and the handle no bot has: counted, never named.
+        expect(words(row)).toContain("and 2 more");
+        expect(res.text).not.toContain(dinnerBots.cold);
+        expect(res.text).not.toContain(STRANGER);
+      });
+
+      it("reads it from the plan down, with the private line marked", async () => {
+        const html = await page();
+        const text = words(html);
+        const at = (s: string) => {
+          const i = text.indexOf(s);
+          expect(i, s).toBeGreaterThan(-1);
+          return i;
+        };
+        // Plan, players, the talk in order, then how it ended.
+        expect(at("The plan they settled on")).toBeLessThan(at("Playing"));
+        expect(at("Playing")).toBeLessThan(at(SAID.grown));
+        expect(at(SAID.grown)).toBeLessThan(
+          at('In private, to <img src=x onerror="alert(4)">:'),
+        );
+        expect(at(SAID.stranger)).toBeLessThan(at("How it ended"));
+        expect(text).toContain("Private messages were hidden during the game.");
+        expect(text).toContain("Also in the game");
+        // The label went in as text, never as a tag.
+        expect(html).not.toMatch(/<img src=x/);
+      });
+
+      it("names the tab and the search result from the site's own words", async () => {
+        const html = await page();
+        const title = /<title>([^<]*)<\/title>/.exec(html)?.[1] ?? "";
+        expect(title).toMatch(/^Eval table, Nov 9, 2026( · |$)/);
+        expect(title).not.toMatch(/script|title|alert/i);
+        expect(html).not.toMatch(/<script>alert\(/);
+        const description =
+          /<meta name="description" content="([^"]*)"/.exec(html)?.[1] ?? "";
+        expect(description).toContain("Eval table");
+        expect(description).toContain("Nov 9, 2026");
+        expect(description).not.toMatch(/script|alert/);
+        expect(html).toMatch(
+          new RegExp(
+            `<link rel="canonical" href="[^"]*/play/${SLUG}/${DINNER}"`,
+          ),
+        );
+        expect(html).not.toMatch(/<meta name="robots" content="[^"]*noindex/);
+        // One it can't read isn't for the index.
+        const off = await get(`/play/${SLUG}/m_off`);
+        expect(off.text).toMatch(/<meta name="robots" content="[^"]*noindex/);
+      });
+
+      it("holds a new bot's words until it's grown up, keeping its link", async () => {
+        let html = await page();
+        expect(html).not.toContain(SAID.fresh);
+        expect(words(html)).toContain(
+          "Basil: Not shown yet. This agent is new here.",
+        );
+        expect(html).toContain(`href="/b/${dinnerBots.fresh}"`);
+        ageBot(dinnerBots.fresh);
+        html = await page();
+        expect(html).toContain(SAID.fresh);
+        expect(html).not.toContain("new here");
+      });
+
+      it("never names a frozen bot, and links no handle the site doesn't know", async () => {
+        const html = await page();
+        expect(html).not.toContain(SAID.cold);
+        expect(html).not.toContain(dinnerBots.cold);
+        expect(words(html)).toContain("Cora: Hidden by the moderators.");
+        // Words from a handle no bot has show, with no link.
+        expect(html).toContain(SAID.stranger);
+        expect(html).not.toContain(`/b/${STRANGER}`);
+        expect(html).toContain(`href="/b/${dinnerBots.grown}"`);
+      });
+
+      it("can't reach a feed of the wrong shape, quickly and never as an error", async () => {
+        for (const id of MISSHAPEN) {
+          // The fake Table really serves each one.
+          expect(
+            (await fetch(`http://127.0.0.1:${PORT}/v1/spectate/${id}`)).status,
+          ).toBe(200);
+          const started = Date.now();
+          const res = await get(`/play/${SLUG}/${id}`);
+          expect(res.status, id).toBe(200);
+          expect(res.text, id).toContain(
+            "Can&#x27;t reach this game right now",
+          );
+          expect(Date.now() - started, id).toBeLessThan(9000);
+        }
+      });
+
+      it("can't reach a list of the wrong shape or past the size cap", async () => {
+        onTestFinished(() => {
+          listInstead = null;
+        });
+        const base = fixture("list.json");
+        const entry = base.matches[0];
+        const lists: Record<string, string> = {
+          "65 handles": JSON.stringify({
+            ...base,
+            matches: [
+              {
+                ...entry,
+                handles: Array.from({ length: 65 }, (_, i) => `bot-${i}`),
+              },
+            ],
+          }),
+          "a handle off the pattern": JSON.stringify({
+            ...base,
+            matches: [{ ...entry, handles: ['"><script>alert(7)</script>'] }],
+          }),
+          "51 matches": JSON.stringify({
+            ...base,
+            matches: Array.from({ length: 51 }, (_, i) => ({
+              ...entry,
+              id: `m_many${i}`,
+            })),
+          }),
+          "agreed as a string": JSON.stringify({
+            ...base,
+            matches: [{ ...entry, agreed: "true" }],
+          }),
+          // Valid but for its size, padded with whitespace inside the JSON.
+          "past the size cap": (() => {
+            const body = JSON.stringify(base);
+            return `${body.slice(0, -1)}${" ".repeat(3_000_000)}}`;
+          })(),
+        };
+        for (const [name, body] of Object.entries(lists)) {
+          listInstead = body;
+          const started = Date.now();
+          const res = await get("/play");
+          expect(res.status, name).toBe(200);
+          expect(res.text, name).toContain("Can&#x27;t reach this game");
+          expect(res.text, name).not.toContain(`/play/${SLUG}/`);
+          expect(res.text, name).not.toMatch(/<script>alert\(/);
+          expect(Date.now() - started, name).toBeLessThan(9000);
+        }
+        listInstead = null;
+        expect((await get("/play")).text).toContain(`/play/${SLUG}/${DINNER}`);
       });
     },
   );

@@ -47,6 +47,7 @@ import { readingScenarios } from "./reading.scenarios";
 import { reconnectScenarios } from "./reconnect.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import {
+  spectatorDinnerScenarios,
   spectatorHideScenarios,
   spectatorModerationScenarios,
   spectatorScenarios,
@@ -830,3 +831,4 @@ agentModScenarios();
 // Also last, for the same reason, with the same room made for its one bot.
 spectatorModerationScenarios();
 spectatorHideScenarios();
+spectatorDinnerScenarios();

@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
-import { StatusBadge } from "@/components/spectator";
-import { Timestamp } from "@/components/timestamp";
+import { MatchRow } from "@/components/spectator";
 import { Words } from "@/components/words";
 import { pageCopy } from "@/lib/page-copy";
 import { recentMatches } from "@/lib/spectate";
@@ -17,7 +16,10 @@ export async function generateMetadata(): Promise<Metadata> {
 // the matches a Table's spectator feed shows (docs/SPECTATOR.md), drawn here.
 export default async function PlayPage() {
   await connection();
-  const [t, listings] = await Promise.all([pageCopy(), recentMatches()]);
+  const [t, { listings, bots }] = await Promise.all([
+    pageCopy(),
+    recentMatches(),
+  ]);
   const now = new Date();
   const muted = "text-neutral-600 dark:text-neutral-400";
   return (
@@ -49,32 +51,16 @@ export default async function PlayPage() {
               ) : matches.length === 0 ? (
                 <p className={muted}>{t["play.none"]}</p>
               ) : (
-                <ul className="space-y-2">
+                <ul className="space-y-4">
                   {matches.map((m) => (
-                    <li
+                    <MatchRow
                       key={m.id}
-                      className="flex flex-wrap items-center gap-2"
-                    >
-                      <StatusBadge status={m.status} t={t} />
-                      <Link
-                        href={`/play/${table.slug}/${encodeURIComponent(m.id)}`}
-                        className="min-w-0 break-words underline"
-                      >
-                        {m.summary ?? (
-                          <Words
-                            text={t["play.players"]}
-                            slots={{ count: String(m.players) }}
-                          />
-                        )}
-                      </Link>
-                      <span className={`text-sm ${muted}`}>
-                        <Timestamp
-                          at={new Date(m.updated_at)}
-                          now={now}
-                          t={t}
-                        />
-                      </span>
-                    </li>
+                      m={m}
+                      slug={table.slug}
+                      bots={bots}
+                      t={t}
+                      now={now}
+                    />
                   ))}
                 </ul>
               )}

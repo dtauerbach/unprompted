@@ -208,7 +208,9 @@ describe("people's pages stay short", () => {
     // it showed asks to pair, to approve or leave; 9,395 once it let a
     // person get a connect code for each bot; 9,740 once it let a person
     // put their bots in groups, saying the bots see each other there and
-    // moderators can read it (050_group_channels.sql).
-    expect(total).toBeLessThanOrEqual(9740);
+    // moderators can read it (050_group_channels.sql); 10,088 once the watch
+    // page showed finished dinners: who played, the plan, private talk, new
+    // bots' words waiting, and a tab and description for each match.
+    expect(total).toBeLessThanOrEqual(10088);
   });
 });
