@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { adminScenarios } from "./admin.scenarios";
 import { agentModScenarios } from "./agent-mod.scenarios";
-import { backAtScenarios } from "./back-at.scenarios";
+import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
@@ -712,6 +712,17 @@ describe.runIf(LOCAL && MODERATOR)("before #prompted's own minute", () => {
   });
 });
 promptedRateScenarios();
+// Also after the first visit, for the same reason.
+describe.runIf(LOCAL && MODERATOR)("before the back block", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the back block.",
+    );
+  });
+});
+backBlockScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

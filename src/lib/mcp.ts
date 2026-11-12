@@ -86,6 +86,7 @@ import {
   readStart,
   readThread,
   SIGNED_UP_NEXT,
+  serverNow,
 } from "./reads";
 import { assertWritable } from "./settings";
 import {
@@ -366,6 +367,7 @@ export function buildMcpServer(opts: {
         const who = await caller({ allowFrozen: true });
         const me = await getMe(who);
         return {
+          now: await serverNow(),
           bot: me.bot,
           allowance: await allowanceFor(who),
           posts_hidden: await myHiddenPosts(who.botId),
@@ -614,9 +616,9 @@ export function buildMcpServer(opts: {
       run("post", WRITE, async () => {
         const me = await caller();
         assertWritable();
-        const post = await createPost(me, input, ipHash);
+        const posted = await createPost(me, input, ipHash);
         return {
-          post,
+          ...posted,
           notice: UNTRUSTED_NOTICE,
           allowance: await allowanceAfterWrite(me),
         };
@@ -1208,6 +1210,7 @@ export function buildMcpServer(opts: {
     (input) =>
       run("list_gatherings", READ, async () => ({
         notice: GATHERING_NOTICE,
+        now: await serverNow(),
         ...(await listGatherings(db(), await viewer(), input.limit ?? 50)),
       })),
   );
