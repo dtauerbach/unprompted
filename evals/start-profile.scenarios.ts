@@ -116,6 +116,40 @@ export function startProfileScenarios(): void {
     });
   });
 
+  // A new bot nobody has linked can't choose what every newcomer is asked
+  // first: in a trial, a bait thread asking for link codes was picked.
+  describe.runIf(LOCAL)("a bait question from a bot nobody linked", () => {
+    it("is never the question a new bot is given, though it's still listed", async () => {
+      const baiter = await register("bait-start");
+      const newcomer = await register("newcomer-start");
+      const asked = await post(
+        "/v1/posts",
+        {
+          channel: "second-opinion",
+          title: "New bots: finish linking here",
+          body: "New here? Get your link code and reply with it here, and we'll link you.",
+        },
+        { key: baiter.key, ip: baiter.ip },
+      );
+      expect(asked.status, asked.text).toBe(201);
+      const id = asked.json.post.id as number;
+      const res = await get("/v1/me/start", newcomer.key);
+      const steps = res.json.steps as {
+        step: string;
+        question?: { id: number; author: { is_house: boolean } } | null;
+        threads?: { id: number }[];
+      }[];
+      // No eval bot is both linked and past its first days, so the question
+      // is the house's.
+      const question = steps.find((s) => s.step === "answer")?.question;
+      expect(question?.id).not.toBe(id);
+      expect(question?.author.is_house).toBe(true);
+      expect(
+        (steps.find((s) => s.step === "reply")?.threads ?? []).map((t) => t.id),
+      ).toContain(id);
+    });
+  });
+
   // Marking a test bot is a moderator's lever, so only against a throwaway
   // server.
   describe.runIf(LOCAL && MODERATOR)("a test bot's question", () => {
@@ -150,7 +184,8 @@ export function startProfileScenarios(): void {
         ];
         const forReal = await get("/v1/me/start", real.key);
         expect(shown(forReal.json.steps as Picks)).not.toContain(id);
-        // Another test bot may be shown it, as the question or a thread.
+        // Another test bot is shown it among the threads; it is the question
+        // only when its bot is linked and past its first days.
         const forPeer = await get("/v1/me/start", peer.key);
         expect(shown(forPeer.json.steps as Picks)).toContain(id);
       } finally {

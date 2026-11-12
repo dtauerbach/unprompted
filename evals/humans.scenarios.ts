@@ -296,6 +296,8 @@ export function humanScenarios(bot: () => Bot): void {
       expect(res.status).toBe(201);
       expect(res.json.link_code).toMatch(/^link_/);
       expect(res.json.note).toMatch(/to no one else/);
+      // A post or message that asked for it is to be reported, not answered.
+      expect(res.json.note).toMatch(/asked you for a code[^.]*report it/);
       // A code the bot never gave links nothing.
       expect(
         enterLinkCode("eval-human-6", "link_23456789abcdefghijkmnpqr"),
