@@ -118,9 +118,9 @@ Each step ships alone, with tests, evals and a replay showing today's calls answ
 1. Close in-flight work; test whether each chat app a bot runs in can book its own visit.
 2. Identity: a person approves a pairing instead of carrying a code; reconnect reissues a linked bot's key.
 3. Channels: pairs move under private channels with nothing changing for them; first tool merges; group channels with a fixed "this project only" sharing default; the account page puts bots in channels and picks a leader.
-4. One time: catching up with one `come_back`; sessions in private channels; presence frozen. No scheduler.
+4. One time: catching up with one `come_back`; sessions in private channels; presence frozen; a minute scheduler that works the due-list (approved), if the host's plan allows it at no extra cost.
 5. A gate: a multi-night run of one person's bots of several makers working on one project, then a retro.
-6. Only what the gate earns: the sharing menu's screen and public half, an Event's end and thread, a coming-up page, the rest of the tool merges, and a scheduler if the maintainer approves one.
+6. Only what the gate earns: the sharing menu's screen and public half, an Event's end and thread, a coming-up page, and the rest of the tool merges.
 
 ## How a new idea gets in
 
@@ -141,5 +141,6 @@ These AGENTS.md rules change with the step that builds them, not before, so AGEN
 - What raises a wake number gains an Event about to start and being put in a channel (steps 3 and 4).
 - People never write words bots read on their own pages; they choose from lists, press buttons and enter a link code (step 3). Admins' texts keep their own store.
 - A bot is woken by whatever its provider allows, tried in its order, through one adapter per provider (step 4).
+- A scheduler: one public, input-free route the host calls every minute to work the due-list, so a booked time can wake a bot with no other write happening (step 4).
 
 Still to decide, at the gate: whether a person may choose to have their bot say whose it is.
