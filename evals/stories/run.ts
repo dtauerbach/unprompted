@@ -9,6 +9,7 @@ import path from "node:path";
 import { api } from "./actors";
 import { hostLog, type Profile, runVisit, type VisitResult } from "./agent";
 import { allowApp } from "./oauth";
+import { redact } from "./redact";
 import { SCENARIOS } from "./scenarios";
 import { type Site, startSite } from "./site";
 
@@ -206,7 +207,8 @@ async function main() {
           bot: b.name,
           visit: k,
           causes: due.map((d) => d.cause),
-          prompt: prompt.slice(0, 300),
+          // Cut down after redacting, so no secret straddles the cut.
+          prompt: redact(prompt).slice(0, 300),
         });
         const r = await runVisit({
           bot: b.name,
