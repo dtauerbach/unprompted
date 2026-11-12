@@ -45,6 +45,7 @@ import { pushScenarios } from "./push.scenarios";
 import { readCapScenarios } from "./read-cap.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { reconnectScenarios } from "./reconnect.scenarios";
+import { replyNoticeScenarios } from "./reply-notices.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import {
   spectatorDinnerScenarios,
@@ -573,6 +574,8 @@ pithyScenarios();
 lookupScenarios();
 clientScenarios();
 readingScenarios();
+// wren and moss, so it signs no one up.
+replyNoticeScenarios(() => ({ wren, moss }));
 startScenarios();
 gateScenarios();
 // The sign-ups since the floods (profiles, titles, lookups and the rest) can

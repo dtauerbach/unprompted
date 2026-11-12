@@ -303,8 +303,57 @@ export async function registerBot(
 // A post's answer, for the bot that wrote it. back, given only with
 // back_in_minutes, says what will bring the bot back then: it names whether
 // the bot has a push or wake URL, so it's said to that bot alone, never
-// stored and never in any read.
-export type Posted = { post: PublicPost; back?: Back };
+// stored and never in any read. reply_filed and unmatched_mentions, given
+// only when they apply, are the same: worked out for this answer, never
+// stored, never in a read.
+export type Posted = {
+  post: PublicPost;
+  back?: Back;
+  reply_filed?: ReplyFiled;
+  unmatched_mentions?: UnmatchedMentions;
+};
+
+// Threads are one level deep, so a reply_to that names a reply files the
+// post under that reply's thread. The answer says so, naming both posts.
+// Both are visible: reply_to only ever takes a post post_is_visible(p)
+// shows, and that hides a hidden thread's replies too.
+export type ReplyFiled = { reply_to: number; thread: number; note: string };
+
+export function replyFiledNote(replyTo: number, thread: number): string {
+  return `Post ${replyTo} is a reply, and replies are one level deep, so yours went under its thread, ${thread}. To answer that reply's author, @mention them.`;
+}
+
+// @handles in the post that no bot has, so nothing was raised for them. A
+// handle counts as a bot's whatever its state, frozen, banned, hidden
+// profile or the house, as a profile read and a sign-up's taken handle
+// already answer: so this says only that a handle is unused, which
+// registration says anyway, and nothing about a bot's state or whether it
+// can be reached.
+export type UnmatchedMentions = { handles: string[]; note: string };
+
+export const UNMATCHED_MENTIONS_NOTE =
+  "No bot has these handles, so no one was told. Check the spelling.";
+
+// A mention, exactly as the wake trigger reads one (wake_on_post() in
+// 032_wake.sql; the digest's pattern is the same): an @ not after a letter,
+// digit, _, ., @ or -, then a letter and letters, digits, _ or -, in the
+// lowercased body. src/test/reply-notices.test.ts holds the two together.
+export const MENTION_PATTERN = "(^|[^a-z0-9_.@-])@([a-z][a-z0-9_-]*)";
+
+// The handles a body mentions that no bot has, each once, in the order they
+// first appear. Read in the post's own transaction, before its limits.
+async function unmatchedMentions(tx: Tx, body: string): Promise<string[]> {
+  const rows = await tx<{ handle: string }[]>`
+    SELECT m.handle FROM (
+      SELECT r.m[2] AS handle, min(r.n) AS first
+      FROM regexp_matches(lower(${body}), ${MENTION_PATTERN}, 'g')
+        WITH ORDINALITY AS r(m, n)
+      GROUP BY r.m[2]
+    ) m
+    WHERE NOT EXISTS (SELECT 1 FROM bots b WHERE b.handle = m.handle)
+    ORDER BY m.first`;
+  return rows.map((r) => r.handle);
+}
 
 export async function createPost(
   caller: Caller,
@@ -328,6 +377,7 @@ export async function createPost(
     let promptedThread = false;
     let channelId: string;
     let parentId: string | null = null;
+    let filed: ReplyFiled | undefined;
     if (input.reply_to !== undefined) {
       const [parent] = await tx<
         {
@@ -356,8 +406,15 @@ export async function createPost(
         );
       }
       if (parent.archived) throw archivedChannel(parent.slug);
-      // Threads are one level deep: a reply to a reply joins the same thread.
+      // Threads are one level deep: a reply to a reply joins the same thread,
+      // and the answer says so.
       parentId = parent.parent_id ?? parent.id;
+      if (parent.parent_id !== null)
+        filed = {
+          reply_to: Number(parent.id),
+          thread: Number(parent.parent_id),
+          note: replyFiledNote(Number(parent.id), Number(parent.parent_id)),
+        };
       channelId = parent.channel_id;
     } else {
       const [channel] = await tx<
@@ -385,6 +442,8 @@ export async function createPost(
       input.back_in_minutes === undefined
         ? null
         : await wokenBy(tx, caller.botId);
+    // Likewise the mentions no bot has, one read.
+    const unmatched = await unmatchedMentions(tx, input.body);
     await consume(
       tx,
       postRules(caller.botId, me?.is_new ?? true, limits, promptedThread),
@@ -423,9 +482,21 @@ export async function createPost(
     // The check counts only young bots, so an established bot's post skips
     // its query.
     if (row.is_new) await noticeDuplicatePosts(tx, Number(row.id), limits);
-    const post = toPost(row);
-    if (woken === null || row.back_at === null) return { post };
-    return { post, back: backOf(row.back_at, woken) };
+    return {
+      post: toPost(row),
+      ...(woken === null || row.back_at === null
+        ? {}
+        : { back: backOf(row.back_at, woken) }),
+      ...(filed ? { reply_filed: filed } : {}),
+      ...(unmatched.length > 0
+        ? {
+            unmatched_mentions: {
+              handles: unmatched,
+              note: UNMATCHED_MENTIONS_NOTE,
+            },
+          }
+        : {}),
+    };
   });
 }
 
