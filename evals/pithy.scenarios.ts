@@ -49,7 +49,7 @@ export function pithyScenarios(): void {
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
       // get_link_code, back_in_minutes, asks to pair and sign_up's
       // connect_code, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(10990);
+      expect(total).toBeLessThanOrEqual(10965);
       await client.close();
     });
   });

@@ -8,6 +8,7 @@ import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as pairingCodeRoute } from "@/app/v1/me/pairing-codes/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { POST as wakeUrlRoute } from "@/app/v1/me/wake/url/route";
+import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemPairingRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
 import { GET as wakeRoute } from "@/app/v1/wake/[token]/route";
@@ -346,12 +347,12 @@ describe("a link only just made", () => {
 });
 
 describe("links made before linked_at", () => {
-  // 048 worked out linked_at for links already made from when each bot
+  // 049 worked out linked_at for links already made from when each bot
   // joined and the log. Run again over links made the usual way, it must
   // give each the time its link was really made, which the trigger kept.
   it("are given the time their current link was made", async () => {
     const sqlText = readFileSync(
-      path.join(process.cwd(), "db/migrations/048_connect_after_a_day.sql"),
+      path.join(process.cwd(), "db/migrations/049_connect_after_a_day.sql"),
       "utf8",
     );
     const backfill = sqlText.match(
@@ -573,6 +574,59 @@ describe("connecting an agent with a code", () => {
     expect(JSON.stringify(profile.body)).not.toMatch(/connect/i);
   });
 
+  it("keeps the bot's private channels: the same channel, the same members, its history and what it writes next", async () => {
+    const alice = await owned("alice");
+    const bob = await register("bob");
+    const [a, b] = [await botId("alice"), await botId("bob")];
+    const made = await call(pairingCodeRoute, {
+      key: alice.key,
+      method: "POST",
+    });
+    await call(redeemPairingRoute, {
+      key: bob.key,
+      body: { code: made.body.code },
+    });
+    const send = (key: string, to: string, body: string) =>
+      call(sendRoute, { key, body: { to, body } });
+    expect((await send(alice.key, "bob", "before")).status).toBe(201);
+    const channel = () => db()<{ channel_id: string; members: number }[]>`
+      SELECT d.channel_id,
+             (SELECT count(*) FROM channel_members m
+              WHERE m.channel_id = d.channel_id
+                AND channel_has(m.channel_id, m.bot_id))::int AS members
+      FROM direct_channels d
+      WHERE d.bot_low = ${Math.min(a, b)} AND d.bot_high = ${Math.max(a, b)}`;
+    const before = [...(await channel())];
+    expect(before).toHaveLength(1);
+    expect(before[0]?.members).toBe(2);
+
+    const res = await connect({
+      handle: "alice",
+      code: await codeFor("alice"),
+    });
+    expect(res.status).toBe(200);
+    expect((await send(res.body.api_key, "bob", "after")).status).toBe(201);
+    expect((await send(bob.key, "alice", "welcome back")).status).toBe(201);
+
+    // Membership belongs to the bot, as a contact does: nothing new is made,
+    // nothing ends, and every message lands in the one channel.
+    expect([...(await channel())]).toEqual(before);
+    const [counts] = await db()<{ channels: number; members: number }[]>`
+      SELECT (SELECT count(*) FROM private_channels)::int AS channels,
+             (SELECT count(*) FROM channel_members)::int AS members`;
+    expect(counts).toEqual({ channels: 1, members: 2 });
+    const history = await db()<{ body: string; channel_id: string }[]>`
+      SELECT body, channel_id FROM channel_messages(${before[0]?.channel_id ?? null})`;
+    expect(history.map((m) => m.body)).toEqual([
+      "before",
+      "after",
+      "welcome back",
+    ]);
+    expect(new Set(history.map((m) => m.channel_id))).toEqual(
+      new Set([before[0]?.channel_id]),
+    );
+  });
+
   it("answers with the header line alone for Accept: text/plain", async () => {
     await owned("alice");
     const res = await connect(
@@ -670,6 +724,8 @@ describe("a connect at the same moment as the bot changing its own key", () => {
     } finally {
       letGo();
       await holder;
+      // A throw in waiting() still settles both, so neither rejects unheard.
+      await Promise.allSettled([first, second]);
     }
     const [a, b] = await Promise.all([first, second]);
     return { other: a.status, connect: b.status };

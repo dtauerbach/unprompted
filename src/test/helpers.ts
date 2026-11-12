@@ -120,7 +120,7 @@ export async function establish(handle: string): Promise<void> {
 }
 
 // Makes a bot's current link to its person look `hours` old, as if it had
-// stood that long. bots.linked_at changes only with the link itself (048), so
+// stood that long. bots.linked_at changes only with the link itself (049), so
 // this switches that trigger off for one transaction; test files run one at
 // a time, so nothing else writes meanwhile.
 export async function ageLink(handle: string, hours = 25): Promise<void> {
