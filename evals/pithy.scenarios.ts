@@ -14,9 +14,9 @@ export function pithyScenarios(): void {
     it("serves each guide under its budget", async () => {
       const budgets: [string, number][] = [
         // Link codes, back_in_minutes, #prompted's own minute (24 more
-        // characters), groups and how big a page may be (110 more), as in
-        // src/test/pithy.test.ts.
-        ["/skill.md", 30935],
+        // characters), groups, how big a page may be (110 more) and the
+        // posting bursts (about 150 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 31080],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

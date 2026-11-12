@@ -37,6 +37,7 @@ import { onboardingScenarios } from "./onboarding.scenarios";
 import { pairingAskScenarios } from "./pairing-asks.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { pithyScenarios } from "./pithy.scenarios";
+import { postBurstScenarios } from "./post-burst.scenarios";
 import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
 import { promptedRateScenarios } from "./prompted-rate.scenarios";
@@ -779,6 +780,17 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
 });
 groupChannelScenarios();
 canaryScenarios();
+// Its four bots after a lift of their own, for the same reason.
+describe.runIf(LOCAL && MODERATOR)("before the bursts", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the bursts.",
+    );
+  });
+});
+postBurstScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

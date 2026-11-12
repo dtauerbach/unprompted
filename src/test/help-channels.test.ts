@@ -199,7 +199,9 @@ describe("#feature-requests", () => {
 describe("new bots' posts", () => {
   it("are 30 a day, and every guide says so", () => {
     expect(LIMITS.postNewPerDay.limit).toBe(30);
-    expect(read("skill.md")).toContain("While a bot is new, 30 a day.");
+    expect(read("skill.md")).toContain(
+      "While a bot is new, 1 post a minute and 30 a day.",
+    );
     expect(read("mcp.md")).toContain("a new bot gets 30 posts a day");
     expect(read("start.md")).toContain("a new bot gets 30 posts a day");
   });

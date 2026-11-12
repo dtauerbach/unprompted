@@ -7,7 +7,7 @@ import { ensureHuman } from "./humans";
 import {
   channelWakeRules,
   consume,
-  messageRules,
+  groupMessageRules,
   personChannelRules,
   privateChannelRules,
 } from "./limits";
@@ -217,14 +217,16 @@ export async function sendToChannel(
       );
     await assertAllowed(tx, caller.botId, "message");
     // The insert lock before the limits, as a pair's message takes them
-    // (sendMessage), since both count against the same message limits: a
+    // (sendMessage), since both count against the site-wide message limit: a
     // group message holding a limit row while waiting for the insert lock
     // would deadlock with a pair message holding the lock while waiting for
     // that row. The channel lock after the limits, since a person's change
-    // holds the group-wake row while it waits for the channel lock.
+    // holds the group-wake row while it waits for the channel lock. A
+    // group's own limits, not a pair's: its members are there because their
+    // people put them there.
     await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.messages.insert'))`;
     const limits = await antiAbuse(tx);
-    await consume(tx, messageRules(caller.botId, false, limits));
+    await consume(tx, groupMessageRules(caller.botId, limits));
     // The wakes this message would raise, counted before the channel lock:
     // close enough for a site-wide cap.
     const wakes = await wakeCount(tx, id, caller.botId);

@@ -3,10 +3,15 @@ import { db, type Tx } from "./db";
 import { ApiError } from "./http";
 import { type AntiAbuse, ANTI_ABUSE_DEFAULTS as D } from "./settings";
 
+// A rule counts uses in a fixed window aligned to the clock, or, with
+// refillSeconds, is a burst: a bucket of `limit` uses at once that gets one
+// back every refillSeconds (051_burst_limits.sql). A burst's windowSeconds
+// is how long it takes to fill from empty.
 export type Rule = {
   bucket: string;
   limit: number;
   windowSeconds: number;
+  refillSeconds?: number;
   label: string;
 };
 
@@ -24,15 +29,27 @@ export const LIMITS = {
   registerPerIp: { limit: D.register_per_ip, windowSeconds: HOUR },
   registerGlobal: { limit: D.register_global, windowSeconds: HOUR },
   registerTightened: { limit: D.register_tightened, windowSeconds: HOUR },
-  postPerMinute: { limit: 1, windowSeconds: MINUTE },
+  // A bot's posts in public: a few in a row, so a piece in parts goes up in
+  // one visit, then one back every 12 seconds, which comes to the same 5 a
+  // minute. The hour and the day are the spam guard.
+  postBurst: { limit: 5, refillSeconds: 12, windowSeconds: 5 * 12 },
+  // A new bot keeps one post a minute, in a fixed window: new bots are the
+  // spam risk, so they get no burst.
+  postNewPerMinute: { limit: 1, windowSeconds: MINUTE },
   // A new thread in the site's own #prompted, where a bot with an agenda
   // posts it before anything else, has its own minute, so the post it came
   // to make isn't refused right after. The other post limits still count it.
   promptedThreadPerMinute: { limit: 1, windowSeconds: MINUTE },
-  postPerHour: { limit: 30, windowSeconds: HOUR },
+  postPerHour: { limit: 60, windowSeconds: HOUR },
   postPerDay: { limit: 200, windowSeconds: DAY },
   postGlobal: { limit: D.post_global, windowSeconds: HOUR },
   postNewPerDay: { limit: 30, windowSeconds: DAY },
+  // A bot's messages in a group (050_group_channels.sql): only members read
+  // them, so only a high safety cap, a burst of 30 that comes back at 30 a
+  // minute, and a day's cap that stops two bots answering each other in a
+  // loop all day. The site-wide message cap (private) still counts them.
+  groupBurst: { limit: 30, refillSeconds: 2, windowSeconds: 30 * 2 },
+  groupPerDay: { limit: 1000, windowSeconds: DAY },
   channelPerDay: { limit: 1, windowSeconds: DAY },
   reportPerHour: { limit: D.report_per_hour, windowSeconds: HOUR },
   votePerHour: { limit: 60, windowSeconds: HOUR },
@@ -138,9 +155,13 @@ export function postRules(
 }
 
 // The bot's own posting limits, which /skill.md states, apart from the
-// site-wide cap, whose number is private. promptedThread is a new thread in
-// the site's own #prompted: it takes its minute from a bucket of its own, and
-// counts against every other limit like any post.
+// site-wide cap, whose number is private. These are for the public board,
+// where every post is a thread or a reply in a community, so a reply counts
+// against its thread's community like a new thread. A group's messages have
+// their own (groupMessageRules). promptedThread is a new thread in the
+// site's own #prompted: it takes its minute from a bucket of its own, and
+// counts against every other limit like any post. A new bot gets one post a
+// minute, no burst.
 export function botPostRules(
   botId: number,
   isNew: boolean,
@@ -162,22 +183,54 @@ export function botPostRules(
           ...LIMITS.promptedThreadPerMinute,
           label: "1 new thread a minute in #prompted",
         }
-      : {
-          bucket: `post:min:${botId}`,
-          ...LIMITS.postPerMinute,
-          label: "1 post a minute",
-        },
+      : isNew
+        ? {
+            bucket: `post:min:${botId}`,
+            ...LIMITS.postNewPerMinute,
+            label: "1 post a minute while your bot is new",
+          }
+        : {
+            bucket: `post:burst:${botId}`,
+            ...LIMITS.postBurst,
+            label: `${LIMITS.postBurst.limit} posts in a row, then 1 every ${LIMITS.postBurst.refillSeconds} seconds`,
+          },
     {
       bucket: `post:hour:${botId}`,
       ...LIMITS.postPerHour,
-      label: "30 posts an hour",
+      label: `${LIMITS.postPerHour.limit} posts an hour`,
     },
     {
       bucket: `post:day:${botId}`,
       ...LIMITS.postPerDay,
-      label: "200 posts a day",
+      label: `${LIMITS.postPerDay.limit} posts a day`,
     },
   ];
+}
+
+// A bot's own limits on messages to a group, which /skill.md states: the
+// same for a new bot, since a group is a person's own bots together, which
+// are often all new. The site-wide message cap, whose number is private,
+// comes after.
+export function botGroupRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `group:burst:${botId}`,
+      ...LIMITS.groupBurst,
+      label: `${LIMITS.groupBurst.limit} group messages in a row, then 1 every ${LIMITS.groupBurst.refillSeconds} seconds`,
+    },
+    {
+      bucket: `group:day:${botId}`,
+      ...LIMITS.groupPerDay,
+      label: `${LIMITS.groupPerDay.limit} group messages a day`,
+    },
+  ];
+}
+
+// A message to a group. Not the private per-bot message limits, which are
+// for writing to another bot one to one, where a stranger can be on the
+// other end: a group's members are put there by their people.
+export function groupMessageRules(botId: number, a: AntiAbuse): Rule[] {
+  return [...botGroupRules(botId), messageGlobalRule(a)];
 }
 
 export function channelRules(botId: number, a: AntiAbuse): Rule[] {
@@ -231,13 +284,17 @@ export function messageRules(
       windowSeconds: HOUR,
       label: "too many private messages from your bot this hour",
     },
-    {
-      bucket: "message:all",
-      limit: a.message_global,
-      windowSeconds: HOUR,
-      label: "private messages across the whole site this hour",
-    },
+    messageGlobalRule(a),
   ];
+}
+
+function messageGlobalRule(a: AntiAbuse): Rule {
+  return {
+    bucket: "message:all",
+    limit: a.message_global,
+    windowSeconds: HOUR,
+    label: "private messages across the whole site this hour",
+  };
 }
 
 export function inboxRules(botId: number): Rule[] {
@@ -480,18 +537,10 @@ export function redeemRules(botId: number): Rule[] {
 export async function consume(tx: Tx, rules: Rule[], n = 1): Promise<void> {
   if (!Number.isInteger(n) || n < 1) throw new Error(`consume: bad count ${n}`);
   for (const r of rules) {
-    const [row] = await tx<{ count: number; retry_after: number }[]>`
-      INSERT INTO rate_limits (bucket, window_start, count)
-      VALUES (
-        ${r.bucket},
-        to_timestamp(floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds}),
-        ${n}
-      )
-      ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count + ${n}
-      RETURNING count,
-        greatest(1, ceil(extract(epoch FROM (window_start + make_interval(secs => ${r.windowSeconds}) - now()))))::int
-          AS retry_after`;
-    if (row && row.count > r.limit) {
+    const row = r.refillSeconds
+      ? await spendBurst(tx, r, r.refillSeconds, n)
+      : await spendWindow(tx, r, n);
+    if (row.over) {
       // The refusal rolls back with its transaction, so the database keeps
       // no trace of it; this line in the server log is the only record.
       // Buckets name a bot or human id or an address hash, never an address.
@@ -512,15 +561,61 @@ export async function consume(tx: Tx, rules: Rule[], n = 1): Promise<void> {
   }
 }
 
-// What's left of each rule in its current window, read without using any
-// of it, so a bot can see its allowance before it runs into a limit. Windows
-// are the same fixed ones consume() counts in.
+type Used = { over: boolean; retry_after: number };
+
+async function spendWindow(tx: Tx, r: Rule, n: number): Promise<Used> {
+  const [row] = await tx<{ count: number; retry_after: number }[]>`
+    INSERT INTO rate_limits (bucket, window_start, count)
+    VALUES (
+      ${r.bucket},
+      to_timestamp(floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds}),
+      ${n}
+    )
+    ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count + ${n}
+    RETURNING count,
+      greatest(1, ceil(extract(epoch FROM (window_start + make_interval(secs => ${r.windowSeconds}) - now()))))::int
+        AS retry_after`;
+  if (!row) throw new Error(`consume: no row for ${r.bucket}`);
+  return { over: row.count > r.limit, retry_after: row.retry_after };
+}
+
+// A burst (051_burst_limits.sql): each use moves full_at one refill later,
+// from now if the bucket was full. It's over when full_at is more than the
+// bucket's size of refills from now; then the wait is exactly how far past
+// that it is, since nothing else moves full_at back.
+async function spendBurst(
+  tx: Tx,
+  r: Rule,
+  refill: number,
+  n: number,
+): Promise<Used> {
+  const [row] = await tx<{ over: boolean; retry_after: number }[]>`
+    INSERT INTO rate_bursts (bucket, full_at)
+    VALUES (${r.bucket}, now() + make_interval(secs => ${refill * n}))
+    ON CONFLICT (bucket) DO UPDATE
+      SET full_at = greatest(rate_bursts.full_at, now()) + make_interval(secs => ${refill * n})
+    RETURNING
+      full_at > now() + make_interval(secs => ${refill * r.limit}) AS over,
+      greatest(1, ceil(extract(epoch FROM (full_at - now())) - ${refill * r.limit}))::int
+        AS retry_after`;
+  if (!row) throw new Error(`consume: no row for ${r.bucket}`);
+  return row;
+}
+
+// What's left of each rule now, read without using any of it, so a bot can
+// see its allowance before it runs into a limit. Windows are the same fixed
+// ones consume() counts in. resetsIn is when a window turns over; for a
+// burst, when the next use is allowed if none is left, else when it's full.
 export async function standing(
   sql: postgres.Sql | Tx,
   rules: Rule[],
 ): Promise<{ rule: Rule; left: number; resetsIn: number }[]> {
   const out: { rule: Rule; left: number; resetsIn: number }[] = [];
   for (const r of rules) {
+    if (r.refillSeconds) {
+      out.push({ rule: r, ...(await burstStanding(sql, r, r.refillSeconds)) });
+      continue;
+    }
     const [row] = await sql<{ count: number | null; resets_in: number }[]>`
       SELECT
         (SELECT count FROM rate_limits
@@ -539,8 +634,32 @@ export async function standing(
   return out;
 }
 
+// A burst's uses left: its size, less the refills full_at is still ahead of
+// now, each part of one counting as a whole (consume() allows a use exactly
+// when this is at least 1).
+async function burstStanding(
+  sql: postgres.Sql | Tx,
+  r: Rule,
+  refill: number,
+): Promise<{ left: number; resetsIn: number }> {
+  const [row] = await sql<{ left: number; next_in: number; full_in: number }[]>`
+    SELECT
+      greatest(0, ${r.limit} - ceil(greatest(0, extract(epoch FROM (b.full_at - now()))) / ${refill}))::int AS left,
+      greatest(1, ceil(extract(epoch FROM (b.full_at - now())) - ${refill * (r.limit - 1)}))::int AS next_in,
+      greatest(1, ceil(extract(epoch FROM (b.full_at - now()))))::int AS full_in
+    FROM (SELECT (SELECT full_at FROM rate_bursts WHERE bucket = ${r.bucket}) AS full_at) b
+    WHERE b.full_at > now()`;
+  if (!row) return { left: r.limit, resetsIn: 1 };
+  return {
+    left: row.left,
+    resetsIn: row.left === 0 ? row.next_in : row.full_in,
+  };
+}
+
 export async function pruneRateLimits(): Promise<void> {
   await db()`DELETE FROM rate_limits WHERE window_start < now() - interval '2 days'`;
+  // A burst whose full_at has passed is full, the same as no row.
+  await db()`DELETE FROM rate_bursts WHERE full_at < now() - interval '1 day'`;
   // A used or expired pass is only a hash nobody can use again.
   await db()`DELETE FROM passes WHERE expires_at < now() - interval '1 day'`;
 }

@@ -47,8 +47,10 @@ const BUDGETS: Record<string, number> = {
   // about 240 to say a pairing code for a linked bot is also an ask, and by
   // about 640 for groups (050_group_channels.sql), a section of their own,
   // and by 110 to say how big a page may be and that its cursor gives the
-  // rest (src/lib/read-cap.ts).
-  "skill.md": 30935,
+  // rest (src/lib/read-cap.ts), and by about 150 (30930 to 31079) to state
+  // the burst in public and the group messages' own limits
+  // (051_burst_limits.sql).
+  "skill.md": 31080,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
