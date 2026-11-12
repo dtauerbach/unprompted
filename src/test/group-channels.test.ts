@@ -1808,6 +1808,97 @@ describe("groups in what's new", () => {
     ).toEqual([]);
   });
 
+  it("never moves the cursor back when the newest group sender is frozen, or the group hidden, so nothing comes twice once it's back", async () => {
+    const { a, b, c, g } = await three();
+    await send(c, g, "older");
+    await send(a, g, "newest");
+    const read = await digest(b, "?messages_since=0");
+    expect(bodies(read.body)).toEqual(["older", "newest"]);
+    const at = read.body.messages.next_since;
+    // Frozen: its message is left out, and the cursor holds.
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'alice'`;
+    const frozen = await digest(b, `?messages_since=${at}`);
+    expect(frozen.body.messages.new).toEqual([]);
+    expect(frozen.body.messages.next_since).toBe(at);
+    await db()`UPDATE bots SET frozen_at = NULL WHERE handle = 'alice'`;
+    expect(
+      (await digest(b, `?messages_since=${frozen.body.messages.next_since}`))
+        .body.messages.new,
+    ).toEqual([]);
+    // Hidden, then shown again: the same.
+    await setPrivateChannelHidden(db(), Number(num(g)), true, "test");
+    const hidden = await digest(b, `?messages_since=${at}`);
+    expect(hidden.body.messages.next_since).toBe(at);
+    expect(hidden.body.groups).toEqual([]);
+    await setPrivateChannelHidden(db(), Number(num(g)), false, "test");
+    const shown = await digest(
+      b,
+      `?messages_since=${hidden.body.messages.next_since}`,
+    );
+    expect(shown.body.messages.new).toEqual([]);
+    // Nor does joined come back for a group already seen.
+    expect(shown.body.groups[0].joined).toBeUndefined();
+  });
+
+  it("stops carrying a group's messages to a member taken out or released, without waking it, and reads only from its new way in when put back", async () => {
+    const { a, b, c, g } = await three();
+    await send(a, g, "while in");
+    const read = await digest(c, "?messages_since=0");
+    expect(bodies(read.body)).toEqual(["while in"]);
+    const at = read.body.messages.next_since;
+    await setOwnBots(db(), "google-p", g, [], ["cat"], null);
+    const out = await wake(c);
+    await send(a, g, "after cat left");
+    for (const q of ["?messages_since=0", `?messages_since=${at}`, ""]) {
+      const d = await digest(c, q);
+      expect(JSON.stringify(d.body)).not.toContain("after cat left");
+      expect(d.body.groups).toEqual([]);
+    }
+    expect(await wake(c)).toBe(out);
+    // Put back: nothing from while it was out.
+    await setOwnBots(db(), "google-p", g, ["cat"], [], null);
+    await send(b, g, "welcome back");
+    expect(bodies((await digest(c, "?messages_since=0")).body)).toEqual([
+      "welcome back",
+    ]);
+    // Released: the same, and its next person sees none of it.
+    await releaseBot(db(), "google-p", "cat", null);
+    const gone = await wake(c);
+    await send(a, g, "after release");
+    for (const q of ["?messages_since=0", ""]) {
+      const d = await digest(c, q);
+      expect(JSON.stringify(d.body)).not.toContain("after release");
+      expect(d.body.groups).toEqual([]);
+    }
+    expect(await wake(c)).toBe(gone);
+  });
+
+  it("says a group's members see a group message, and to answer in the group, never only the two of you", async () => {
+    const { a, b, g } = await three();
+    for (const k of [a.key, b.key])
+      await call(inboxRoute, { key: k, body: { open: true } });
+    await send(a, g, "to the team");
+    const groupOnly = await digest(b, "?messages_since=0");
+    expect(groupOnly.body.messages_note).not.toContain("Only the two of you");
+    expect(groupOnly.body.messages_note).toContain("Only its members");
+    expect(groupOnly.body.messages_note).toContain("that channel, not with to");
+    expect(groupOnly.body.messages_note).not.toContain("A request");
+    await call(sendRoute, { key: a.key, body: { to: "bob", body: "just us" } });
+    const mixed = await digest(b, "?messages_since=0");
+    expect(mixed.body.messages_note).not.toContain("Only the two of you");
+    expect(mixed.body.messages_note).toContain("A request");
+    expect(mixed.body.messages_note).toContain("that channel, not with to");
+    const pairOnly = await digest(
+      b,
+      `?messages_since=${groupOnly.body.messages.next_since}`,
+    );
+    expect(bodies(pairOnly.body)).toEqual(["just us"]);
+    expect(pairOnly.body.messages_note).toContain("Only the two of you");
+    expect(pairOnly.body.messages_note).not.toContain("channel");
+    const viaTool = await tool(b.key, "read_digest", { messages_since: 0 });
+    expect(viaTool.data.messages_note).toContain("post and that channel");
+  });
+
   it("lists a bot's groups with their handles and leader, says when it came in since its cursor, and drops them when it's taken out or released", async () => {
     const { a, b, c, g } = await three();
     const fresh = await digest(c);
@@ -1946,5 +2037,18 @@ describe("groups in what's new", () => {
         joined: true,
       },
     ]);
+    // Somewhere to go: not "nothing is waiting", but how to read the group.
+    expect(d.body.start).toBeUndefined();
+    expect(d.body.groups_note).toContain("GET /v1/private-channels/");
+    expect((await tool(b.key, "read_digest", {})).data.groups_note).toContain(
+      "read_channel",
+    );
+    // Once it has written there, a quiet digest points to getting started
+    // again.
+    await send(b, g, "here");
+    const quiet = await digest(b);
+    expect(quiet.body.groups[0].joined).toBeUndefined();
+    expect(quiet.body.groups_note).toBeUndefined();
+    expect(quiet.body.start).toBeDefined();
   });
 });

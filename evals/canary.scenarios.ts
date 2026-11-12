@@ -244,6 +244,32 @@ export function canaryScenarios(): void {
             }
       });
 
+      it("names P and its members in no group list of a bot outside P", async () => {
+        const c = await setUp();
+        for (const v of [c.z, c.w]) {
+          const lists = [
+            (await get("/v1/me/digest?messages_since=0", v.key)).json.groups,
+            (await get("/v1/me", v.key)).json.groups,
+            (await get("/v1/me/digest?view=compact", v.key)).json.groups,
+          ];
+          for (const groups of lists) {
+            const text = JSON.stringify(groups);
+            expect(text).not.toContain(`"${c.p}"`);
+            expect(text).not.toContain(c.y.handle);
+          }
+        }
+        // Z sees its own group, Q, and only Q's members.
+        expect(
+          (await get("/v1/me", c.z.key)).json.groups.map(
+            (g: { channel: string; members: string[] }) => [
+              g.channel,
+              g.members,
+            ],
+          ),
+        ).toEqual([[c.q, [c.x.handle, c.z.handle].sort()]]);
+        expect((await get("/v1/me", c.w.key)).json.groups).toEqual([]);
+      });
+
       it("is in no digest, wake number or wake URL body", async () => {
         const c = await setUp();
         for (const v of [c.z, c.w]) {

@@ -472,9 +472,11 @@ export type GroupView = {
 
 // The caller's groups, oldest first. With `joinedAfter`, each says whether
 // the caller came in since then: after the newest message at or before that
-// id that the caller may read (to it, its own, or in a group it reads),
-// judged by time, so no other message's time shows; with none to judge by,
-// a group it hasn't written in yet counts as just joined.
+// id to it, its own, or in a group it's in now since it came in, judged by
+// time, so no other message's time shows; with none to judge by, a group it
+// hasn't written in yet counts as just joined. Group messages count by
+// membership alone, as the digest's cursor does (digestMessages), so a
+// sender frozen or blocked since doesn't make joined come back.
 export async function myGroups(
   sql: postgres.Sql | Tx,
   me: number,
@@ -515,12 +517,17 @@ export async function myGroups(
          WHERE m.bot_id = ${me} AND m.id <= ${joinedAfter}
          ORDER BY m.id DESC LIMIT 1)
         UNION ALL
-        (SELECT m.created_at FROM messages m
-         WHERE m.to_bot_id IS NULL AND m.id <= ${joinedAfter}
-           AND m.channel_id IN (SELECT DISTINCT cm.channel_id FROM channel_members cm
-                                WHERE cm.bot_id = ${me})
-           AND group_message_readable(m, ${me})
-         ORDER BY m.id DESC LIMIT 1)
+        (SELECT max(n.at) FROM
+           (SELECT DISTINCT cm.channel_id FROM channel_members cm
+            WHERE cm.bot_id = ${me}) g
+         CROSS JOIN LATERAL (SELECT channel_reads_from(g.channel_id, ${me}) AS rf) w
+         CROSS JOIN LATERAL (
+           SELECT m.created_at AS at FROM messages m
+           WHERE m.channel_id = g.channel_id AND m.to_bot_id IS NULL
+             AND (m.channel_id, m.id) > (g.channel_id, w.rf)
+             AND m.id <= ${joinedAfter}
+           ORDER BY m.channel_id DESC, m.id DESC LIMIT 1) n
+         WHERE w.rf IS NOT NULL)
       ) t`;
     after = t?.at ?? null;
   } else if (joinedAfter !== undefined) after = null;

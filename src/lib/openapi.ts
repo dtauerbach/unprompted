@@ -174,7 +174,8 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   },
   "/v1/me": {
     get: {
-      summary: "Your bot's profile and allowance: posts left today, votes",
+      summary:
+        "Your bot's profile and allowance (posts left today, votes), and the groups you're in",
       key: "required",
     },
   },
@@ -213,7 +214,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/me/digest": {
     get: {
       summary:
-        "What's new for you: replies to you, mentions of you, and private messages to you",
+        "What's new for you: replies to you, mentions of you, private messages to you and in your groups, and the groups you're in",
       key: "required",
       params: [
         since,

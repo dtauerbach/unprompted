@@ -626,16 +626,73 @@ export async function digestMessages(
     SELECT DISTINCT cm.channel_id FROM channel_members cm
     JOIN group_channels g ON g.channel_id = cm.channel_id
     WHERE cm.bot_id = ${me}`;
-  const inGroup = sql`m.to_bot_id IS NULL AND m.channel_id IN (${groups})
-    AND m.bot_id <> ${me} AND group_message_readable(m, ${me})`;
+  // Each group it's in now, with where its reading starts there.
+  const ways = sql`
+    (${groups}) g
+    CROSS JOIN LATERAL (SELECT channel_reads_from(g.channel_id, ${me}) AS rf) w`;
+  // The newest message to it, and the newest from another member in each
+  // group it's in now, since it came in, worked out from membership alone:
+  // not filtered by a frozen or blocked sender or a hidden group, as the
+  // pair half isn't, so next_since never falls when one of those changes
+  // and nothing given once is given again when it changes back. It tells a
+  // member only that a message exists in its own group. One step down
+  // messages_channel per group, newest first.
   const [top] = await sql<{ top: string | null }[]>`
     SELECT greatest(
       (SELECT max(id) FROM messages WHERE to_bot_id = ${me}),
-      (SELECT max(m.id) FROM messages m WHERE ${inGroup})
+      (SELECT max(t.id) FROM ${ways}
+       CROSS JOIN LATERAL (
+         SELECT m.id FROM messages m
+         WHERE m.channel_id = g.channel_id
+           AND (m.channel_id, m.id) > (g.channel_id, w.rf)
+           AND m.to_bot_id IS NULL AND m.bot_id <> ${me}
+         ORDER BY m.channel_id DESC, m.id DESC LIMIT 1) t
+       WHERE w.rf IS NOT NULL)
     ) AS top`;
   const upTo = Number(top?.top ?? 0);
   const from = since === undefined ? undefined : Math.min(since, upTo);
+  const recent = sql`m.id <= ${upTo}
+    AND m.created_at > now() - make_interval(days => ${MESSAGE_DIGEST_DAYS})`;
+  // A page from the pairs, down messages_to, and a page from each group,
+  // down messages_channel from where it reads, each filtered before its
+  // limit, so the first MESSAGE_PAGE of them all in id order is the page:
+  // one OR over the whole table walks messages_pkey instead. The row
+  // comparison keeps the planner on messages_channel. A group's filter is
+  // group_message_readable (050_group_channels.sql) spelled out, since
+  // calling it per row costs most of the read: a member now (rf), after its
+  // way in, a group not hidden, a sender not frozen or blocked, never its
+  // own.
   const rows = await sql<(MessageRow & { channel_id: string | null })[]>`
+    WITH page AS (
+      (SELECT m.id FROM messages m JOIN bots fb ON fb.id = m.bot_id
+       WHERE m.to_bot_id = ${me} AND ${recent}
+         AND fb.frozen_at IS NULL AND NOT has_blocked(${me}, m.bot_id)
+         AND ${
+           from === undefined
+             ? sql`m.id > coalesce((
+                 SELECT max(x.id) FROM messages x
+                 WHERE x.bot_id = ${me} AND x.to_bot_id = m.bot_id), 0)`
+             : sql`m.id > ${from}`
+         }
+       ORDER BY m.to_bot_id, m.id LIMIT ${MESSAGE_PAGE})
+      UNION ALL
+      (SELECT t.id FROM ${ways}
+       CROSS JOIN LATERAL (
+         SELECT m.id FROM messages m JOIN bots fb ON fb.id = m.bot_id
+         WHERE m.channel_id = g.channel_id
+           AND (m.channel_id, m.id) > (g.channel_id, greatest(w.rf, ${
+             from === undefined
+               ? sql`coalesce((
+                   SELECT max(x.id) FROM messages x
+                   WHERE x.bot_id = ${me} AND x.to_bot_id IS NULL
+                     AND x.channel_id = g.channel_id), 0)`
+               : sql`${from}::bigint`
+           }))
+           AND m.to_bot_id IS NULL AND m.bot_id <> ${me} AND ${recent}
+           AND fb.frozen_at IS NULL AND NOT has_blocked(${me}, m.bot_id)
+         ORDER BY m.channel_id, m.id LIMIT ${MESSAGE_PAGE}) t
+       WHERE w.rf IS NOT NULL AND private_channel_is_visible(g.channel_id))
+    )
     SELECT m.id, fb.handle AS from_handle,
       coalesce(tb.handle, 'private:' || m.channel_id) AS to_handle,
       CASE WHEN m.to_bot_id IS NULL THEN m.channel_id END AS channel_id,
@@ -644,30 +701,9 @@ export async function digestMessages(
         SELECT 1 FROM messages e
         WHERE e.bot_id = m.to_bot_id AND e.to_bot_id = m.bot_id AND e.id < m.id
       ) AS request
-    FROM messages m JOIN bots fb ON fb.id = m.bot_id
+    FROM page JOIN messages m ON m.id = page.id
+      JOIN bots fb ON fb.id = m.bot_id
       LEFT JOIN bots tb ON tb.id = m.to_bot_id
-    WHERE m.id <= ${upTo}
-      AND m.created_at > now() - make_interval(days => ${MESSAGE_DIGEST_DAYS})
-      AND (
-        (m.to_bot_id = ${me} AND fb.frozen_at IS NULL
-          AND NOT has_blocked(${me}, m.bot_id)
-          AND ${
-            from === undefined
-              ? sql`m.id > coalesce((
-                  SELECT max(x.id) FROM messages x
-                  WHERE x.bot_id = ${me} AND x.to_bot_id = m.bot_id), 0)`
-              : sql`m.id > ${from}`
-          })
-        OR (${inGroup}
-          AND ${
-            from === undefined
-              ? sql`m.id > coalesce((
-                  SELECT max(x.id) FROM messages x
-                  WHERE x.bot_id = ${me} AND x.to_bot_id IS NULL
-                    AND x.channel_id = m.channel_id), 0)`
-              : sql`m.id > ${from}`
-          })
-      )
     ORDER BY m.id LIMIT ${MESSAGE_PAGE}`;
   const more = rows.length === MESSAGE_PAGE;
   const last = rows.at(-1);
