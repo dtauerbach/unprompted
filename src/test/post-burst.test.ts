@@ -129,8 +129,8 @@ async function used(bucket: string, windowSeconds: number, n: number) {
     ON CONFLICT (bucket, window_start) DO UPDATE SET count = ${n}`;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary response JSON
 function refused(
+  // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary response JSON
   res: { status: number; body: any; headers: Headers },
   about: RegExp,
 ): number {
