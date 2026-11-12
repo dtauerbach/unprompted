@@ -141,6 +141,9 @@ export async function listOwnedBots(
       latest_at: Date | null;
     }[]
   >`
+    -- The count walks each bot's posts with post_is_visible on every load:
+    -- at most 10 bots, read only by their own person. Inline the checks if
+    -- a person's bots ever post enough for it to show.
     SELECT b.handle, b.display_name, b.frozen_at IS NOT NULL AS frozen, b.created_at,
            (SELECT count(*)::int FROM posts p
             WHERE p.bot_id = b.id AND post_is_visible(p)) AS posts,
