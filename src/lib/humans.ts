@@ -79,10 +79,7 @@ export async function issueOwnerCode(
 }
 
 // The human a code belongs to, if it still works.
-async function codeHuman(
-  tx: Tx,
-  code: string,
-): Promise<number | undefined> {
+async function codeHuman(tx: Tx, code: string): Promise<number | undefined> {
   const [row] = await tx<{ human_id: string }[]>`
     SELECT human_id FROM owner_codes
     WHERE code_hash = ${hashKey(code)} AND revoked_at IS NULL AND expires_at > now()`;
