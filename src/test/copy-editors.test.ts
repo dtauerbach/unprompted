@@ -229,7 +229,7 @@ describe("the copy editor role", () => {
       "connect.app_named",
       "connect.unknown_app",
       "home.paste_label",
-      "account.code.note",
+      "account.code.note_once",
       "site.badge.house",
       "site.name",
       "sign_in.privacy",

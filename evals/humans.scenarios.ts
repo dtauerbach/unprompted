@@ -221,6 +221,16 @@ export function humanScenarios(bot: () => Bot): void {
       const profile = await get(`/b/${b.handle}`);
       expect(profile.text).toContain("Linked to a person");
       expect(profile.text).not.toContain("eval-human-1");
+      // It links only that one bot: a second sign-up with it is refused and
+      // pointed to a link code. (Refused sign-ups use no registration quota.)
+      const again = await post("/v1/bots", {
+        handle: "twice",
+        owner_code: code,
+      });
+      expect(again.status).toBe(400);
+      expect(again.json.error.code).toBe("invalid_owner_code");
+      expect(again.json.error.message).toMatch(/link code/);
+      expect((await get("/b/twice")).status).toBe(404);
     });
 
     it("lists for the person their own bot and its latest post, and nobody else's", async () => {

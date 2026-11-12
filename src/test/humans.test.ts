@@ -8,6 +8,9 @@ import {
   issueOwnerCode,
   listOwnedBots,
   MAX_BOTS_PER_HUMAN,
+  markOwnerCodeUsed,
+  OWNER_CODE_MINUTES,
+  ownerForCode,
   releaseBot,
 } from "@/lib/humans";
 import { hashKey, OWNER_CODE_RE } from "@/lib/keys";
@@ -17,6 +20,7 @@ import {
   awayFromWindowEdge,
   call,
   freshIp,
+  linkBot,
   register,
   resetDb,
 } from "./helpers";
@@ -172,13 +176,13 @@ describe("registering with an owner code", () => {
   });
 
   it("stops at the cap, and the bot over it isn't made", async () => {
-    const c = await code();
     for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++) {
       const res = await call(registerRoute, {
-        body: { handle: `bot-${i}`, owner_code: c },
+        body: { handle: `bot-${i}`, owner_code: await code() },
       });
       expect(res.status).toBe(201);
     }
+    const c = await code();
     const before = await counts();
     const res = await call(registerRoute, {
       body: { handle: "one-more", owner_code: c },
@@ -188,21 +192,145 @@ describe("registering with an owner code", () => {
     expect(await counts()).toEqual(before);
   });
 
-  it("holds the cap when bots register at once", async () => {
+  it("links one bot when several sign up with the same code at once", async () => {
     const c = await code();
     const results = await Promise.all(
-      Array.from({ length: MAX_BOTS_PER_HUMAN + 5 }, (_, i) =>
+      Array.from({ length: 8 }, (_, i) =>
         call(registerRoute, { body: { handle: `race-${i}`, owner_code: c } }),
       ),
     );
-    expect(results.filter((r) => r.status === 201)).toHaveLength(
-      MAX_BOTS_PER_HUMAN,
-    );
-    expect(results.filter((r) => r.status === 409)).toHaveLength(5);
+    expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+    expect(
+      results
+        .filter((r) => r.status !== 201)
+        .map((r) => [r.status, r.body.error.code]),
+    ).toEqual(Array(7).fill([400, "invalid_owner_code"]));
     const human = await findHuman(db(), "google-1");
     const [n] = await db()<{ count: number }[]>`
       SELECT count(*)::int AS count FROM bots WHERE owner_id = ${human ?? 0}`;
-    expect(n?.count).toBe(MAX_BOTS_PER_HUMAN);
+    expect(n?.count).toBe(1);
+  });
+
+  it("stops at the cap when a bot linked another way took the last place", async () => {
+    for (let i = 0; i < MAX_BOTS_PER_HUMAN - 1; i++) {
+      const res = await call(registerRoute, {
+        body: { handle: `bot-${i}`, owner_code: await code() },
+      });
+      expect(res.status).toBe(201);
+    }
+    // A bot that joined first, linked by the person entering its link code,
+    // takes the last place before the code is used.
+    const c = await code();
+    const late = await register("late");
+    await linkBot(late.key, "google-1");
+    const res = await call(registerRoute, {
+      body: { handle: "racer", owner_code: c },
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe("owner_full");
+  });
+
+  it("works once: a second sign-up with it is refused and writes nothing", async () => {
+    const c = await code();
+    const first = await call(registerRoute, {
+      body: { handle: "alice", owner_code: c },
+    });
+    expect(first.status).toBe(201);
+    const before = await counts();
+    const again = await call(registerRoute, {
+      body: { handle: "bob", owner_code: c },
+    });
+    expect(again.status).toBe(400);
+    expect(again.body.error.code).toBe("invalid_owner_code");
+    expect(again.body.error.message).toMatch(/used/);
+    expect(await counts()).toEqual(before);
+    const [row] = await db()<{ used_at: Date | null; handle: string }[]>`
+      SELECT o.used_at, b.handle FROM owner_codes o JOIN bots b ON b.id = o.bot_id`;
+    expect(row?.handle).toBe("alice");
+    expect(row?.used_at).toBeInstanceOf(Date);
+  });
+
+  it("lasts 15 minutes, as a link code does", async () => {
+    expect(OWNER_CODE_MINUTES).toBe(15);
+    await code();
+    const [row] = await db()<{ mins: number }[]>`
+      SELECT round(extract(epoch FROM expires_at - created_at) / 60)::int AS mins
+      FROM owner_codes`;
+    expect(row?.mins).toBe(15);
+    // The guide says so, and what to do when one is refused.
+    const guide = readFileSync("content/skill.md", "utf8");
+    expect(guide).toMatch(/linked to them \(it works once, for 15 minutes\)/);
+    expect(guide).toMatch(/owner code \(then join without it\)/);
+  });
+
+  it("stays unused when the sign-up fails after marking it", async () => {
+    const c = await code();
+    const other = await register("other");
+    const [bot] = await db()<{ id: string }[]>`
+      SELECT id FROM bots WHERE handle = ${other.handle}`;
+    const failed = await db()
+      .begin(async (tx) => {
+        const { codeId } = await ownerForCode(tx, c);
+        await markOwnerCodeUsed(tx, codeId, Number(bot?.id));
+        throw new Error("a later step failed");
+      })
+      .catch((e: Error) => e);
+    expect(String(failed)).toMatch(/a later step failed/);
+    const [row] = await db()<{ used_at: Date | null }[]>`
+      SELECT used_at FROM owner_codes`;
+    expect(row?.used_at).toBeNull();
+    const ok = await call(registerRoute, {
+      body: { handle: "alice", owner_code: c },
+    });
+    expect(ok.status).toBe(201);
+    expect(ok.body.bot.claimed).toBe(true);
+  });
+
+  it("is refused when marking finds it already used, even without the lock", async () => {
+    const c = await code();
+    const first = await call(registerRoute, {
+      body: { handle: "alice", owner_code: c },
+    });
+    expect(first.status).toBe(201);
+    const other = await register("other");
+    const [ids] = await db()<{ code: string; bot: string }[]>`
+      SELECT (SELECT id FROM owner_codes) AS code,
+        (SELECT id FROM bots WHERE handle = ${other.handle}) AS bot`;
+    const err = await db()
+      .begin((tx) => markOwnerCodeUsed(tx, Number(ids?.code), Number(ids?.bot)))
+      .catch((e: { code?: string }) => e);
+    expect(err).toMatchObject({ code: "invalid_owner_code" });
+  });
+
+  it("holds a code made before the change to 15 minutes from when it was made", async () => {
+    const c = await code();
+    // As if the old deployment issued it for a week, 20 minutes ago.
+    await db()`
+      UPDATE owner_codes SET created_at = now() - interval '20 minutes',
+        expires_at = now() + interval '7 days'`;
+    const res = await call(registerRoute, {
+      body: { handle: "alice", owner_code: c },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("invalid_owner_code");
+  });
+
+  it("can't be marked used without the bot it linked, and a bot is linked by one code", async () => {
+    await code();
+    const err = await db()`UPDATE owner_codes SET used_at = now()`.catch(
+      (e: Error) => e,
+    );
+    expect(String(err)).toMatch(/owner_codes_used_by_one_bot/);
+    const c = await code();
+    const res = await call(registerRoute, {
+      body: { handle: "alice", owner_code: c },
+    });
+    expect(res.status).toBe(201);
+    const twice = await db()`
+      UPDATE owner_codes SET used_at = now(),
+        bot_id = (SELECT id FROM bots WHERE handle = 'alice')
+      WHERE used_at IS NULL`.catch((e: Error) => e);
+    expect(String(twice)).toMatch(/owner_codes_bot/);
   });
 
   it("is refused in read-only mode like any registration", async () => {
@@ -247,11 +375,12 @@ describe("a human's bots", () => {
   });
 
   it("shows each of the human's bots with its visible posts and the latest", async () => {
-    const c = await code("google-1");
     const theirs = await code("google-2");
-    await call(registerRoute, { body: { handle: "alice", owner_code: c } });
+    await call(registerRoute, {
+      body: { handle: "alice", owner_code: await code("google-1") },
+    });
     const b = await call(registerRoute, {
-      body: { handle: "bob", owner_code: c },
+      body: { handle: "bob", owner_code: await code("google-1") },
     });
     await call(registerRoute, { body: { handle: "zed", owner_code: theirs } });
     // Straight into the table: the posting route's rate limits aren't what's
@@ -270,7 +399,9 @@ describe("a human's bots", () => {
         RETURNING id`;
       return Number(r?.id);
     };
-    await call(registerRoute, { body: { handle: "carol", owner_code: c } });
+    await call(registerRoute, {
+      body: { handle: "carol", owner_code: await code("google-1") },
+    });
     const first = await say("alice", "first");
     const seen = await say("alice", "a reply", first);
     const hidden = await say("alice", "hidden later");
@@ -339,14 +470,13 @@ describe("a human's bots", () => {
   });
 
   it("frees a place under the cap when one is released", async () => {
-    const c = await code();
     for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++)
       await call(registerRoute, {
-        body: { handle: `bot-${i}`, owner_code: c },
+        body: { handle: `bot-${i}`, owner_code: await code() },
       });
     await releaseBot(db(), "google-1", "bot-0", null);
     const res = await call(registerRoute, {
-      body: { handle: "next", owner_code: c },
+      body: { handle: "next", owner_code: await code() },
     });
     expect(res.status).toBe(201);
   });

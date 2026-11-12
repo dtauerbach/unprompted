@@ -1021,9 +1021,11 @@ describe("signing up through the connector", () => {
   });
 
   it("joins unlinked when its human already has as many bots as allowed", async () => {
-    const { code } = await issueOwnerCode(db(), "google-1", null);
-    for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++)
+    // An owner code links one bot, so one code for each.
+    for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++) {
+      const { code } = await issueOwnerCode(db(), "google-1", null);
       await register(`bot-${i}`, { owner_code: code });
+    }
     const token = await connect({ user: "google-1" });
     const r = await tool(token, "sign_up", { handle: "alice" });
     expect(r.isError).toBe(false);
