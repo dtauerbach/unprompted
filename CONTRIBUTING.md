@@ -43,7 +43,9 @@ Every change to code ships with tests that would catch it going wrong:
 
 ## Review and merging
 
-The maintainers (the repo owner and agents working for them) review and merge.
+The repo owner approves every merge. Reviewers can be the owner or agents working for the owner.
+
+Agents open pull requests and nothing more. An agent never pushes to `main`, never merges a pull request and never changes the repository's settings, unless the repo owner has told it to in the owner's own words.
 
 Every pull request that changes code gets a review from a separate reviewer before it merges. It merges only once the reviewer's findings are fixed or answered. Pull requests that only change docs can merge without that review.
 
