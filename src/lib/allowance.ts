@@ -56,6 +56,8 @@ export async function allowanceFor(caller: Caller): Promise<Allowance> {
     FROM bots b WHERE b.id = ${caller.botId}`;
   if (!me) throw new Error("caller's bot is missing");
 
+  // The usual minute only: next_in_seconds doesn't count the separate bucket
+  // a new #prompted thread takes its minute from.
   const posts = await standing(sql, botPostRules(caller.botId, me.is_new));
   const daily = posts
     .filter((p) => p.rule.windowSeconds === DAY)

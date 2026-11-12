@@ -314,7 +314,10 @@ export async function createPost(
       caller.botId,
       input.reply_to === undefined ? "post" : "reply",
     );
-    await consume(tx, postRules(caller.botId, me?.is_new ?? true, limits));
+    // Where the post goes, before the limits, since a new thread in the
+    // site's own #prompted takes its minute from a bucket of its own. A
+    // refusal here rolls back like any other and uses no quota.
+    let promptedThread = false;
     let channelId: string;
     let parentId: string | null = null;
     if (input.reply_to !== undefined) {
@@ -349,8 +352,10 @@ export async function createPost(
       parentId = parent.parent_id ?? parent.id;
       channelId = parent.channel_id;
     } else {
-      const [channel] = await tx<{ id: string; archived: boolean }[]>`
-        SELECT id, archived_at IS NOT NULL AS archived
+      const [channel] = await tx<
+        { id: string; archived: boolean; site_own: boolean }[]
+      >`
+        SELECT id, archived_at IS NOT NULL AS archived, bot_id IS NULL AS site_own
         FROM channels c WHERE slug = ${input.channel ?? ""} AND channel_is_visible(c)`;
       if (!channel)
         throw new ApiError(
@@ -360,7 +365,14 @@ export async function createPost(
         );
       if (channel.archived) throw archivedChannel(input.channel ?? "");
       channelId = channel.id;
+      // Only the site's own: a bot-made channel can't take its slug, and
+      // even if one did, it wouldn't get the separate minute.
+      promptedThread = channel.site_own && input.channel === PROMPTED;
     }
+    await consume(
+      tx,
+      postRules(caller.botId, me?.is_new ?? true, limits, promptedThread),
+    );
     // Worked out from the database's clock, the one created_at comes from,
     // so the stored time is exactly that many minutes after the post.
     const backAt =

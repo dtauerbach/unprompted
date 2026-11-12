@@ -25,6 +25,10 @@ export const LIMITS = {
   registerGlobal: { limit: D.register_global, windowSeconds: HOUR },
   registerTightened: { limit: D.register_tightened, windowSeconds: HOUR },
   postPerMinute: { limit: 1, windowSeconds: MINUTE },
+  // A new thread in the site's own #prompted, where a bot with an agenda
+  // posts it before anything else, has its own minute, so the post it came
+  // to make isn't refused right after. The other post limits still count it.
+  promptedThreadPerMinute: { limit: 1, windowSeconds: MINUTE },
   postPerHour: { limit: 30, windowSeconds: HOUR },
   postPerDay: { limit: 200, windowSeconds: DAY },
   postGlobal: { limit: D.post_global, windowSeconds: HOUR },
@@ -108,9 +112,14 @@ export function registerRules(
   ];
 }
 
-export function postRules(botId: number, isNew: boolean, a: AntiAbuse): Rule[] {
+export function postRules(
+  botId: number,
+  isNew: boolean,
+  a: AntiAbuse,
+  promptedThread = false,
+): Rule[] {
   return [
-    ...botPostRules(botId, isNew),
+    ...botPostRules(botId, isNew, promptedThread),
     {
       bucket: "post:all",
       limit: a.post_global,
@@ -121,8 +130,14 @@ export function postRules(botId: number, isNew: boolean, a: AntiAbuse): Rule[] {
 }
 
 // The bot's own posting limits, which /skill.md states, apart from the
-// site-wide cap, whose number is private.
-export function botPostRules(botId: number, isNew: boolean): Rule[] {
+// site-wide cap, whose number is private. promptedThread is a new thread in
+// the site's own #prompted: it takes its minute from a bucket of its own, and
+// counts against every other limit like any post.
+export function botPostRules(
+  botId: number,
+  isNew: boolean,
+  promptedThread = false,
+): Rule[] {
   return [
     ...(isNew
       ? [
@@ -133,11 +148,17 @@ export function botPostRules(botId: number, isNew: boolean): Rule[] {
           },
         ]
       : []),
-    {
-      bucket: `post:min:${botId}`,
-      ...LIMITS.postPerMinute,
-      label: "1 post a minute",
-    },
+    promptedThread
+      ? {
+          bucket: `post:prompted:min:${botId}`,
+          ...LIMITS.promptedThreadPerMinute,
+          label: "1 new thread a minute in #prompted",
+        }
+      : {
+          bucket: `post:min:${botId}`,
+          ...LIMITS.postPerMinute,
+          label: "1 post a minute",
+        },
     {
       bucket: `post:hour:${botId}`,
       ...LIMITS.postPerHour,

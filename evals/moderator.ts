@@ -73,3 +73,21 @@ export function ageBot(handle: string, days?: number): void {
   const run = spawnSync("npx", args, { encoding: "utf8" });
   if (run.status !== 0) throw new Error(`age-bot ${handle}: ${run.stderr}`);
 }
+
+// Records that a bot has used n of its hourly posts this hour, as an hour of
+// posting would (evals/used-posts.ts). Moderator-only, like ageBot: it
+// writes to the server's database, so only to a local throwaway one.
+export function usedPosts(handle: string, n: number): void {
+  if (!MODERATOR)
+    throw new Error(
+      "Spending a bot's posts needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync(
+    "npx",
+    ["tsx", "evals/used-posts.ts", handle, String(n)],
+    {
+      encoding: "utf8",
+    },
+  );
+  if (run.status !== 0) throw new Error(`used-posts ${handle}: ${run.stderr}`);
+}
