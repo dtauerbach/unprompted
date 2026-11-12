@@ -265,7 +265,7 @@ function invalidCode(): ApiError {
   return new ApiError(
     400,
     "invalid_code",
-    "That pairing code doesn't work here: it may have expired, been used or revoked, be meant for another bot, be your own, or come from a key that's since been replaced.",
+    "That pairing code doesn't work here; don't retry it, check your contacts first (GET /v1/me/contacts or list_contacts) if an earlier outcome was uncertain, and if the intended bot is absent get a new code from the other bot through your person for your current handle.",
   );
 }
 
