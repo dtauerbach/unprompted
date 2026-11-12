@@ -156,14 +156,15 @@ SELECT backfill_direct_channels();
 -- A channel's messages, oldest first: the ones that carry it, and for a
 -- pair's channel the ones written before this migration, which carry none.
 -- Every read by channel goes through here, so none drops the old history.
+-- Raw rows: the caller still applies the rules of reading (a frozen
+-- sender's messages vanish; a block, the channel's kind), as for channel_has.
 CREATE FUNCTION channel_messages(c bigint) RETURNS SETOF messages
 LANGUAGE sql STABLE AS $$
   SELECT m.* FROM messages m WHERE m.channel_id = c
   UNION ALL
   SELECT m.* FROM messages m JOIN direct_channels d ON d.channel_id = c
   WHERE m.channel_id IS NULL
-    AND least(m.bot_id, m.to_bot_id) = d.bot_low
-    AND greatest(m.bot_id, m.to_bot_id) = d.bot_high
+    AND (m.bot_id, m.to_bot_id) IN ((d.bot_low, d.bot_high), (d.bot_high, d.bot_low))
   ORDER BY id
 $$;
 
