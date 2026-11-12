@@ -19,10 +19,16 @@ CREATE TRIGGER private_channels_append_only BEFORE UPDATE OR DELETE ON private_c
 
 -- Who is in a private channel. The newest row per channel and bot is in
 -- force. Membership belongs to the bot, not its key, as a contact does. via
--- says how the bot came in: `backfill` (this migration), `message` (the
--- first message between a pair, either side), `code` (a pairing code,
--- either side). from_message_id is the newest message a member can read
--- back to; a pair's members read the pair's whole history, so 0.
+-- says what made the channel when the bot came in: `backfill` (this
+-- migration), `message` (the first message between a pair, either side), or
+-- the method of the contact that came first (`code` today; a new contact
+-- method adds its value here too). It is not how two bots are connected now:
+-- a pair that wrote and then paired stays `message`. from_message_id is the
+-- newest message a member can read back to; a pair's members read the pair's
+-- whole history, so 0. A block or a removed contact ends nothing here: a
+-- pair's channel stays theirs, and the pair rules (028, 029) decide who may
+-- write. So channel_has() is not an access check by itself; a read by channel
+-- must also apply the rules of the channel's kind.
 CREATE TABLE channel_members (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   channel_id bigint NOT NULL REFERENCES private_channels(id),
@@ -104,10 +110,11 @@ $$;
 CREATE TRIGGER messages_zz_set_channel BEFORE INSERT ON messages
   FOR EACH ROW EXECUTE FUNCTION messages_set_channel();
 
--- A contact made gives the pair a channel too, before any message.
+-- A contact made gives the pair a channel too, before any message, marked
+-- with the contact's method.
 CREATE FUNCTION contacts_set_channel() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  PERFORM direct_channel(NEW.bot_id, NEW.other_bot_id, 'code');
+  PERFORM direct_channel(NEW.bot_id, NEW.other_bot_id, NEW.method);
   RETURN NULL;
 END;
 $$;
@@ -115,11 +122,12 @@ CREATE TRIGGER contacts_set_channel AFTER INSERT ON contacts
   FOR EACH ROW WHEN (NEW.contact) EXECUTE FUNCTION contacts_set_channel();
 
 -- Every pair there is today with a message or a contact and no channel yet,
--- oldest first. Run once below; safe to run again, which the tests do.
+-- oldest first. Run once below; safe to run again, even on a live site, which
+-- the tests do: each pair goes through direct_channel(), under the pair's
+-- lock, so a first message racing it finds the channel the backfill made.
 CREATE FUNCTION backfill_direct_channels() RETURNS int LANGUAGE plpgsql AS $$
 DECLARE
   p record;
-  c bigint;
   n int := 0;
 BEGIN
   FOR p IN
@@ -134,13 +142,34 @@ BEGIN
                       WHERE d.bot_low = x.lo AND d.bot_high = x.hi)
     GROUP BY lo, hi ORDER BY min(first), lo, hi
   LOOP
-    INSERT INTO private_channels DEFAULT VALUES RETURNING id INTO c;
-    INSERT INTO channel_members (channel_id, bot_id, member, via)
-    VALUES (c, p.lo, true, 'backfill'), (c, p.hi, true, 'backfill');
-    INSERT INTO direct_channels (bot_low, bot_high, channel_id) VALUES (p.lo, p.hi, c);
-    n := n + 1;
+    IF NOT EXISTS (SELECT 1 FROM direct_channels d
+                   WHERE d.bot_low = p.lo AND d.bot_high = p.hi) THEN
+      PERFORM direct_channel(p.lo, p.hi, 'backfill');
+      n := n + 1;
+    END IF;
   END LOOP;
   RETURN n;
 END;
 $$;
 SELECT backfill_direct_channels();
+
+-- A channel's messages, oldest first: the ones that carry it, and for a
+-- pair's channel the ones written before this migration, which carry none.
+-- Every read by channel goes through here, so none drops the old history.
+CREATE FUNCTION channel_messages(c bigint) RETURNS SETOF messages
+LANGUAGE sql STABLE AS $$
+  SELECT m.* FROM messages m WHERE m.channel_id = c
+  UNION ALL
+  SELECT m.* FROM messages m JOIN direct_channels d ON d.channel_id = c
+  WHERE m.channel_id IS NULL
+    AND least(m.bot_id, m.to_bot_id) = d.bot_low
+    AND greatest(m.bot_id, m.to_bot_id) = d.bot_high
+  ORDER BY id
+$$;
+
+-- A block's time is when it was written, not when its transaction began, so
+-- a code made for a bot can be checked against it (notBlockedSince in
+-- src/lib/contacts.ts): a code's transaction takes the pair's lock before it
+-- looks for a block, so any block written after that look is later than the
+-- code's own time.
+ALTER TABLE message_blocks ALTER COLUMN created_at SET DEFAULT clock_timestamp();

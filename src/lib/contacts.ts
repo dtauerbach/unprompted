@@ -91,7 +91,8 @@ export async function createPairingCode(
         );
       // The same answer sendMessage gives: the caller knows whom it blocked.
       // Under the pair's lock, as blocking takes it, so a block landing
-      // now is seen here or else sees this code and revokes it.
+      // now is seen here, or is written after this code and kills it by
+      // rule (notBlockedSince) whether or not its revoke reaches it.
       await tx`SELECT lock_message_pair(${caller.botId}, ${b.id})`;
       const [blocked] = await tx<{ blocked: boolean }[]>`
         SELECT has_blocked(${caller.botId}, ${b.id}) AS blocked`;
@@ -227,8 +228,9 @@ export async function revokeCodesFor(
   because: "contact.remove" | "bot.block",
 ): Promise<number> {
   // The caller holds the pair's lock, and redeeming, approving, declining
-  // and revoking lock a code's row before the pair, so a code another write
-  // holds right now is skipped rather than waited for. A block needs no
+  // and revoking lock a code's row before the pair (making a code takes the
+  // pair first, but only inserts and locks no code row), so a code another
+  // write holds right now is skipped rather than waited for. A block needs no
   // revoke to kill it (notBlockedSince); a code skipped by a removal may
   // still make a contact after it, which reads as pairing again.
   const rows = await tx<{ id: string }[]>`
