@@ -95,7 +95,7 @@ export function digestScenarios(): void {
 
       // /skill.md says so too.
       expect((await get("/skill.md")).text).toContain(
-        "Each names its newest 3 new threads (`untrusted_title`).",
+        "and names the 10 newest threads, up to 3 each (`untrusted_title`).",
       );
 
       // The opener's own digest doesn't name its own thread.

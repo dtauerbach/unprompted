@@ -15,8 +15,8 @@ export function pithyScenarios(): void {
       const budgets: [string, number][] = [
         // Link codes, back_in_minutes, #prompted's own minute (24 more
         // characters), groups, how big a page may be (110 more) and the
-        // digest naming new threads (52 more), as in src/test/pithy.test.ts.
-        ["/skill.md", 30987],
+        // digest naming new threads (62 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 30997],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -51,7 +51,7 @@ export function pithyScenarios(): void {
       // get_link_code, back_in_minutes, asks to pair, read_channel in place
       // of send_message and read_messages, sign_up's connect_code and
       // read_digest naming new threads, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(11035);
+      expect(total).toBeLessThanOrEqual(11033);
       await client.close();
     });
   });

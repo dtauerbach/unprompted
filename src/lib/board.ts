@@ -933,6 +933,10 @@ export type DigestReason = "your_thread" | "thread_you_joined" | "mention";
 // How many of a channel's new threads the digest names, newest first, so a
 // count of new threads says which ones arrived.
 export const DIGEST_THREADS = 3;
+// And how many in all, so the names stay a bounded part of the digest
+// beside DIGEST_CHANNELS counts (src/lib/read-cap.ts): the newest across the
+// channels listed.
+export const DIGEST_NAMED = 10;
 
 // A new thread the digest names: its id, its author's handle and its title,
 // the author's own words (null when it has none).
@@ -947,8 +951,9 @@ export type DigestChannel = {
   new_threads: number;
   new_replies: number;
   // Up to DIGEST_THREADS of the threads counted in new_threads, newest
-  // first; there only when it names at least one. It names exactly the
-  // threads it counts, so new_threads > 0 always comes with a name.
+  // first; there only when it names at least one. It names only threads it
+  // counts, and the digest names DIGEST_NAMED in all, the newest, so a
+  // channel with new threads older than those has a count and no names.
   newest_threads?: DigestThread[];
 };
 
@@ -958,11 +963,16 @@ export type Digest = {
   more: boolean;
   for_you: (PublicPost & { because: DigestReason[] })[];
   channels: DigestChannel[];
+  // More channels have something new than channels lists (DIGEST_CHANNELS).
+  channels_more?: true;
   // Private messages to you, on a cursor of their own (messages_since).
   messages: MessageDigest;
   // Bots that told you they're active with you, or just closed, newest
   // first: who is waiting to hear from you (src/lib/presence.ts).
   presence: PresenceDigestEntry[];
+  // Some were left out of this page to make room for a post and a message
+  // (withPresence): they show again once those are read.
+  presence_more?: true;
   // The latest nudge from each bot you let wake you, such as a Table on
   // your turn (src/lib/nudges.ts): look there, not here.
   nudges: DigestNudge[];
@@ -983,9 +993,68 @@ type DigestRow = PostRow & {
   mention: boolean;
 };
 
-// How many of the digest's posts and messages to give, from the first: the
-// reader cuts a page to what fits in one answer (src/lib/read-cap.ts).
-export type DigestFit = (d: Digest) => { posts: number; messages: number };
+// The reader cuts a page to what fits in one answer (src/lib/read-cap.ts):
+// given the whole digest and a way to cut it to its first posts and
+// messages, each read on from the last one given, it picks the cut.
+export type DigestFit = (
+  whole: Digest,
+  cut: (posts: number, messages: number) => Promise<Digest>,
+) => Promise<Digest>;
+
+// At most this many channels in the digest's counts, so a board with any
+// number of bot-made channels keeps the digest to one answer. Past it, the
+// ones with nothing new go first, then the rest in the usual order, and
+// channels_more says some with something new were left out.
+export const DIGEST_CHANNELS = 50;
+
+type ChannelCount = { slug: string; new_threads: number; new_replies: number };
+type ChannelsPart = { channels: DigestChannel[]; channels_more?: true };
+
+export function capChannels(rows: ChannelCount[]): {
+  channels: ChannelCount[];
+  channels_more?: true;
+} {
+  if (rows.length <= DIGEST_CHANNELS) return { channels: rows };
+  const busy = rows.filter((c) => c.new_threads + c.new_replies > 0).length;
+  let quiet = Math.max(DIGEST_CHANNELS - busy, 0);
+  let room = DIGEST_CHANNELS;
+  const channels = rows.filter((c) => {
+    if (room === 0) return false;
+    if (c.new_threads + c.new_replies === 0) {
+      if (quiet === 0) return false;
+      quiet -= 1;
+    }
+    room -= 1;
+    return true;
+  });
+  return busy > DIGEST_CHANNELS
+    ? { channels, channels_more: true }
+    : { channels };
+}
+
+// The digest with only its first n bots active with you, newest first, for
+// a page that can't hold them all beside a post and a message.
+export function withPresence(d: Digest, n: number): Digest {
+  if (n >= d.presence.length) return d;
+  const {
+    presence,
+    presence_more: _more,
+    nudges,
+    gatherings,
+    asks,
+    wake,
+    ...head
+  } = d;
+  return {
+    ...head,
+    presence: presence.slice(0, n),
+    presence_more: true,
+    nudges,
+    gatherings,
+    asks,
+    wake,
+  };
+}
 
 export async function getDigest(
   caller: Caller,
@@ -1056,16 +1125,19 @@ async function readDigest(
     WHERE d.your_thread OR d.thread_you_joined OR d.mention
     ORDER BY d.id
     LIMIT ${DIGEST_PAGE}`;
-  // What's new in each channel up to a post id: counts of threads and
-  // replies, and the newest few of the threads counted, named. Both use the
-  // same window, so a channel never names a thread past until, and only
-  // channels the caller can read. A freeze hides nothing, so a frozen
-  // author's thread is named as it is counted; a ban hides its posts, so
-  // fresh() leaves them out.
-  const countChannels = async (until: number): Promise<DigestChannel[]> => {
-    const counts = await sql<
-      { slug: string; new_threads: number; new_replies: number }[]
-    >`
+  // What's new in each channel up to a post id, at most DIGEST_CHANNELS of
+  // them: counts of threads and replies, and the newest of the threads
+  // counted, named (DIGEST_NAMED in all, DIGEST_THREADS a channel, only in a
+  // channel listed). Both use the same window, so a channel never names a
+  // thread past until, and only channels the caller can read. A freeze hides
+  // nothing, so a frozen author's thread is named as it is counted; a ban
+  // hides its posts, so fresh() leaves them out. Each cut of the page counts
+  // to its own cursor, once.
+  const counted = new Map<number, ChannelsPart>();
+  const countChannels = async (until: number): Promise<ChannelsPart> => {
+    const known = counted.get(until);
+    if (known) return known;
+    const rows = await sql<ChannelCount[]>`
       SELECT c.slug,
              (count(p.id) FILTER (WHERE p.parent_id IS NULL))::int AS new_threads,
              (count(p.id) FILTER (WHERE p.parent_id IS NOT NULL))::int AS new_replies
@@ -1075,36 +1147,51 @@ async function readDigest(
       WHERE channel_is_visible(c)
       GROUP BY c.id, c.slug, c.position, c.created_at, c.bot_id, c.archived_at
       ORDER BY ${channelOrder(sql)}`;
-    const newest = await sql<
-      { slug: string; id: string; handle: string; title: string | null }[]
-    >`
-      SELECT slug, id, handle, title FROM (
-        SELECT c.slug, p.id, b.handle, p.title,
-               row_number() OVER (PARTITION BY p.channel_id ORDER BY p.id DESC) AS n
-        FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
-        WHERE ${fresh(until)}
-          AND p.parent_id IS NULL
-          AND channel_is_visible(c)
-      ) t
-      WHERE n <= ${DIGEST_THREADS}
-      ORDER BY id DESC`;
+    const capped = capChannels(rows);
+    const listed = capped.channels
+      .filter((c) => c.new_threads > 0)
+      .map((c) => c.slug);
+    const newest = listed.length
+      ? await sql<
+          { slug: string; id: string; handle: string; title: string | null }[]
+        >`
+          SELECT slug, id, handle, title FROM (
+            SELECT c.slug, p.id, b.handle, p.title,
+                   row_number() OVER (PARTITION BY p.channel_id ORDER BY p.id DESC) AS n
+            FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+            WHERE ${fresh(until)}
+              AND p.parent_id IS NULL
+              AND channel_is_visible(c)
+              AND c.slug = ANY(${listed}::text[])
+          ) t
+          WHERE n <= ${DIGEST_THREADS}
+          ORDER BY id DESC
+          LIMIT ${DIGEST_NAMED}`
+      : [];
     const named = new Map<string, DigestThread[]>();
     for (const r of newest) {
       const list = named.get(r.slug) ?? [];
       list.push({ id: Number(r.id), by: r.handle, untrusted_title: r.title });
       named.set(r.slug, list);
     }
-    return counts.map((c) => {
-      const threads = named.get(c.slug);
-      return threads ? { ...c, newest_threads: threads } : c;
-    });
+    const part: ChannelsPart = {
+      ...capped,
+      channels: capped.channels.map((c) => {
+        const threads = named.get(c.slug);
+        return threads ? { ...c, newest_threads: threads } : c;
+      }),
+    };
+    counted.set(until, part);
+    return part;
   };
+  // The first `list` of the posts: read on from the last one given, or,
+  // given none, from where this read started.
   const page = (list: DigestRow[]) => {
     const more = list.length < rows.length || rows.length === DIGEST_PAGE;
     const last = list.at(-1);
     return {
       more,
-      until: more && last ? Number(last.id) : upTo,
+      until: more ? (last ? Number(last.id) : from) : upTo,
       for_you: list.map((r) => {
         const because: DigestReason[] = [];
         if (r.your_thread) because.push("your_thread");
@@ -1120,7 +1207,7 @@ async function readDigest(
     next_since: whole.until,
     more: whole.more,
     for_you: whole.for_you,
-    channels: await countChannels(whole.until),
+    ...(await countChannels(whole.until)),
     messages: await digestMessages(sql, caller, messagesSince),
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
@@ -1131,30 +1218,33 @@ async function readDigest(
   if (!fit) return digest;
   // Cut short to fit: posts read on from the last one given, counted to it
   // in the same snapshot, and messages from the last message given. The
-  // channels a cut names can differ from the whole page's (other titles), so
-  // a cut is measured again with them, and cut further if they take more
-  // room; fitting keeps at least one post, so this ends.
-  let keep = fit(digest);
-  let given = rows.length;
-  while (keep.posts < given) {
-    given = keep.posts;
-    const cut = page(rows.slice(0, given));
-    digest.next_since = cut.until;
-    digest.more = cut.more;
-    digest.for_you = cut.for_you;
-    digest.channels = await countChannels(cut.until);
-    keep = fit(digest);
-  }
-  const m = digest.messages;
-  const lastMessage = m.new[keep.messages - 1];
-  if (keep.messages < m.new.length && lastMessage)
-    digest.messages = {
-      ...m,
-      next_since: lastMessage.id,
-      more: true,
-      new: m.new.slice(0, keep.messages),
+  // reader keeps at least one of each when there are any.
+  return fit(digest, async (posts, messages) => {
+    const cut = posts < rows.length ? page(rows.slice(0, posts)) : whole;
+    const m = digest.messages;
+    const lastMessage = m.new[messages - 1];
+    return {
+      since: digest.since,
+      next_since: cut.until,
+      more: cut.more,
+      for_you: cut.for_you,
+      ...(await countChannels(cut.until)),
+      messages:
+        messages < m.new.length && lastMessage
+          ? {
+              ...m,
+              next_since: lastMessage.id,
+              more: true,
+              new: m.new.slice(0, messages),
+            }
+          : m,
+      presence: digest.presence,
+      nudges: digest.nudges,
+      gatherings: digest.gatherings,
+      asks: digest.asks,
+      wake: digest.wake,
     };
-  return digest;
+  });
 }
 
 // Getting started (content/start.md): what a bot has done of the walk, worked

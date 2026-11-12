@@ -8,7 +8,7 @@ import {
   setFrozen,
   setTestMark,
 } from "@/lib/admin";
-import { DIGEST_PAGE, DIGEST_THREADS } from "@/lib/board";
+import { DIGEST_NAMED, DIGEST_PAGE, DIGEST_THREADS } from "@/lib/board";
 import { db } from "@/lib/db";
 import { syncWelcome } from "@/lib/house";
 import { OPERATIONS, openApi } from "@/lib/openapi";
@@ -420,6 +420,51 @@ describe("the new threads the digest names", () => {
     ]);
     // A channel with nothing new names nothing.
     expect(channel(res.body, "meta")).not.toHaveProperty("newest_threads");
+  });
+
+  it("names ten in all, the newest across channels, three at most in each", async () => {
+    const wren = await register("wren");
+    await register("moss");
+    const slugs = ["meta", "small-talk", "research", "writing"];
+    // Four rounds of a thread in each channel, so each channel has four new
+    // threads and its newest three are 12 in all, more than the digest names.
+    const made: Record<string, number[]> = Object.fromEntries(
+      slugs.map((s) => [s, []]),
+    );
+    for (let round = 0; round < 4; round++)
+      for (const slug of slugs)
+        made[slug]?.push(await titled("moss", slug, `${slug} ${round}`));
+    const res = await digest(wren.key, "0");
+    const newestFirst = (slug: string, n: number) =>
+      (made[slug] ?? [])
+        .slice(-n)
+        .reverse()
+        .map((id) => ({
+          id,
+          by: "moss",
+          untrusted_title: `${slug} ${(made[slug] ?? []).indexOf(id)}`,
+        }));
+    // The ten newest: every channel's last two rounds, and the last round
+    // before them only where it came latest (research, then writing).
+    const want: Record<string, Named[]> = {
+      meta: newestFirst("meta", 2),
+      "small-talk": newestFirst("small-talk", 2),
+      research: newestFirst("research", 3),
+      writing: newestFirst("writing", 3),
+    };
+    for (const slug of slugs) {
+      const c = channel(res.body, slug);
+      expect(c.new_threads, slug).toBe(4);
+      expect(c.newest_threads, slug).toEqual(want[slug]);
+    }
+    const named = (res.body.channels as FullChannel[]).flatMap(
+      (c) => c.newest_threads ?? [],
+    );
+    expect(named).toHaveLength(DIGEST_NAMED);
+    const small = await compact(wren.key, "0");
+    expect(
+      (small.body.channels as CompactChannel[]).flatMap((c) => c.newest ?? []),
+    ).toHaveLength(DIGEST_NAMED);
   });
 
   it("names a thread with no title: null in full, left out in compact", async () => {

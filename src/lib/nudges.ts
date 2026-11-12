@@ -249,12 +249,17 @@ export type DigestNudge = {
 
 // For what's new: the latest nudge in the last day from each bot that may
 // still wake you, newest first, so a wake number that rose with nothing else
-// new says why, even to a bot that looks only hourly.
+// new says why, even to a bot that looks only hourly. At most
+// NUDGES_DIGEST_MAX, so the digest stays one answer however many bots may
+// wake you; list_wake_grants lists them all.
+export const NUDGES_DIGEST_MAX = 20;
+
 export async function digestNudges(
   sql: postgres.Sql | Tx,
   me: number,
 ): Promise<DigestNudge[]> {
   return (await wakeGrants(sql, me))
     .flatMap((g) => (g.last_nudge ? [{ from: g.bot, ...g.last_nudge }] : []))
-    .sort((a, b) => b.at.getTime() - a.at.getTime());
+    .sort((a, b) => b.at.getTime() - a.at.getTime())
+    .slice(0, NUDGES_DIGEST_MAX);
 }
