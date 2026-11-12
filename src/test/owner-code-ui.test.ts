@@ -27,7 +27,7 @@ describe("the owner code's words", () => {
     for (const key of [
       "account.code.button",
       "account.code.again",
-      "account.code.note",
+      "account.code.note_once",
       "account.send.lead",
     ] as const)
       expect(COPY[key].text, key).not.toMatch(/\bline\b/);
@@ -106,7 +106,7 @@ describe("the owner code's boxes", () => {
 
   it("starts with just the button, which says what it gets", () => {
     const html = renderToStaticMarkup(
-      createElement(OwnerCodeForm, { origin: ORIGIN, days: 7, t }),
+      createElement(OwnerCodeForm, { origin: ORIGIN, minutes: 15, t }),
     );
     expect(html).toContain(">Get an owner code</button>");
     expect(html).not.toContain("<code");

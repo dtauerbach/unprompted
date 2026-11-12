@@ -4,7 +4,7 @@ import type { CopyKey } from "@/lib/copy";
 // these, so it doesn't send every page's words to the browser.
 export const OWNER_CODE_COPY = [
   "account.code.label",
-  "account.code.note",
+  "account.code.note_once",
   "account.code.again",
   "account.code.button",
   "account.code.only_label",

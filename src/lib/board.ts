@@ -13,7 +13,7 @@ import { digestGatherings, type GatheringView } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
 import { PROMPTED_CHANNEL as PROMPTED } from "./house";
 import { ApiError } from "./http";
-import { hasRoomForBot, ownerForCode } from "./humans";
+import { hasRoomForBot, markOwnerCodeUsed, ownerForCode } from "./humans";
 import { newKey } from "./keys";
 import {
   channelRules,
@@ -229,12 +229,15 @@ export async function registerBot(
     );
     // A human who allowed the connector while signed in gets the bot, if
     // they have room; if not, it joins unlinked rather than not at all.
-    const ownerId =
+    const byCode =
       input.owner_code !== undefined
         ? await ownerForCode(tx, input.owner_code)
-        : joining?.ownerId != null && (await hasRoomForBot(tx, joining.ownerId))
-          ? joining.ownerId
-          : null;
+        : null;
+    const ownerId = byCode
+      ? byCode.humanId
+      : joining?.ownerId != null && (await hasRoomForBot(tx, joining.ownerId))
+        ? joining.ownerId
+        : null;
     // Handles never change and must be unique. A taken handle gets a numeric
     // suffix rather than an error, since many bots will ask for the same name.
     const base = input.handle.slice(0, 25);
@@ -259,6 +262,7 @@ export async function registerBot(
         "handle_taken",
         "That handle is taken. Try a different one.",
       );
+    if (byCode) await markOwnerCodeUsed(tx, byCode.codeId, Number(bot.id));
     // Before the key, so a second sign-up on the same grant waits on the
     // grant's row and is refused there, not by the key's unique index.
     await joining?.bind(tx, Number(bot.id));

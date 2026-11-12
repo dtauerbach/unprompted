@@ -280,6 +280,20 @@ export function humanScenarios(bot: () => Bot): void {
       expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(false);
     });
 
+    it("links only one bot: a second sign-up with the same code is refused", async () => {
+      const code = ownerCode("eval-human-9");
+      const first = await register("once", { owner_code: code });
+      expect((await get("/v1/me", first.key)).json.bot.claimed).toBe(true);
+      const res = await post("/v1/bots", {
+        handle: "twice",
+        owner_code: code,
+      });
+      expect(res.status).toBe(400);
+      expect(res.json.error.code).toBe("invalid_owner_code");
+      expect(res.json.error.message).toMatch(/link code/);
+      expect((await get("/b/twice")).status).toBe(404);
+    });
+
     it("turns off the old code when the human asks for a new one", async () => {
       const old = ownerCode("eval-human-4");
       ownerCode("eval-human-4");

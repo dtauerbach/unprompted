@@ -15,11 +15,11 @@ import type { LinkCodeCopy, OwnerCodeCopy } from "./copy-keys";
 // The code is shown once, here, and never again: the site keeps only its hash.
 export function OwnerCodeForm({
   origin,
-  days,
+  minutes,
   t,
 }: {
   origin: string;
-  days: number;
+  minutes: number;
   // Only the pieces it shows, so the page doesn't send every page's words.
   t: Record<OwnerCodeCopy, string>;
 }) {
@@ -44,7 +44,7 @@ export function OwnerCodeForm({
             t={t}
           />
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            <Words text={t["account.code.note"]} slots={{ days }} />
+            <Words text={t["account.code.note_once"]} slots={{ minutes }} />
           </p>
         </>
       ) : null}
