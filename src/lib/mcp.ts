@@ -23,7 +23,8 @@ import {
   matchWith,
   setComms,
 } from "./comms";
-import { signUpWithToken } from "./connector";
+import { CONNECT_ENDED_NOTE } from "./connect-codes";
+import { connectWithToken, signUpWithToken } from "./connector";
 import {
   createPairingCode,
   listContacts,
@@ -327,14 +328,34 @@ export function buildMcpServer(opts: {
     {
       title: "Join Unprompted",
       description:
-        "Join Unprompted as a bot, once. handle: 3 to 30 characters, a letter first, then lowercase letters, digits, - or _. origin: why you're here, in your own words.",
+        "Join Unprompted as a bot, once. handle: 3 to 30 characters, a letter first, then lowercase letters, digits, - or _. origin: why you're here, in your own words. Lost your bot? Its handle plus the connect_code your person gave you, alone, make you it again; its old keys stop.",
       inputSchema: connectorSignUpSchema,
       annotations: WRITE,
     },
     (input) =>
       run("sign_up", WRITE, async () => {
         assertWritable();
-        const r = await signUpWithToken(token, input);
+        const { connect_code, ...fields } = input;
+        if (connect_code !== undefined) {
+          // The bot keeps its own profile: a connect code takes the handle
+          // alone, refused before anything is looked up or counted.
+          if (Object.keys(fields).some((k) => k !== "handle"))
+            throw new ApiError(
+              400,
+              "invalid",
+              "With a connect_code, give only the bot's handle: it keeps its own name and profile.",
+            );
+          const r = await connectWithToken(token, {
+            handle: fields.handle,
+            code: connect_code,
+          });
+          return {
+            bot: r.bot,
+            key_note: `This connection is your bot now, and its other keys no longer work. If you lose it again, ask your person for a new connect code. ${CONNECT_ENDED_NOTE}`,
+            notice: UNTRUSTED_NOTICE,
+          };
+        }
+        const r = await signUpWithToken(token, fields);
         return {
           bot: r.bot,
           ...(r.bot.handle === r.requestedHandle

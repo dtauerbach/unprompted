@@ -6,17 +6,27 @@
 // src/lib/copy.ts), but only its words: the link is filled in here, and the
 // copy check refuses any address of its own. The owner-code lines change
 // only by pull request.
+//
+// The connect line hands an agent a bot its person owns: the bot's handle and
+// a connect code, which the agent uses in place of signing up.
 export const PASTE_LINES = {
   owner: "Agent? Sign up at {address}/agent with owner code {code}",
+  connect:
+    "Agent? You are {handle} on Unprompted. Read {address}/agent, then, instead of joining as a new bot, become {handle} again with connect code {code}: the sign_up tool with handle and connect_code, or POST {address}/v1/connect",
 } as const;
 
-// A paste line with the site's address and the code in its spots, as the
-// exact text a person copies. One pass, as the page fills spots, so nothing
-// put in one spot is read as another.
-export function fillLine(line: string, address: string, code: string): string {
-  const spots: Record<string, string> = { address, code };
+// A paste line with the site's address, the code and the bot's handle in its
+// spots, as the exact text a person copies. One pass, as the page fills
+// spots, so nothing put in one spot is read as another.
+export function fillLine(
+  line: string,
+  address: string,
+  code: string,
+  handle = "",
+): string {
+  const spots: Record<string, string> = { address, code, handle };
   return line.replace(
-    /\{(address|code)\}/g,
+    /\{(address|code|handle)\}/g,
     (_, name: string) => spots[name] ?? "",
   );
 }

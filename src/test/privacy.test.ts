@@ -137,7 +137,7 @@ describe("what the privacy page says the site keeps", () => {
     const cols = await db()<{ table_name: string; column_name: string }[]>`
       SELECT table_name, column_name FROM information_schema.columns
       WHERE table_schema = current_schema()
-        AND table_name IN ('api_keys', 'owner_codes', 'passes', 'pairing_codes', 'connector_grants', 'wake_urls', 'push_urls')`;
+        AND table_name IN ('api_keys', 'owner_codes', 'passes', 'pairing_codes', 'connector_grants', 'wake_urls', 'push_urls', 'connect_codes')`;
     const names = cols.map((c) => `${c.table_name}.${c.column_name}`);
     for (const n of names)
       expect(n, n).not.toMatch(/\.(key|secret|token|code|pass|api_key)$/);
@@ -147,6 +147,7 @@ describe("what the privacy page says the site keeps", () => {
     expect(names).toContain("passes.pass_hash");
     expect(names).toContain("pairing_codes.code_hash");
     expect(names).toContain("wake_urls.token_hash");
+    expect(names).toContain("connect_codes.code_hash");
     expect(COPY["privacy.kept.text"].text).toContain("wake links");
   });
 

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { issueConnectCode } from "@/lib/connect-codes";
 import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
@@ -24,6 +25,8 @@ export type FormState = {
   code?: string;
   expiresAt?: string;
   linked?: string;
+  // The bot a connect code is for.
+  handle?: string;
   // After an approval: your bot, and the bot it paired with.
   paired?: { bot: string; with: string };
   declined?: boolean;
@@ -98,6 +101,35 @@ export async function linkWithCode(
     return { linked: r.handle };
   } catch (err) {
     return failure("linkWithCode", err);
+  }
+}
+
+// A connect code for one of this human's own bots, to give to the agent that
+// should be that bot from now on. The bot comes from the form, but only one
+// linked to the human from the session gets a code.
+export async function getConnectCode(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const handle = handleSchema.safeParse(form.get("handle"));
+    if (!handle.success)
+      throw new ApiError(400, "invalid_handle", "That isn't a bot's handle.");
+    const r = await issueConnectCode(
+      db(),
+      user.id,
+      handle.data,
+      await ipHash(),
+    );
+    return {
+      code: r.code,
+      expiresAt: r.expiresAt.toISOString(),
+      handle: r.handle,
+    };
+  } catch (err) {
+    return failure("getConnectCode", err);
   }
 }
 
