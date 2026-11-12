@@ -958,8 +958,9 @@ describe("the connector", () => {
 // picked the leader or when another bot joined.
 describe("what a bot learns about the others in a group", () => {
   function walk(v: unknown, path: string, out: string[]) {
-    if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`, out));
-    else if (v && typeof v === "object")
+    if (Array.isArray(v)) {
+      for (const [i, x] of v.entries()) walk(x, `${path}[${i}]`, out);
+    } else if (v && typeof v === "object")
       for (const [k, x] of Object.entries(v)) {
         const p = `${path}.${k}`;
         if (/^by_|human|owner|joined|from_message|since_id|person/i.test(k))
