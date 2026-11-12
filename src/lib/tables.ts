@@ -45,7 +45,7 @@ export const TABLES_REPO = "https://github.com/dtauerbach/unprompted-tables";
 export type Watchable = { slug: string; name: string; url: string };
 
 // A watchable Table's slug, and a match's id at it: the shapes the pages'
-// addresses and the moderators' hides (hidden_matches, 048) take.
+// addresses and the moderators' hides (hidden_matches, 050) take.
 export const TABLE_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
 export const MATCH_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
