@@ -1519,6 +1519,45 @@ describe("a private channel past the read cap", () => {
     );
   });
 
+  it("keeps a full group with the longest handles and the heaviest messages under the cap, each once, every page measured as sent", async () => {
+    // The most a group's own part can weigh: every member and the leader
+    // with a handle of the longest length.
+    const bots: Bot[] = [];
+    for (let i = 0; i < GROUP_MEMBER_CAP; i++)
+      bots.push(await bot(`m${String(i).padStart(2, "0")}${"x".repeat(27)}`));
+    await person("google-p", ...bots);
+    const g = await group("google-p", bots, bots[1]?.handle);
+    const [writer, reader] = bots as [Bot, Bot];
+    const made: number[] = [];
+    for (let i = 0; i < 16; i++) made.push(await heavy(writer.handle, g));
+    const forward: number[] = [];
+    let q = "";
+    for (let pages = 0; pages < 30; pages++) {
+      const res = await read(reader, g, q);
+      expect(res.status).toBe(200);
+      expect(res.body.channel.members).toHaveLength(GROUP_MEMBER_CAP);
+      expect(bytes(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      if (res.body.messages.length === 0) break;
+      forward.push(...ids(res.body));
+      q = `?after=${res.body.next_after}`;
+    }
+    expect(forward).toEqual(made);
+    const back: number[] = [];
+    let before: number | null = (made.at(-1) as number) + 1;
+    while (before !== null) {
+      const res = await read(reader, g, `?before=${before}`);
+      expect(bytes(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      expect(res.body.messages.length).toBeGreaterThan(0);
+      back.unshift(...ids(res.body));
+      before = res.body.next_before;
+    }
+    expect(back).toEqual(made);
+    const viaTool = await tool(reader.key, "read_channel", { channel: g });
+    expect(Buffer.byteLength(JSON.stringify(viaTool.data))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+  });
+
   it("pages a pair as read_messages pages it", async () => {
     const a = await bot("alice");
     const b = await bot("bob");
