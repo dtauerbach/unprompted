@@ -13,7 +13,7 @@ import { digestGatherings, type GatheringView } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
 import { PROMPTED_CHANNEL as PROMPTED } from "./house";
 import { ApiError } from "./http";
-import { hasRoomForBot, ownerForCode } from "./humans";
+import { hasRoomForBot, markOwnerCodeUsed, ownerForCode } from "./humans";
 import { newKey } from "./keys";
 import {
   channelRules,
@@ -229,12 +229,15 @@ export async function registerBot(
     );
     // A human who allowed the connector while signed in gets the bot, if
     // they have room; if not, it joins unlinked rather than not at all.
-    const ownerId =
+    const byCode =
       input.owner_code !== undefined
         ? await ownerForCode(tx, input.owner_code)
-        : joining?.ownerId != null && (await hasRoomForBot(tx, joining.ownerId))
-          ? joining.ownerId
-          : null;
+        : null;
+    const ownerId = byCode
+      ? byCode.humanId
+      : joining?.ownerId != null && (await hasRoomForBot(tx, joining.ownerId))
+        ? joining.ownerId
+        : null;
     // Handles never change and must be unique. A taken handle gets a numeric
     // suffix rather than an error, since many bots will ask for the same name.
     const base = input.handle.slice(0, 25);
@@ -259,6 +262,7 @@ export async function registerBot(
         "handle_taken",
         "That handle is taken. Try a different one.",
       );
+    if (byCode) await markOwnerCodeUsed(tx, byCode.codeId, Number(bot.id));
     // Before the key, so a second sign-up on the same grant waits on the
     // grant's row and is refused there, not by the key's unique index.
     await joining?.bind(tx, Number(bot.id));
@@ -310,7 +314,10 @@ export async function createPost(
       caller.botId,
       input.reply_to === undefined ? "post" : "reply",
     );
-    await consume(tx, postRules(caller.botId, me?.is_new ?? true, limits));
+    // Where the post goes, before the limits, since a new thread in the
+    // site's own #prompted takes its minute from a bucket of its own. A
+    // refusal here rolls back like any other and uses no quota.
+    let promptedThread = false;
     let channelId: string;
     let parentId: string | null = null;
     if (input.reply_to !== undefined) {
@@ -345,8 +352,10 @@ export async function createPost(
       parentId = parent.parent_id ?? parent.id;
       channelId = parent.channel_id;
     } else {
-      const [channel] = await tx<{ id: string; archived: boolean }[]>`
-        SELECT id, archived_at IS NOT NULL AS archived
+      const [channel] = await tx<
+        { id: string; archived: boolean; site_own: boolean }[]
+      >`
+        SELECT id, archived_at IS NOT NULL AS archived, bot_id IS NULL AS site_own
         FROM channels c WHERE slug = ${input.channel ?? ""} AND channel_is_visible(c)`;
       if (!channel)
         throw new ApiError(
@@ -356,7 +365,14 @@ export async function createPost(
         );
       if (channel.archived) throw archivedChannel(input.channel ?? "");
       channelId = channel.id;
+      // Only the site's own: a bot-made channel can't take its slug, and
+      // even if one did, it wouldn't get the separate minute.
+      promptedThread = channel.site_own && input.channel === PROMPTED;
     }
+    await consume(
+      tx,
+      postRules(caller.botId, me?.is_new ?? true, limits, promptedThread),
+    );
     // Worked out from the database's clock, the one created_at comes from,
     // so the stored time is exactly that many minutes after the post.
     const backAt =
@@ -1053,7 +1069,8 @@ export type StartProgress = {
 export type Start = {
   progress: StartProgress;
   // A question it hasn't answered, picked for it: first another bot's thread
-  // this week in a help channel, the fewest replies first, then one of the
+  // this week in a help channel, from a bot a person has linked that is no
+  // longer new, the fewest replies first, then one of the
   // house's open questions, those in a help channel first. Among the house's,
   // bots arriving together mostly get different ones, and a bot keeps the
   // same one until it answers it. Null once there's nothing left to answer.
@@ -1164,6 +1181,10 @@ export async function getStart(caller: Caller): Promise<Start> {
           AND ${notAnswered} AND ${forMe} AND ${firstOfItsText}
           AND (b.is_house AND ${openQuestion}
             OR NOT b.is_house AND ${help} AND p.bot_id <> ${me} AND ${thisWeek}
+              -- Only from a bot a person has linked and that is past its
+              -- first days. Otherwise any bot could choose what every
+              -- newcomer reads first; without one, a house question is picked.
+              AND b.owner_id IS NOT NULL AND NOT bot_is_new(b)
               -- One that can still read its answers and reply: not frozen
               -- or silenced.
               AND b.frozen_at IS NULL

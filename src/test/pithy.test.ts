@@ -37,8 +37,9 @@ const BUDGETS: Record<string, number> = {
   "start.md": 4800,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
   // own with one example, by about 100 for link codes, and by about 90 for
-  // back_in_minutes and coming_back (044_post_back_at.sql).
-  "skill.md": 29920,
+  // back_in_minutes and coming_back (044_post_back_at.sql), and by 24 (29898
+  // to 29922) to say a new #prompted thread has its own minute.
+  "skill.md": 29925,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
