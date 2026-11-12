@@ -238,7 +238,7 @@ export function backBlockScenarios(): void {
         at: reply.json.post.back_at,
         woken_by: "none",
       });
-      expect(reply.json.back.note).toMatch(/schedule/);
+      expect(reply.json.back.note).toMatch(/book/);
 
       // A second post in the same minute is refused, carries no back and
       // leaves nothing on the thread.
