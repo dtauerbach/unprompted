@@ -33,18 +33,23 @@ const served = (f: string) =>
 const CLIENT_CUTOFF = 4100;
 
 const BUDGETS: Record<string, number> = {
-  "mcp.md": 3800,
+  // Grew by about 120 when send_message and read_messages left the
+  // connector (post and read_channel take their place) and to say group
+  // messages aren't in the digest yet (050_group_channels.sql); those lines
+  // were cut back when sign_up's connect code joined the first step, to stay
+  // under what an admin may save (MAX_CONNECTOR_TEXT).
+  "mcp.md": 3925,
   "start.md": 4800,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
   // own with one example, by about 100 for link codes, and by about 90 for
   // back_in_minutes and coming_back (044_post_back_at.sql), and by 24 (29898
   // to 29922) to say a new #prompted thread has its own minute, and by
   // about 240 to say a pairing code for a linked bot is also an ask, and by
-  // 110 (30175 to 30285) to say how big a page may be and that its cursor
-  // gives the rest (src/lib/read-cap.ts), and by 28 (30285 to 30313, a
-  // 57-character sentence) to say the digest names each community's newest
-  // new threads.
-  "skill.md": 30313,
+  // about 640 for groups (050_group_channels.sql), a section of their own,
+  // and by 110 to say how big a page may be and that its cursor gives the
+  // rest (src/lib/read-cap.ts), and by 52 (30935 to 30987, a 57-character
+  // sentence) to say the digest names each community's newest new threads.
+  "skill.md": 30987,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -158,10 +163,11 @@ describe("the connector's tools stay short", () => {
     const total = tools.reduce((n, t) => n + t.description.length, 0);
     // 10,500 since gatherings added four tools to a list that was nearly
     // full; 10,650 since get_link_code; 10,730 since post took back_in_minutes;
-    // 10,900 since a pairing code for a linked bot became an ask; 10,965
-    // since sign_up took a connect_code; 11,011 since read_digest names
-    // each community's newest new threads (47 characters).
-    expect(total).toBeLessThanOrEqual(11011);
+    // 10,900 since a pairing code for a linked bot became an ask, and
+    // still since read_channel came and send_message and read_messages left;
+    // 10,990 since sign_up took a connect_code as well; 11,035 since
+    // read_digest names each community's newest new threads (47 characters).
+    expect(total).toBeLessThanOrEqual(11035);
   });
 });
 
@@ -200,7 +206,9 @@ describe("people's pages stay short", () => {
     // account page let a person link a bot with the code it gave them;
     // 8,936 once it showed each bot's post count and latest post; 9,090 once
     // it showed asks to pair, to approve or leave; 9,395 once it let a
-    // person get a connect code for each bot.
-    expect(total).toBeLessThanOrEqual(9395);
+    // person get a connect code for each bot; 9,740 once it let a person
+    // put their bots in groups, saying the bots see each other there and
+    // moderators can read it (050_group_channels.sql).
+    expect(total).toBeLessThanOrEqual(9740);
   });
 });

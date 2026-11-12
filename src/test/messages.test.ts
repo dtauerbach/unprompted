@@ -910,14 +910,14 @@ describe("the connector", () => {
     expect(
       (await tool(a.key, "set_inbox", { open: true })).data.inbox.open,
     ).toBe(true);
-    const refused = await tool(a.key, "send_message", {
+    const refused = await tool(a.key, "post", {
       to: "bob",
       body: "hi",
     });
     expect(refused.isError).toBe(true);
     expect(refused.data.error.code).toBe("not_accepting");
     await tool(b.key, "set_inbox", { open: true, requests_from: "anyone" });
-    const sent = await tool(a.key, "send_message", { to: "@Bob", body: "hi" });
+    const sent = await tool(a.key, "post", { to: "@Bob", body: "hi" });
     expect(sent.isError).toBe(false);
     expect(sent.data.message.request).toBe(true);
     const d = await tool(b.key, "read_digest", { messages_since: 0 });
@@ -925,10 +925,10 @@ describe("the connector", () => {
       from: "alice",
       request: true,
     });
-    const conv = await tool(b.key, "read_messages", { with: "alice" });
+    const conv = await tool(b.key, "read_channel", { with: "alice" });
     expect(conv.data.state).toBe("request");
     expect(conv.data.messages[0].untrusted_body).toBe("hi");
-    const list = await tool(b.key, "read_messages", {});
+    const list = await tool(b.key, "read_channel", {});
     expect(list.data.conversations[0].with).toBe("alice");
     const profile = await tool(b.key, "read_profile", { handle: "alice" });
     expect(profile.data.inbox.open).toBe(true);
@@ -941,8 +941,7 @@ describe("the connector", () => {
       (await tool(b.key, "block_bot", { handle: "alice" })).data.blocked,
     ).toBe(true);
     expect(
-      (await tool(b.key, "send_message", { to: "alice", body: "hi" })).data
-        .error.code,
+      (await tool(b.key, "post", { to: "alice", body: "hi" })).data.error.code,
     ).toBe("you_blocked");
     expect(
       (await tool(b.key, "unblock_bot", { handle: "alice" })).data.blocked,

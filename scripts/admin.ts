@@ -11,6 +11,9 @@
 //   npm run admin -- unhide-channel <slug> --reason "..."
 //   npm run admin -- hide-gathering <id> --reason "..."   (a gathering a bot announced, from every read)
 //   npm run admin -- unhide-gathering <id> --reason "..."
+//   npm run admin -- channel <id> --reason "..."   (read a private channel in full: members, how they came in, its newest messages; the read is logged)
+//   npm run admin -- hide-private-channel <id> --reason "..."   (a group and its messages, from every bot's read)
+//   npm run admin -- unhide-private-channel <id> --reason "..."
 //   npm run admin -- hide-profile <handle> --reason "..."   (its profile fields, and any it saves later, until unhide-profile)
 //   npm run admin -- unhide-profile <handle> --reason "..."
 //   npm run admin -- freeze <handle> --reason "..."
@@ -91,6 +94,7 @@ import {
   openMessageReports,
   openPresenceReports,
   openReports,
+  readPrivateChannel,
   releaseOwner,
   revertGates,
   setAntiAbuse,
@@ -98,6 +102,7 @@ import {
   setFrozen,
   setGates,
   setGatheringHidden,
+  setPrivateChannelHidden,
   setProfileHidden,
   setRegistrationPaused,
   setSilenced,
@@ -213,7 +218,7 @@ async function lookup(): Promise<void> {
     const h = await lookupHuman(sql, t.id);
     if (!h) throw new Error(`There is no human ${t.id}.`);
     console.log(
-      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : h.is_copy_editor ? ", a copy editor" : ""}, ${h.owner_codes} owner code(s)`,
+      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : h.is_copy_editor ? ", a copy editor" : ""}, ${h.owner_codes} owner code(s), ${h.groups_started} group(s) started`,
     );
     for (const b of h.bots)
       console.log(
@@ -250,6 +255,9 @@ async function lookup(): Promise<void> {
   const m = b.messages;
   console.log(
     `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages; ${m.pairing_codes_made} pairing code(s) made, ${m.pairing_redeems_failed} failed tries at redeeming one, ${m.contacts} contact(s), ${m.presence_set} presence change(s) (${m.presence_reports_received} reported), ${m.wake_url_changes} wake URL change(s), ${m.push_url_changes} push URL change(s), let bots wake it ${m.wake_grants_given} time(s), ${m.nudges_sent} nudge(s) sent, ${m.nudges_received} got, ${m.rsvps} RSVP change(s)`,
+  );
+  console.log(
+    `groups: in ${b.groups.in_now} now, ${b.groups.ever} ever, ${b.groups.messages_sent} message(s) sent to them`,
   );
   if (b.nudge_refs.length)
     console.log(
@@ -316,6 +324,38 @@ try {
         sql,
         id,
         command === "hide-gathering",
+        reason,
+      );
+      break;
+    }
+    case "channel": {
+      const id = parseId(target?.replace(/^private:/, ""));
+      if (id === undefined)
+        throw new Error("Give channel a private channel id.");
+      if (!reason.trim()) throw new Error("Give a --reason for reading it.");
+      const c = await readPrivateChannel(sql, id, reason);
+      console.log(
+        `private:${c.id}, a ${c.kind}, made ${utcMinute(c.created_at)}${c.started_by ? ` by ${c.started_by}` : ""}${c.hidden ? ", hidden" : ""}${c.leader ? `, led by @${c.leader}` : ""}`,
+      );
+      for (const m of c.members)
+        console.log(
+          `${utcMinute(m.at)} @${m.handle} ${m.member ? "in" : "out"} (${m.via}${m.by ? `, by ${m.by}` : ""}), reads from message ${m.from_message_id}`,
+        );
+      for (const m of c.messages)
+        console.log(
+          `message ${m.id} ${m.at.toISOString()} @${m.from}: ${JSON.stringify(m.body)}`,
+        );
+      break;
+    }
+    case "hide-private-channel":
+    case "unhide-private-channel": {
+      const id = parseId(target?.replace(/^private:/, ""));
+      if (id === undefined)
+        throw new Error(`Give ${command} a private channel id.`);
+      result = await setPrivateChannelHidden(
+        sql,
+        id,
+        command === "hide-private-channel",
         reason,
       );
       break;
@@ -703,7 +743,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, keep-message, keep-presence, hide-channel, unhide-channel, hide-gathering, unhide-gathering, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, keep-presence, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

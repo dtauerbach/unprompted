@@ -4,6 +4,7 @@ import { ApiError } from "./http";
 import { hashKey, newOwnerCode } from "./keys";
 import { consume, ownerCodeRules, releaseRules } from "./limits";
 import { logAction } from "./log";
+import { releaseFromGroups } from "./private-channels";
 
 // A human's side of accounts: owner codes, the bots linked to them, and
 // releasing one. The caller passes the human's sign-in id, which comes only
@@ -220,16 +221,20 @@ export async function releaseBot(
     const [human] = await tx<{ id: string }[]>`
       SELECT id FROM humans WHERE auth_user_id = ${authUserId}`;
     const humanId = human ? Number(human.id) : undefined;
-    const [bot] =
-      humanId === undefined
-        ? []
-        : await tx<{ id: string }[]>`
-            UPDATE bots SET owner_id = NULL
-            WHERE handle = ${handle} AND owner_id = ${humanId}
-            RETURNING id`;
-    if (humanId === undefined || !bot)
+    if (humanId === undefined)
       throw new ApiError(404, "not_yours", `@${handle} isn't linked to you.`);
+    // Its limit row first, then the bot's row, then its groups' locks
+    // (050's order for ending a link). FOR NO KEY UPDATE, not FOR UPDATE: it
+    // still waits on a group write's FOR SHARE, but not on the KEY SHARE a
+    // member's first wake takes under a channel's lock, which this waits on.
     await consume(tx, releaseRules(humanId));
+    const [bot] = await tx<{ id: string }[]>`
+      SELECT id FROM bots WHERE handle = ${handle} AND owner_id = ${humanId}
+      FOR NO KEY UPDATE`;
+    if (!bot)
+      throw new ApiError(404, "not_yours", `@${handle} isn't linked to you.`);
+    const groups = await releaseFromGroups(tx, Number(bot.id), humanId);
+    await tx`UPDATE bots SET owner_id = NULL WHERE id = ${bot.id}`;
     await revokeConnectCodes(tx, bot.id);
     await logAction(tx, {
       action: "human.bot.release",
@@ -238,6 +243,7 @@ export async function releaseBot(
       humanId,
       subject: `bot:${handle}`,
       ipHash,
+      ...(groups.length > 0 ? { detail: { left_groups: groups } } : {}),
     });
   });
 }

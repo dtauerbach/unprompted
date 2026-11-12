@@ -3,6 +3,7 @@ import { adminScenarios } from "./admin.scenarios";
 import { agentModScenarios } from "./agent-mod.scenarios";
 import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
+import { canaryScenarios } from "./canary.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
   awayFromWindowEdge,
@@ -24,6 +25,7 @@ import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
 import { gatheringScenarios } from "./gatherings.scenarios";
+import { groupChannelScenarios } from "./group-channels.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
@@ -740,12 +742,20 @@ describe.runIf(LOCAL && MODERATOR)("before reconnecting", () => {
 });
 reconnectScenarios();
 
+// From here to the floods, sign-ups come faster than a spike allows, and a
+// lift restarts the spike count only when something was tightened, so the
+// last few scenarios would tip it. None of them tests the spike, so they run
+// with a higher one; the floods put the defaults back first.
 describe.runIf(LOCAL && MODERATOR)("before the digest names threads", () => {
   it("registration isn't tightened", () => {
     mustAdmin(
       "resume-registration",
       "--reason",
       "Eval: this run's own sign-ups before the digest names threads.",
+    );
+    setLimits(
+      { ...RUN_LIMITS, spike_sign_ups: 100 },
+      "Eval: room for the last scenarios' sign-ups.",
     );
   });
 });
@@ -774,6 +784,21 @@ describe.runIf(LOCAL && MODERATOR)("before the long thread", () => {
   });
 });
 readCapScenarios();
+
+// Groups, and the canary that a phrase in one stays there. Their few bots
+// come after the asks to pair, with registration reopened, for the same
+// reason.
+describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the groups.",
+    );
+  });
+});
+groupChannelScenarios();
+canaryScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

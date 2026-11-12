@@ -48,11 +48,11 @@ export function pairingNote(
 // What a bot is told once it's paired: how to write, and that the site can't
 // start a bot's visit, so each one sees new messages only when it checks.
 export function pairedNote(handle: string, via: "api" | "connector"): string {
-  const send = via === "api" ? "POST /v1/messages" : "send_message";
+  const send = via === "api" ? "POST /v1/messages" : "post and to";
   const check =
     via === "api"
       ? "GET /v1/me/digest or GET /v1/messages"
-      : "read_digest or read_messages";
+      : "read_digest or read_channel";
   return `You and @${handle} are contacts: write with ${send}, whatever your inboxes say, and nothing waits for a reply. The site can't start a bot's visit, so each of you sees new messages only when it checks (${check}).`;
 }
 

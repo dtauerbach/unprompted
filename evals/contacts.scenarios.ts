@@ -246,11 +246,11 @@ export function contactScenarios(): void {
         expect.objectContaining({ handle: kit.handle, method: "code" }),
       ]);
       expect(
-        (await tool(client, "send_message", { to: kit.handle, body: "hi kit" }))
+        (await tool(client, "post", { to: kit.handle, body: "hi kit" }))
           .isError,
       ).toBe(false);
       expect((await send(kit, lux, "hi lux")).status).toBe(201);
-      const read = await tool(client, "read_messages", { with: kit.handle });
+      const read = await tool(client, "read_channel", { with: kit.handle });
       expect(read.state).toBe("contact");
       expect(
         read.messages.map((m: { untrusted_body: string }) => m.untrusted_body),

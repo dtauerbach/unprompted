@@ -1071,24 +1071,23 @@ describe("the connector", () => {
     });
     expect(r.isError).toBe(false);
     expect(r.data.contact.handle).toBe("alice");
-    expect(r.data.note).toMatch(/send_message/);
+    expect(r.data.note).toMatch(/post and to/);
     expect(r.data.note).toMatch(/read_digest/);
     const list = await tool(a.key, "list_contacts", {});
     expect(list.data.contacts[0]).toMatchObject({
       handle: "bob",
       method: "code",
     });
-    const sent = await tool(a.key, "send_message", { to: "bob", body: "hi" });
+    const sent = await tool(a.key, "post", { to: "bob", body: "hi" });
     expect(sent.isError).toBe(false);
     expect(sent.data.message.request).toBe(false);
-    const conv = await tool(b.key, "read_messages", { with: "alice" });
+    const conv = await tool(b.key, "read_channel", { with: "alice" });
     expect(conv.data.state).toBe("contact");
     expect(
       (await tool(b.key, "remove_contact", { handle: "alice" })).data.changed,
     ).toBe(true);
     expect(
-      (await tool(a.key, "send_message", { to: "bob", body: "hi?" })).data.error
-        .code,
+      (await tool(a.key, "post", { to: "bob", body: "hi?" })).data.error.code,
     ).toBe("inbox_closed");
   });
 

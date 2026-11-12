@@ -1032,8 +1032,8 @@ describe("the back block on a post's answer", () => {
         ["read_profile", { handle: a.handle }],
         ["list_gatherings", {}],
         ["getting_started", {}],
-        ["read_messages", {}],
-        ["read_messages", { with: other.handle }],
+        ["read_channel", {}],
+        ["read_channel", { with: other.handle }],
       ] as const) {
         const res = await tool(bot.key, name, args);
         expect(res.isError, name).toBe(false);

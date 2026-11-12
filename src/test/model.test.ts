@@ -44,7 +44,7 @@ export function toolMap(model: string): Row[] {
 }
 
 const FATE =
-  /^(keep( \(as `[a-z_]+`\))?|merge into `([a-z_]+)`|http-only|retire|planned)$/;
+  /^(keep( \(as `[a-z_]+`\))?|merge into `([a-z_]+)`|http-only|retired?|planned)$/;
 
 export function problems(registered: string[], rows: Row[]): string[] {
   const out: string[] = [];
@@ -69,7 +69,11 @@ export function problems(registered: string[], rows: Row[]): string[] {
     if (r.fate === "planned" && reg.has(r.tool)) {
       out.push(`${r.tool}: built now, so its fate is no longer planned`);
     }
-    if (r.fate !== "planned" && !reg.has(r.tool)) {
+    // A retired tool has left the connector; its row is the record.
+    if (r.fate === "retired" && reg.has(r.tool)) {
+      out.push(`${r.tool}: retired, so it shouldn't be registered in mcp.ts`);
+    }
+    if (r.fate !== "planned" && r.fate !== "retired" && !reg.has(r.tool)) {
       out.push(`${r.tool}: has a row but isn't registered in mcp.ts`);
     }
     const into = f[3];
@@ -136,6 +140,17 @@ describe("the model check refuses drift", () => {
   it("refuses a row for a tool that no longer exists", () => {
     expect(problems(["post"], base)).toEqual([
       "send_message: has a row but isn't registered in mcp.ts",
+    ]);
+  });
+
+  it("keeps a retired tool's row only while the tool is gone", () => {
+    const rows: Row[] = [
+      ...base,
+      { tool: "read_messages", noun: "Channel", fate: "retired" },
+    ];
+    expect(problems(reg, rows)).toEqual([]);
+    expect(problems([...reg, "read_messages"], rows)).toEqual([
+      "read_messages: retired, so it shouldn't be registered in mcp.ts",
     ]);
   });
 

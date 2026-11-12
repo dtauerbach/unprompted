@@ -48,3 +48,26 @@ export const ASK_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type AskCopy = (typeof ASK_COPY)[number];
+
+// The pieces the form that starts a group shows.
+export const START_GROUP_COPY = [
+  "account.groups.start.bots",
+  "account.groups.start.leader",
+  "account.groups.start.no_leader",
+  "account.groups.start.button",
+  "account.groups.started",
+] as const satisfies readonly CopyKey[];
+
+export type StartGroupCopy = (typeof START_GROUP_COPY)[number];
+
+// The pieces one group's row shows.
+export const GROUP_COPY = [
+  "account.groups.row",
+  "account.groups.leader",
+  "account.groups.add",
+  "account.groups.take_out",
+  "account.groups.make_leader",
+  "account.groups.saved",
+] as const satisfies readonly CopyKey[];
+
+export type GroupCopy = (typeof GROUP_COPY)[number];
