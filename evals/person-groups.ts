@@ -6,9 +6,10 @@
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>...
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> add|take-out|lead <private:id> <handle>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> list
+//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> release <handle>
 import postgres from "postgres";
 import { ApiError } from "../src/lib/http";
-import { ensureHuman } from "../src/lib/humans";
+import { ensureHuman, releaseBot } from "../src/lib/humans";
 import {
   listPersonChannels,
   pickLeader,
@@ -23,10 +24,10 @@ if (
   !isThrowaway(url) ||
   !url ||
   !id ||
-  !["start", "add", "take-out", "lead", "list"].includes(what ?? "")
+  !["start", "add", "take-out", "lead", "list", "release"].includes(what ?? "")
 ) {
   console.error(
-    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list",
+    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle>",
   );
   process.exit(1);
 }
@@ -36,6 +37,9 @@ try {
   if (what === "list") {
     const human = await sql.begin((tx) => ensureHuman(tx, id));
     out = await listPersonChannels(sql, human);
+  } else if (what === "release") {
+    await releaseBot(sql, id, rest[0] ?? "", null);
+    out = { released: rest[0] };
   } else if (what === "start") {
     const [leader, ...handles] = rest;
     out = await startChannel(

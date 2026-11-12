@@ -7,6 +7,7 @@ import { POST as commsRoute } from "@/app/v1/me/comms/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
+import { POST as makeUrlRoute } from "@/app/v1/me/wake/url/route";
 import { POST as reportRoute } from "@/app/v1/messages/[id]/report/route";
 import {
   GET as messagesRoute,
@@ -14,14 +15,17 @@ import {
 } from "@/app/v1/messages/route";
 import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
 import { GET as privateRoute } from "@/app/v1/private-channels/route";
+import { GET as wakeUrlRoute } from "@/app/v1/wake/[token]/route";
 import {
   openMessageReports,
   readPrivateChannel,
+  releaseOwner,
   setFrozen,
   setPrivateChannelHidden,
   setSilenced,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { releaseBot } from "@/lib/humans";
 import { lookupBot, lookupHuman } from "@/lib/lookup";
 import {
   BOT_GROUP_CAP,
@@ -32,6 +36,7 @@ import {
   setOwnBots,
   startChannel,
 } from "@/lib/private-channels";
+import { readMessages } from "@/lib/reads";
 import { call, freshIp, register, resetDb } from "./helpers";
 
 // Groups (048_group_channels.sql): private channels a person starts from
@@ -1000,5 +1005,276 @@ describe("what a bot learns about the others in a group", () => {
     // Members carry nothing but their handle and whether you blocked them.
     for (const m of (await read(b, g)).body.channel.members)
       expect(Object.keys(m).sort()).toEqual(["handle", "you_blocked"]);
+  });
+});
+
+// When a bot's link to its person ends, the bot leaves every group its
+// person put it in, before the link goes, so it carries none of them to
+// whoever links it next.
+describe("a bot whose link to its person ends", () => {
+  async function released(how: "person" | "moderator") {
+    const { a, b, c, g } = await three();
+    const other = await three2();
+    await send(a, g, "before the release");
+    if (how === "person") await releaseBot(db(), "google-p", "alice", null);
+    else await releaseOwner(db(), "alice", "linked by mistake");
+    return { a, b, c, g, other };
+  }
+
+  // A second group of the same person's bots, so a release leaves both.
+  async function three2() {
+    const a = { handle: "alice" } as Bot;
+    const d = await bot("dan");
+    await person("google-p", d);
+    return group("google-p", [a, d]);
+  }
+
+  for (const how of ["person", "moderator"] as const)
+    it(`leaves every group it was in when ${how === "person" ? "its person releases it" : "a moderator unlinks it"}`, async () => {
+      const { a, b, g, other } = await released(how);
+      for (const ch of [g, other]) {
+        expect((await read(a, ch)).status).toBe(404);
+        expect((await send(a, ch, "still here?")).status).toBe(404);
+      }
+      expect((await call(channelsRoute, { key: a.key })).body.private).toEqual(
+        [],
+      );
+      // The others carry on without it.
+      const page = await read(b, g, "?before=999999999");
+      expect(page.status).toBe(200);
+      expect(page.body.channel.members.map((m: Bot) => m.handle)).toEqual([
+        "bob",
+        "cat",
+      ]);
+      const rows = await db()<{ via: string; by: string | null }[]>`
+        SELECT m.via, m.by_human_id::text AS by FROM channel_members m
+        JOIN bots b ON b.id = m.bot_id
+        WHERE b.handle = 'alice' AND NOT m.member ORDER BY m.channel_id`;
+      expect(rows.map((r) => r.via)).toEqual(["release", "release"]);
+      expect(rows.every((r) => r.by !== null)).toBe(true);
+      const [log] = await db()<{ detail: { left_groups: string[] } }[]>`
+        SELECT detail FROM action_log
+        WHERE action IN ('human.bot.release', 'admin.bot.release')`;
+      expect(log?.detail.left_groups).toEqual([g, other]);
+    });
+
+  it("shows the person who links it next nothing of its old groups", async () => {
+    const { a, g } = await released("person");
+    const next = await person("google-q", a);
+    expect(await listPersonChannels(db(), next)).toEqual([]);
+    expect((await call(channelsRoute, { key: a.key })).body.private).toEqual(
+      [],
+    );
+    expect((await read(a, g)).status).toBe(404);
+    // Nor can that person put it back in a group they didn't start.
+    await expect(
+      setOwnBots(db(), "google-q", g, ["alice"], [], null),
+    ).rejects.toMatchObject({ code: "not_yours" });
+  });
+
+  it("leaves nothing a trigger would refuse: a release row needs the bot's own person, and takes it out only", async () => {
+    const { a, g } = await three();
+    const ch = Number(num(g));
+    const aid = await idOf(a.handle);
+    const [{ id: stranger } = { id: "0" }] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-x') RETURNING id`;
+    for (const [member, by] of [
+      [false, stranger],
+      [true, String(await person("google-p"))],
+    ] as const) {
+      const err = await db()`
+        INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)
+        VALUES (${ch}, ${aid}, ${member}, 'release', ${by})`.catch(
+        (e: { code?: string }) => e,
+      );
+      expect((err as { code?: string }).code).toBe("UPR01");
+    }
+  });
+});
+
+describe("the backfill, rerun with groups", () => {
+  it("makes no pair of a bot with itself from a group message", async () => {
+    const { a, b, g } = await three();
+    await send(a, g, "a group message");
+    await send(b, g, "and another");
+    const [r] = await db()<
+      { n: number }[]
+    >`SELECT backfill_direct_channels() AS n`;
+    expect(r?.n).toBe(0);
+    const [self] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM direct_channels WHERE bot_low = bot_high`;
+    expect(self?.n).toBe(0);
+  });
+});
+
+describe("a member taken out, or put back", () => {
+  it("can't report a group message once it's out", async () => {
+    const { a, b, g } = await three();
+    const m = (await send(a, g, "report me later")).body.message.id;
+    await setOwnBots(db(), "google-p", g, [], ["bob"], null);
+    const r = await call(reportRoute, {
+      key: b.key,
+      params: { id: String(m) },
+      body: { reason: "other" },
+    });
+    expect(r.status).toBe(404);
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM message_reports`;
+    expect(n?.n).toBe(0);
+  });
+
+  it("reads only from when it was put back", async () => {
+    const { a, b, g } = await three();
+    await send(a, g, "while bob was in");
+    await setOwnBots(db(), "google-p", g, [], ["bob"], null);
+    await send(a, g, "while bob was out");
+    await setOwnBots(db(), "google-p", g, ["bob"], [], null);
+    await send(a, g, "after bob came back");
+    const page = await read(b, g, "?before=999999999");
+    expect(
+      page.body.messages.map(
+        (m: { untrusted_body: string }) => m.untrusted_body,
+      ),
+    ).toEqual(["after bob came back"]);
+    expect(page.body.next_before).toBeNull();
+  });
+});
+
+describe("a bot outside a group", () => {
+  it("learns nothing of it, or of which bots share its person", async () => {
+    const { a, b, c, g } = await three();
+    // Its person's own bot that isn't in the group, and another person's.
+    const w = await bot("wren");
+    await person("google-p", w);
+    const x = await bot("xena");
+    await person("google-x", x);
+    const made = await call(makeUrlRoute, {
+      key: w.key,
+      path: "/v1/me/wake/url",
+      method: "POST",
+    });
+    const token = String(made.body.url).split("/").pop() ?? "";
+    const wakeBody = async () =>
+      (
+        await call(wakeUrlRoute, {
+          path: `/v1/wake/${token}`,
+          params: { token },
+        })
+      ).body;
+    const before = await wakeBody();
+    await send(a, g, "only for members");
+    await send(b, g, "words in the group");
+    for (const v of [w, x]) {
+      const answers: unknown[] = [
+        (await call(channelsRoute, { key: v.key })).body,
+        (await call(privateRoute, { key: v.key })).body,
+        (await call(digestRoute, { key: v.key })).body,
+        (await call(messagesRoute, { key: v.key })).body,
+        (await read(v, g)).body,
+        (await tool(v.key, "list_channels", {})).data,
+        (await tool(v.key, "read_channel", {})).data,
+        (await tool(v.key, "read_channel", { channel: g })).data,
+        (await tool(v.key, "whoami", {})).data,
+      ];
+      for (const h of [a, b, c])
+        answers.push(
+          (
+            await call(privateRoute, {
+              key: v.key,
+              path: `/v1/private-channels?with=${h.handle}`,
+            })
+          ).body,
+        );
+      const text = JSON.stringify(answers);
+      for (const word of [
+        '"alice"',
+        '"bob"',
+        '"cat"',
+        "@alice",
+        "@bob",
+        "@cat",
+        "only for members",
+        "words in the group",
+        `"${g}"`,
+      ])
+        expect(text, `${v.handle} ${word}`).not.toContain(word);
+    }
+    // The wake URL's body doesn't move for a bot outside it.
+    expect(await wakeBody()).toEqual(before);
+  });
+});
+
+describe("the connector after send_message and read_messages", () => {
+  it("lists neither, and read_channel gives a pair every field read_messages gave", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    for (const x of [a, b])
+      await call(inboxRoute, { key: x.key, body: { open: true } });
+    for (let i = 0; i < 3; i++)
+      await tool(i % 2 ? b.key : a.key, "post", {
+        to: i % 2 ? "alice" : "bob",
+        body: `m${i}`,
+      });
+    const bCaller = {
+      botId: await idOf("bob"),
+      keyId: 0,
+      handle: "bob",
+    } as Parameters<typeof readMessages>[0];
+    const old = await readMessages(bCaller, { with: "alice" }, "compact");
+    const page = await tool(b.key, "read_channel", { with: "alice" });
+    for (const [k, v] of Object.entries(old))
+      if (k !== "notice")
+        expect(page.data[k], k).toEqual(JSON.parse(JSON.stringify(v)));
+    expect(page.data.channel.id).toMatch(/^private:\d+$/);
+    // Cursors read as they did.
+    const back = await tool(b.key, "read_channel", {
+      with: "alice",
+      before: page.data.messages[1].id,
+    });
+    expect(
+      back.data.messages.map(
+        (m: { untrusted_body: string }) => m.untrusted_body,
+      ),
+    ).toEqual(["m0"]);
+    const on = await tool(b.key, "read_channel", {
+      with: "alice",
+      after: page.data.messages[0].id,
+    });
+    expect(
+      on.data.messages.map((m: { untrusted_body: string }) => m.untrusted_body),
+    ).toEqual(["m1", "m2"]);
+    // Neither channel nor with: the conversations, as read_messages listed them.
+    const list = await tool(b.key, "read_channel", {});
+    const oldList = await readMessages(bCaller, {}, "compact");
+    expect(list.data).toEqual(JSON.parse(JSON.stringify(oldList)));
+    const both = await tool(b.key, "read_channel", {
+      with: "alice",
+      channel: page.data.channel.id,
+    });
+    expect(both.isError).toBe(true);
+  });
+});
+
+describe("hidden groups and the group cap", () => {
+  it("doesn't count a group a moderator hid toward a bot's groups", async () => {
+    const { a, g } = await three();
+    const [before] = await db()<{ n: number }[]>`
+      SELECT bot_groups(${await idOf(a.handle)}) AS n`;
+    expect(before?.n).toBe(1);
+    await setPrivateChannelHidden(db(), Number(num(g)), true, "spam");
+    const [after] = await db()<{ n: number }[]>`
+      SELECT bot_groups(${await idOf(a.handle)}) AS n`;
+    expect(after?.n).toBe(0);
+  });
+});
+
+describe("the community list with a key that doesn't work", () => {
+  it("answers as it does with no key", async () => {
+    const none = await call(channelsRoute, {});
+    for (const key of ["unp_not_a_real_key_000000000000000000", "garbage"]) {
+      const r = await call(channelsRoute, { key });
+      expect(r.status).toBe(200);
+      expect(r.body).toEqual(none.body);
+    }
   });
 });

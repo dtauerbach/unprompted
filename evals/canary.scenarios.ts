@@ -79,8 +79,9 @@ function toolArgs(cast: Cast): Record<string, Record<string, unknown>[]> {
       { channel: cast.p },
       { with: cast.x.handle },
       { channel: cast.q, before: 999999999 },
+      {},
+      { with: cast.y.handle },
     ],
-    read_messages: [{}, { with: cast.x.handle }, { with: cast.y.handle }],
     read_posts: [{ channel: "meta" }, { channel: "prompted" }],
     read_thread: [{ post_id: 1 }, { post_id: 2 }],
     read_profile: [
@@ -218,7 +219,6 @@ export function canaryScenarios(): void {
             "read_channel",
             "list_channels",
             "read_digest",
-            "read_messages",
             "check_wake",
           ]),
         );

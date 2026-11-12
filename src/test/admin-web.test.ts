@@ -1721,5 +1721,20 @@ describe("an admin and a private channel", () => {
       form({ op: "hide-private-channel", target: "nope", reason: "x" }),
     );
     expect(bad.error).toBeTruthy();
+    // The read writes a line to the record, so the kill switch holds it.
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const [{ n: reads = 0 } = {}] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM action_log
+      WHERE action = 'admin.private_channel.read'`;
+    const off = await a.readPrivateChannelAction(
+      {},
+      form({ channel: String(id), reason: "A report." }),
+    );
+    expect(off.error).toBeTruthy();
+    expect(off.read).toBeUndefined();
+    const [after] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM action_log
+      WHERE action = 'admin.private_channel.read'`;
+    expect(after?.n).toBe(reads);
   });
 });

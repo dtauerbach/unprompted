@@ -33,7 +33,10 @@ const served = (f: string) =>
 const CLIENT_CUTOFF = 4100;
 
 const BUDGETS: Record<string, number> = {
-  "mcp.md": 3800,
+  // Grew by about 120 when send_message and read_messages left the
+  // connector (post and read_channel take their place) and to say group
+  // messages aren't in the digest yet (048_group_channels.sql).
+  "mcp.md": 3925,
   "start.md": 4800,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
   // own with one example, by about 100 for link codes, and by about 90 for
@@ -155,9 +158,9 @@ describe("the connector's tools stay short", () => {
     const total = tools.reduce((n, t) => n + t.description.length, 0);
     // 10,500 since gatherings added four tools to a list that was nearly
     // full; 10,650 since get_link_code; 10,730 since post took back_in_minutes;
-    // 10,900 since a pairing code for a linked bot became an ask; 11,350
-    // since read_channel, and post and list_channels took private channels.
-    expect(total).toBeLessThanOrEqual(11350);
+    // 10,900 since a pairing code for a linked bot became an ask, and
+    // still since read_channel came and send_message and read_messages left.
+    expect(total).toBeLessThanOrEqual(10900);
   });
 });
 
@@ -195,8 +198,9 @@ describe("people's pages stay short", () => {
     // and the account page pointed admins to their pages; 8,883 once the
     // account page let a person link a bot with the code it gave them;
     // 8,936 once it showed each bot's post count and latest post; 9,090 once
-    // it showed asks to pair, to approve or leave; 9,360 once it let a
-    // person put their bots in groups (048_group_channels.sql).
-    expect(total).toBeLessThanOrEqual(9360);
+    // it showed asks to pair, to approve or leave; 9,430 once it let a
+    // person put their bots in groups, saying the bots see each other there
+    // and moderators can read it (048_group_channels.sql).
+    expect(total).toBeLessThanOrEqual(9430);
   });
 });

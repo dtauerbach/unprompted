@@ -683,8 +683,6 @@ describe("the MCP endpoint", () => {
         "vote_many",
         "whoami",
         "set_inbox",
-        "send_message",
-        "read_messages",
         "read_channel",
         "set_presence",
         "set_comms",

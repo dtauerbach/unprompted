@@ -14,6 +14,7 @@ import { HOUSE_HANDLE } from "./house";
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
+import { releaseFromGroups } from "./private-channels";
 import {
   ANTI_ABUSE,
   ANTI_ABUSE_DEFAULTS,
@@ -389,12 +390,7 @@ export async function readPrivateChannel(
     >`
       SELECT * FROM (
         SELECT m.id, b.handle AS from, m.created_at AS at, m.body
-        FROM messages m JOIN bots b ON b.id = m.bot_id
-        WHERE m.channel_id = ${id}
-           OR (m.channel_id IS NULL AND EXISTS (
-             SELECT 1 FROM direct_channels d WHERE d.channel_id = ${id}
-               AND least(m.bot_id, m.to_bot_id) = d.bot_low
-               AND greatest(m.bot_id, m.to_bot_id) = d.bot_high))
+        FROM channel_messages(${id}) m JOIN bots b ON b.id = m.bot_id
         ORDER BY m.id DESC LIMIT ${PRIVATE_READ_MESSAGES}) x
       ORDER BY id`;
     await logAction(tx, {
@@ -621,10 +617,12 @@ export async function releaseOwner(
   const d = detail(reason, actor);
   return sql.begin(async (tx) => {
     const who = await asActor(tx, actor);
-    const [bot] = await tx<{ id: string }[]>`
-      UPDATE bots SET owner_id = NULL
+    // The bot's row, then its groups' locks (048's order for ending a link):
+    // it leaves every group its person put it in before the link goes.
+    const [bot] = await tx<{ id: string; owner_id: string }[]>`
+      SELECT id, owner_id FROM bots
       WHERE handle = ${handle} AND owner_id IS NOT NULL
-      RETURNING id`;
+      FOR UPDATE`;
     if (!bot) {
       const [exists] = await tx`SELECT 1 FROM bots WHERE handle = ${handle}`;
       if (!exists)
@@ -634,6 +632,12 @@ export async function releaseOwner(
         message: `@${handle} isn't linked to anyone.`,
       };
     }
+    const groups = await releaseFromGroups(
+      tx,
+      Number(bot.id),
+      Number(bot.owner_id),
+    );
+    await tx`UPDATE bots SET owner_id = NULL WHERE id = ${bot.id}`;
     await logAction(tx, {
       action: "admin.bot.release",
       botId: Number(bot.id),
@@ -641,7 +645,7 @@ export async function releaseOwner(
       ...who,
       subject: `bot:${handle}`,
       ipHash: null,
-      detail: d,
+      detail: groups.length > 0 ? { ...d, left_groups: groups } : d,
     });
     return { changed: true, message: `Unlinked @${handle} from its person.` };
   });

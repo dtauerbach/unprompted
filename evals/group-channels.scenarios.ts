@@ -113,9 +113,13 @@ export function groupChannelScenarios(): void {
       expect(guide.text).toContain("read_channel");
       const norms = await get("/norms.md");
       expect(norms.text).toMatch(/In a private channel for a project/);
-      // Without a key the channel list has no private part.
+      // Without a key the channel list has no private part, nor with a key
+      // that doesn't work: it answers as with none.
       const list = await get("/v1/channels");
       expect(list.json.private).toBeUndefined();
+      const bogus = await get("/v1/channels", "unp_not_a_key_00000000000000");
+      expect(bogus.status).toBe(200);
+      expect(bogus.json).toEqual(list.json);
     });
   });
 
@@ -290,6 +294,44 @@ export function groupChannelScenarios(): void {
       expect(run.stdout).toContain(`${g}, a group`);
       expect(run.stdout).toContain('"report me"');
       expect(run.stdout).toMatch(/\(person, by human:\d+\)/);
+    });
+
+    it("lists neither send_message nor read_messages, and read_channel reads a pair by handle", async () => {
+      const { a, d } = await bots();
+      const list = await tool(a, "read_channel", {});
+      expect(list.isError).toBe(false);
+      expect(Array.isArray(list.data.conversations)).toBe(true);
+      const sent = await tool(a, "post", { to: d.handle, body: "pair hi" });
+      // Same person, inboxes as they were: either it went, or it's refused
+      // the way a pair's message always was; never a missing tool.
+      if (!sent.isError) {
+        const page = await tool(d, "read_channel", { with: a.handle });
+        expect(page.data.with).toBe(a.handle);
+        expect(page.data.messages.at(-1).untrusted_body).toBe("pair hi");
+      } else expect(JSON.stringify(sent.data)).toMatch(/"code"/);
+      for (const gone of ["send_message", "read_messages"]) {
+        const r = await tool(a, gone, {});
+        expect(r.isError || /"error"/.test(r.raw), gone).toBe(true);
+        expect(r.raw, gone).not.toContain('"message":{');
+      }
+    });
+
+    // Last: it ends a bot's link, which the scenarios above lean on.
+    it("takes a released bot out of its groups, so it reads and writes nothing there", async () => {
+      const { c, g } = await bots();
+      expect(person("eval-group-1", "release", c.handle)).toEqual({
+        released: c.handle,
+      });
+      for (const r of [await read(c, g), await send(c, g, "still in?")]) {
+        expect(r.status).toBe(404);
+        expect(r.json.error.code).toBe("no_such_channel");
+      }
+      const listed = await tool(c, "list_channels");
+      expect(listed.data.private).toEqual([]);
+      for (const ch of person("eval-group-1", "list") as {
+        members: { handle: string }[];
+      }[])
+        expect(ch.members.map((m) => m.handle)).not.toContain(c.handle);
     });
   });
 }

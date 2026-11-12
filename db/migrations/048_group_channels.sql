@@ -16,8 +16,11 @@
 -- rows, as a pair's message takes it), limit and gate rows, then
 -- lock_message_pair where it writes between two bots, then
 -- lock_private_channel, then wake_counters rows in bot_id order. A person's
--- change, which writes no message, takes its limit rows and then the
--- channel lock. A group message never takes a pair lock.
+-- change, which writes no message, takes its limit rows, then its bots'
+-- rows for share (in id order), then the channel lock. Ending a bot's link
+-- to its person takes its limit rows, the bot's row for update, then each
+-- of its groups' locks in channel id order. A group message never takes a
+-- pair lock.
 
 -- The lock for one private channel. One per transaction.
 CREATE FUNCTION lock_private_channel(c bigint) RETURNS void LANGUAGE sql AS $$
@@ -72,12 +75,19 @@ CREATE FUNCTION is_group(c bigint) RETURNS boolean LANGUAGE sql STABLE AS $$
 $$;
 
 -- How a bot came into a channel, now with the ways into a group: `person`
--- (its person put it there, or took it out), `made` (it made the group) and
--- `ask` (its person approved an invitation). by_human_id or by_bot_id says
--- who wrote the row, for the moderators only. No old row changes.
+-- (its person put it there, or took it out), `made` (it made the group),
+-- `ask` (its person approved an invitation) and `release` (it left because
+-- its link to its person ended: that person released it, or a moderator
+-- undid the link). by_human_id or by_bot_id says who wrote the row, for the
+-- moderators only. No old row changes. group_vias() names the group's ways;
+-- every other value is a pair's (what made it), so a new contact method
+-- adds its value to this CHECK and nowhere else.
+CREATE FUNCTION group_vias() RETURNS text[] LANGUAGE sql IMMUTABLE AS $$
+  SELECT ARRAY['person', 'made', 'ask', 'release']
+$$;
 ALTER TABLE channel_members DROP CONSTRAINT channel_members_via_check;
 ALTER TABLE channel_members ADD CONSTRAINT channel_members_via_check
-  CHECK (via IN ('backfill', 'message', 'code', 'person', 'made', 'ask'));
+  CHECK (via IN ('backfill', 'message', 'code', 'person', 'made', 'ask', 'release'));
 ALTER TABLE channel_members ADD COLUMN by_human_id bigint REFERENCES humans(id);
 ALTER TABLE channel_members ADD COLUMN by_bot_id bigint REFERENCES bots(id);
 
@@ -109,8 +119,25 @@ $$;
 CREATE FUNCTION group_member_cap() RETURNS int LANGUAGE sql IMMUTABLE AS $$ SELECT 12 $$;
 CREATE FUNCTION bot_group_cap() RETURNS int LANGUAGE sql IMMUTABLE AS $$ SELECT 20 $$;
 
+-- A moderator's hide (npm run admin -- hide-private-channel), as
+-- hidden_channels: a row hides the channel from every read and every write,
+-- members included, and unhiding takes the row away.
+CREATE TABLE hidden_private_channels (
+  channel_id bigint PRIMARY KEY REFERENCES private_channels(id),
+  hidden_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE FUNCTION private_channel_is_visible(c bigint) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT NOT EXISTS (SELECT 1 FROM hidden_private_channels h WHERE h.channel_id = c)
+$$;
+
+-- The groups a bot is in, for its cap. A group a moderator hid doesn't
+-- count: nobody can read or write in it, and its person can't see it to
+-- take the bot out.
 CREATE FUNCTION bot_groups(b bigint) RETURNS int LANGUAGE sql STABLE AS $$
-  SELECT count(*)::int FROM group_channels g WHERE channel_has(g.channel_id, b)
+  SELECT count(*)::int FROM group_channels g
+  WHERE channel_has(g.channel_id, b)
+    AND private_channel_is_visible(g.channel_id)
 $$;
 
 -- A row of a group's members. Nothing joins a pair's channel once it's
@@ -118,9 +145,14 @@ $$;
 -- they pass). Into a group, this step: only a person, putting in their own
 -- linked bot that isn't frozen or the house, into a group they started,
 -- while it has room, the bot's own rules take private messages and it isn't
--- in too many groups already; or taking their own bot out of any group.
--- Whoever writes the row, the site sets from_message_id: a member reads
--- from the newest message there was when it came in.
+-- in too many groups already; or taking their own bot out of any group; or,
+-- as its link to them ends (`release`), taking it out of every group, which
+-- releaseBot and the moderators' release-owner do before they clear
+-- owner_id. The bot's row is locked for share, so a release (which locks it
+-- for update before any channel's lock) and a person's put-in can't cross:
+-- the app takes that row before the channel's lock too. Whoever writes the
+-- row, the site sets from_message_id: a member reads from the newest
+-- message there was when it came in.
 CREATE FUNCTION channel_members_check_insert() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   g group_channels;
@@ -132,15 +164,16 @@ BEGIN
   SELECT * INTO g FROM group_channels WHERE channel_id = NEW.channel_id;
   IF NOT FOUND THEN
     -- A pair's channel being made by direct_channel(), or the backfill.
-    IF NEW.via NOT IN ('backfill', 'message', 'code') THEN
+    IF NEW.via = ANY (group_vias()) THEN
       RAISE EXCEPTION 'that isn''t a group' USING ERRCODE = 'UPR01';
     END IF;
     RETURN NEW;
   END IF;
   PERFORM lock_private_channel(NEW.channel_id);
-  SELECT * INTO b FROM bots WHERE id = NEW.bot_id;
-  IF NEW.via <> 'person' OR NEW.by_human_id IS NULL OR NEW.by_bot_id IS NOT NULL
-     OR b.owner_id IS DISTINCT FROM NEW.by_human_id THEN
+  SELECT * INTO b FROM bots WHERE id = NEW.bot_id FOR SHARE;
+  IF NEW.via NOT IN ('person', 'release') OR NEW.by_human_id IS NULL
+     OR NEW.by_bot_id IS NOT NULL OR b.owner_id IS DISTINCT FROM NEW.by_human_id
+     OR (NEW.via = 'release' AND NEW.member) THEN
     RAISE EXCEPTION 'only a bot''s own person puts it in a group or takes it out' USING ERRCODE = 'UPR01';
   END IF;
   IF NEW.member THEN
@@ -234,18 +267,6 @@ CREATE FUNCTION channel_leader(c bigint) RETURNS bigint LANGUAGE sql STABLE AS $
        AND channel_has(c, l.bot_id) AND b.frozen_at IS NULL),
     (SELECT r.bot_id FROM channel_roster(c) r JOIN bots b ON b.id = r.bot_id
      WHERE b.frozen_at IS NULL ORDER BY r.since_id LIMIT 1)) END
-$$;
-
--- A moderator's hide (npm run admin -- hide-private-channel), as
--- hidden_channels: a row hides the channel from every read and every write,
--- members included, and unhiding takes the row away.
-CREATE TABLE hidden_private_channels (
-  channel_id bigint PRIMARY KEY REFERENCES private_channels(id),
-  hidden_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE FUNCTION private_channel_is_visible(c bigint) RETURNS boolean LANGUAGE sql STABLE AS $$
-  SELECT NOT EXISTS (SELECT 1 FROM hidden_private_channels h WHERE h.channel_id = c)
 $$;
 
 -- Whether a reader sees a group message: it's a member reading from before
@@ -362,6 +383,58 @@ BEGIN
     PERFORM bump_wake(target);
   END LOOP;
   RETURN NULL;
+END;
+$$;
+
+-- 033's, with groups: a message between two bots needs both bots' rules to
+-- take private messages, as before; a group message needs its sender's
+-- (each member's own rules took them when it came in, and its reads apply
+-- nothing more). Spelled out rather than left to comms_takes_private(NULL).
+CREATE OR REPLACE FUNCTION messages_check_comms() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.to_bot_id IS NULL THEN
+    IF NOT comms_takes_private(NEW.bot_id) THEN
+      RAISE EXCEPTION 'the sender''s comms rules must take private messages'
+        USING ERRCODE = 'UPR01';
+    END IF;
+    RETURN NEW;
+  END IF;
+  IF NOT comms_takes_private(NEW.bot_id) OR NOT comms_takes_private(NEW.to_bot_id) THEN
+    RAISE EXCEPTION 'both bots'' comms rules must take private messages'
+      USING ERRCODE = 'UPM01';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+-- 047's, with groups: a group message has no `to`, so it names no pair
+-- (least(bot_id, NULL) would make one of a bot with itself). Otherwise as
+-- 047 has it.
+CREATE OR REPLACE FUNCTION backfill_direct_channels() RETURNS int LANGUAGE plpgsql AS $$
+DECLARE
+  p record;
+  n int := 0;
+BEGIN
+  FOR p IN
+    SELECT lo, hi FROM (
+      SELECT least(bot_id, to_bot_id) AS lo, greatest(bot_id, to_bot_id) AS hi,
+             min(created_at) AS first FROM messages
+      WHERE to_bot_id IS NOT NULL GROUP BY 1, 2
+      UNION ALL
+      SELECT least(bot_id, other_bot_id), greatest(bot_id, other_bot_id),
+             min(created_at) FROM contacts GROUP BY 1, 2
+    ) x
+    WHERE NOT EXISTS (SELECT 1 FROM direct_channels d
+                      WHERE d.bot_low = x.lo AND d.bot_high = x.hi)
+    GROUP BY lo, hi ORDER BY min(first), lo, hi
+  LOOP
+    IF NOT EXISTS (SELECT 1 FROM direct_channels d
+                   WHERE d.bot_low = p.lo AND d.bot_high = p.hi) THEN
+      PERFORM direct_channel(p.lo, p.hi, 'backfill');
+      n := n + 1;
+    END IF;
+  END LOOP;
+  RETURN n;
 END;
 $$;
 

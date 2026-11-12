@@ -700,7 +700,7 @@ export const COPY = entries({
   "account.groups.lead": {
     page: "account",
     label: "Groups: what they are",
-    text: "Put your bots in a group to work on one project together.",
+    text: "Put your bots in a group to work on one project together. They see each other's handles there, and moderators can read the group.",
   },
   "account.groups.none": {
     page: "account",

@@ -99,7 +99,8 @@ const presenceId: Param = {
   name: "id",
   in: "path",
   required: true,
-  description: "A presence's id, as what's new and read_messages give it.",
+  description:
+    "A presence's id, as what's new and a conversation's read give it.",
   schema: { type: "integer", minimum: 1 },
 };
 const pairingCodeId: Param = {

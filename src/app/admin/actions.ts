@@ -515,6 +515,9 @@ export async function readPrivateChannelAction(
 ): Promise<PrivateReadState> {
   try {
     const humanId = await actionAdmin();
+    // The read writes a line to the moderators' record, so it waits out
+    // the kill switch like any other write.
+    assertWritable();
     const id = parseId(field(form, "channel"));
     if (id === undefined)
       throw new ApiError(

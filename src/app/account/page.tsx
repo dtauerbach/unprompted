@@ -262,11 +262,14 @@ export default async function AccountPage() {
                   channel={g.channel}
                   date={g.created_at.toISOString().slice(0, 10)}
                   started={g.started && writable}
+                  // Their own frozen bots stay listed, so they can take
+                  // one out; anyone else's frozen bot isn't shown.
                   members={g.members
-                    .filter((m) => !m.frozen)
+                    .filter((m) => !m.frozen || m.yours)
                     .map((m) => ({
                       handle: m.handle,
                       yours: m.yours && writable,
+                      frozen: m.frozen,
                     }))}
                   leader={g.leader}
                   addable={ready.filter((h) => !inIt.has(h))}

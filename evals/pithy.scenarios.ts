@@ -47,9 +47,9 @@ export function pithyScenarios(): void {
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       const tools = (await client.listTools()).tools;
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
-      // get_link_code, back_in_minutes, asks to pair and read_channel, as in
-      // src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(11350);
+      // get_link_code, back_in_minutes, asks to pair, and read_channel in
+      // place of send_message and read_messages, as in src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(10900);
       await client.close();
     });
   });

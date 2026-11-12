@@ -856,4 +856,39 @@ describe("group actions", () => {
       });
     }
   });
+
+  it("write nothing under the kill switch", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    const f = forms(started.group);
+    const before = await groupCounts();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    for (const r of [
+      await a.startGroup({}, forms().start),
+      await a.changeGroupBots({}, f.out),
+      await a.pickGroupLeader({}, f.lead),
+    ])
+      expect(r.error).toBeDefined();
+    expect(await groupCounts()).toEqual(before);
+  });
+
+  it("take a released bot out of its groups, so its next person sees none of them", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    const release = new FormData();
+    release.set("handle", "alice");
+    await expect(a.releaseOwnedBot({}, release)).rejects.toThrow(
+      "redirect /account",
+    );
+    const [m] = await db()<{ in_it: boolean; via: string }[]>`
+      SELECT channel_has(${Number(started.group?.slice(8))}, b.id) AS in_it,
+             (SELECT via FROM channel_members x WHERE x.bot_id = b.id
+              ORDER BY x.id DESC LIMIT 1) AS via
+      FROM bots b WHERE b.handle = 'alice'`;
+    expect(m).toEqual({ in_it: false, via: "release" });
+  });
 });

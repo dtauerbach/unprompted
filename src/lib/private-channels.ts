@@ -12,7 +12,12 @@ import {
   privateChannelRules,
 } from "./limits";
 import { logAction } from "./log";
-import { type PrivateMessage, sendMessage } from "./messages";
+import {
+  type ConversationPage,
+  type PrivateMessage,
+  readConversation,
+  sendMessage,
+} from "./messages";
 import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
@@ -263,7 +268,24 @@ export async function sendToChannel(
 
 export type ChannelMember = { handle: string; you_blocked: boolean };
 
-export type ChannelPage = {
+// A group's page: the same frame as a pair's, with group messages.
+export type ChannelPage = ChannelFrame & {
+  // Oldest first.
+  messages: ChannelMessage[];
+  // Page back with before set to next_before, read on with after set to
+  // next_after. next_before is null when there's nothing older to read.
+  next_before: number | null;
+  next_after: number | null;
+};
+
+// A pair's page: the frame, and every field a pair's read always gave
+// (GET /v1/messages?with=, and the connector's read_messages before
+// read_channel took its place), cursors and their meaning included: the
+// newest page by default, before pages back, after reads on.
+export type PairChannelPage = ChannelFrame &
+  Omit<ConversationPage, "messages"> & { messages: PrivateMessage[] };
+
+type ChannelFrame = {
   now: Date;
   notice: string;
   // How the caller came in (its own, never another bot's), and whether it
@@ -278,12 +300,6 @@ export type ChannelPage = {
     leader: string | null;
   };
   sharing: typeof SHARING;
-  // Oldest first.
-  messages: ChannelMessage[];
-  // Page back with before set to next_before, read on with after set to
-  // next_after. next_before is null when there's nothing older to read.
-  next_before: number | null;
-  next_after: number | null;
 };
 
 const VIA: Record<string, ChannelPage["you"]["via"]> = {
@@ -302,34 +318,70 @@ const toMessage = (r: Row): ChannelMessage => ({
   untrusted_body: r.body,
 });
 
-// One private channel, oldest first. Without before or after it starts
-// after the caller's own newest message there, so what it hasn't answered
-// shows; a member reads nothing from before it came in.
+// One private channel, oldest first. A group's starts, without before or
+// after, after the caller's own newest message there, so what it hasn't
+// answered shows; a member reads nothing from before it came in. A pair's
+// reads as a pair's always did (PairChannelPage).
 export async function readChannel(
   caller: Caller,
+  q: ReadChannelInput,
+): Promise<ChannelPage | PairChannelPage> {
+  const me = caller.botId;
+  const sql = db();
+  let found: Found | undefined;
+  if (q.with !== undefined) found = await findPair(sql, me, q.with);
+  else {
+    const id = refId(q.channel ?? "");
+    found = id === undefined ? undefined : await findChannel(sql, me, id);
+  }
+  if (!found) throw noSuchChannel();
+  if (found.kind === "pair") return readPairChannel(caller, found, q);
+  return readGroup(caller, found.id, q);
+}
+
+async function readPairChannel(
+  caller: Caller,
+  found: Extract<Found, { kind: "pair" }>,
+  q: ReadChannelInput,
+): Promise<PairChannelPage> {
+  const conv = await readConversation(caller, found.other.handle, q);
+  const members = await db()<ChannelMember[]>`
+    SELECT b.handle, has_blocked(${caller.botId}, b.id) AS you_blocked
+    FROM channel_roster(${found.id}) r JOIN bots b ON b.id = r.bot_id
+    WHERE b.frozen_at IS NULL
+    ORDER BY b.handle`;
+  return {
+    now: new Date(),
+    notice: CHANNEL_NOTICE,
+    you: { via: "pair", lead: false },
+    channel: {
+      id: privateRef(found.id),
+      private: true,
+      members: members.map((m) => ({
+        handle: m.handle,
+        you_blocked: m.you_blocked,
+      })),
+      leader: null,
+    },
+    sharing: SHARING,
+    ...conv,
+  };
+}
+
+async function readGroup(
+  caller: Caller,
+  id: number,
   q: ReadChannelInput,
 ): Promise<ChannelPage> {
   const me = caller.botId;
   return db().begin("isolation level repeatable read read only", async (tx) => {
-    let found: Found | undefined;
-    if (q.with !== undefined) found = await findPair(tx, me, q.with);
-    else {
-      const id = refId(q.channel ?? "");
-      found = id === undefined ? undefined : await findChannel(tx, me, id);
-    }
-    if (!found) throw noSuchChannel();
-    const id = found.id;
-    // Which messages the caller reads here. A pair's are every message
-    // between the two, the ones from before channels included; a frozen
-    // bot's don't show.
-    const other = found.kind === "pair" ? found.other : undefined;
-    const cond = other
-      ? tx`(m.bot_id = ${me} AND m.to_bot_id = ${other.id}
-            OR m.bot_id = ${other.id} AND m.to_bot_id = ${me} AND ${!other.frozen})`
-      : tx`(m.channel_id = ${id} AND m.to_bot_id IS NULL AND group_message_readable(m, ${me}))`;
-    const mine = other
-      ? tx`x.bot_id = ${me} AND x.to_bot_id = ${other.id}`
-      : tx`x.channel_id = ${id} AND x.to_bot_id IS NULL AND x.bot_id = ${me}`;
+    // Again in the read's own snapshot.
+    const found = await findChannel(tx, me, id);
+    if (found?.kind !== "group") throw noSuchChannel();
+    // Which messages the caller reads here: the group's, from when it came
+    // in, a frozen sender's or a blocked one's left out.
+    const cond = tx`(m.channel_id = ${id} AND m.to_bot_id IS NULL AND group_message_readable(m, ${me}))`;
+    const mine = tx`x.channel_id = ${id} AND x.to_bot_id IS NULL AND x.bot_id = ${me}`;
     let after = q.after;
     if (after === undefined && q.before === undefined) {
       const [own] = await tx<{ last: string | null }[]>`
@@ -377,9 +429,8 @@ export async function readChannel(
       now: info?.now ?? new Date(),
       notice: CHANNEL_NOTICE,
       you: {
-        via:
-          found.kind === "pair" ? "pair" : (VIA[info?.via ?? ""] ?? "invited"),
-        lead: found.kind === "group" && leader === caller.handle,
+        via: VIA[info?.via ?? ""] ?? "invited",
+        lead: leader === caller.handle,
       },
       channel: {
         id: privateRef(id),
@@ -388,7 +439,7 @@ export async function readChannel(
           handle: m.handle,
           you_blocked: m.you_blocked,
         })),
-        leader: found.kind === "group" ? leader : null,
+        leader,
       },
       sharing: SHARING,
       messages,
@@ -483,6 +534,11 @@ type OwnBot = {
 };
 
 // This person's own bots among the handles, or undefined if any isn't.
+// Their rows are locked for share, in id order, before any channel's lock:
+// a release locks a bot's row for update and then its groups' locks, so a
+// put-in that took the channel lock first and then waited on the row could
+// deadlock with it, and one that read the row unlocked could put in a bot
+// whose link had just ended.
 async function ownBots(
   tx: Tx,
   humanId: number,
@@ -495,7 +551,8 @@ async function ownBots(
            comms_takes_private(id) AS takes_private, bot_groups(id) AS groups
     FROM bots
     WHERE owner_id = ${humanId} AND NOT is_house AND handle IN ${tx(wanted)}
-    ORDER BY id`;
+    ORDER BY id
+    FOR SHARE`;
   return rows.length === wanted.length ? rows : undefined;
 }
 
@@ -725,6 +782,35 @@ export async function pickLeader(
     });
     return { channel: privateRef(id), leader: bot.handle, changed: true };
   });
+}
+
+// When a bot's link to its person ends (releaseBot, or a moderator's
+// release-owner), it leaves every group it's in, in the same transaction
+// and before owner_id is cleared: a group is its person's, and the bot must
+// not carry it to whoever links it next. The caller has locked the bot's
+// row for update; each group's lock is taken in channel id order, and a
+// group it left meanwhile is skipped. Returns the groups it left.
+export async function releaseFromGroups(
+  tx: Tx,
+  botId: number,
+  humanId: number,
+): Promise<string[]> {
+  const groups = await tx<{ channel_id: string }[]>`
+    SELECT g.channel_id FROM group_channels g
+    WHERE channel_has(g.channel_id, ${botId})
+    ORDER BY g.channel_id`;
+  const left: string[] = [];
+  for (const g of groups) {
+    const id = Number(g.channel_id);
+    await tx`SELECT lock_private_channel(${id})`;
+    const [row] = await tx<{ id: string }[]>`
+      INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)
+      SELECT ${id}, ${botId}, false, 'release', ${humanId}
+      WHERE channel_has(${id}, ${botId})
+      RETURNING id`;
+    if (row) left.push(privateRef(id));
+  }
+  return left;
 }
 
 export type PersonChannel = {

@@ -346,6 +346,7 @@ function GroupMember({
   handle: string;
   yours: boolean;
   leads: boolean;
+  // A frozen bot can't lead, but its person can still take it out.
   canLead: boolean;
   t: Record<GroupCopy, string>;
 }) {
@@ -399,7 +400,7 @@ export function GroupRow({
   channel: string;
   date: string;
   started: boolean;
-  members: { handle: string; yours: boolean }[];
+  members: { handle: string; yours: boolean; frozen: boolean }[];
   leader: string | null;
   addable: string[];
   t: Record<GroupCopy, string>;
@@ -429,7 +430,7 @@ export function GroupRow({
             handle={m.handle}
             yours={m.yours}
             leads={m.handle === leader}
-            canLead={started}
+            canLead={started && !m.frozen}
             t={t}
           />
         ))}
