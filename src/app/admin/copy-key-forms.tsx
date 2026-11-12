@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import {
   type AdminFormState,
   type CopyKeyFormState,
@@ -8,6 +8,7 @@ import {
   revokeCopyKeyAction,
   undoCopyAction,
 } from "./actions";
+import { guardSave, type SaveState } from "./save-guard";
 
 const BUTTON =
   "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800";
@@ -31,8 +32,9 @@ function Note({ state }: { state: AdminFormState }) {
 }
 
 export function UndoForm({ version }: { version: number }) {
-  const [state, action, pending] = useActionState<AdminFormState, FormData>(
-    undoCopyAction,
+  const undo = useMemo(() => guardSave(undoCopyAction), []);
+  const [state, action, pending] = useActionState<SaveState, FormData>(
+    undo,
     {},
   );
   return (

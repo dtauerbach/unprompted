@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useMemo, useState } from "react";
 import { MAX_BOT_TEXT } from "@/lib/bot-text-limit";
 import {
   type AdminFormState,
@@ -12,6 +12,19 @@ import {
   saveCopyAction,
   saveDescriptionAction,
 } from "./actions";
+import {
+  draftKey,
+  guardSave,
+  isUnsaved,
+  keepDraft,
+  RESTORED,
+  readDraft,
+  type SaveState,
+  SLOW_SAVE_MS,
+  STILL_SAVING,
+  sessionStore,
+  UNSAVED,
+} from "./save-guard";
 
 // What a save or a restore is for: a piece of copy, a text bots read, or one
 // of the site's own channels' descriptions.
@@ -74,8 +87,9 @@ export function CopyForm({
   // What the box holds, for a screen reader, where the page shows it nearby.
   label?: string;
 }) {
-  const [state, action, pending] = useActionState<AdminFormState, FormData>(
-    SAVE[kind],
+  const save = useMemo(() => guardSave(SAVE[kind]), [kind]);
+  const [state, action, pending] = useActionState<SaveState, FormData>(
+    save,
     {},
   );
   // The box holds what was typed, so a refused save (a dropped {spot}, say)
@@ -84,10 +98,34 @@ export function CopyForm({
   // starts the box again from its words.
   const [draft, setDraft] = useState(text);
   const [version, setVersion] = useState(after);
+  const [restored, setRestored] = useState(false);
+  const [slow, setSlow] = useState(false);
   if (version !== after) {
     setVersion(after);
     setDraft(text);
+    setRestored(false);
   }
+  const stored = draftKey(kind, copyKey);
+  const unsaved = isUnsaved(draft, text, state);
+  // Words typed and not yet saved come back after a reload or a trip to sign
+  // in. Read once the page is in the browser, where the storage is.
+  useEffect(() => {
+    const kept = readDraft(sessionStore(), stored, after, text);
+    if (kept === undefined) return;
+    setDraft(kept);
+    setRestored(true);
+  }, [stored, after, text]);
+  useEffect(() => {
+    keepDraft(sessionStore(), stored, after, draft, unsaved);
+  }, [stored, after, draft, unsaved]);
+  useEffect(() => {
+    if (!pending) {
+      setSlow(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlow(true), SLOW_SAVE_MS);
+    return () => clearTimeout(timer);
+  }, [pending]);
   // A whole document gets room and keeps its lines; a piece is one line.
   const document = kind === "bot_text";
   return (
@@ -97,7 +135,10 @@ export function CopyForm({
       <textarea
         name="body"
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setRestored(false);
+        }}
         rows={
           document
             ? Math.min(30, text.split("\n").length + 2)
@@ -107,13 +148,59 @@ export function CopyForm({
         aria-label={label}
         className={document ? `${INPUT} font-mono` : INPUT}
       />
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3" aria-live="polite">
         <button type="submit" disabled={pending} className={BUTTON}>
           Save
         </button>
-        <Result state={state} />
+        <SaveNote
+          state={state}
+          pending={pending}
+          slow={slow}
+          unsaved={unsaved}
+          restored={restored}
+        />
       </div>
     </form>
+  );
+}
+
+// One line beside Save: what the last save did, or that the words in the box
+// aren't saved yet. Never nothing while the box holds unsaved words.
+function SaveNote({
+  state,
+  pending,
+  slow,
+  unsaved,
+  restored,
+}: {
+  state: SaveState;
+  pending: boolean;
+  slow: boolean;
+  unsaved: boolean;
+  restored: boolean;
+}) {
+  if (pending)
+    return slow ? <Warn>{STILL_SAVING}</Warn> : <Quiet>Saving…</Quiet>;
+  if (state.error) return <Warn>{state.error}</Warn>;
+  if (restored && unsaved) return <Warn>{RESTORED}</Warn>;
+  if (unsaved) return <Warn>{UNSAVED}</Warn>;
+  if (state.message) return <Quiet>{state.message}</Quiet>;
+  return null;
+}
+
+function Warn({ children }: { children: string }) {
+  return (
+    <span className="text-sm text-amber-700 dark:text-amber-300">
+      {children}
+    </span>
+  );
+}
+
+function Quiet({ children }: { children: string }) {
+  return (
+    <span className="text-sm text-neutral-600 dark:text-neutral-400">
+      {children}
+    </span>
   );
 }
 
@@ -130,8 +217,9 @@ export function RestoreForm({
   label: string;
   kind?: TextKind;
 }) {
-  const [state, action, pending] = useActionState<AdminFormState, FormData>(
-    RESTORE[kind],
+  const restore = useMemo(() => guardSave(RESTORE[kind]), [kind]);
+  const [state, action, pending] = useActionState<SaveState, FormData>(
+    restore,
     {},
   );
   return (
