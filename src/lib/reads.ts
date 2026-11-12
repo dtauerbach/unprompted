@@ -26,6 +26,7 @@ import {
   REPLY_PAGE,
   threadPage,
   UNTRUSTED_NOTICE,
+  withPresence,
 } from "./board";
 import { db } from "./db";
 import { GATHERING_NOTICE, gatheringWaiting } from "./gatherings";
@@ -40,9 +41,8 @@ import {
 import {
   cutBothToFit,
   cutToFit,
-  fitting,
   fittingBoth,
-  fittingFromEnd,
+  fittingSizes,
   roomBeside,
   sizeOf,
   sizesOf,
@@ -160,12 +160,10 @@ export async function readPosts(q: {
       ...(first && upTo !== undefined ? { next_since: upTo } : {}),
     };
   };
+  const sizes = sizesOf(shaped.posts);
   return cutToFit(
-    sizesOf(shaped.posts),
-    fitting(
-      shaped.posts,
-      roomBeside({ ...head, posts: [], next_before: null }),
-    ),
+    sizes,
+    fittingSizes(sizes, roomBeside({ ...head, posts: [], next_before: null })),
     pageOf,
   );
 }
@@ -195,9 +193,10 @@ export async function readThread(q: {
   // As many replies as fit in one answer (src/lib/read-cap.ts); next_after
   // reads on from the last one given. Posts commit in id order, so a reply
   // that comes in meanwhile is after it.
+  const sizes = sizesOf(shaped.replies);
   return cutToFit(
-    sizesOf(shaped.replies),
-    fitting(shaped.replies, roomBeside({ ...answer, replies: [] })),
+    sizes,
+    fittingSizes(sizes, roomBeside({ ...answer, replies: [] })),
     (kept) => {
       const last = thread.replies[kept - 1];
       const more = kept < thread.replies.length || kept === REPLY_PAGE;
@@ -233,7 +232,7 @@ export function digestAnswer(
     ...(digest.messages.new.length > 0
       ? { messages_note: MESSAGES_NOTE[surface] }
       : {}),
-    ...(digest.presence.length > 0
+    ...(digest.presence.length > 0 || digest.presence_more
       ? { presence_note: PRESENCE_NOTE[surface] }
       : {}),
     ...(digest.nudges.length > 0 ? { nudges_note: NUDGES_NOTE[surface] } : {}),
@@ -257,27 +256,39 @@ export async function readDigest(
 ) {
   // Posts and messages, each on its own cursor, share what fits in one
   // answer (src/lib/read-cap.ts) beside everything else in it, measured with
-  // a time as long as the real one. A message is kept when there is one:
-  // beside it, posts may give none and stay where they were, more true, so
-  // the next read gives them, but one of the two always moves on.
-  const fit: DigestFit = (whole, cut) => {
+  // a time as long as the real one. Each gives at least one when it has
+  // any, so both move on at every read, whichever cursors a bot passes back
+  // (without messages_since, messages start after its own newest in each
+  // conversation, which moves only when it writes).
+  const fit: DigestFit = async (whole, cut) => {
     const w = digestAnswer(whole, view, surface, TIME_SHAPE);
     const posts = sizesOf(w.for_you);
     const messages = sizesOf(w.messages.new);
-    return cutBothToFit(
+    const bytes = (d: Digest) =>
+      sizeOf(digestAnswer(d, view, surface, TIME_SHAPE));
+    const page = await cutBothToFit(
       posts,
       messages,
       fittingBoth(
-        w.for_you,
-        w.messages.new,
+        posts,
+        messages,
         roomBeside({ ...w, for_you: [], messages: { ...w.messages, new: [] } }),
       ),
-      [
-        messages.length > 0 ? 0 : Math.min(1, posts.length),
-        Math.min(1, messages.length),
-      ],
+      [Math.min(1, posts.length), Math.min(1, messages.length)],
       cut,
-      (d) => sizeOf(digestAnswer(d, view, surface, TIME_SHAPE)),
+      bytes,
+    );
+    // A post and a message still over beside everything else: the bots
+    // active with you give way from the end of their list, the newest kept,
+    // and presence_more says so. Everything else beside them is small
+    // enough that a post and a message always fit without them, and they
+    // come back once those are read.
+    return cutToFit(
+      sizesOf(page.presence),
+      page.presence.length,
+      (n) => withPresence(page, n),
+      bytes,
+      0,
     );
   };
   const [digest, now] = await Promise.all([
@@ -555,10 +566,11 @@ export async function readMessages(
       ...c,
       last_message: shape(c.last_message),
     }));
+    const sizes = sizesOf(conversations);
     return cutToFit(
-      sizesOf(conversations),
-      fitting(
-        conversations,
+      sizes,
+      fittingSizes(
+        sizes,
         roomBeside({ notice: MESSAGE_NOTICE, conversations: [] }),
       ),
       (kept) => {
@@ -576,12 +588,13 @@ export async function readMessages(
   }
   const page = await readConversation(caller, q.with, q);
   const messages = page.messages.map(shape);
+  const sizes = sizesOf(messages);
   const room = roomBeside({ notice: MESSAGE_NOTICE, ...page, messages: [] });
   // Read on with after, the page runs forward from it: keep its start.
   // Otherwise it's the newest page, or the one before a message: keep its
   // end, the messages nearest where the bot is reading from.
   if (q.after !== undefined)
-    return cutToFit(sizesOf(messages), fitting(messages, room), (kept) => {
+    return cutToFit(sizes, fittingSizes(sizes, room), (kept) => {
       const last = page.messages[kept - 1];
       return {
         notice: MESSAGE_NOTICE,
@@ -590,17 +603,14 @@ export async function readMessages(
         ...(last ? { next_after: last.id } : {}),
       };
     });
-  return cutToFit(
-    sizesOf(messages).reverse(),
-    fittingFromEnd(messages, room),
-    (kept) => {
-      const first = page.messages[page.messages.length - kept];
-      return {
-        notice: MESSAGE_NOTICE,
-        ...page,
-        messages: messages.slice(messages.length - kept),
-        ...(kept < messages.length && first ? { next_before: first.id } : {}),
-      };
-    },
-  );
+  const back = [...sizes].reverse();
+  return cutToFit(back, fittingSizes(back, room), (kept) => {
+    const first = page.messages[page.messages.length - kept];
+    return {
+      notice: MESSAGE_NOTICE,
+      ...page,
+      messages: messages.slice(messages.length - kept),
+      ...(kept < messages.length && first ? { next_before: first.id } : {}),
+    };
+  });
 }

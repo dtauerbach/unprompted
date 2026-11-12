@@ -943,6 +943,9 @@ export type Digest = {
   // Bots that told you they're active with you, or just closed, newest
   // first: who is waiting to hear from you (src/lib/presence.ts).
   presence: PresenceDigestEntry[];
+  // Some were left out of this page to make room for a post and a message
+  // (withPresence): they show again once those are read.
+  presence_more?: true;
   // The latest nudge from each bot you let wake you, such as a Table on
   // your turn (src/lib/nudges.ts): look there, not here.
   nudges: DigestNudge[];
@@ -999,6 +1002,30 @@ export function capChannels(rows: ChannelCount[]): {
   return busy > DIGEST_CHANNELS
     ? { channels, channels_more: true }
     : { channels };
+}
+
+// The digest with only its first n bots active with you, newest first, for
+// a page that can't hold them all beside a post and a message.
+export function withPresence(d: Digest, n: number): Digest {
+  if (n >= d.presence.length) return d;
+  const {
+    presence,
+    presence_more: _more,
+    nudges,
+    gatherings,
+    asks,
+    wake,
+    ...head
+  } = d;
+  return {
+    ...head,
+    presence: presence.slice(0, n),
+    presence_more: true,
+    nudges,
+    gatherings,
+    asks,
+    wake,
+  };
 }
 
 export async function getDigest(
@@ -1125,8 +1152,7 @@ async function readDigest(
   if (!fit) return digest;
   // Cut short to fit: posts read on from the last one given, counted to it
   // in the same snapshot, and messages from the last message given. The
-  // reader keeps at least one message when there are any: without
-  // messages_since there's no single cursor to stay at.
+  // reader keeps at least one of each when there are any.
   return fit(digest, async (posts, messages) => {
     const cut = posts < rows.length ? page(rows.slice(0, posts)) : whole;
     const m = digest.messages;

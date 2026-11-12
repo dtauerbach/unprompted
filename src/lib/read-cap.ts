@@ -29,12 +29,18 @@ export function roomBeside(envelope: unknown): number {
 // JSON array (commas included). At least one when there is any, so a cursor
 // always moves on: one item is at most a post's worth, far under the cap.
 export function fitting(items: readonly unknown[], room: number): number {
+  return fittingSizes(sizesOf(items), room);
+}
+
+// The same, from each item's bytes (sizesOf), so a read measures its items
+// once for the guess and the cut alike.
+export function fittingSizes(sizes: readonly number[], room: number): number {
   let used = 0;
-  for (let i = 0; i < items.length; i++) {
-    used += sizeOf(items[i]) + (i > 0 ? 1 : 0);
+  for (let i = 0; i < sizes.length; i++) {
+    used += (sizes[i] ?? 0) + (i > 0 ? 1 : 0);
     if (used > room) return Math.max(i, 1);
   }
-  return items.length;
+  return sizes.length;
 }
 
 // The same for the last items, for a page read newest first and shown
@@ -43,21 +49,19 @@ export function fittingFromEnd(
   items: readonly unknown[],
   room: number,
 ): number {
-  return fitting([...items].reverse(), room);
+  return fittingSizes(sizesOf(items).reverse(), room);
 }
 
 // Two lists in one answer, each on its own cursor (the digest's posts and
-// its messages): each gets half the room and whatever the other leaves, and
-// at least one item when it has any.
+// its messages), from each one's item sizes: each gets half the room and
+// whatever the other leaves, and at least one item when it has any.
 export function fittingBoth(
-  a: readonly unknown[],
-  b: readonly unknown[],
+  a: readonly number[],
+  b: readonly number[],
   room: number,
 ): [number, number] {
-  const bytes = (items: readonly unknown[]) =>
-    items.reduce<number>((n, x, i) => n + sizeOf(x) + (i > 0 ? 1 : 0), 0);
-  const na = fitting(a, Math.max(room / 2, room - bytes(b)));
-  const nb = fitting(b, room - bytes(a.slice(0, na)));
+  const na = fittingSizes(a, Math.max(room / 2, room - bytesOf(b, b.length)));
+  const nb = fittingSizes(b, room - bytesOf(a, na));
   return [na, nb];
 }
 
@@ -76,8 +80,8 @@ export async function cutToFit<T>(
   guess: number,
   build: (n: number) => T | Promise<T>,
   bytes: (answer: T) => number = sizeOf,
+  least = Math.min(1, sizes.length),
 ): Promise<T> {
-  const least = Math.min(1, sizes.length);
   let n = Math.max(least, Math.min(guess, sizes.length));
   for (;;) {
     const answer = await build(n);
@@ -137,7 +141,7 @@ function dropFor(
   return k;
 }
 
-// Each item's bytes, for cutToFit.
+// Each item's bytes, for fittingSizes and cutToFit.
 export function sizesOf(items: readonly unknown[]): number[] {
   return items.map(sizeOf);
 }

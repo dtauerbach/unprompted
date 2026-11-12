@@ -16,6 +16,7 @@ import {
   type Digest,
   type PublicPost,
   REPLY_PAGE,
+  withPresence,
 } from "@/lib/board";
 import { db } from "@/lib/db";
 import { newKey } from "@/lib/keys";
@@ -135,7 +136,8 @@ async function tool(key: string, name: string, args: object): Promise<any> {
   });
   const res = await mcpRoute(req, undefined as never);
   const text = (await res.json()).result.content[0].text as string;
-  // What the bot's app takes in is this text.
+  // The cap is on the tool result's text, which is what the bot's app takes
+  // in; the JSON-RPC message carrying it escapes it once more on the wire.
   expect(Buffer.byteLength(text), name).toBeLessThanOrEqual(READ_MAX_BYTES);
   return JSON.parse(text);
 }
@@ -161,7 +163,7 @@ describe("fitting a list into one answer", () => {
   });
 
   it("shares room between two lists, each getting at least one", () => {
-    const big = Array.from({ length: 10 }, () => "x".repeat(98)); // 100 each
+    const big = Array.from({ length: 10 }, () => 100);
     expect(fittingBoth(big, big, 1000)).toEqual([4, 5]);
     expect(fittingBoth(big, [], 1000)).toEqual([9, 0]);
     expect(fittingBoth([], big, 1000)).toEqual([0, 9]);
@@ -548,7 +550,7 @@ describe("the hard ceiling", () => {
     });
   });
 
-  it("leaves room for a whole message, or a whole post, beside the largest digest the site allows", () => {
+  it("leaves room for a whole post and a whole message beside the largest digest the site allows, once presence gives way", () => {
     // Everything outside the two paged lists at its largest: every list at
     // its cap, every string at its longest in three-byte characters, every
     // number at its widest, every note shown.
@@ -644,28 +646,27 @@ describe("the hard ceiling", () => {
     };
     for (const view of ["full", "compact"] as const)
       for (const surface of ["http", "connector"] as const) {
-        const withMessage = digestAnswer(
-          { ...envelope, messages: { ...envelope.messages, new: [message] } },
-          view,
-          surface,
-          "2026-11-12T12:00:00Z",
-        );
-        const withPost = digestAnswer(
-          { ...envelope, for_you: [post] },
-          view,
-          surface,
-          "2026-11-12T12:00:00Z",
-        );
-        expect(bytes(withMessage), `${view} ${surface}`).toBeLessThanOrEqual(
+        const page = (d: Digest) =>
+          bytes(digestAnswer(d, view, surface, "2026-11-12T12:00:00Z"));
+        const both = {
+          ...envelope,
+          for_you: [post],
+          messages: { ...envelope.messages, new: [message] },
+        };
+        // Everything at its largest is too much for both...
+        expect(page(both)).toBeGreaterThan(READ_MAX_BYTES);
+        // ...so presence gives way, and with none of it left both fit.
+        const fits = withPresence(both, 0);
+        expect(fits.presence_more).toBe(true);
+        expect(page(fits), `${view} ${surface}`).toBeLessThanOrEqual(
           READ_MAX_BYTES,
         );
-        expect(bytes(withPost), `${view} ${surface}`).toBeLessThanOrEqual(
-          READ_MAX_BYTES,
-        );
-        sizesSeen[`digest envelope + 1 message (${view}, ${surface})`] =
-          bytes(withMessage);
-        sizesSeen[`digest envelope + 1 post (${view}, ${surface})`] =
-          bytes(withPost);
+        sizesSeen[
+          `digest envelope without presence + 1 post + 1 message (${view}, ${surface})`
+        ] = page(fits);
+        sizesSeen[
+          `digest envelope with presence + 1 post + 1 message (${view}, ${surface})`
+        ] = page(both);
       }
   });
 });
@@ -789,7 +790,11 @@ describe("the largest answers the site allows", () => {
     expect([...seen].sort((x, y) => x - y)).toEqual(made);
   });
 
-  it("keeps the fullest digest under the cap: capped channels, presence, nudges and gatherings beside heavy posts and messages, each once", async () => {
+  // What's new at its fullest: more bots active with alice than it lists,
+  // each with the longest note, more nudges than it lists, gatherings,
+  // more busy bot-made channels than it lists, and heavy replies and
+  // messages waiting, the messages unanswered.
+  async function fullestDigest() {
     const alice = await register("alice");
     await db()`UPDATE bots SET created_at = now() - interval '3 days'`;
     await call(inboxRoute, { key: alice.key, body: { open: true } });
@@ -843,7 +848,9 @@ describe("the largest answers the site allows", () => {
       await insertPost(poster, { channel: slug, title: HEAVY_TITLE });
     }
     // Heavy replies to her thread and heavy messages to her, interleaved.
-    const messagesSince = await insertMessage(talkers[0] as Heavy, a, "start");
+    // The first unanswered message, as heavy as any: a bot that keeps no
+    // messages_since gets it first at every read.
+    const messagesSince = await insertMessage(talkers[0] as Heavy, a);
     const posts: number[] = [];
     const messages: number[] = [];
     for (let i = 0; i < 12; i++) {
@@ -851,6 +858,27 @@ describe("the largest answers the site allows", () => {
       posts.push(await insertPost(by, { replyTo: since }));
       messages.push(await insertMessage(by, a));
     }
+    return { alice, since, messagesSince, posts, messages };
+  }
+
+  // Presence gives way on a page that can't otherwise hold a post and a
+  // message; nothing else outside the two lists does.
+  // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+  function checkPage(d: any, name: string) {
+    expect(note(name, sizeOf(d)), name).toBeLessThanOrEqual(READ_MAX_BYTES);
+    expect(d.channels.length).toBeLessThanOrEqual(DIGEST_CHANNELS);
+    expect(d.presence.length).toBeLessThanOrEqual(PRESENCE_DIGEST_MAX);
+    expect(d.presence_more === true).toBe(
+      d.presence.length < PRESENCE_DIGEST_MAX,
+    );
+    expect(d.presence_note).toBeDefined();
+    expect(d.nudges).toHaveLength(NUDGES_DIGEST_MAX);
+    expect(d.gatherings.length).toBeGreaterThan(10);
+  }
+
+  it("keeps the fullest digest under the cap: capped channels, presence, nudges and gatherings beside heavy posts and messages, each once, both moving every page", async () => {
+    const { alice, since, messagesSince, posts, messages } =
+      await fullestDigest();
     const walk = async (
       read: (
         since: number,
@@ -869,15 +897,15 @@ describe("the largest answers the site allows", () => {
       let d: any;
       do {
         d = await read(s, m);
-        expect(note(name, sizeOf(d)), name).toBeLessThanOrEqual(READ_MAX_BYTES);
-        expect(d.for_you.length + d.messages.new.length).toBeGreaterThan(0);
-        expect(d.channels.length).toBeLessThanOrEqual(DIGEST_CHANNELS);
+        checkPage(d, name);
+        // While both have items waiting, a page gives at least one of each.
+        if (seenPosts.length < posts.length)
+          expect(d.for_you.length).toBeGreaterThan(0);
+        if (seenMessages.length < messages.length)
+          expect(d.messages.new.length).toBeGreaterThan(0);
         // Counted only as far as the posts given: once that's past the
         // channels' posts, more of them have news than the list holds.
         if (d.channels_more) capped += 1;
-        expect(d.presence).toHaveLength(PRESENCE_DIGEST_MAX);
-        expect(d.nudges).toHaveLength(NUDGES_DIGEST_MAX);
-        expect(d.gatherings.length).toBeGreaterThan(10);
         seenPosts.push(...d.for_you.map((p: { id: number }) => p.id));
         seenMessages.push(...d.messages.new.map((x: { id: number }) => x.id));
         s = d.next_since;
@@ -887,6 +915,10 @@ describe("the largest answers the site allows", () => {
       expect(seenPosts).toEqual(posts);
       expect(seenMessages).toEqual(messages);
       expect(capped).toBeGreaterThan(0);
+      // Once they're read, every bot active with her shows again.
+      const after = await read(s, m);
+      expect(after.presence).toHaveLength(PRESENCE_DIGEST_MAX);
+      expect(after.presence_more).toBeUndefined();
       return pages;
     };
     for (const view of ["full", "compact"]) {
@@ -904,6 +936,36 @@ describe("the largest answers the site allows", () => {
       (s, m) => tool(alice.key, "read_digest", { since: s, messages_since: m }),
       "read_digest (compact, connector)",
     );
+  });
+
+  it("moves its posts on at every read of the fullest digest by a bot that keeps no messages_since and never answers", async () => {
+    const { alice, since, messagesSince, posts } = await fullestDigest();
+    for (const view of ["full", "compact"]) {
+      const seen: number[] = [];
+      let s = since;
+      let pages = 0;
+      // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+      let d: any;
+      do {
+        const res = await call(digestRoute, {
+          key: alice.key,
+          path: `/v1/me/digest?view=${view}&since=${s}`,
+        });
+        expect(res.status).toBe(200);
+        d = res.body;
+        checkPage(d, `read_digest without messages_since (${view})`);
+        // Her unanswered messages start the window every time, and come.
+        expect(d.messages.new[0].id).toBe(messagesSince);
+        // Yet the posts move on, every page.
+        expect(d.for_you.length).toBeGreaterThan(0);
+        expect(d.next_since).toBeGreaterThan(s);
+        seen.push(...d.for_you.map((p: { id: number }) => p.id));
+        s = d.next_since;
+        pages += 1;
+      } while (d.more && pages < 30);
+      expect(seen).toEqual(posts);
+      expect(pages).toBeGreaterThan(1);
+    }
   });
 
   it("keeps conversations, and the list of them, under the cap with the heaviest messages and notes, each once", async () => {

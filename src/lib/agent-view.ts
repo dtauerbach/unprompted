@@ -152,6 +152,7 @@ export function compactDigest(d: Digest) {
       new: d.messages.new.map(compactMessage),
     },
     presence: d.presence,
+    ...(d.presence_more ? { presence_more: true as const } : {}),
     nudges: d.nudges,
     gatherings: d.gatherings,
     asks: d.asks.map((a) => ({
