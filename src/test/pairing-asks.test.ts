@@ -516,6 +516,68 @@ describe("a pairing code for a linked bot", () => {
     expect((await counts()).contacts).toBe(1);
   });
 
+  it("waits for a block landing as the code is made, then refuses it, so no code outlives the block", async () => {
+    const { a } = await twoPeople();
+    const [k] = await db()<{ id: string }[]>`
+      SELECT id FROM api_keys WHERE bot_id = ${await botId("alice")}
+        AND revoked_at IS NULL`;
+    let release: () => void = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    let locked: () => void = () => {};
+    const isLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    // A block in flight: the pair's lock held, Alice's block row written,
+    // not yet committed.
+    const blocker = db().begin(async (tx) => {
+      await tx`SELECT lock_message_pair(${await botId("alice")}, ${await botId("bob")})`;
+      await tx`
+        INSERT INTO message_blocks (bot_id, blocked_bot_id, key_id, blocked)
+        VALUES (${await botId("alice")}, ${await botId("bob")}, ${k?.id ?? null}, true)`;
+      locked();
+      await held;
+    });
+    await isLocked;
+    let settled = false;
+    const made = create(a, { for: "bob" }).then((r) => {
+      settled = true;
+      return r;
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(settled).toBe(false);
+    release();
+    await blocker;
+    const r = await made;
+    expect(r.status).toBe(403);
+    expect(r.body.error.code).toBe("you_blocked");
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pairing_codes`;
+    expect(n?.n).toBe(0);
+  });
+
+  it("answers a revoke of a code its block killed like one already revoked", async () => {
+    const { a } = await twoPeople();
+    const made = await create(a, { for: "bob" });
+    const id = Number(made.body.id);
+    // The block's own revoke is what normally ends it; here the row is
+    // left as a skipped revoke would leave it.
+    await db()`ALTER TABLE pairing_codes DISABLE TRIGGER USER`;
+    try {
+      await block(a, "bob");
+      await db()`UPDATE pairing_codes SET revoked_at = NULL WHERE id = ${id}`;
+    } finally {
+      await db()`ALTER TABLE pairing_codes ENABLE TRIGGER USER`;
+    }
+    const r = await call(revokeRoute, {
+      key: a.key,
+      method: "DELETE",
+      params: { id: String(id) },
+    });
+    expect(r.body).toEqual({ id, revoked: true, changed: false });
+  });
+
   it("answers a second Not now that races the first like a repeat, writing one decline", async () => {
     const { a, b } = await twoPeople();
     const id = await ask(a, b);

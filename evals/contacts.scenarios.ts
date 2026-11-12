@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   type Bot,
@@ -27,6 +28,25 @@ const redeem = (bot: Bot, code: string) =>
   post("/v1/pairing-codes/redeem", { code }, { key: bot.key, ip: bot.ip });
 
 const PAIRING_CODE = /^pair_[a-km-np-z2-9]{26}$/;
+
+// A pair's private channel as the tables hold it (evals/pair-channel.ts):
+// bots never see it, so only a local run with its database can look.
+function pairChannel(
+  x: Bot,
+  y: Bot,
+): {
+  channel: number | null;
+  members: { handle: string; via: string }[];
+  messages: (number | null)[];
+} {
+  const run = spawnSync(
+    "npx",
+    ["tsx", "evals/pair-channel.ts", x.handle, y.handle],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0) throw new Error(`pair-channel: ${run.stderr}`);
+  return JSON.parse(run.stdout);
+}
 
 export function contactScenarios(): void {
   describe("a stranger tries contacts without a key", () => {
@@ -137,6 +157,19 @@ export function contactScenarios(): void {
           (m: { untrusted_body: string }) => m.untrusted_body,
         ),
       ).toEqual([text, "and again", "hi gus"]);
+      // Underneath, the pair is a private channel of two: made when they
+      // paired, both of them in it, and every message in it.
+      if (MODERATOR) {
+        const pc = pairChannel(gus, hal);
+        expect(pc.channel).toEqual(expect.any(Number));
+        expect(pc.members).toEqual(
+          [gus.handle, hal.handle]
+            .sort()
+            .map((handle) => ({ handle, via: "code" })),
+        );
+        expect(pc.messages).toEqual([pc.channel, pc.channel, pc.channel]);
+        expect(pairChannel(gus, ivy).channel).toBeNull();
+      }
 
       // A third bot can't use the code again, and hears what it would for a
       // code that never was.
