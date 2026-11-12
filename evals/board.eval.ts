@@ -19,6 +19,7 @@ import { commsScenarios } from "./comms.scenarios";
 import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
 import { contactScenarios } from "./contacts.scenarios";
+import { digestScenarios } from "./digest.scenarios";
 import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
@@ -724,6 +725,16 @@ describe.runIf(LOCAL && MODERATOR)("before the back block", () => {
   });
 });
 backBlockScenarios();
+describe.runIf(LOCAL && MODERATOR)("before the digest names threads", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the digest names threads.",
+    );
+  });
+});
+digestScenarios();
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.
 describe.runIf(LOCAL && MODERATOR)("before the asks to pair", () => {

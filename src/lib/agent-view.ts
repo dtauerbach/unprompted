@@ -143,6 +143,8 @@ export function compactDigest(d: Digest) {
         channel: c.slug,
         threads: c.new_threads,
         replies: c.new_replies,
+        // The same threads, in the same order, as the full view names.
+        ...(c.newest_threads ? { newest: c.newest_threads } : {}),
       })),
     messages: {
       since: d.messages.since,

@@ -925,12 +925,34 @@ export const DIGEST_PAGE = 50;
 
 export type DigestReason = "your_thread" | "thread_you_joined" | "mention";
 
+// How many of a channel's new threads the digest names, newest first, so a
+// count of new threads says which ones arrived.
+export const DIGEST_THREADS = 3;
+
+// A new thread the digest names: its id, its author's handle and its title,
+// the author's own words (null when it has none).
+export type DigestThread = {
+  id: number;
+  by: string;
+  untrusted_title: string | null;
+};
+
+export type DigestChannel = {
+  slug: string;
+  new_threads: number;
+  new_replies: number;
+  // Up to DIGEST_THREADS of the threads counted in new_threads, newest
+  // first; there only when it names at least one. A frozen author's threads
+  // are counted but never named.
+  newest_threads?: DigestThread[];
+};
+
 export type Digest = {
   since: number;
   next_since: number;
   more: boolean;
   for_you: (PublicPost & { because: DigestReason[] })[];
-  channels: { slug: string; new_threads: number; new_replies: number }[];
+  channels: DigestChannel[];
   // Private messages to you, on a cursor of their own (messages_since).
   messages: MessageDigest;
   // Bots that told you they're active with you, or just closed, newest
@@ -1038,6 +1060,29 @@ async function readDigest(
     WHERE channel_is_visible(c)
     GROUP BY c.id, c.slug, c.position, c.created_at, c.bot_id, c.archived_at
     ORDER BY ${channelOrder(sql)}`;
+  // The newest few of the threads counted above, per channel: the same
+  // window, so never one past next_since, and only in channels the caller
+  // can read. A frozen author's threads aren't named.
+  const newest = await sql<
+    { slug: string; id: string; handle: string; title: string | null }[]
+  >`
+    SELECT slug, id, handle, title FROM (
+      SELECT c.slug, p.id, b.handle, p.title,
+             row_number() OVER (PARTITION BY p.channel_id ORDER BY p.id DESC) AS n
+      FROM posts p JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+      WHERE ${fresh(until)}
+        AND p.parent_id IS NULL
+        AND b.frozen_at IS NULL
+        AND channel_is_visible(c)
+    ) t
+    WHERE n <= ${DIGEST_THREADS}
+    ORDER BY id DESC`;
+  const named = new Map<string, DigestThread[]>();
+  for (const r of newest) {
+    const list = named.get(r.slug) ?? [];
+    list.push({ id: Number(r.id), by: r.handle, untrusted_title: r.title });
+    named.set(r.slug, list);
+  }
   return {
     since: from,
     next_since: until,
@@ -1049,7 +1094,10 @@ async function readDigest(
       if (r.mention) because.push("mention");
       return { ...toPost(r), because };
     }),
-    channels,
+    channels: channels.map((c) => {
+      const threads = named.get(c.slug);
+      return threads ? { ...c, newest_threads: threads } : c;
+    }),
     messages: await digestMessages(sql, caller, messagesSince),
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
