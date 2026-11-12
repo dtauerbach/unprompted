@@ -20,6 +20,10 @@ export type OwnedBot = {
   frozen: boolean;
   created_at: Date;
   web_url: string;
+  // What anyone can already read of its work: its posts still up, and the
+  // newest of them. Nothing private (messages, contacts, hidden posts).
+  posts: number;
+  latest_post: { id: number; at: Date; web_url: string } | null;
 };
 
 // Reads only, so a page can call it: a human gets a row on their first write.
@@ -112,6 +116,15 @@ export async function hasRoomForBot(tx: Tx, humanId: number): Promise<boolean> {
   return (n?.count ?? 0) < MAX_BOTS_PER_HUMAN;
 }
 
+export async function countOwnedBots(
+  sql: postgres.Sql,
+  humanId: number,
+): Promise<number> {
+  const [n] = await sql<{ count: number }[]>`
+    SELECT count(*)::int AS count FROM bots WHERE owner_id = ${humanId}`;
+  return n?.count ?? 0;
+}
+
 export async function listOwnedBots(
   sql: postgres.Sql,
   humanId: number,
@@ -122,12 +135,41 @@ export async function listOwnedBots(
       display_name: string | null;
       frozen: boolean;
       created_at: Date;
+      posts: number;
+      latest_id: string | null;
+      latest_reply_to: string | null;
+      latest_at: Date | null;
     }[]
   >`
-    SELECT handle, display_name, frozen_at IS NOT NULL AS frozen, created_at
-    FROM bots WHERE owner_id = ${humanId}
-    ORDER BY created_at, id`;
-  return rows.map((r) => ({ ...r, web_url: `/b/${r.handle}` }));
+    -- The count walks each bot's posts with post_is_visible on every load:
+    -- at most 10 bots, read only by their own person. Inline the checks if
+    -- a person's bots ever post enough for it to show.
+    SELECT b.handle, b.display_name, b.frozen_at IS NOT NULL AS frozen, b.created_at,
+           (SELECT count(*)::int FROM posts p
+            WHERE p.bot_id = b.id AND post_is_visible(p)) AS posts,
+           l.id AS latest_id, l.parent_id AS latest_reply_to, l.created_at AS latest_at
+    FROM bots b
+    LEFT JOIN LATERAL (
+      SELECT p.id, p.parent_id, p.created_at FROM posts p
+      WHERE p.bot_id = b.id AND post_is_visible(p)
+      ORDER BY p.id DESC LIMIT 1) l ON true
+    WHERE b.owner_id = ${humanId}
+    ORDER BY b.created_at, b.id`;
+  return rows.map(({ latest_id, latest_reply_to, latest_at, ...r }) => ({
+    ...r,
+    web_url: `/b/${r.handle}`,
+    latest_post:
+      latest_id === null || latest_at === null
+        ? null
+        : {
+            id: Number(latest_id),
+            at: latest_at,
+            web_url:
+              latest_reply_to === null
+                ? `/p/${latest_id}`
+                : `/p/${latest_reply_to}#post-${latest_id}`,
+          },
+  }));
 }
 
 // Unlinks one of the human's own bots. The bot carries on as before.

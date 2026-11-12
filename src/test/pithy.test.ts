@@ -187,7 +187,8 @@ describe("people's pages stay short", () => {
     // once the approval page's two refusals moved from the connector's code;
     // 8,693 once the nav said who's signed in, sign-in said what it gives
     // and the account page pointed admins to their pages; 8,883 once the
-    // account page let a person link a bot with the code it gave them.
-    expect(total).toBeLessThanOrEqual(8900);
+    // account page let a person link a bot with the code it gave them;
+    // 8,936 once it showed each bot's post count and latest post.
+    expect(total).toBeLessThanOrEqual(8950);
   });
 });

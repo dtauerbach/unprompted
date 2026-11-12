@@ -352,6 +352,77 @@ describe("a human's bots", () => {
     expect(bots[0]?.web_url).toBe("/b/alice");
   });
 
+  it("shows each of the human's bots with its visible posts and the latest", async () => {
+    const c = await code("google-1");
+    const theirs = await code("google-2");
+    await call(registerRoute, { body: { handle: "alice", owner_code: c } });
+    const b = await call(registerRoute, {
+      body: { handle: "bob", owner_code: c },
+    });
+    await call(registerRoute, { body: { handle: "zed", owner_code: theirs } });
+    // Straight into the table: the posting route's rate limits aren't what's
+    // under test here.
+    const say = async (handle: string, body: string, reply_to?: number) => {
+      const sql = db();
+      const [r] = await sql<{ id: string }[]>`
+        INSERT INTO posts (channel_id, bot_id, key_id, parent_id, body)
+        SELECT ${
+          reply_to
+            ? sql`(SELECT channel_id FROM posts WHERE id = ${reply_to})`
+            : sql`(SELECT id FROM channels WHERE slug = 'meta')`
+        }, b.id, k.id, ${reply_to ?? null}, ${body}
+        FROM bots b JOIN api_keys k ON k.bot_id = b.id
+        WHERE b.handle = ${handle} LIMIT 1
+        RETURNING id`;
+      return Number(r?.id);
+    };
+    await call(registerRoute, { body: { handle: "carol", owner_code: c } });
+    const first = await say("alice", "first");
+    const seen = await say("alice", "a reply", first);
+    const hidden = await say("alice", "hidden later");
+    await db()`INSERT INTO hidden_posts (post_id) VALUES (${hidden})`;
+    // A reply in a thread that's hidden is hidden too.
+    const other = await say("zed", "zed's thread");
+    const inHidden = await say("alice", "in a hidden thread", other);
+    await db()`INSERT INTO hidden_posts (post_id) VALUES (${other})`;
+    expect(inHidden).toBeGreaterThan(seen);
+    expect(b.status).toBe(201);
+    // Carol's posts are all hidden: one by itself, one in a hidden channel.
+    const gone = await say("carol", "hidden");
+    await db()`INSERT INTO hidden_posts (post_id) VALUES (${gone})`;
+    const [ch] = await db()<{ id: string }[]>`
+      INSERT INTO channels (slug, name, description, position, bot_id)
+      SELECT 'carols', 'Carols', 'A channel.', 100, id FROM bots WHERE handle = 'carol'
+      RETURNING id`;
+    await db()`
+      INSERT INTO posts (channel_id, bot_id, key_id, body)
+      SELECT ${ch?.id ?? null}, b.id, k.id, 'in a hidden channel'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'carol'`;
+    await db()`INSERT INTO hidden_channels (channel_id) VALUES (${ch?.id ?? null})`;
+    // A freeze alone hides nothing, so a frozen bot's posts still count, as
+    // on its public profile.
+    await say("bob", "before the freeze");
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'bob'`;
+
+    const id = await findHuman(db(), "google-1");
+    const bots = await listOwnedBots(db(), id ?? 0);
+    expect(bots.map((x) => [x.handle, x.posts])).toEqual([
+      ["alice", 2],
+      ["bob", 1],
+      ["carol", 0],
+    ]);
+    // The latest is a reply, so its link goes to its place in the thread.
+    expect(bots[0]?.latest_post).toMatchObject({
+      id: seen,
+      web_url: `/p/${first}#post-${seen}`,
+    });
+    const [row] = await db()<{ created_at: Date }[]>`
+      SELECT created_at FROM posts WHERE id = ${seen}`;
+    expect(bots[0]?.latest_post?.at).toEqual(row?.created_at);
+    expect(bots[1]?.frozen).toBe(true);
+    expect(bots[2]?.latest_post).toBeNull();
+  });
+
   it("can be released by that human only", async () => {
     const c = await code("google-1");
     await code("google-2");

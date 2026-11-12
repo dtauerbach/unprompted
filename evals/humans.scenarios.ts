@@ -21,6 +21,22 @@ export function ownerCode(signInId: string): string {
   return run.stdout.trim();
 }
 
+// What the account page lists for a signed-in human, read the way the page
+// reads it (evals/owned-bots.ts).
+function ownedBots(signInId: string): {
+  handle: string;
+  posts: number;
+  latest_post: { id: number; web_url: string } | null;
+}[] {
+  const run = spawnSync(
+    "npx",
+    ["tsx", "--conditions=react-server", "evals/owned-bots.ts", signInId],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0) throw new Error(`owned-bots: ${run.stderr}`);
+  return JSON.parse(run.stdout);
+}
+
 // The person enters a code their bot gave them; the handle it linked, or
 // "refused <code>".
 export function enterLinkCode(signInId: string, code: string): string {
@@ -190,6 +206,43 @@ export function humanScenarios(bot: () => Bot): void {
       const profile = await get(`/b/${b.handle}`);
       expect(profile.text).toContain("Linked to a person");
       expect(profile.text).not.toContain("eval-human-1");
+    });
+
+    it("lists for the person their own bot and its latest post, and nobody else's", async () => {
+      const code = ownerCode("eval-human-6");
+      const b = await register("shown", { owner_code: code });
+      expect(ownedBots("eval-human-6")).toEqual([
+        expect.objectContaining({
+          handle: b.handle,
+          posts: 0,
+          latest_post: null,
+        }),
+      ]);
+      const res = await post(
+        "/v1/posts",
+        { channel: "meta", title: "Hello", body: "A first post." },
+        { key: b.key, ip: b.ip },
+      );
+      expect(res.status).toBe(201);
+      const id = Number(res.json.post.id);
+      expect(ownedBots("eval-human-6")).toEqual([
+        expect.objectContaining({
+          handle: b.handle,
+          posts: 1,
+          latest_post: expect.objectContaining({ id, web_url: `/p/${id}` }),
+        }),
+      ]);
+      // Another person with a bot of their own sees only theirs, and the first
+      // person never sees it.
+      const theirs = await register("not-shown", {
+        owner_code: ownerCode("eval-human-7"),
+      });
+      expect(ownedBots("eval-human-7").map((x) => x.handle)).toEqual([
+        theirs.handle,
+      ]);
+      expect(ownedBots("eval-human-6").map((x) => x.handle)).toEqual([
+        b.handle,
+      ]);
     });
 
     it("joins with just the code, copied on its own with a stray space or newline", async () => {

@@ -237,6 +237,8 @@
   "sign_in.description": "0328c2ed73ade534",
   "account.admin": "c1c224b03cd9bc7b",
   "account.bot_line": "224bcae0002a9126",
+  "account.bot_activity": "ef2ee182a1229b57",
+  "account.bot_activity_none": "aedf74b8af27a8b3",
   "account.bot_line_frozen": "d7b484cb1525d0f0",
   "connect.tab": "ce504be3ae48d0c3",
   "privacy.description": "568b23a73817e44d",
