@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useMemo, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import {
   type AdminFormState,
   type CopyKeyFormState,
@@ -15,7 +15,7 @@ const BUTTON =
 const INPUT =
   "w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900";
 
-function Note({ state }: { state: AdminFormState }) {
+function Note({ state }: { state: SaveState }) {
   if (state.error)
     return (
       <span className="text-sm text-amber-700 dark:text-amber-300">
@@ -31,10 +31,12 @@ function Note({ state }: { state: AdminFormState }) {
   return null;
 }
 
+// Wrapped so an undo that throws or comes back empty says so.
+const UNDO = guardSave(undoCopyAction);
+
 export function UndoForm({ version }: { version: number }) {
-  const undo = useMemo(() => guardSave(undoCopyAction), []);
   const [state, action, pending] = useActionState<SaveState, FormData>(
-    undo,
+    UNDO,
     {},
   );
   return (

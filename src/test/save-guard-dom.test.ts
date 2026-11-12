@@ -28,12 +28,25 @@ vi.mock("@/app/admin/actions", () => {
     restoreBotTextAction: save,
     restoreDescriptionAction: save,
     moderateAction: save,
+    undoCopyAction: save,
+    makeCopyKeyAction: save,
+    revokeCopyKeyAction: save,
   };
 });
 
-const { CopyForm } = await import("@/app/admin/forms");
-const { NOT_SAVED, RESTORED, SLOW_SAVE_MS, STILL_SAVING, UNSAVED, draftKey } =
-  await import("@/app/admin/save-guard");
+const { CopyForm, RestoreForm } = await import("@/app/admin/forms");
+const { UndoForm } = await import("@/app/admin/copy-key-forms");
+const {
+  NOT_DONE,
+  NOT_SAVED,
+  NOT_SAVED_UNKEPT,
+  OVERTAKEN,
+  RESTORED,
+  SLOW_SAVE_MS,
+  STILL_SAVING,
+  UNSAVED,
+  draftKey,
+} = await import("@/app/admin/save-guard");
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -180,18 +193,115 @@ describe("the words page's box", () => {
     expect(sessionStorage.getItem(STORED)).toBeNull();
   });
 
-  it("lets a newer version win over old unsaved words", async () => {
+  it("brings words back after a refusal that says reload, though newer words came in", async () => {
+    // Someone saved version 22 while these were typed over version 0: the
+    // save is refused with "Reload to see it", and the reload keeps them.
+    answer = async () => ({
+      error:
+        "Someone saved a newer version while you were editing. Reload to see it.",
+    });
     const first = await draw(PROPS);
     await type(first, "Threads");
+    await save(first);
+    expect(first.note()).toMatch(/Reload to see it/);
     await act(async () => first.root.unmount());
     const again = await draw({ ...PROPS, text: "Board", after: 22 });
-    expect(again.box.value).toBe("Board");
-    expect(again.note()).toBe("");
+    expect(again.box.value).toBe("Threads");
+    expect(again.note()).toBe(OVERTAKEN);
+    // And after another reload, still marked.
+    await act(async () => again.root.unmount());
+    const third = await draw({ ...PROPS, text: "Board", after: 22 });
+    expect(third.box.value).toBe("Threads");
+    expect(third.note()).toBe(OVERTAKEN);
+    answer = async () => ({ message: "Saved." });
+    await save(third);
+    expect(calls.at(-1)).toBe("Threads");
+    expect(third.note()).toBe("Saved.");
+  });
+
+  it("keeps typed words when newer words arrive on the page, and says so", async () => {
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Threads");
+    expect(b.note()).toBe(OVERTAKEN);
+    expect(sessionStorage.getItem(STORED)).toContain("Threads");
+  });
+
+  it("takes newer words when the box holds nothing typed", async () => {
+    const b = await draw(PROPS);
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Board");
+    expect(b.note()).toBe("");
+  });
+
+  it("says Not saved yet when saved words are typed again over a later version", async () => {
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await save(b);
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Threads", after: 21 }),
+      ),
+    );
+    // Undone elsewhere: the page shows the old words again, as version 23.
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Forum", after: 23 }),
+      ),
+    );
+    expect(b.box.value).toBe("Forum");
+    await type(b, "Threads");
+    expect(b.note()).toBe(UNSAVED);
+    expect(sessionStorage.getItem(STORED)).toContain("Threads");
+  });
+
+  it("drops a refusal once the words it refused are gone from the box", async () => {
+    answer = async () => ({ error: "Keep {welcome_post} in the words." });
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await save(b);
+    expect(b.note()).toBe("Keep {welcome_post} in the words.");
+    await type(b, "Threads, again");
+    expect(b.note()).toBe(UNSAVED);
+    await type(b, "Forum");
+    expect(b.note()).toBe("");
+  });
+
+  it("doesn't promise a reload keeps the words when this tab can't store them", async () => {
+    const setItem = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("full");
+      });
+    answer = async () => {
+      throw new Error("gone");
+    };
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await save(b);
+    expect(b.note()).toBe(NOT_SAVED_UNKEPT);
+    expect(b.box.value).toBe("Threads");
+    setItem.mockRestore();
   });
 
   it("says Saving…, holds Save, and says so when a save hangs", async () => {
     vi.useFakeTimers();
-    answer = () => new Promise<Answer>(() => {});
+    // React holds every later action on the page behind one still running,
+    // so this one ends before the test does.
+    let finish: (a: Answer) => void = () => {};
+    answer = () =>
+      new Promise<Answer>((resolve) => {
+        finish = resolve;
+      });
     const b = await draw(PROPS);
     await type(b, "Threads");
     await save(b);
@@ -201,6 +311,8 @@ describe("the words page's box", () => {
     expect(b.note()).toBe(STILL_SAVING);
     expect(b.box.value).toBe("Threads");
     expect(sessionStorage.getItem(STORED)).toContain("Threads");
+    await act(async () => finish({ message: "Saved." }));
+    expect(b.note()).toBe("Saved.");
   });
 
   it("keeps each box's words apart", async () => {
@@ -216,5 +328,50 @@ describe("the words page's box", () => {
     expect(
       sessionStorage.getItem(draftKey("copy", "site.nav.play")),
     ).toBeNull();
+  });
+});
+
+describe("the restore and undo buttons", () => {
+  async function drawButton(el: ReturnType<typeof createElement>) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    mounted.push(root);
+    await act(async () => root.render(el));
+    return {
+      press: () => act(async () => host.querySelector("form")?.requestSubmit()),
+      text: () => host.textContent ?? "",
+    };
+  }
+
+  it("say it didn't save when the save throws or comes back empty", async () => {
+    for (const fail of [
+      async () => {
+        throw new Error("gone");
+      },
+      async () => undefined,
+    ]) {
+      answer = fail;
+      const restore = await drawButton(
+        createElement(RestoreForm, {
+          copyKey: "site.nav.forum",
+          version: "original",
+          after: 3,
+          label: "Use the original",
+        }),
+      );
+      await restore.press();
+      expect(restore.text()).toContain(NOT_DONE);
+      const undo = await drawButton(createElement(UndoForm, { version: 3 }));
+      await undo.press();
+      expect(undo.text()).toContain(NOT_DONE);
+    }
+  });
+
+  it("pass on what the save said", async () => {
+    answer = async () => ({ message: "Undone." });
+    const undo = await drawButton(createElement(UndoForm, { version: 3 }));
+    await undo.press();
+    expect(undo.text()).toContain("Undone.");
   });
 });

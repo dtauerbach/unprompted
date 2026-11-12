@@ -5,17 +5,38 @@ import { unstable_rethrow } from "next/navigation";
 // after a deploy, a dropped connection, a server error), says so beside the
 // Save button, and the words typed stay in the box. Words typed and not yet
 // saved are also kept in this tab's session storage, so a reload, or a trip
-// to sign in, brings them back to the same box instead of losing them.
+// to sign in, brings them back to the same box instead of losing them, even
+// when someone saved newer words meanwhile.
 
-export type SaveState = { error?: string; message?: string; saved?: string };
+// `saved` and `savedAfter`: the words a save took and the version they were
+// typed over. `failed`: the words a save didn't take, so its error shows only
+// while the box still holds them.
+export type SaveState = {
+  error?: string;
+  message?: string;
+  saved?: string;
+  savedAfter?: number;
+  failed?: string;
+};
 
 export const NOT_SAVED =
   "That didn't save. Your words are still in the box: reload the page, then press Save again.";
+// For a button that sends no words: a restore or an undo.
+export const NOT_DONE =
+  "That didn't go through. Reload the page and try again.";
+// The same, when this tab couldn't keep the words through a reload.
+export const NOT_SAVED_UNKEPT =
+  "That didn't save. Copy your words before you reload the page, then save them again.";
 export const STILL_SAVING =
   "Still saving. If this doesn't finish, reload the page: your words will still be here.";
+export const STILL_SAVING_UNKEPT =
+  "Still saving. If this doesn't finish, copy your words, then reload the page.";
+export const SAVING = "Saving…";
 export const UNSAVED = "Not saved yet.";
 export const RESTORED =
   "These are your words from before the page reloaded. They aren't saved yet: press Save to keep them.";
+export const OVERTAKEN =
+  "Newer words were saved while you were typing (see History). The box still holds yours, not saved: press Save to use yours instead.";
 
 // How long a save may take before the box says it's still going.
 export const SLOW_SAVE_MS = 15_000;
@@ -25,40 +46,58 @@ type Action = (
   form: FormData,
 ) => Promise<SaveState | undefined | null>;
 
+function text(form: FormData, name: string): string | undefined {
+  const v = form.get(name);
+  return typeof v === "string" ? v : undefined;
+}
+
 // Wraps a server action so that every way it can end shows something: its
 // own answer, or NOT_SAVED. A redirect (to sign in) still happens; the words
-// come back from the session's storage afterwards. A save that worked
-// remembers the words it sent, so the box knows they're saved even before
-// the page brings back the new version.
+// come back from the session's storage afterwards.
 export function guardSave(
   action: Action,
 ): (prev: SaveState, form: FormData) => Promise<SaveState> {
   return async (prev, form) => {
-    const body = form.get("body");
+    const body = text(form, "body");
+    const after = Number(text(form, "after"));
+    const failed = body === undefined ? {} : { failed: body };
+    const broken = body === undefined ? NOT_DONE : NOT_SAVED;
     let r: SaveState | undefined | null;
     try {
       r = await action(prev, form);
     } catch (err) {
       unstable_rethrow(err);
-      return { error: NOT_SAVED };
+      return { error: broken, ...failed };
     }
-    if (!r || (!r.error && !r.message)) return { error: NOT_SAVED };
-    if (r.error) return { error: r.error };
+    if (!r || (!r.error && !r.message)) return { error: broken, ...failed };
+    if (r.error) return { error: r.error, ...failed };
     return {
       message: r.message,
-      ...(typeof body === "string" ? { saved: body } : {}),
+      ...(body === undefined ? {} : { saved: body, savedAfter: after }),
     };
   };
 }
 
 // The words in a box are unsaved when they differ from the words showing now
-// and from the last words a save took.
+// and aren't the words a save just took over this same version.
 export function isUnsaved(
   draft: string,
   showing: string,
+  after: number,
   state: SaveState,
 ): boolean {
-  return draft !== showing && draft !== state.saved;
+  if (draft === showing) return false;
+  return !(state.saved === draft && state.savedAfter === after);
+}
+
+// The error beside Save, while the box still holds the words it refused.
+export function currentError(
+  draft: string,
+  state: SaveState,
+): string | undefined {
+  if (!state.error) return undefined;
+  if (state.failed !== undefined && state.failed !== draft) return undefined;
+  return state.error;
 }
 
 export type DraftStore = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -67,42 +106,53 @@ export function draftKey(kind: string, id: string): string {
   return `unprompted:unsaved:${kind}:${id}`;
 }
 
-// The words left unsaved in this box, if they were typed over the version
-// showing now. Words typed over an older version give way to the newer one.
+export type KeptDraft = { body: string; overtaken: boolean };
+
+// The words left unsaved in this box, if any. `overtaken` when they were
+// typed over other words than the ones showing now: someone saved newer
+// words, or a deploy changed the built-in ones. They come back either way,
+// marked, so a refusal that says "reload" never costs the words.
 export function readDraft(
   store: DraftStore | undefined,
   key: string,
   after: number,
   showing: string,
-): string | undefined {
+): KeptDraft | undefined {
   try {
     const raw = store?.getItem(key);
     if (!raw) return undefined;
-    const v = JSON.parse(raw) as { after?: unknown; body?: unknown };
-    if (v.after !== after || typeof v.body !== "string") {
+    const v = JSON.parse(raw) as {
+      after?: unknown;
+      base?: unknown;
+      body?: unknown;
+    };
+    if (typeof v.body !== "string" || v.body === showing) {
       store?.removeItem(key);
       return undefined;
     }
-    return v.body === showing ? undefined : v.body;
+    return { body: v.body, overtaken: v.after !== after || v.base !== showing };
   } catch {
     return undefined;
   }
 }
 
-// Keeps unsaved words for this box, or forgets them once they're saved or
-// match what's showing.
+// Keeps unsaved words for this box, with the version and words they were
+// typed over (null once newer words came in under them), or forgets them once they're saved or match what's showing.
+// False when the words couldn't be kept.
 export function keepDraft(
   store: DraftStore | undefined,
   key: string,
-  after: number,
-  body: string,
+  draft: { after: number; base: string | null; body: string },
   unsaved: boolean,
-): void {
+): boolean {
   try {
-    if (unsaved) store?.setItem(key, JSON.stringify({ after, body }));
-    else store?.removeItem(key);
+    if (!store) return !unsaved;
+    if (unsaved) store.setItem(key, JSON.stringify(draft));
+    else store.removeItem(key);
+    return true;
   } catch {
     // Storage may be full, blocked or missing: the box still works.
+    return !unsaved;
   }
 }
 
