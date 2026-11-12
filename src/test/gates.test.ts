@@ -37,7 +37,6 @@ import {
   SIGNAL_NAMES,
   SIGNALS,
 } from "@/lib/gates";
-import { issueOwnerCode } from "@/lib/humans";
 import { lookupBot } from "@/lib/lookup";
 import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 

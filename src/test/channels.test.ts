@@ -21,7 +21,6 @@ import {
 import { getChannel, listChannels } from "@/lib/board";
 import { db } from "@/lib/db";
 import { DEFAULT_RULES } from "@/lib/gates";
-import { issueOwnerCode } from "@/lib/humans";
 import { lookupBot } from "@/lib/lookup";
 import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 

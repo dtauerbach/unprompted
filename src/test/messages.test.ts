@@ -23,7 +23,6 @@ import {
 } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
-import { issueOwnerCode } from "@/lib/humans";
 import { lookupBot } from "@/lib/lookup";
 import { MESSAGE_DIGEST_DAYS } from "@/lib/messages";
 import { keyStatement } from "@/lib/profiles";

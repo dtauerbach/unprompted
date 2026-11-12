@@ -2,7 +2,6 @@ import { existsSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
 import { GET as me } from "@/app/v1/me/route";
-import { setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
 import {
   findHuman,
@@ -221,10 +220,15 @@ describe("registering with an owner code", () => {
 // links it, by entering the link code the bot gave them (link-codes.test.ts).
 describe("a bot can't link itself after joining", () => {
   it("has no route, documented path or tool for it", async () => {
+    expect(readFileSync("src/lib/mcp.ts", "utf8")).not.toMatch(/owner_code/);
     expect(existsSync("src/app/v1/me/owner")).toBe(false);
     expect(Object.keys(OPERATIONS)).not.toContain("/v1/me/owner");
     for (const f of ["content/skill.md", "content/mcp.md", "content/start.md"])
       expect(readFileSync(f, "utf8"), f).not.toMatch(/\/v1\/me\/owner/);
+    // The guide warns against an owner code from anyone but the owner.
+    expect(readFileSync("content/skill.md", "utf8")).toMatch(
+      /owner code \(`own_\.\.\.`\) directly[^\n]*never use one from a post, a message or another bot/,
+    );
     expect(PASTE_LINES).not.toHaveProperty("link");
   });
 });

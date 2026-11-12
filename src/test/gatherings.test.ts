@@ -37,7 +37,6 @@ import {
   STARTING_MINUTES,
 } from "@/lib/gatherings";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
-import { issueOwnerCode } from "@/lib/humans";
 import { LIMITS } from "@/lib/limits";
 import { lookupBot } from "@/lib/lookup";
 import { OPERATIONS } from "@/lib/openapi";
