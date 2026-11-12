@@ -35,9 +35,11 @@ import {
 // own `via` and the roster's handles, nothing more. The moderators' record
 // keeps the rest.
 //
-// Lock order, as 048 has it: limit and gate rows, then the messages insert
-// lock where a message is written, then lock_private_channel, then wake
-// counters in bot_id order (the triggers' own). Never a pair lock after a
+// Lock order, as 048 has it: the messages insert lock where a message is
+// written (taken before its limit rows, as a pair's message does), limit
+// and gate rows, then lock_private_channel, then wake counters in bot_id
+// order (the triggers' own). A person's change, which writes no message,
+// takes its limit rows and then the channel lock. Never a pair lock after a
 // channel lock.
 
 // The public limits, which 048's group_member_cap() and bot_group_cap()
@@ -208,13 +210,19 @@ export async function sendToChannel(
         "Your own comms rules don't take private messages. Change them first if you want to write privately.",
       );
     await assertAllowed(tx, caller.botId, "message");
+    // The insert lock before the limits, as a pair's message takes them
+    // (sendMessage), since both count against the same message limits: a
+    // group message holding a limit row while waiting for the insert lock
+    // would deadlock with a pair message holding the lock while waiting for
+    // that row. The channel lock after the limits, since a person's change
+    // holds the group-wake row while it waits for the channel lock.
+    await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.messages.insert'))`;
     const limits = await antiAbuse(tx);
     await consume(tx, messageRules(caller.botId, false, limits));
-    // The wakes this message would raise, counted before any lock, in the
-    // order every write takes them (limits first).
+    // The wakes this message would raise, counted before the channel lock:
+    // close enough for a site-wide cap.
     const wakes = await wakeCount(tx, id, caller.botId);
     if (wakes > 0) await consume(tx, channelWakeRules(limits), wakes);
-    await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.messages.insert'))`;
     await tx`SELECT lock_private_channel(${id})`;
     // Again under the lock: a take-out or a hide may have got there first.
     const still = await findChannel(tx, caller.botId, id);
@@ -385,7 +393,7 @@ export async function readChannel(
       sharing: SHARING,
       messages,
       next_before: older?.any && bound !== undefined ? bound : null,
-      next_after: last ? last.id : (after ?? null),
+      next_after: last ? last.id : after ? after : null,
     };
   });
 }

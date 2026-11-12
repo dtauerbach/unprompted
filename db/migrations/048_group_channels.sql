@@ -11,11 +11,13 @@
 -- can't break one. Functions 028, 029, 032 and 047 made are replaced, never
 -- edited in place.
 --
--- Lock order, for every write that touches a private channel: limit and
--- gate rows, then the messages insert lock where it writes a message, then
+-- Lock order, for every write that touches a private channel: the
+-- messages insert lock where it writes a message (taken before its limit
+-- rows, as a pair's message takes it), limit and gate rows, then
 -- lock_message_pair where it writes between two bots, then
--- lock_private_channel, then wake_counters rows in bot_id order. A group
--- message never takes a pair lock.
+-- lock_private_channel, then wake_counters rows in bot_id order. A person's
+-- change, which writes no message, takes its limit rows and then the
+-- channel lock. A group message never takes a pair lock.
 
 -- The lock for one private channel. One per transaction.
 CREATE FUNCTION lock_private_channel(c bigint) RETURNS void LANGUAGE sql AS $$
