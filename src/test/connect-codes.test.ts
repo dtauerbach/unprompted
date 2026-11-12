@@ -1,6 +1,10 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as botRoute } from "@/app/v1/bots/[handle]/route";
 import { POST as connectRoute } from "@/app/v1/connect/route";
+import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
+import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as pairingCodeRoute } from "@/app/v1/me/pairing-codes/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { POST as wakeUrlRoute } from "@/app/v1/me/wake/url/route";
@@ -341,6 +345,52 @@ describe("a link only just made", () => {
   });
 });
 
+describe("links made before linked_at", () => {
+  // 047 worked out linked_at for links already made from when each bot
+  // joined and the log. Run again over links made the usual way, it must
+  // give each the time its link was really made, which the trigger kept.
+  it("are given the time their current link was made", async () => {
+    const sqlText = readFileSync(
+      path.join(process.cwd(), "db/migrations/047_connect_after_a_day.sql"),
+      "utf8",
+    );
+    const backfill = sqlText.match(
+      /UPDATE bots b SET linked_at = greatest\([\s\S]*?WHERE b\.owner_id IS NOT NULL;/,
+    )?.[0];
+    expect(backfill).toBeTruthy();
+    // Linked at sign-up with an owner code.
+    const owner_code = (await issueOwnerCode(db(), "google-1", null)).code;
+    await register("alice", { owner_code });
+    // Linked later with a link code.
+    const bob = await register("bob");
+    await new Promise((r) => setTimeout(r, 20));
+    await linkBot(bob.key, "google-1");
+    // Linked, released, then linked to someone else.
+    const carol = await register("carol");
+    await linkBot(carol.key, "google-1");
+    await new Promise((r) => setTimeout(r, 20));
+    await releaseBot(db(), "google-1", "carol", null);
+    await new Promise((r) => setTimeout(r, 20));
+    await linkBot(carol.key, "google-2");
+    // Never linked.
+    await register("dave");
+    const read = () =>
+      db()<{ handle: string; linked_at: Date | null }[]>`
+        SELECT handle, linked_at FROM bots WHERE NOT is_house ORDER BY handle`;
+    const before = await read();
+    expect(before.filter((b) => b.linked_at).length).toBe(3);
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE bots DISABLE TRIGGER bots_linked_at`;
+      await tx`
+        UPDATE bots SET linked_at = now() - interval '30 days'
+        WHERE owner_id IS NOT NULL`;
+      await tx.unsafe(backfill ?? "");
+      await tx`ALTER TABLE bots ENABLE TRIGGER bots_linked_at`;
+    });
+    expect(await read()).toEqual(before);
+  });
+});
+
 describe("releasing a bot", () => {
   async function waiting(): Promise<number> {
     const [r] = await db()<{ n: number }[]>`
@@ -568,6 +618,75 @@ describe("connecting an agent with a code", () => {
   });
 });
 
+// A connect ends every key the bot has while the bot itself may be rotating
+// or revoking one. Those take their key's row and then touch the bot's row
+// (a new key's frozen check, a log line's foreign key); a connect takes the
+// bot's row and then every key's. Each test holds the key's row in a third
+// transaction so the two line up in the order that used to deadlock, then
+// lets go: both must finish.
+describe("a connect at the same moment as the bot changing its own key", () => {
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  async function race(
+    alice: Bot,
+    other: () => Promise<{ status: number }>,
+  ): Promise<{ other: number; connect: number }> {
+    const code = await codeFor("alice");
+    let letGo = () => {};
+    const held = new Promise<void>((r) => {
+      letGo = r;
+    });
+    let holding = () => {};
+    const holds = new Promise<void>((r) => {
+      holding = r;
+    });
+    const holder = db().begin(async (tx) => {
+      await tx`
+        SELECT 1 FROM api_keys WHERE key_hash = ${hashKey(alice.key)} FOR UPDATE`;
+      holding();
+      await held;
+    });
+    await holds;
+    const first = other();
+    await pause(300);
+    const second = connect({ handle: "alice", code });
+    await pause(300);
+    letGo();
+    await holder;
+    const [a, b] = await Promise.all([first, second]);
+    return { other: a.status, connect: b.status };
+  }
+
+  it("lets a rotation and a connect both finish, the connect last", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const alice = await owned("alice");
+    const r = await race(alice, () =>
+      call(rotateRoute, { key: alice.key, path: "/v1/me/keys/rotate" }),
+    );
+    expect(r).toEqual({ other: 200, connect: 200 });
+    // The connect came after, so it ended the rotated key too.
+    const [live] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM api_keys WHERE revoked_at IS NULL`;
+    expect(live?.n).toBe(1);
+    const [log] = await db()<{ detail: Record<string, unknown> }[]>`
+      SELECT detail FROM action_log WHERE action = 'bot.connect'`;
+    expect(log?.detail).toMatchObject({ keys_revoked: 1 });
+  });
+
+  it("lets a revocation and a connect both finish", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const alice = await owned("alice");
+    const r = await race(alice, () =>
+      call(revokeRoute, { key: alice.key, path: "/v1/me/keys/revoke" }),
+    );
+    expect(r.connect).toBe(200);
+    expect([200, 204]).toContain(r.other);
+    const [live] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM api_keys WHERE revoked_at IS NULL`;
+    expect(live?.n).toBe(1);
+  });
+});
+
 describe("a connect code that doesn't work", () => {
   it("gets one refusal for every way it can fail, counts the try, and changes nothing else", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -746,6 +865,36 @@ describe("a connect code that doesn't work", () => {
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe("invalid_connect_code");
     }
+  });
+});
+
+describe("what bots read about a lost key", () => {
+  const text = (f: string) =>
+    readFileSync(path.join(process.cwd(), "content", f), "utf8");
+
+  it("never says a lost bot is gone without saying a linked one can come back", () => {
+    for (const f of ["skill.md", "start.md", "mcp.md"]) {
+      const t = text(f);
+      expect(t, f).not.toMatch(
+        /can't be recovered|cannot be recovered|no recovery/,
+      );
+      for (const line of t
+        .split("\n")
+        .filter((l) => /bot is (gone|lost)|old bot is lost|it's lost/.test(l)))
+        expect(line, f).toMatch(/linked/);
+      expect(t, f).toMatch(/connect.code/);
+    }
+  });
+
+  it("says how in the guide, with the public limits", () => {
+    const t = text("skill.md");
+    expect(t).toContain("POST /v1/connect");
+    expect(t).toContain("`connect_code`");
+    expect(t).toMatch(/linked you a day or more ago/);
+    expect(t).toContain(
+      `Per person, ${LIMITS.connectCodePerHour.limit} connect codes an hour; per address, ${LIMITS.connectTryPerHour.limit} tries at using one, failures included.`,
+    );
+    expect(text("mcp.md")).toMatch(/sign_up takes their connect code/);
   });
 });
 

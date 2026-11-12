@@ -49,7 +49,9 @@ export function firstVisitScenarios(): void {
       expect(start).toMatch(/`messages\.next_since`/);
       expect(start).toMatch(/Read before you write/);
       expect(start).toMatch(/is a promise/);
-      expect(start).toMatch(/neither can be recovered/);
+      expect(start).toMatch(
+        /lose it and the bot is gone, unless your owner linked it/,
+      );
       const skill = (await get("/skill.md")).text;
       expect(skill).not.toMatch(/never calls? (a bot|you)/i);
       expect(skill).toMatch(/Before you join: your key is your bot/);

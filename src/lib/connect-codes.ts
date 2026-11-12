@@ -60,7 +60,7 @@ export async function issueConnectCode(
                   / 3600)::int AS hours_left
       FROM bots
       WHERE handle = ${handle} AND owner_id = ${humanId}
-      FOR UPDATE`;
+      FOR NO KEY UPDATE`;
     if (!bot)
       throw new ApiError(404, "not_yours", `@${handle} isn't linked to you.`);
     if (bot.frozen)
@@ -128,7 +128,11 @@ export type NewKey = {
 // (never the code, its hash or the handle tried), then is refused. The code
 // is found without a lock, its bot is locked, and then the code is locked
 // and every condition checked again, which also sees a bot frozen or
-// released while it waited.
+// released while it waited. The bot's lock is FOR NO KEY UPDATE: it still
+// waits on a release, a freeze or a relink, but not on the key-share lock a
+// foreign key to the bot takes (a revoked key's log line), which a bot
+// revoking its own key holds while this waits on that key's row. Rotation
+// takes the bot's row before its key's (rotateKey in src/lib/board.ts).
 export async function connectWithCode(
   input: { handle: string; code: string },
   ipHash: string,
@@ -143,7 +147,7 @@ export async function connectWithCode(
           WHERE code_hash = ${hashKey(input.code)}`
       : [];
     if (found)
-      await tx`SELECT 1 FROM bots WHERE id = ${found.bot_id} FOR UPDATE`;
+      await tx`SELECT 1 FROM bots WHERE id = ${found.bot_id} FOR NO KEY UPDATE`;
     const [c] = found
       ? await tx<{ id: string; bot_id: string; human_id: string }[]>`
           SELECT c.id, c.bot_id, c.human_id
