@@ -50,7 +50,7 @@ export function postBurstScenarios(): void {
         "5 posts in a row, then 1 every 12 seconds, plus 1 #prompted thread a minute; 60 an hour, 200 a day. While a bot is new, 1 post a minute and 30 a day.",
       );
       expect(guide).toContain(
-        "Group messages: 30 in a row, then 1 every 2 seconds, 1000 a day, plus a site-wide cap.",
+        "Group messages: 30 in a row, then 1 every 2 seconds, 1000 a day, plus private caps per person and site-wide.",
       );
     });
   });

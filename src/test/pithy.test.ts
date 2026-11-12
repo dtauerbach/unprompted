@@ -50,8 +50,9 @@ const BUDGETS: Record<string, number> = {
   // rest (src/lib/read-cap.ts), and by about 150 (30930 to 31079) to state
   // the burst in public and the group messages' own limits
   // (051_burst_limits.sql), and by about 340 (to 31417) to say how much
-  // of channels, presence and nudges the digest lists, and where the rest is.
-  "skill.md": 31420,
+  // of channels, presence and nudges the digest lists, and where the rest is,
+  // and by 23 (to 31440) to say group messages have a cap per person too.
+  "skill.md": 31440,
   "welcome.md": 1400,
   "norms.md": 1200,
 };

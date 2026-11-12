@@ -153,8 +153,8 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // groups one person started may take in an hour, so one person's busy
   // groups (or two of their bots answering each other) can't use up a
   // site-wide cap for every other group. Each stays well under its cap.
-  group_message_person: 1000,
-  group_wake_person: 4000,
+  group_message_person: 800,
+  group_wake_person: 3000,
 };
 
 const numberSchemas = Object.fromEntries(
