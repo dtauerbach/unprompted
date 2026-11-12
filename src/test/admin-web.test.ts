@@ -386,7 +386,10 @@ describe("admin actions", () => {
     await addAdmin(db(), { authUserId: "google-admin" }, "Admin.", "x");
     session.user = { id: "google-admin" };
     const c = await calls();
-    expect(await c.saveCopy()).toEqual({ message: "Saved." });
+    expect(await c.saveCopy()).toEqual({
+      message: "Saved.",
+      version: expect.any(Number),
+    });
     await removeAdmin(db(), { authUserId: "google-admin" }, "Done.", "x");
     expect(await c.restoreCopy()).toEqual({
       error: "Only admins can do that.",
@@ -402,16 +405,17 @@ describe("admin actions", () => {
     );
     session.user = { id: "google-admin" };
     const a = await import("@/app/admin/actions");
-    expect(
-      await a.saveCopyAction(
-        {},
-        form({ key: "home.tagline", body: "Bots at play.", after: "0" }),
-      ),
-    ).toEqual({ message: "Saved." });
+    const first = await a.saveCopyAction(
+      {},
+      form({ key: "home.tagline", body: "Bots at play.", after: "0" }),
+    );
+    expect(first).toEqual({ message: "Saved.", version: expect.any(Number) });
     expect((await readCopy())["home.tagline"]).toBe("Bots at play.");
     const [v] = await db()<{ id: string; human_id: string }[]>`
       SELECT id, human_id FROM copy_versions`;
     expect(Number(v?.human_id)).toBe(humanId);
+    // The answer names the version the save made: the page's next "after".
+    expect(first.version).toBe(Number(v?.id));
     // Two admins on an old page: the second is told to reload.
     expect(
       await a.saveCopyAction(
@@ -431,7 +435,7 @@ describe("admin actions", () => {
           after: String(v?.id),
         }),
       ),
-    ).toEqual({ message: "Restored." });
+    ).toEqual({ message: "Restored.", version: expect.any(Number) });
     expect((await readCopy())["home.tagline"]).toBe(COPY["home.tagline"].text);
   });
 
@@ -525,7 +529,7 @@ describe("admin actions", () => {
         {},
         form({ key: "mcp", body: "Words for apps that connect.", after: "0" }),
       ),
-    ).toEqual({ message: "Saved." });
+    ).toEqual({ message: "Saved.", version: expect.any(Number) });
     expect(cacheCalls.updateTag).toEqual([botTextTag("mcp")]);
     await a.restoreBotTextAction(
       {},
@@ -572,7 +576,7 @@ describe("admin actions", () => {
           after: String(v2.version),
         }),
       ),
-    ).toEqual({ message: "Restored." });
+    ).toEqual({ message: "Restored.", version: expect.any(Number) });
     expect((await readCopy())["forum.title"]).toBe("First words");
     expect(await db()`SELECT 1 FROM copy_versions`).toHaveLength(3);
     // A version of another piece can't be restored here.
@@ -626,7 +630,7 @@ describe("admin actions", () => {
           after: String(v2.version),
         }),
       ),
-    ).toEqual({ message: "Restored." });
+    ).toEqual({ message: "Restored.", version: expect.any(Number) });
     expect((await botTextState(db(), "start")).text).toBe(first.trim());
     const v3 = (await botTextState(db(), "start")).latest?.id;
     expect(
@@ -634,7 +638,7 @@ describe("admin actions", () => {
         {},
         form({ key: "start", version: "original", after: String(v3) }),
       ),
-    ).toEqual({ message: "Restored." });
+    ).toEqual({ message: "Restored.", version: expect.any(Number) });
     expect((await botTextState(db(), "start")).text).toBe(start);
     expect(await db()`SELECT 1 FROM bot_text_versions`).toHaveLength(4);
     // A version of another text can't be restored here.
@@ -682,7 +686,7 @@ describe("admin actions", () => {
           after: String(d2.version),
         }),
       ),
-    ).toEqual({ message: "Restored." });
+    ).toEqual({ message: "Restored.", version: expect.any(Number) });
     expect((await shown())?.shown).toBe("First words.");
     expect(
       await a.restoreDescriptionAction(
@@ -693,7 +697,7 @@ describe("admin actions", () => {
           after: String((await shown())?.latest?.id),
         }),
       ),
-    ).toEqual({ message: "Restored." });
+    ).toEqual({ message: "Restored.", version: expect.any(Number) });
     expect((await shown())?.shown).toBe(builtIn);
     expect(
       await a.restoreDescriptionAction(

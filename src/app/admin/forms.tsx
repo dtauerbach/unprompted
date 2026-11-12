@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { MAX_BOT_TEXT } from "@/lib/bot-text-limit";
 import {
   type AdminFormState,
@@ -12,20 +12,41 @@ import {
   saveCopyAction,
   saveDescriptionAction,
 } from "./actions";
+import {
+  COPY_FIRST,
+  currentError,
+  draftKey,
+  guardSave,
+  isUnsaved,
+  keepDraft,
+  NOT_SAVED,
+  NOT_SAVED_UNKEPT,
+  OVERTAKEN,
+  RESTORED,
+  readDraft,
+  SAVING,
+  type SaveState,
+  SLOW_SAVE_MS,
+  STILL_SAVING,
+  STILL_SAVING_UNKEPT,
+  sessionStore,
+  UNSAVED,
+} from "./save-guard";
 
 // What a save or a restore is for: a piece of copy, a text bots read, or one
 // of the site's own channels' descriptions.
 export type TextKind = "copy" | "bot_text" | "description";
 
+// Each wrapped so a save that throws or comes back empty says so.
 const SAVE = {
-  copy: saveCopyAction,
-  bot_text: saveBotTextAction,
-  description: saveDescriptionAction,
+  copy: guardSave(saveCopyAction),
+  bot_text: guardSave(saveBotTextAction),
+  description: guardSave(saveDescriptionAction),
 };
 const RESTORE = {
-  copy: restoreCopyAction,
-  bot_text: restoreBotTextAction,
-  description: restoreDescriptionAction,
+  copy: guardSave(restoreCopyAction),
+  bot_text: guardSave(restoreBotTextAction),
+  description: guardSave(restoreDescriptionAction),
 };
 const MAX = { copy: 2000, bot_text: MAX_BOT_TEXT, description: 280 };
 
@@ -45,18 +66,8 @@ const INPUT =
   "w-full rounded-md border border-neutral-300 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900";
 
 function Result({ state }: { state: AdminFormState }) {
-  if (state.error)
-    return (
-      <span className="text-sm text-amber-700 dark:text-amber-300">
-        {state.error}
-      </span>
-    );
-  if (state.message)
-    return (
-      <span className="text-sm text-neutral-600 dark:text-neutral-400">
-        {state.message}
-      </span>
-    );
+  if (state.error) return <Warn>{state.error}</Warn>;
+  if (state.message) return <Quiet>{state.message}</Quiet>;
   return null;
 }
 
@@ -74,20 +85,88 @@ export function CopyForm({
   // What the box holds, for a screen reader, where the page shows it nearby.
   label?: string;
 }) {
-  const [state, action, pending] = useActionState<AdminFormState, FormData>(
+  const [state, action, pending] = useActionState<SaveState, FormData>(
     SAVE[kind],
     {},
   );
   // The box holds what was typed, so a refused save (a dropped {spot}, say)
   // doesn't put the old words back over it: React resets a form's
-  // uncontrolled fields after its action. A newer version from the server
-  // starts the box again from its words.
+  // uncontrolled fields after its action.
   const [draft, setDraft] = useState(text);
-  const [version, setVersion] = useState(after);
-  if (version !== after) {
-    setVersion(after);
-    setDraft(text);
+  // The version the box last took from the page.
+  const [seen, setSeen] = useState({ after, text });
+  const [note, setNote] = useState<"restored" | "overtaken" | null>(null);
+  const [slow, setSlow] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [kept, setKept] = useState(true);
+  if (!pending && (seen.after !== after || seen.text !== text)) {
+    // New words from the page: this box's own save, or someone else's. The
+    // box takes them unless it holds other words the admin typed and hasn't
+    // saved, which it keeps. Decided only once this box's save has answered,
+    // since words that arrive meanwhile may be someone else's. The server
+    // may tidy the words a save took (a trailing space), so the box takes
+    // the tidied ones in their place.
+    // This box's own save made the version now showing.
+    const landed =
+      state.savedVersion !== undefined && state.savedVersion === after;
+    const ours = landed && draft === state.saved;
+    // Words a save found already showing, but for what the server tidies (a
+    // trailing space), aren't the admin's to keep over someone else's.
+    const taken =
+      state.savedVersion === undefined &&
+      state.saved === draft &&
+      state.savedAfter === seen.after;
+    const typed = draft !== seen.text && draft !== text && !ours && !taken;
+    setSeen({ after, text });
+    if (typed) {
+      // Words typed while this box's own save was going aren't overtaken by
+      // it: they're just not saved yet.
+      setNote(landed ? null : "overtaken");
+    } else {
+      setDraft(text);
+      setNote(null);
+    }
   }
+  const stored = draftKey(kind, copyKey);
+  // Until a save going now answers, the box judges its words against the
+  // version it last took, not words that came in meanwhile.
+  const unsaved = isUnsaved(draft, seen.text, seen.after, state);
+  // Words typed and not yet saved come back after a reload or a trip to sign
+  // in. Read once, when the page is first in the browser, where the storage
+  // is, before anything is written there; never again, or words a save just
+  // took would come back from storage before they're cleared from it.
+  useEffect(() => {
+    if (ready) return;
+    const back = readDraft(sessionStore(), stored, after, text);
+    if (back) {
+      setDraft(back.body);
+      setNote(back.overtaken ? "overtaken" : "restored");
+    }
+    setReady(true);
+  }, [ready, stored, after, text]);
+  useEffect(() => {
+    if (!ready) return;
+    setKept(
+      keepDraft(
+        sessionStore(),
+        stored,
+        {
+          after: seen.after,
+          base: note === "overtaken" ? null : seen.text,
+          body: draft,
+        },
+        unsaved,
+      ),
+    );
+  }, [ready, stored, seen, draft, unsaved, note]);
+  useEffect(() => {
+    if (!pending) {
+      setSlow(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlow(true), SLOW_SAVE_MS);
+    return () => clearTimeout(timer);
+  }, [pending]);
   // A whole document gets room and keeps its lines; a piece is one line.
   const document = kind === "bot_text";
   return (
@@ -97,7 +176,10 @@ export function CopyForm({
       <textarea
         name="body"
         value={draft}
-        onChange={(e) => setDraft(e.target.value)}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (note === "restored" || e.target.value === text) setNote(null);
+        }}
         rows={
           document
             ? Math.min(30, text.split("\n").length + 2)
@@ -107,13 +189,77 @@ export function CopyForm({
         aria-label={label}
         className={document ? `${INPUT} font-mono` : INPUT}
       />
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3" aria-live="polite">
         <button type="submit" disabled={pending} className={BUTTON}>
           Save
         </button>
-        <Result state={state} />
+        <SaveNote
+          state={state}
+          draft={draft}
+          after={seen.after}
+          pending={pending}
+          slow={slow}
+          unsaved={unsaved}
+          note={note}
+          kept={kept}
+        />
       </div>
     </form>
+  );
+}
+
+// One line beside Save: what the last save did, or that the words in the box
+// aren't saved yet. Never nothing while the box holds unsaved words.
+function SaveNote({
+  state,
+  draft,
+  after,
+  pending,
+  slow,
+  unsaved,
+  note,
+  kept,
+}: {
+  state: SaveState;
+  draft: string;
+  after: number;
+  pending: boolean;
+  slow: boolean;
+  unsaved: boolean;
+  note: "restored" | "overtaken" | null;
+  kept: boolean;
+}) {
+  if (pending) {
+    if (!slow) return <Quiet>{SAVING}</Quiet>;
+    return <Warn>{kept ? STILL_SAVING : STILL_SAVING_UNKEPT}</Warn>;
+  }
+  const error = currentError(draft, after, state);
+  if (error) {
+    if (kept || !unsaved) return <Warn>{error}</Warn>;
+    // A reload would lose the words: say so, whatever the refusal says.
+    if (error === NOT_SAVED) return <Warn>{NOT_SAVED_UNKEPT}</Warn>;
+    return <Warn>{`${error} ${COPY_FIRST}`}</Warn>;
+  }
+  if (unsaved && note === "overtaken") return <Warn>{OVERTAKEN}</Warn>;
+  if (unsaved && note === "restored") return <Warn>{RESTORED}</Warn>;
+  if (unsaved) return <Warn>{UNSAVED}</Warn>;
+  if (state.message) return <Quiet>{state.message}</Quiet>;
+  return null;
+}
+
+function Warn({ children }: { children: string }) {
+  return (
+    <span className="text-sm text-amber-700 dark:text-amber-300">
+      {children}
+    </span>
+  );
+}
+
+function Quiet({ children }: { children: string }) {
+  return (
+    <span className="text-sm text-neutral-600 dark:text-neutral-400">
+      {children}
+    </span>
   );
 }
 
@@ -130,7 +276,7 @@ export function RestoreForm({
   label: string;
   kind?: TextKind;
 }) {
-  const [state, action, pending] = useActionState<AdminFormState, FormData>(
+  const [state, action, pending] = useActionState<SaveState, FormData>(
     RESTORE[kind],
     {},
   );

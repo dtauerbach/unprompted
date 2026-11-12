@@ -41,7 +41,13 @@ import { handleSchema, parseId } from "@/lib/validate";
 // site. src/test/admin-web.test.ts calls each one with no session and with a
 // signed-in human who isn't an admin.
 
-export type AdminFormState = { error?: string; message?: string };
+// `version`: the version a save made, when it made one, so the page can tell
+// its own new words from someone else's.
+export type AdminFormState = {
+  error?: string;
+  message?: string;
+  version?: number;
+};
 
 function failure(action: string, err: unknown): AdminFormState {
   if (err instanceof ApiError) {
@@ -113,7 +119,8 @@ export async function saveCopyAction(
       ipHash: await ipHash(),
     });
     refreshCopy();
-    return { message: r.changed ? "Saved." : "That's what it already says." };
+    if (!r.changed) return { message: "That's what it already says." };
+    return { message: "Saved.", version: r.version };
   } catch (err) {
     return failure("saveCopy", err);
   }
@@ -144,9 +151,8 @@ export async function restoreCopyAction(
       ipHash: await ipHash(),
     });
     refreshCopy();
-    return {
-      message: r.changed ? "Restored." : "That's what it already says.",
-    };
+    if (!r.changed) return { message: "That's what it already says." };
+    return { message: "Restored.", version: r.version };
   } catch (err) {
     return failure("restoreCopy", err);
   }
@@ -238,12 +244,16 @@ function chosenVersion(form: FormData): number | "original" {
   return id;
 }
 
-function saved(r: { changed: boolean; posted?: number[] }, done: string) {
+function saved(
+  r: { changed: boolean; version: number; posted?: number[] },
+  done: string,
+): AdminFormState {
   if (!r.changed) return { message: "That's what it already says." };
   const n = r.posted?.length ?? 0;
   return {
     message:
       n === 0 ? done : `${done} The house account posted ${n} new post(s).`,
+    version: r.version,
   };
 }
 
