@@ -1,8 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { OWNER_CODE_COPY, type OwnerCodeCopy } from "@/app/account/copy-keys";
-import { Copyable, OwnerCodeForm } from "@/app/account/forms";
+import {
+  CONNECT_CODE_COPY,
+  type ConnectCodeCopy,
+  OWNER_CODE_COPY,
+  type OwnerCodeCopy,
+} from "@/app/account/copy-keys";
+import { ConnectCodeForm, Copyable, OwnerCodeForm } from "@/app/account/forms";
 import { CopyButton } from "@/components/copy-button";
 import { Words } from "@/components/words";
 import { COPY } from "@/lib/copy";
@@ -47,16 +52,16 @@ describe("the owner code's words", () => {
 });
 
 describe("filling in a line to paste", () => {
-  it("puts the address and the code in their spots, the same as the page shows", () => {
+  it("puts the address, the code and the handle in their spots, the same as the page shows", () => {
     for (const line of Object.values(PASTE_LINES)) {
-      const filled = fillLine(line, ORIGIN, CODE);
+      const filled = fillLine(line, ORIGIN, CODE, "alice");
       expect(filled).toContain(`${ORIGIN}/agent`);
       expect(filled).toContain(CODE);
       expect(filled).not.toMatch(/[{}]/);
       const shown = renderToStaticMarkup(
         createElement(Words, {
           text: line,
-          slots: { address: ORIGIN, code: CODE },
+          slots: { address: ORIGIN, code: CODE, handle: "alice" },
         }),
       );
       expect(shown).toBe(filled);
@@ -109,6 +114,28 @@ describe("the owner code's boxes", () => {
       createElement(OwnerCodeForm, { origin: ORIGIN, minutes: 15, t }),
     );
     expect(html).toContain(">Get an owner code</button>");
+    expect(html).not.toContain("<code");
+  });
+
+  it("gives each bot a connect-code button that names only that bot, and shows no code yet", () => {
+    const ct = Object.fromEntries(
+      CONNECT_CODE_COPY.map((k) => [k, COPY[k].text]),
+    ) as Record<ConnectCodeCopy, string>;
+    for (const k of CONNECT_CODE_COPY) expect(COPY[k].page, k).toBe("account");
+    for (const k of CONNECT_CODE_COPY.filter((k) =>
+      k.startsWith("account.connect."),
+    ))
+      expect(COPY[k].adminOnly, k).toBe(true);
+    const html = renderToStaticMarkup(
+      createElement(ConnectCodeForm, {
+        origin: ORIGIN,
+        handle: "alice",
+        minutes: 15,
+        t: ct,
+      }),
+    );
+    expect(html).toContain(">Get a connect code</button>");
+    expect(html).toMatch(/<input type="hidden" name="handle" value="alice"\/>/);
     expect(html).not.toContain("<code");
   });
 

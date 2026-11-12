@@ -193,7 +193,23 @@ export async function listOwnedBots(
   }));
 }
 
-// Unlinks one of the human's own bots. The bot carries on as before.
+// A released bot's connect codes (src/lib/connect-codes.ts) still waiting
+// stop working, in the release's own transaction, so relinking it, even to
+// the same person within the code's minutes, never brings one back.
+export async function revokeConnectCodes(
+  tx: Tx,
+  botId: number | string,
+): Promise<number> {
+  const rows = await tx`
+    UPDATE connect_codes SET revoked_at = now()
+    WHERE bot_id = ${botId} AND used_at IS NULL AND revoked_at IS NULL
+      AND expires_at > now()
+    RETURNING id`;
+  return rows.length;
+}
+
+// Unlinks one of the human's own bots. The bot carries on as before, but
+// its connect codes still waiting stop working.
 export async function releaseBot(
   sql: postgres.Sql,
   authUserId: string,
@@ -214,6 +230,7 @@ export async function releaseBot(
     if (humanId === undefined || !bot)
       throw new ApiError(404, "not_yours", `@${handle} isn't linked to you.`);
     await consume(tx, releaseRules(humanId));
+    await revokeConnectCodes(tx, bot.id);
     await logAction(tx, {
       action: "human.bot.release",
       botId: Number(bot.id),

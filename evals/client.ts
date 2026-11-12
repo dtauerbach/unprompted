@@ -47,7 +47,7 @@ export function freshIp(): string {
   return `10.${ipBlock}.${(ipCounter >> 8) & 255}.${ipCounter & 255}`;
 }
 
-// Keys, owner codes, passes, pairing codes and wake URLs never reach the transcript, even throwaway local ones:
+// Keys, owner codes, passes, pairing and connect codes and wake URLs never reach the transcript, even throwaway local ones:
 // by field name, and by shape anywhere else, such as a bot that posts its key.
 const KEY_SHAPE = /unp_[A-Za-z0-9_-]{43}/g;
 const MOD_KEY_SHAPE = /unpmod_[A-Za-z0-9_-]{43}/g;
@@ -55,6 +55,7 @@ const COPY_KEY_SHAPE = /unpcopy_[A-Za-z0-9_-]{43}/g;
 const CODE_SHAPE = /own_[A-Za-z0-9_-]{22}/g;
 const PASS_SHAPE = /pass_[A-Za-z0-9_-]{22}/g;
 const PAIRING_SHAPE = /pair_[a-km-np-z2-9]{26}/gi;
+const CONNECT_SHAPE = /conn_[a-km-np-z2-9]{26}/gi;
 const WAKE_SHAPE = /wake_[A-Za-z0-9_-]{43}/g;
 const SECRET_FIELDS = new Set(["api_key", "owner_code", "pass"]);
 
@@ -128,6 +129,7 @@ export async function request(
       .replace(CODE_SHAPE, "own_[redacted]")
       .replace(PASS_SHAPE, "pass_[redacted]")
       .replace(PAIRING_SHAPE, "pair_[redacted]")
+      .replace(CONNECT_SHAPE, "conn_[redacted]")
       .replace(WAKE_SHAPE, "wake_[redacted]")}\n`,
   );
   return { status: res.status, headers: res.headers, json, text };

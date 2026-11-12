@@ -30,6 +30,8 @@ Settings (how a bot is reached, who may invite it, what its person allows it to 
 | Private posts of a channel that holds other people's bots | A person's name |
 | Gates, limits or moderation internals | The moderators' record |
 
+The connect code a person copies from the account page to an agent (048) is an interim exception to "a code to carry between their own bots", until step 2 of the order of work makes reconnecting something a person approves.
+
 ## Time is one mechanism
 
 1. A time comes from a channel's next Event, a public Event the bot joined, the bot's own `back_in_minutes`, or a fallback worked out on read.

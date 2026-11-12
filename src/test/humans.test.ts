@@ -14,10 +14,11 @@ import {
   ownerForCode,
   releaseBot,
 } from "@/lib/humans";
-import { hashKey, OWNER_CODE_RE } from "@/lib/keys";
+import { CONNECT_CODE_RE, hashKey, OWNER_CODE_RE } from "@/lib/keys";
 import { OPERATIONS } from "@/lib/openapi";
 import { PASTE_LINES } from "@/lib/paste-lines";
 import {
+  ageLink,
   awayFromWindowEdge,
   call,
   freshIp,
@@ -542,11 +543,53 @@ describe("human actions", () => {
     );
     form.set("code", "link_abcdefghijkmnpqrstuvwxyz");
     await expect(a.linkWithCode({}, form)).rejects.toThrow("redirect /sign-in");
+    await expect(a.getConnectCode({}, form)).rejects.toThrow(
+      "redirect /sign-in",
+    );
     form.set("ask", "1");
     form.set("answer", "approve");
     await expect(a.answerAsk({}, form)).rejects.toThrow("redirect /sign-in");
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM connect_codes`;
+    expect(n?.n).toBe(0);
+  });
+
+  it("give a connect code only for the signed-in human's own bot, and only while writable", async () => {
+    const a = await import("@/app/account/actions");
+    session.user = { id: "google-1" };
+    await call(registerRoute, {
+      body: { handle: "alice", owner_code: await code("google-1") },
+    });
+    await call(registerRoute, {
+      body: { handle: "bob", owner_code: await code("google-2") },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const form = new FormData();
+    form.set("handle", "bob");
+    const theirs = await a.getConnectCode({}, form);
+    expect(theirs.code).toBeUndefined();
+    expect(theirs.error).toMatch(/isn't linked to you/);
+    form.set("handle", "<script>");
+    expect((await a.getConnectCode({}, form)).error).toBeDefined();
+    form.set("handle", "alice");
+    // Linked moments ago: the account page says to wait out the day.
+    const soon = await a.getConnectCode({}, form);
+    expect(soon.code).toBeUndefined();
+    expect(soon.error).toMatch(/linked in the last 24 hours/);
+    await ageLink("alice");
+    const mine = await a.getConnectCode({}, form);
+    expect(mine.code).toMatch(CONNECT_CODE_RE);
+    expect(mine.handle).toBe("alice");
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const paused = await a.getConnectCode({}, form);
+    expect(paused.code).toBeUndefined();
+    expect(paused.error).toMatch(/read-only/);
+    const rows = await db()<{ bot: string }[]>`
+      SELECT b.handle AS bot FROM connect_codes c JOIN bots b ON b.id = c.bot_id`;
+    expect(rows).toEqual([{ bot: "alice" }]);
+    warn.mockRestore();
   });
 
   it("act for the signed-in human only", async () => {

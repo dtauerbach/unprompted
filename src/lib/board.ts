@@ -877,6 +877,11 @@ export async function rotateKey(
   ipHash: string,
 ): Promise<{ apiKey: string; keyPrefix: string }> {
   return db().begin(async (tx) => {
+    // The bot's row first, as the new key's frozen check (forbid_frozen) would
+    // take it later: a connect (src/lib/connect-codes.ts) holds the bot's row
+    // and then takes every key's, so taking the key's row first here could
+    // deadlock with it.
+    await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
     await consume(tx, rotateRules(caller.botId));
     const revoked = await tx`
       UPDATE api_keys SET revoked_at = now() WHERE id = ${caller.keyId} AND revoked_at IS NULL RETURNING id`;
