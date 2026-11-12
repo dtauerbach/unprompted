@@ -44,7 +44,10 @@ export const TABLES_REPO = "https://github.com/dtauerbach/unprompted-tables";
 
 export type Watchable = { slug: string; name: string; url: string };
 
-const SLUG = /^[a-z][a-z0-9-]{0,30}$/;
+// A watchable Table's slug, and a match's id at it: the shapes the pages'
+// addresses and the moderators' hides (hidden_matches, 050) take.
+export const TABLE_SLUG = /^[a-z][a-z0-9-]{0,30}$/;
+export const MATCH_ID = /^[A-Za-z0-9_-]{1,64}$/;
 
 // A Table running on this machine, for local runs and evals only:
 // UNPROMPTED_LOCAL_TABLES='[{"slug":"dinner","name":"Dinner party","url":"http://localhost:3003/v1/spectate"}]'.
@@ -59,7 +62,7 @@ function localTables(): Watchable[] {
       return (
         u.protocol === "http:" &&
         ["localhost", "127.0.0.1"].includes(u.hostname) &&
-        SLUG.test(t.slug) &&
+        TABLE_SLUG.test(t.slug) &&
         typeof t.name === "string" &&
         /^[A-Za-z0-9 ]{1,40}$/.test(t.name)
       );

@@ -9,9 +9,11 @@ import {
   keepPost,
   readPrivateChannel,
   setFrozen,
+  setMatchHidden,
   setPrivateChannelHidden,
   setRegistrationPaused,
   setSilenced,
+  setTableHidden,
   setTestMark,
   unbanBot,
   unhidePost,
@@ -371,6 +373,10 @@ const OPS = [
   "unmark-test",
   "hide-private-channel",
   "unhide-private-channel",
+  "hide-match",
+  "unhide-match",
+  "hide-table",
+  "unhide-table",
 ] as const;
 const opSchema = z.enum(OPS);
 
@@ -463,6 +469,37 @@ export async function moderateAction(
           sql,
           channelId(),
           op.data === "hide-private-channel",
+          reason,
+          actor,
+        );
+        break;
+      case "hide-match":
+      case "unhide-match": {
+        // <table>/<match-id>, as the command line takes it.
+        const target = field(form, "target").trim();
+        const at = target.indexOf("/");
+        if (at < 1)
+          throw new ApiError(
+            400,
+            "invalid_match",
+            "Give the Table and the match's id, as table/id.",
+          );
+        r = await setMatchHidden(
+          sql,
+          target.slice(0, at),
+          target.slice(at + 1),
+          op.data === "hide-match",
+          reason,
+          actor,
+        );
+        break;
+      }
+      case "hide-table":
+      case "unhide-table":
+        r = await setTableHidden(
+          sql,
+          field(form, "target").trim(),
+          op.data === "hide-table",
           reason,
           actor,
         );
