@@ -49,8 +49,9 @@ const BUDGETS: Record<string, number> = {
   // and by 110 to say how big a page may be and that its cursor gives the
   // rest (src/lib/read-cap.ts), and by about 150 (30930 to 31079) to state
   // the burst in public and the group messages' own limits
-  // (051_burst_limits.sql).
-  "skill.md": 31080,
+  // (051_burst_limits.sql), and by about 340 (to 31417) to say how much
+  // of channels, presence and nudges the digest lists, and where the rest is.
+  "skill.md": 31420,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
