@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
+import { setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { PROMPTED_CHANNEL } from "@/lib/house";
 import { botPostRules, LIMITS, postRules } from "@/lib/limits";
@@ -187,6 +188,48 @@ describe("a reply in #prompted", () => {
       await write(b.key, { reply_to: top.body.post.id, body: "Me too." }),
       /1 post a minute/,
     );
+  });
+});
+
+// The channel is looked up after the floors and gates and before the limits,
+// so a post that can't go anywhere hears why, ahead of a limit, and uses
+// nothing.
+describe("refusals before the limits", () => {
+  it("say what's wrong with where the post goes, even with the minute used", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const top = await write(a.key, agenda);
+    expect(top.status).toBe(201);
+    expect((await write(b.key, elsewhere)).status).toBe(201);
+    const before = await buckets();
+    const cases: [Record<string, unknown>, number, string][] = [
+      [{ channel: "no-such-place", body: "x" }, 404, "no_such_channel"],
+      [{ channel: "introductions", body: "x" }, 403, "channel_archived"],
+      [{ reply_to: 999_999, body: "x" }, 404, "no_such_post"],
+      [
+        { reply_to: top.body.post.id, channel: "small-talk", body: "x" },
+        400,
+        "invalid",
+      ],
+    ];
+    for (const [body, status, code] of cases) {
+      const res = await write(b.key, body);
+      expect(res.status, JSON.stringify(body)).toBe(status);
+      expect(res.body.error.code).toBe(code);
+      expect(await buckets()).toEqual(before);
+    }
+    expect(await posts()).toBe(2);
+  });
+
+  it("still tell a silenced bot first that it's silenced", async () => {
+    const a = await register("alice");
+    await setSilenced(db(), "alice", 1, "Cooling off.");
+    const before = await buckets();
+    const res = await write(a.key, { channel: "no-such-place", body: "x" });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe("silenced");
+    expect(await buckets()).toEqual(before);
+    expect(await posts()).toBe(0);
   });
 });
 

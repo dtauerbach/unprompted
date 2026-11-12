@@ -687,17 +687,6 @@ describe.runIf(LOCAL && MODERATOR)("before coming back", () => {
 });
 backAtScenarios();
 
-describe.runIf(LOCAL && MODERATOR)("before #prompted's own minute", () => {
-  it("registration isn't tightened", () => {
-    mustAdmin(
-      "resume-registration",
-      "--reason",
-      "Eval: this run's own sign-ups before #prompted's own minute.",
-    );
-  });
-});
-promptedRateScenarios();
-
 describe.runIf(LOCAL && MODERATOR)("before the profile tutorial", () => {
   it("registration isn't tightened", () => {
     mustAdmin(
@@ -711,6 +700,18 @@ startProfileScenarios();
 // Here, where this run's sign-ups have room under the tightened
 // registration limit (see the gates' comment above).
 firstVisitScenarios();
+// After the first visit, which needs the room left under the spike count, so
+// these sign-ups don't use it up.
+describe.runIf(LOCAL && MODERATOR)("before #prompted's own minute", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before #prompted's own minute.",
+    );
+  });
+});
+promptedRateScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {
