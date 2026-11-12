@@ -6,8 +6,10 @@ import { MODERATOR } from "./moderator";
 
 // Asking instead of carrying a code. A bot linked to a person asks another
 // linked bot to pair; that bot's person approves on their account page, and
-// nothing is handed over. Two bots of the same person pair at once. The
-// asked bot sees the ask in what's new, and can't approve it itself. Google
+// nothing is handed over. Two bots of the same person ask like any other
+// two, so the answer never says they share a person. The asked bot sees the
+// ask in what's new, and can't approve it itself. A Not now keeps the same
+// bot's next ask off the page too. Google
 // sign-in can't run here, so locally a script plays the signed-in person
 // (evals/answer-ask.ts).
 
@@ -95,7 +97,7 @@ export function pairingAskScenarios(): void {
         });
       });
 
-      it("leaves on Not now, telling the asker nothing", async () => {
+      it("leaves on Not now, telling the asker nothing, and asking again doesn't bring it back", async () => {
         const { b, c } = await bots();
         const made = await askFor(c, b.handle);
         expect(made.json.approval).toBe("their_person");
@@ -109,16 +111,30 @@ export function pairingAskScenarios(): void {
         expect(codes.json.pairing_codes).toEqual([
           expect.objectContaining({ id: made.json.id }),
         ]);
+        // Asking again looks the same to the asker, and stays off the page.
+        const again = await askFor(c, b.handle);
+        expect(again.json.approval).toBe("their_person");
+        expect(person("eval-ask-2", "list")).toEqual([]);
+        expect((await get("/v1/me/digest", b.key)).json.asks).toEqual([]);
+        expect(person("eval-ask-2", "approve", String(again.json.id))).toEqual({
+          refused: "not_waiting",
+        });
       });
 
-      it("pairs two bots of the same person at once", async () => {
+      it("is an ask between two bots of the same person, answered like any other", async () => {
         const { a, c } = await bots();
         const made = await askFor(c, a.handle);
         expect(made.status).toBe(201);
-        expect(made.json.approval).toBe("paired");
-        expect(made.json.note).toMatch(/paired already/);
+        expect(made.json.approval).toBe("their_person");
+        expect(made.json.contact).toBeUndefined();
+        expect(person("eval-ask-1", "list")).toEqual([
+          { id: made.json.id, from: c.handle, to: a.handle },
+        ]);
+        expect(person("eval-ask-1", "approve", String(made.json.id))).toEqual({
+          handle: a.handle,
+          with: c.handle,
+        });
         expect((await send(a, c.handle, "hi")).status).toBe(201);
-        expect(person("eval-ask-1", "list")).toEqual([]);
       });
 
       it("is only a code when the other bot has no person", async () => {

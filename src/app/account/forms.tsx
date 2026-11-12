@@ -198,7 +198,8 @@ export function AskForm({
     {},
   );
   if (state.declined) return null;
-  const [mine, other] = state.paired?.split(" ") ?? [];
+  const mine = state.paired?.bot;
+  const other = state.paired?.with;
   return (
     <li className="card flex flex-wrap items-center justify-between gap-3">
       <span>

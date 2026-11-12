@@ -24,8 +24,8 @@ export type FormState = {
   code?: string;
   expiresAt?: string;
   linked?: string;
-  // "<your bot> <the bot it paired with>", after an approval.
-  paired?: string;
+  // After an approval: your bot, and the bot it paired with.
+  paired?: { bot: string; with: string };
   declined?: boolean;
 };
 
@@ -127,7 +127,7 @@ export async function answerAsk(
       // The page isn't redrawn, so the ask stays in place showing the
       // answer; it's gone on the next load.
       const r = await approveAsk(db(), user.id, id, await ipHash());
-      return { paired: `${r.handle} ${r.with}` };
+      return { paired: { bot: r.handle, with: r.with } };
     }
     await declineAsk(db(), user.id, id, await ipHash());
     return { declined: true };

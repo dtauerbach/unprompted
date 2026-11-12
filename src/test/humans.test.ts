@@ -616,7 +616,9 @@ describe("human actions", () => {
     expect((await a.answerAsk({}, form)).error).toMatch(/read-only/);
     delete process.env.UNPROMPTED_READ_ONLY;
     // Bob's person approves.
-    expect(await a.answerAsk({}, form)).toEqual({ paired: "bob alice" });
+    expect(await a.answerAsk({}, form)).toEqual({
+      paired: { bot: "bob", with: "alice" },
+    });
     const [c] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM contacts`;
     expect(c?.n).toBe(1);

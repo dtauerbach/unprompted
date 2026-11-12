@@ -10,11 +10,17 @@ import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { setFrozen, setGates } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { ApiError } from "@/lib/http";
-import { findHuman } from "@/lib/humans";
+import { findHuman, releaseBot } from "@/lib/humans";
 import { newPairingCode } from "@/lib/keys";
-import { LIMITS } from "@/lib/limits";
+import {
+  askAnswerRules,
+  consume,
+  LIMITS,
+  pairingRedeemRules,
+} from "@/lib/limits";
 import {
   approveAsk,
+  DECLINE_DAYS,
   declineAsk,
   digestAsks,
   listAsks,
@@ -31,9 +37,10 @@ import {
 // Asking instead of carrying a code. A pairing code a linked bot makes for
 // another linked bot is an ask: that bot's person approves it on their
 // account page, with nothing handed over, and the bot sees it in its digest.
-// Between two bots of the same person it pairs at once. Every ask that
-// can't be answered gets the same refusal, only the person a bot is linked
-// to can answer for it, and every refusal writes nothing.
+// Two bots of the same person ask like any other two, so no answer tells a
+// bot which bots share its person. Every ask that can't be answered gets the
+// same refusal, only the person a bot is linked to can answer for it, and
+// every refusal writes nothing.
 
 beforeEach(resetDb);
 afterEach(() => {
@@ -58,6 +65,12 @@ async function humanId(authUserId: string): Promise<number> {
   const id = await findHuman(db(), authUserId);
   if (id === undefined) throw new Error(`no human ${authUserId}`);
   return id;
+}
+
+async function botId(handle: string): Promise<number> {
+  const [r] = await db()<{ id: string }[]>`
+    SELECT id FROM bots WHERE handle = ${handle}`;
+  return Number(r?.id);
 }
 
 async function counts() {
@@ -136,57 +149,77 @@ describe("a pairing code for a linked bot", () => {
     expect((await redeem(c, made.body.code)).status).toBe(200);
   });
 
-  it("pairs two bots of the same person at once, with nothing to pass on", async () => {
+  it("is an ask between two bots of the same person too, answered like any other", async () => {
     const a = await register("alice");
     const b = await register("bob");
+    const c = await register("carol");
     await linkBot(a.key, "google-1");
     await linkBot(b.key, "google-1");
-    const made = await create(a, { for: "bob" });
-    expect(made.status).toBe(201);
-    expect(made.body.approval).toBe("paired");
-    expect(made.body.contact).toMatchObject({ handle: "bob" });
-    expect(made.body.note).toMatch(/paired already/);
-    expect((await contacts(b)).body.contacts).toEqual([
-      expect.objectContaining({ handle: "alice", method: "code" }),
-    ]);
-    expect((await counts()).used).toBe(1);
-    // Logged as a redeem by Bob, on the same person's word.
-    expect(await logged("pairing.redeem")).toEqual([
-      expect.objectContaining({
-        bot: "bob",
-        detail: expect.objectContaining({ via: "same_person" }),
-      }),
-    ]);
-    // The code is spent: nobody can redeem it again.
-    expect((await redeem(b, made.body.code)).body.error.code).toBe(
-      "invalid_code",
+    await linkBot(c.key, "google-3");
+    const same = await create(a, { for: "bob" });
+    const other = await create(a, { for: "carol" });
+    // The same answer whoever's bot it is: nothing tells Alice that Bob
+    // shares her person and Carol doesn't.
+    for (const r of [same, other]) {
+      expect(r.status).toBe(201);
+      expect(r.body.approval).toBe("their_person");
+    }
+    expect(Object.keys(same.body).sort()).toEqual(
+      Object.keys(other.body).sort(),
     );
-    expect(await listAsks(db(), await humanId("google-1"))).toEqual([]);
-    // And they can write each other with closed inboxes.
+    expect(same.body.note.replaceAll("@bob", "@x")).toBe(
+      other.body.note.replaceAll("@carol", "@x"),
+    );
+    expect((await counts()).contacts).toBe(0);
+    // Their person sees it, one tap to approve.
+    expect(await listAsks(db(), await humanId("google-1"))).toEqual([
+      expect.objectContaining({ from: "alice", to: "bob" }),
+    ]);
+    await approveAsk(db(), "google-1", Number(same.body.id), null);
+    expect((await contacts(b)).body.contacts).toEqual([
+      expect.objectContaining({ handle: "alice" }),
+    ]);
     expect((await send(b, "alice", "hi")).status).toBe(201);
   });
 
-  it("falls back to an ask when the other bot of the same person may not pair yet", async () => {
-    const a = await register("alice");
-    const b = await register("bob");
-    await linkBot(a.key, "google-1");
-    await linkBot(b.key, "google-1");
+  it("is only a code when the maker's ask gate holds it back", async () => {
+    const { a, b } = await twoPeople();
+    await setGates(db(), { ask: [{ signal: "is_new", is: false }] }, "test");
+    const made = await create(a, { for: "bob" });
+    expect(made.status).toBe(201);
+    expect(made.body.approval).toBe("code_only");
+    expect(made.body.note).not.toMatch(/Asked/);
+    expect(await listAsks(db(), await humanId("google-2"))).toEqual([]);
+    expect((await digest(b)).body.asks).toEqual([]);
+    // Still a code that works when handed over.
+    expect((await redeem(b, made.body.code)).status).toBe(200);
+  });
+
+  it("can't be approved while the asked bot's own gate or limit holds it, in words for its person", async () => {
+    const { a, b } = await twoPeople();
     await db()`UPDATE bots SET created_at = now() - interval '30 days'
                WHERE handle = 'alice'`;
     await setGates(db(), { pair: [{ signal: "is_new", is: false }] }, "test");
-    const made = await create(a, { for: "bob" });
-    expect(made.status).toBe(201);
-    expect(made.body.approval).toBe("their_person");
-    expect((await counts()).contacts).toBe(0);
-    // Approving runs the same gate for Bob, and refuses without writing.
+    const id = await ask(a, b);
     const before = await counts();
-    const err = await refusal(
-      approveAsk(db(), "google-1", Number(made.body.id), null),
-    );
-    expect(err.code).toBe("not_yet");
+    let err = await refusal(approveAsk(db(), "google-2", id, null));
+    expect(err.status).toBe(403);
+    expect(err.code).toBe("cant_pair_yet");
+    expect(err.message).not.toMatch(/Your bot/);
     expect(await counts()).toEqual(before);
+    // Its redeem limit spent: the person hears to try later, with no number.
+    await setGates(db(), {}, "test");
+    const bob = await botId("bob");
+    await db().begin((tx) =>
+      consume(tx, pairingRedeemRules(bob), LIMITS.pairingRedeemPerHour.limit),
+    );
+    const mid = await counts();
+    err = await refusal(approveAsk(db(), "google-2", id, null));
+    expect(err.status).toBe(429);
+    expect(err.code).toBe("try_later");
+    expect(err.message).not.toMatch(/\d/);
+    expect(await counts()).toEqual(mid);
   });
-
   it("is an ask its person approves, with nothing handed over", async () => {
     const { a, b } = await twoPeople();
     const id = await ask(a, b);
@@ -264,12 +297,20 @@ describe("a pairing code for a linked bot", () => {
     const id = await ask(a, b);
     const two = await humanId("google-2");
     await declineAsk(db(), "google-2", id, null);
-    await declineAsk(db(), "google-2", id, null);
+    // Once set aside it's no longer waiting: not again, and not approved.
+    expect((await refusal(declineAsk(db(), "google-2", id, null))).code).toBe(
+      "not_waiting",
+    );
+    expect((await refusal(approveAsk(db(), "google-2", id, null))).code).toBe(
+      "not_waiting",
+    );
     expect((await counts()).declines).toBe(1);
+    expect((await counts()).contacts).toBe(0);
     expect(await logged("human.pairing.decline")).toHaveLength(1);
     expect(await listAsks(db(), two)).toEqual([]);
     expect((await digest(b)).body.asks).toEqual([]);
-    // Alice's code is still waiting, as far as she can tell.
+    // Alice's code is still waiting, as far as she can tell, and still
+    // works if it's handed over.
     const [row] = await db()<
       { redeemed_at: Date | null; revoked_at: Date | null }[]
     >`
@@ -277,6 +318,128 @@ describe("a pairing code for a linked bot", () => {
     expect(row).toEqual({ redeemed_at: null, revoked_at: null });
   });
 
+  it("keeps the same bot's later asks off the page after Not now, for a while", async () => {
+    const { a, b } = await twoPeople();
+    const c = await register("carol");
+    await linkBot(c.key, "google-3");
+    const two = await humanId("google-2");
+    await declineAsk(db(), "google-2", await ask(a, b), null);
+    // Alice asks again: still answered as an ask, never shown.
+    const again = await ask(a, b);
+    expect(await listAsks(db(), two)).toEqual([]);
+    expect((await digest(b)).body.asks).toEqual([]);
+    expect(
+      (await refusal(approveAsk(db(), "google-2", again, null))).code,
+    ).toBe("not_waiting");
+    // Another bot's ask still shows.
+    await ask(c, b);
+    expect(await listAsks(db(), two)).toEqual([
+      expect.objectContaining({ from: "carol" }),
+    ]);
+    // A Not now from long enough ago no longer hides Carol's next ask.
+    const old = await ask(c, b);
+    await db()`
+      INSERT INTO pairing_code_declines (code_id, human_id, created_at)
+      VALUES (${old - 1}, ${two}, now() - make_interval(days => ${DECLINE_DAYS + 1}))`;
+    expect(await listAsks(db(), two)).toEqual([
+      expect.objectContaining({ id: old, from: "carol" }),
+    ]);
+  });
+
+  it("shows only the newest ask from each bot, and only that one can be answered", async () => {
+    const { a, b } = await twoPeople();
+    const first = await ask(a, b);
+    const second = await ask(a, b);
+    const newest = await ask(a, b);
+    const two = await humanId("google-2");
+    expect((await listAsks(db(), two)).map((x) => x.id)).toEqual([newest]);
+    expect((await digest(b)).body.asks).toHaveLength(1);
+    expect(
+      (await refusal(approveAsk(db(), "google-2", first, null))).code,
+    ).toBe("not_waiting");
+    // Revoking the newest shows the one before it.
+    await call(revokeRoute, {
+      key: a.key,
+      method: "DELETE",
+      params: { id: String(newest) },
+    });
+    expect((await listAsks(db(), two)).map((x) => x.id)).toEqual([second]);
+  });
+
+  it("isn't shown once the asked bot has no live key, or is released by its person", async () => {
+    const { a, b } = await twoPeople();
+    const id = await ask(a, b);
+    const two = await humanId("google-2");
+    await db()`UPDATE api_keys SET revoked_at = now()
+               WHERE bot_id = (SELECT id FROM bots WHERE handle = 'bob')`;
+    expect(await listAsks(db(), two)).toEqual([]);
+    expect((await refusal(approveAsk(db(), "google-2", id, null))).code).toBe(
+      "not_waiting",
+    );
+    // Released: the person it was linked to no longer sees asks for it.
+    const c = await register("carol");
+    await linkBot(c.key, "google-3");
+    const d = await register("dave");
+    await linkBot(d.key, "google-4");
+    const cid = await ask(c, d);
+    expect(await listAsks(db(), await humanId("google-4"))).toHaveLength(1);
+    await releaseBot(db(), "google-4", "dave", null);
+    expect(await listAsks(db(), await humanId("google-4"))).toEqual([]);
+    expect((await refusal(approveAsk(db(), "google-4", cid, null))).code).toBe(
+      "not_waiting",
+    );
+    expect((await counts()).contacts).toBe(0);
+  });
+
+  it("doesn't deadlock or pair twice when a person approves as their bot redeems or a block lands", async () => {
+    const answer = (p: Promise<unknown>) =>
+      p.then(
+        () => "ok",
+        (e: unknown) => (e instanceof ApiError ? e.code : String(e)),
+      );
+    for (let i = 0; i < 4; i++) {
+      await resetDb();
+      const { a, b } = await twoPeople();
+      const made = await create(a, { for: "bob" });
+      const [approved, redeemed] = await Promise.all([
+        answer(approveAsk(db(), "google-2", Number(made.body.id), null)),
+        redeem(b, made.body.code),
+      ]);
+      expect(["ok", "not_waiting"]).toContain(approved);
+      expect([200, 400]).toContain(redeemed.status);
+      expect(approved === "ok").not.toBe(redeemed.status === 200);
+      expect((await counts()).contacts).toBe(1);
+    }
+    for (let i = 0; i < 4; i++) {
+      await resetDb();
+      const { a, b } = await twoPeople();
+      const id = await ask(a, b);
+      const [approved, blocked] = await Promise.all([
+        answer(approveAsk(db(), "google-2", id, null)),
+        block(a, "bob"),
+      ]);
+      expect(["ok", "not_waiting"]).toContain(approved);
+      expect(blocked.status).toBeLessThan(300);
+      // Whichever came first, the block stands and no contact is left.
+      expect((await contacts(a)).body.contacts).toEqual([]);
+    }
+  });
+
+  it("never logs a code or its hash", async () => {
+    const { a, b } = await twoPeople();
+    const made = await create(a, { for: "bob" });
+    await approveAsk(db(), "google-2", Number(made.body.id), null);
+    const c = await register("carol");
+    await linkBot(c.key, "google-3");
+    await declineAsk(db(), "google-2", await ask(c, b), null);
+    const rows = await db()<{ line: string }[]>`
+      SELECT row_to_json(l)::text AS line FROM action_log l`;
+    const all = rows.map((r) => r.line).join("\n");
+    expect(all).not.toMatch(/pair_[a-z0-9]{26}/);
+    const hashes = await db()<{ code_hash: string }[]>`
+      SELECT code_hash FROM pairing_codes`;
+    for (const h of hashes) expect(all).not.toContain(h.code_hash);
+  });
   it("isn't shown across a block either way, and can't be approved across one", async () => {
     const { a, b } = await twoPeople();
     const id = await ask(a, b);
@@ -359,14 +522,17 @@ describe("a pairing code for a linked bot", () => {
     await awayFromWindowEdge();
     const { a, b } = await twoPeople();
     const id = await ask(a, b);
+    const two = await humanId("google-2");
     // A refusal rolls back and uses no quota.
     await refusal(approveAsk(db(), "google-2", id + 1000, null));
-    for (let i = 0; i < LIMITS.askAnswerPerHour.limit; i++)
-      await declineAsk(db(), "google-2", id, null);
+    await db().begin((tx) =>
+      consume(tx, askAnswerRules(two), LIMITS.askAnswerPerHour.limit),
+    );
+    const before = await counts();
     const err = await refusal(declineAsk(db(), "google-2", id, null));
     expect(err.status).toBe(429);
+    expect(await counts()).toEqual(before);
   });
-
   it("is an ask over the connector too", async () => {
     const { b } = await twoPeople();
     const req = new Request("http://unprompted.test/v1/mcp", {

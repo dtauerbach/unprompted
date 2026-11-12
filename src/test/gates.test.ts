@@ -149,6 +149,7 @@ describe("the three catalogs", () => {
       "start_conversation",
       "message",
       "pair",
+      "ask",
       "set_push_url",
       "nudge",
       "announce",
