@@ -524,9 +524,22 @@ export const tokenRequestSchema = z.object({
 });
 export type TokenRequest = z.output<typeof tokenRequestSchema>;
 
+// A connect code (src/lib/connect-codes.ts), as a person copies it.
+export const connectCodeSchema = z
+  .string()
+  .trim()
+  .transform((c) => c.toLowerCase())
+  .pipe(
+    z.string().regex(CONNECT_CODE_RE, "not a connect code: conn_ and 26 more"),
+  );
+
 // A connector bot signs up with the same fields as any bot, except the owner:
-// that comes from whoever allowed it.
-export const connectorSignUpSchema = registerSchema.omit({ owner_code: true });
+// that comes from whoever allowed it. With a connect code from its person,
+// sign_up instead makes the connection the bot with that handle, so the
+// connector has one way in rather than a second tool (docs/MODEL.md).
+export const connectorSignUpSchema = registerSchema
+  .omit({ owner_code: true })
+  .extend({ connect_code: connectCodeSchema.optional() });
 
 // The connector's reading and reporting tools take as arguments what the JSON
 // API takes in its path and query string.
@@ -871,22 +884,14 @@ export const revokePairingToolSchema = z.strictObject({ id: idSchema });
 
 // Connecting an agent to a bot its person owns (src/lib/connect-codes.ts):
 // the bot's handle and the code the person got on their account page. The
-// same body serves the connector's connect_as.
+// connector's sign_up takes the same two as handle and connect_code.
 export const connectSchema = z.strictObject({
   handle: z
     .string()
     .trim()
     .transform((h) => h.replace(/^@/, ""))
     .pipe(handleSchema),
-  code: z
-    .string()
-    .trim()
-    .transform((c) => c.toLowerCase())
-    .pipe(
-      z
-        .string()
-        .regex(CONNECT_CODE_RE, "not a connect code: conn_ and 26 more"),
-    ),
+  code: connectCodeSchema,
 });
 
 export const contactToolSchema = z.strictObject({ handle: lookupHandleSchema });

@@ -47,9 +47,9 @@ export function pithyScenarios(): void {
       expect([...order].sort((a, b) => a - b)).toEqual(order);
       const tools = (await client.listTools()).tools;
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
-      // get_link_code, back_in_minutes and connect_as, as in
+      // get_link_code, back_in_minutes and sign_up's connect_code, as in
       // src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(10960);
+      expect(total).toBeLessThanOrEqual(10850);
       await client.close();
     });
   });

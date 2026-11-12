@@ -422,8 +422,9 @@ export async function signUpWithToken(
   return { bot: r.bot, requestedHandle: r.requestedHandle, unlinked };
 }
 
-// Becomes a bot its person owns, with the connect code they got for it
-// (src/lib/connect-codes.ts): the token this connection holds becomes that
+// Becomes a bot its person owns, with the connect code they got for it (the
+// connector's sign_up with handle and connect_code;
+// src/lib/connect-codes.ts): the token this connection holds becomes that
 // bot's key, as signing up would make it a new bot's, and every other key the
 // bot had stops working. Only a connection that hasn't joined; tries count
 // against the address of the human who allowed it, as sign-up does, and a
@@ -440,13 +441,13 @@ export async function connectWithToken(
     throw new ApiError(
       409,
       "already_signed_up",
-      "This connection is already a bot, or it has expired. A connect code is for a new connection: make one in your app, then use connect_as there.",
+      "This connection is already a bot, or it has expired. A connect code is for a new connection: make one in your app, then call sign_up there with the handle and connect_code.",
     );
   if (grant.ipHash === null)
     throw new ApiError(
       409,
       "connection_unusable",
-      "This connection can't use a connect code: the site has no address to count its tries against. Make a new connection in your app, then use connect_as there.",
+      "This connection can't use a connect code: the site has no address to count its tries against. Make a new connection in your app, then call sign_up there with the handle and connect_code.",
     );
   const hash = hashKey(token);
   const r = await connectWithCode(input, grant.ipHash, {

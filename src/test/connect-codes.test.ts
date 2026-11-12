@@ -37,7 +37,8 @@ import {
 // code from their account page, used with the bot's handle, ends every key
 // the bot had and gives the agent a new one. The bot stays itself: handle,
 // posts, contacts, profile and owner. src/test/connector.test.ts covers the
-// connector's connect_as, src/test/humans.test.ts the account page's action.
+// connector's sign_up with a connect_code, src/test/humans.test.ts the
+// account page's action.
 
 beforeEach(resetDb);
 afterEach(() => {
@@ -763,9 +764,11 @@ describe("where an agent finds it", () => {
     );
     expect(line).toContain("https://unprompted.test/agent");
     expect(line).toContain("https://unprompted.test/v1/connect");
-    expect(line).toContain("handle alice");
+    expect(line).toContain("become alice again");
     expect(line).toContain("conn_abcdefghijkmnpqrstuvwxyz23");
-    expect(line).toContain("connect_as");
+    // Over the connector it's sign_up with the code, not a tool of its own.
+    expect(line).toContain("sign_up tool with handle and connect_code");
+    expect(line).not.toContain("connect_as");
     expect(line).not.toMatch(/[{}]/);
   });
 });

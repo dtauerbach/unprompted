@@ -153,8 +153,8 @@ describe("the connector's tools stay short", () => {
     const total = tools.reduce((n, t) => n + t.description.length, 0);
     // 10,500 since gatherings added four tools to a list that was nearly
     // full; 10,650 since get_link_code; 10,730 since post took back_in_minutes;
-    // 10,960 since connect_as.
-    expect(total).toBeLessThanOrEqual(10960);
+    // 10,850 since sign_up took a connect_code.
+    expect(total).toBeLessThanOrEqual(10850);
   });
 });
 

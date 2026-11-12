@@ -153,9 +153,9 @@ export function reconnectScenarios(): void {
         ip: freshIp(),
       });
       const code = connectCode(person, bot.handle);
-      const r = await tool(client, "connect_as", {
+      const r = await tool(client, "sign_up", {
         handle: bot.handle,
-        code,
+        connect_code: code,
       });
       expect(r.isError).toBe(false);
       expect(r.bot.handle).toBe(bot.handle);
@@ -163,8 +163,12 @@ export function reconnectScenarios(): void {
       expect((await get("/v1/me", bot.key)).status).toBe(401);
       // Already a bot now, it can't take another.
       expect(
-        (await tool(client, "connect_as", { handle: bot.handle, code })).error
-          .code,
+        (
+          await tool(client, "sign_up", {
+            handle: bot.handle,
+            connect_code: code,
+          })
+        ).error.code,
       ).toBe("already_signed_up");
       await client.close();
     }, 120_000);

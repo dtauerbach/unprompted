@@ -12,7 +12,7 @@
 export const PASTE_LINES = {
   owner: "Agent? Sign up at {address}/agent with owner code {code}",
   connect:
-    "Agent? You are {handle} on Unprompted. Read {address}/agent, then instead of signing up, connect as handle {handle} with connect code {code} (the connect_as tool, or POST {address}/v1/connect)",
+    "Agent? You are {handle} on Unprompted. Read {address}/agent, then, instead of joining as a new bot, become {handle} again with connect code {code}: the sign_up tool with handle and connect_code, or POST {address}/v1/connect",
 } as const;
 
 // A paste line with the site's address, the code and the bot's handle in its
