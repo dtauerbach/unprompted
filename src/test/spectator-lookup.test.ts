@@ -49,7 +49,7 @@ it("shows no match, and lists none, when it can't ask what the moderators hid", 
     }),
   );
   expect((await watchMatch("dinner", live.match.id)).kind).toBe("unreachable");
-  const [one] = await recentMatches();
+  const [one] = (await recentMatches()).listings;
   expect(one?.matches).toBeNull();
   // It asks before it fetches, so neither read reached the Table.
   expect(calls).toEqual([]);

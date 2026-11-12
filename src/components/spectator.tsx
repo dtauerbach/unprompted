@@ -1,7 +1,9 @@
 import Link from "next/link";
 import type { Copy } from "@/lib/copy";
-import { type Board, boardOf, type Feed } from "@/lib/spectator";
+import type { BotsShown, Held } from "@/lib/spectate";
+import { type Board, boardOf, type Feed, type FeedList } from "@/lib/spectator";
 import { exactUtc } from "@/lib/time";
+import { TestBadge } from "./post-list";
 import { Timestamp } from "./timestamp";
 import { Words } from "./words";
 
@@ -30,40 +32,150 @@ function clock(at: string) {
   );
 }
 
-export function StatusBadge({ status, t }: { status: string; t: Copy }) {
+// Live, Finished, or, for a finished game whose players tried to agree on
+// something, whether they did.
+export function StatusBadge({
+  status,
+  agreed,
+  t,
+}: {
+  status: string;
+  agreed?: boolean;
+  t: Copy;
+}) {
   const live = status === "live";
+  const tone = live
+    ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100"
+    : agreed === true
+      ? "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200"
+      : "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300";
   return (
-    <span
-      className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-        live
-          ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100"
-          : "bg-neutral-100 text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300"
-      }`}
-    >
-      {live ? t["play.live"] : t["play.over"]}
+    <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${tone}`}>
+      {live
+        ? t["play.live"]
+        : agreed === true
+          ? t["play.agreed"]
+          : agreed === false
+            ? t["play.not_agreed"]
+            : t["play.over"]}
     </span>
+  );
+}
+
+// A bot's handle, linked to its profile, only when the site knows the bot
+// and its moderators haven't stopped it.
+function linkable(handle: string | null, bots: BotsShown): boolean {
+  if (handle === null) return false;
+  const b = bots.get(handle);
+  return b !== undefined && !b.stopped;
+}
+
+function Handle({
+  handle,
+  bots,
+  t,
+}: {
+  handle: string;
+  bots: BotsShown;
+  t: Copy;
+}) {
+  return (
+    <>
+      <Link href={`/b/${handle}`} className={`${MUTED} underline`}>
+        @{handle}
+      </Link>
+      {bots.get(handle)?.isTest ? (
+        <>
+          {" "}
+          <TestBadge t={t} />
+        </>
+      ) : null}
+    </>
   );
 }
 
 function Player({
   p,
-  withheld,
+  bots,
+  t,
 }: {
   p: Feed["participants"][number];
-  withheld: boolean;
+  bots: BotsShown;
+  t: Copy;
 }) {
   return (
     <li>
       <span className="font-medium">{p.label}</span>
-      {p.handle && !withheld ? (
+      {p.handle && linkable(p.handle, bots) ? (
         <>
           {" "}
-          <Link href={`/b/${p.handle}`} className={`${MUTED} underline`}>
-            @{p.handle}
-          </Link>
+          <Handle handle={p.handle} bots={bots} t={t} />
         </>
       ) : null}
       {p.note ? <span className={MUTED}> · {p.note}</span> : null}
+    </li>
+  );
+}
+
+// One match on /play: its badge, when it started, the bots that played
+// (those the site knows and hasn't stopped, linked; the rest counted, never
+// named), the Table's one line, and a link to its page here.
+export function MatchRow({
+  m,
+  slug,
+  bots,
+  t,
+  now,
+}: {
+  m: FeedList["matches"][number];
+  slug: string;
+  bots: BotsShown;
+  t: Copy;
+  now: Date;
+}) {
+  const shownHandles = (m.handles ?? []).filter((h) => linkable(h, bots));
+  const more = (m.handles?.length ?? 0) - shownHandles.length;
+  return (
+    <li className="space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge status={m.status} agreed={m.agreed} t={t} />
+        <span className={`text-sm ${MUTED}`}>
+          <Timestamp at={new Date(m.started_at)} now={now} t={t} />
+        </span>
+        <Link
+          href={`/play/${slug}/${encodeURIComponent(m.id)}`}
+          className="underline"
+        >
+          {t["play.read"]}
+        </Link>
+      </div>
+      <p className="flex flex-wrap items-center gap-x-2 text-sm">
+        {m.handles === undefined ? (
+          <Words
+            text={t["play.players"]}
+            slots={{ count: String(m.players) }}
+          />
+        ) : (
+          <>
+            {shownHandles.map((h) => (
+              <span key={h}>
+                <Handle handle={h} bots={bots} t={t} />
+              </span>
+            ))}
+            {more > 0 ? (
+              <span className={MUTED}>
+                <Words
+                  text={t["play.row_more"]}
+                  slots={{ count: String(more) }}
+                />
+              </span>
+            ) : null}
+          </>
+        )}
+      </p>
+      {m.summary ? (
+        <p className={`min-w-0 break-words text-sm ${MUTED}`}>{m.summary}</p>
+      ) : null}
     </li>
   );
 }
@@ -181,30 +293,38 @@ function Section({
   );
 }
 
-// withheld: participants whose bot the site's moderators have frozen or
-// silenced. Their words aren't shown and their profile isn't linked.
+// held: participants whose words wait, because the site's moderators have
+// stopped their bot (its profile isn't linked either) or because it's new
+// here (its profile still is). bots: what the site knows of the handles.
 export function MatchView({
   feed,
   table,
   t,
-  withheld = new Set(),
+  held = new Map(),
+  bots = new Map(),
   now = new Date(),
 }: {
   feed: Feed;
   table: string;
   t: Copy;
-  withheld?: ReadonlySet<string>;
+  held?: Held;
+  bots?: BotsShown;
   now?: Date;
 }) {
   const who: Who = new Map(feed.participants.map((p) => [p.id, p]));
   const board = boardOf(feed);
   const { match, outcome } = feed;
+  const players = feed.participants.filter((p) => p.kind !== "unknown");
+  const cast = feed.participants.filter((p) => p.kind === "unknown");
+  const name = (id: string) => who.get(id)?.label ?? id;
+  const plan = (b: Board) =>
+    b.tables.map((tb) => <TablePlan key={tb.label} table={tb} who={who} />);
   return (
     <article className="space-y-4">
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-2xl font-bold tracking-tight">{table}</h1>
-          <StatusBadge status={match.status} t={t} />
+          <StatusBadge status={match.status} agreed={match.agreed} t={t} />
         </div>
         <p className={`text-sm ${MUTED}`}>
           <Words
@@ -238,6 +358,83 @@ export function MatchView({
           {match.status === "live" ? <> {t["play.updating"]}</> : null}
         </p>
       </header>
+
+      {match.agreed !== undefined ? (
+        <Section title={t["play.plan"]}>
+          {match.agreed && board ? (
+            <>
+              <p className={`text-sm ${MUTED}`}>{board.title}</p>
+              {plan(board)}
+            </>
+          ) : (
+            <p>{t["play.no_plan"]}</p>
+          )}
+        </Section>
+      ) : board ? (
+        <Section title={board.title}>{plan(board)}</Section>
+      ) : null}
+
+      <Section title={t["play.who"]}>
+        <ul className="space-y-1">
+          {players.map((p) => (
+            <Player key={p.id} p={p} bots={bots} t={t} />
+          ))}
+        </ul>
+        {cast.length > 0 ? (
+          <>
+            <h3 className="font-medium">{t["play.cast"]}</h3>
+            <ul className="space-y-1">
+              {cast.map((p) => (
+                <Player key={p.id} p={p} bots={bots} t={t} />
+              ))}
+            </ul>
+          </>
+        ) : null}
+      </Section>
+
+      <Section title={t["play.timeline"]}>
+        {feed.timeline.some((e) => e.to) ? (
+          <p className={`text-sm ${MUTED}`}>{t["play.private_note"]}</p>
+        ) : null}
+        <ol className="space-y-2">
+          {feed.timeline.map((e, i) => {
+            const by = e.by ? name(e.by) : null;
+            const why =
+              e.kind === "talk" && e.by !== null ? held.get(e.by) : undefined;
+            const quiet = e.kind !== "talk" || why !== undefined;
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: a timeline only grows
+              <li key={i} className="flex gap-3">
+                <span className={`shrink-0 text-xs tabular-nums ${MUTED}`}>
+                  {clock(e.at)}
+                </span>
+                <p
+                  className={`min-w-0 whitespace-pre-wrap break-words ${
+                    quiet ? `italic ${MUTED}` : ""
+                  }`}
+                >
+                  {e.to && e.kind === "talk" ? (
+                    <span className={`not-italic ${MUTED}`}>
+                      <Words
+                        text={t["play.private_to"]}
+                        slots={{ names: e.to.map(name).join(", ") }}
+                      />{" "}
+                    </span>
+                  ) : null}
+                  {by && e.kind === "talk" ? (
+                    <span className="font-medium not-italic">{by}: </span>
+                  ) : null}
+                  {why === "stopped"
+                    ? t["play.withheld"]
+                    : why === "new"
+                      ? t["play.new_held"]
+                      : e.text}
+                </p>
+              </li>
+            );
+          })}
+        </ol>
+      </Section>
 
       {outcome ? (
         <Section title={t["play.outcome"]}>
@@ -277,7 +474,7 @@ export function MatchView({
                       className="border-t border-neutral-200 dark:border-neutral-800"
                     >
                       <td className="py-1 pr-4 font-medium">
-                        {who.get(r.participant)?.label ?? r.participant}
+                        {name(r.participant)}
                       </td>
                       {outcome.scores?.columns.map((c) => (
                         <td key={c.key} className="py-1 pr-4 tabular-nums">
@@ -297,51 +494,6 @@ export function MatchView({
           ) : null}
         </Section>
       ) : null}
-
-      {board ? (
-        <Section title={board.title}>
-          {board.tables.map((tb) => (
-            <TablePlan key={tb.label} table={tb} who={who} />
-          ))}
-        </Section>
-      ) : null}
-
-      <Section title={t["play.who"]}>
-        <ul className="space-y-1">
-          {feed.participants.map((p) => (
-            <Player key={p.id} p={p} withheld={withheld.has(p.id)} />
-          ))}
-        </ul>
-      </Section>
-
-      <Section title={t["play.timeline"]}>
-        <ol className="space-y-2">
-          {feed.timeline.map((e, i) => {
-            const by = e.by ? (who.get(e.by)?.label ?? e.by) : null;
-            const hidden =
-              e.kind === "talk" && e.by !== null && withheld.has(e.by);
-            const quiet = e.kind !== "talk" || hidden;
-            return (
-              // biome-ignore lint/suspicious/noArrayIndexKey: a timeline only grows
-              <li key={i} className="flex gap-3">
-                <span className={`shrink-0 text-xs tabular-nums ${MUTED}`}>
-                  {clock(e.at)}
-                </span>
-                <p
-                  className={`min-w-0 whitespace-pre-wrap break-words ${
-                    quiet ? `italic ${MUTED}` : ""
-                  }`}
-                >
-                  {by && e.kind === "talk" ? (
-                    <span className="font-medium not-italic">{by}: </span>
-                  ) : null}
-                  {hidden ? t["play.withheld"] : e.text}
-                </p>
-              </li>
-            );
-          })}
-        </ol>
-      </Section>
 
       {outcome && outcome.reveals.length > 0 ? (
         <Section title={t["play.reveals"]}>

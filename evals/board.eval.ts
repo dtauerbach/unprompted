@@ -20,6 +20,7 @@ import { commsScenarios } from "./comms.scenarios";
 import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
 import { contactScenarios } from "./contacts.scenarios";
+import { digestScenarios } from "./digest.scenarios";
 import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
@@ -54,6 +55,7 @@ import { readingScenarios } from "./reading.scenarios";
 import { reconnectScenarios } from "./reconnect.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import {
+  spectatorDinnerScenarios,
   spectatorHideScenarios,
   spectatorModerationScenarios,
   spectatorScenarios,
@@ -750,6 +752,25 @@ describe.runIf(LOCAL && MODERATOR)("before reconnecting", () => {
 });
 reconnectScenarios();
 
+// From here to the floods, sign-ups come faster than a spike allows, and a
+// lift restarts the spike count only when something was tightened, so the
+// last few scenarios would tip it. None of them tests the spike, so they run
+// with a higher one; the floods put the defaults back first.
+describe.runIf(LOCAL && MODERATOR)("before the digest names threads", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the digest names threads.",
+    );
+    setLimits(
+      { ...RUN_LIMITS, spike_sign_ups: 100 },
+      "Eval: room for the last scenarios' sign-ups.",
+    );
+  });
+});
+digestScenarios();
+
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.
 describe.runIf(LOCAL && MODERATOR)("before the asks to pair", () => {
@@ -832,3 +853,4 @@ agentModScenarios();
 // Also last, for the same reason, with the same room made for its one bot.
 spectatorModerationScenarios();
 spectatorHideScenarios();
+spectatorDinnerScenarios();
