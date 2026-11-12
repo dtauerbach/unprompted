@@ -29,7 +29,10 @@ export type Nudge = {
   atMin: number;
   bot: string;
   prompt: string;
-  onlyIfNoVisit?: boolean;
+  onlyIfNoVisit?: boolean; // skip if the bot came back on its own
+  // ...or, sharper: skip if a visit of the bot ended after this minute (its
+  // owner already heard how it went).
+  unlessVisitEndedAfterMin?: number;
 };
 
 export type Ctx = { site: Site; dir: string; t0: number; arm: string };
@@ -50,7 +53,12 @@ export type Scenario = {
   setup: (ctx: Ctx) => Promise<Setup>;
 };
 
-type Pending = { at: number; prompt: string; cause: string };
+type Pending = {
+  at: number;
+  prompt: string;
+  cause: string;
+  unlessAfter?: number; // epoch ms: skip if a visit ended after this
+};
 
 async function main() {
   const [id, arm = "a", portArg] = process.argv.slice(2);
@@ -111,12 +119,46 @@ async function main() {
         at: t1 + n.atMin * 60_000,
         prompt: n.prompt,
         cause: n.onlyIfNoVisit ? "owner prod (if needed)" : "owner prod",
+        unlessAfter:
+          n.unlessVisitEndedAfterMin === undefined
+            ? undefined
+            : t1 + n.unlessVisitEndedAfterMin * 60_000,
       });
     const results = new Map<string, VisitResult[]>(
       setup.bots.map((b) => [b.name, []]),
     );
     const seen = new Map<string, number>(setup.bots.map((b) => [b.name, 0]));
     const byOwner = new Map(setup.bots.map((b) => [b.owner, b]));
+    const endedAt = new Map<string, number[]>(
+      setup.bots.map((b) => [b.name, []]),
+    );
+    // The owners' apps act as soon as a bot asks: a message passed to another
+    // owner reaches that owner's assistant now, not when the sender's visit
+    // ends, and a granted visit is booked now.
+    const scanHost = () => {
+      for (const b of setup.bots) {
+        const log = hostLog(path.join(dir, b.name));
+        for (const e of log.slice(seen.get(b.name) ?? 0)) {
+          if (e.kind === "schedule_visit_granted")
+            queue.get(b.name)?.push({
+              at: new Date(e.at).getTime() + e.in_minutes * 60_000,
+              prompt: `Your app started you again, as you asked earlier. Your note to yourself: "${e.note}"`,
+              cause: "scheduled",
+            });
+          if (e.kind === "tell_owner" && e.delivered) {
+            const to = byOwner.get(e.pass_to);
+            if (to)
+              queue.get(to.name)?.push({
+                at: new Date(e.at).getTime(),
+                prompt: `${b.owner} passed me this from their assistant: "${e.message}"`,
+                cause: `relay from ${b.owner}`,
+              });
+          }
+        }
+        seen.set(b.name, log.length);
+      }
+    };
+    const ticker = setInterval(scanHost, 3000);
 
     const loop = async (b: BotSpec) => {
       const bdir = path.join(dir, b.name);
@@ -144,9 +186,13 @@ async function main() {
           await new Promise((r) => setTimeout(r, 5000));
           continue;
         }
+        const reported = (endedAt.get(b.name) ?? []).some(
+          (t) => next.unlessAfter !== undefined && t > next.unlessAfter,
+        );
         if (
-          next.cause === "owner prod (if needed)" &&
-          (results.get(b.name)?.length ?? 0) > 1
+          reported ||
+          (next.cause === "owner prod (if needed)" &&
+            (results.get(b.name)?.length ?? 0) > 1)
         ) {
           q.shift();
           continue;
@@ -189,7 +235,16 @@ async function main() {
           // waits through it is the point, not a runaway.
           timeoutMs: Math.max(60_000, end + 5 * 60_000 - Date.now()),
         });
+        // A continued chat reports its whole cost so far; keep this visit's.
+        if (
+          n > 1 &&
+          fromOwner &&
+          r.costUsd !== undefined &&
+          last?.sessionId === r.sessionId
+        )
+          r.costUsd -= last?.sessionCostUsd ?? 0;
         results.get(b.name)?.push(r);
+        endedAt.get(b.name)?.push(Date.now());
         note({
           bot: b.name,
           visit: n,
@@ -199,28 +254,11 @@ async function main() {
           calls: r.toolCalls.length,
           timedOut: r.timedOut,
         });
-        const log = hostLog(bdir);
-        for (const e of log.slice(seen.get(b.name) ?? 0)) {
-          if (e.kind === "schedule_visit_granted")
-            queue.get(b.name)?.push({
-              at: new Date(e.at).getTime() + e.in_minutes * 60_000,
-              prompt: `Your app started you again, as you asked earlier. Your note to yourself: "${e.note}"`,
-              cause: "scheduled",
-            });
-          if (e.kind === "tell_owner" && e.delivered) {
-            const to = byOwner.get(e.pass_to);
-            if (to)
-              queue.get(to.name)?.push({
-                at: Date.now(),
-                prompt: `${b.owner} passed me this from their assistant: "${e.message}"`,
-                cause: `relay from ${b.owner}`,
-              });
-          }
-        }
-        seen.set(b.name, log.length);
+        scanHost();
       }
     };
     await Promise.all(setup.bots.map(loop));
+    clearInterval(ticker);
     await Promise.race([
       setup.background ?? Promise.resolve(),
       new Promise((r) => setTimeout(r, 1000)),

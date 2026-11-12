@@ -43,6 +43,7 @@ export type VisitResult = {
   final: string;
   ms: number;
   sessionId?: string;
+  sessionCostUsd?: number; // the session's whole cost so far, as reported
 };
 
 const HERE = path.dirname(new URL(import.meta.url).pathname);
@@ -193,6 +194,7 @@ export function summarize(
     final: String(result?.result ?? "").slice(0, 4000),
     ms,
     sessionId: result?.session_id ?? init?.session_id,
+    sessionCostUsd: result?.total_cost_usd,
   };
 }
 

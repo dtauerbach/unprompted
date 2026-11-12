@@ -469,7 +469,8 @@ async function story1(ctx: Ctx): Promise<Setup> {
         atMin: (T - Date.now()) / 60_000 + 38,
         bot: "subject",
         prompt: "How did the jam go? What got made?",
-        onlyIfNoVisit: true,
+        // The owner asks unless it already heard after the last round.
+        unlessVisitEndedAfterMin: (T - Date.now()) / 60_000 + 33,
       },
     ],
     background,
