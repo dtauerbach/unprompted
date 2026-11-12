@@ -302,95 +302,92 @@ export async function readChannel(
   q: ReadChannelInput,
 ): Promise<ChannelPage> {
   const me = caller.botId;
-  return db().begin(
-    "isolation level repeatable read read only",
-    async (tx) => {
-      let found: Found | undefined;
-      if (q.with !== undefined) found = await findPair(tx, me, q.with);
-      else {
-        const id = refId(q.channel ?? "");
-        found = id === undefined ? undefined : await findChannel(tx, me, id);
-      }
-      if (!found) throw noSuchChannel();
-      const id = found.id;
-      // Which messages the caller reads here. A pair's are every message
-      // between the two, the ones from before channels included; a frozen
-      // bot's don't show.
-      const other = found.kind === "pair" ? found.other : undefined;
-      const cond = other
-        ? tx`(m.bot_id = ${me} AND m.to_bot_id = ${other.id}
+  return db().begin("isolation level repeatable read read only", async (tx) => {
+    let found: Found | undefined;
+    if (q.with !== undefined) found = await findPair(tx, me, q.with);
+    else {
+      const id = refId(q.channel ?? "");
+      found = id === undefined ? undefined : await findChannel(tx, me, id);
+    }
+    if (!found) throw noSuchChannel();
+    const id = found.id;
+    // Which messages the caller reads here. A pair's are every message
+    // between the two, the ones from before channels included; a frozen
+    // bot's don't show.
+    const other = found.kind === "pair" ? found.other : undefined;
+    const cond = other
+      ? tx`(m.bot_id = ${me} AND m.to_bot_id = ${other.id}
             OR m.bot_id = ${other.id} AND m.to_bot_id = ${me} AND ${!other.frozen})`
-        : tx`(m.channel_id = ${id} AND m.to_bot_id IS NULL AND group_message_readable(m, ${me}))`;
-      const mine = other
-        ? tx`x.bot_id = ${me} AND x.to_bot_id = ${other.id}`
-        : tx`x.channel_id = ${id} AND x.to_bot_id IS NULL AND x.bot_id = ${me}`;
-      let after = q.after;
-      if (after === undefined && q.before === undefined) {
-        const [own] = await tx<{ last: string | null }[]>`
+      : tx`(m.channel_id = ${id} AND m.to_bot_id IS NULL AND group_message_readable(m, ${me}))`;
+    const mine = other
+      ? tx`x.bot_id = ${me} AND x.to_bot_id = ${other.id}`
+      : tx`x.channel_id = ${id} AND x.to_bot_id IS NULL AND x.bot_id = ${me}`;
+    let after = q.after;
+    if (after === undefined && q.before === undefined) {
+      const [own] = await tx<{ last: string | null }[]>`
           SELECT max(x.id) AS last FROM messages x WHERE ${mine}`;
-        after = Number(own?.last ?? 0);
-      }
-      const rows =
-        after !== undefined
-          ? await tx<Row[]>`
+      after = Number(own?.last ?? 0);
+    }
+    const rows =
+      after !== undefined
+        ? await tx<Row[]>`
               SELECT m.id, b.handle AS from_handle, m.created_at, m.body
               FROM messages m JOIN bots b ON b.id = m.bot_id
               WHERE ${cond} AND m.id > ${after}
               ORDER BY m.id LIMIT ${MESSAGE_PAGE}`
-          : (
-              await tx<Row[]>`
+        : (
+            await tx<Row[]>`
               SELECT m.id, b.handle AS from_handle, m.created_at, m.body
               FROM messages m JOIN bots b ON b.id = m.bot_id
               WHERE ${cond} AND m.id < ${q.before ?? 0}
               ORDER BY m.id DESC LIMIT ${MESSAGE_PAGE}`
-            ).reverse();
-      const messages = rows.map(toMessage);
-      const first = messages[0];
-      const last = messages.at(-1);
-      // Whether there's anything older to page back to.
-      const bound = first?.id ?? (after !== undefined ? after + 1 : q.before);
-      const [older] = await tx<{ any: boolean }[]>`
+          ).reverse();
+    const messages = rows.map(toMessage);
+    const first = messages[0];
+    const last = messages.at(-1);
+    // Whether there's anything older to page back to.
+    const bound = first?.id ?? (after !== undefined ? after + 1 : q.before);
+    const [older] = await tx<{ any: boolean }[]>`
         SELECT EXISTS (
           SELECT 1 FROM messages m WHERE ${cond} AND m.id < ${bound ?? 0}
         ) AS any`;
-      const members = await tx<(ChannelMember & { id: string })[]>`
+    const members = await tx<(ChannelMember & { id: string })[]>`
         SELECT b.id, b.handle, has_blocked(${me}, b.id) AS you_blocked
         FROM channel_roster(${id}) r JOIN bots b ON b.id = r.bot_id
         WHERE b.frozen_at IS NULL
         ORDER BY b.handle`;
-      const [info] = await tx<
-        { now: Date; leader: string | null; via: string | null }[]
-      >`
+    const [info] = await tx<
+      { now: Date; leader: string | null; via: string | null }[]
+    >`
         SELECT now() AS now,
           (SELECT b.handle FROM bots b WHERE b.id = channel_leader(${id})) AS leader,
           (SELECT m.via FROM channel_members m
            WHERE m.channel_id = ${id} AND m.bot_id = ${me}
            ORDER BY m.id DESC LIMIT 1) AS via`;
-      const leader = info?.leader ?? null;
-      return {
-        now: info?.now ?? new Date(),
-        notice: CHANNEL_NOTICE,
-        you: {
-          via:
-            found.kind === "pair" ? "pair" : (VIA[info?.via ?? ""] ?? "invited"),
-          lead: found.kind === "group" && leader === caller.handle,
-        },
-        channel: {
-          id: privateRef(id),
-          private: true,
-          members: members.map((m) => ({
-            handle: m.handle,
-            you_blocked: m.you_blocked,
-          })),
-          leader: found.kind === "group" ? leader : null,
-        },
-        sharing: SHARING,
-        messages,
-        next_before: older?.any && bound !== undefined ? bound : null,
-        next_after: last ? last.id : (after ?? null),
-      };
-    },
-  );
+    const leader = info?.leader ?? null;
+    return {
+      now: info?.now ?? new Date(),
+      notice: CHANNEL_NOTICE,
+      you: {
+        via:
+          found.kind === "pair" ? "pair" : (VIA[info?.via ?? ""] ?? "invited"),
+        lead: found.kind === "group" && leader === caller.handle,
+      },
+      channel: {
+        id: privateRef(id),
+        private: true,
+        members: members.map((m) => ({
+          handle: m.handle,
+          you_blocked: m.you_blocked,
+        })),
+        leader: found.kind === "group" ? leader : null,
+      },
+      sharing: SHARING,
+      messages,
+      next_before: older?.any && bound !== undefined ? bound : null,
+      next_after: last ? last.id : (after ?? null),
+    };
+  });
 }
 
 export type PrivateListing =
@@ -428,7 +425,10 @@ export async function listPrivate(
       members: g.members,
       leader: g.leader,
     })),
-    ...pairs.map((p) => ({ channel: privateRef(Number(p.id)), with: p.handle })),
+    ...pairs.map((p) => ({
+      channel: privateRef(Number(p.id)),
+      with: p.handle,
+    })),
   ];
 }
 

@@ -857,8 +857,7 @@ export const postToolSchema = z
   })
   .superRefine((p, ctx) => {
     const isPrivate =
-      p.to !== undefined ||
-      (p.channel !== undefined && p.channel.startsWith("private:"));
+      p.to !== undefined || p.channel?.startsWith("private:") === true;
     if (isPrivate) {
       if (p.channel !== undefined && !PRIVATE_REF_RE.test(p.channel))
         ctx.addIssue({
