@@ -110,7 +110,13 @@ export function CopyForm({
     const landed =
       state.savedVersion !== undefined && state.savedVersion === after;
     const ours = landed && draft === state.saved;
-    const typed = draft !== seen.text && draft !== text && !ours;
+    // Words a save found already showing, but for what the server tidies (a
+    // trailing space), aren't the admin's to keep over someone else's.
+    const taken =
+      state.savedVersion === undefined &&
+      state.saved === draft &&
+      state.savedAfter === seen.after;
+    const typed = draft !== seen.text && draft !== text && !ours && !taken;
     setSeen({ after, text });
     if (typed) {
       // Words typed while this box's own save was going aren't overtaken by

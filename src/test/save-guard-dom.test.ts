@@ -356,6 +356,22 @@ describe("the words page's box", () => {
     expect(JSON.parse(sessionStorage.getItem(STORED) ?? "{}").base).toBeNull();
   });
 
+  it("takes someone else's words over words a save found already showing", async () => {
+    answer = async () => ({ message: "That's what it already says." });
+    const b = await draw(PROPS);
+    await type(b, "Forum ");
+    await save(b);
+    expect(b.note()).toBe("That's what it already says.");
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Board");
+    expect([OVERTAKEN, UNSAVED]).not.toContain(b.note());
+    expect(sessionStorage.getItem(STORED)).toBeNull();
+  });
+
   it("stops saying newer words came in once the box is back to them", async () => {
     const b = await draw(PROPS);
     await type(b, "Threads");
