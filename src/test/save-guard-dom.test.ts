@@ -286,6 +286,56 @@ describe("the words page's box", () => {
     expect(sessionStorage.getItem(STORED)).toContain("Threads");
   });
 
+  it("keeps its words when someone else's arrive while its save is going, and that save is refused", async () => {
+    let finish: (a: Answer) => void = () => {};
+    const b = await draw(PROPS);
+    answer = () => new Promise<Answer>((r) => (finish = r));
+    await type(b, "Threads");
+    await save(b);
+    // Another box's save brings this piece's newer words, saved elsewhere.
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Threads");
+    await act(async () =>
+      finish({
+        error:
+          "Someone saved a newer version while you were editing. Reload to see it.",
+      }),
+    );
+    expect(b.box.value).toBe("Threads");
+    expect(b.note()).toBe(OVERTAKEN);
+    expect(sessionStorage.getItem(STORED)).toContain("Threads");
+  });
+
+  it("doesn't take an old save for a later one when the same words are typed again", async () => {
+    const b = await draw(PROPS);
+    await type(b, "Threads");
+    await save(b);
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Threads", after: 21 }),
+      ),
+    );
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Board", after: 22 }),
+      ),
+    );
+    expect(b.box.value).toBe("Board");
+    await type(b, "Threads");
+    expect(b.note()).toBe(UNSAVED);
+    await act(async () =>
+      b.root.render(
+        createElement(CopyForm, { ...PROPS, text: "Boards", after: 23 }),
+      ),
+    );
+    expect(b.box.value).toBe("Threads");
+    expect(b.note()).toBe(OVERTAKEN);
+  });
+
   it("stops saying newer words came in once the box is back to them", async () => {
     const b = await draw(PROPS);
     await type(b, "Threads");

@@ -99,20 +99,21 @@ export function CopyForm({
   const [slow, setSlow] = useState(false);
   const [ready, setReady] = useState(false);
   const [kept, setKept] = useState(true);
-  // The words the press of Save now going sent, until it finishes.
-  const [sent, setSent] = useState<string | null>(null);
-  if (seen.after !== after || seen.text !== text) {
+  if (!pending && (seen.after !== after || seen.text !== text)) {
     // New words from the page: this box's own save, or someone else's. The
     // box takes them unless it holds other words the admin typed and hasn't
-    // saved, which it keeps. The server may tidy the words a save took (a
-    // trailing space), so the box takes the tidied ones in their place.
-    const ours = draft === sent || draft === state.saved;
+    // saved, which it keeps. Decided only once this box's save has answered,
+    // since words that arrive meanwhile may be someone else's. The server
+    // may tidy the words a save took (a trailing space), so the box takes
+    // the tidied ones in their place.
+    const landed = state.saved !== undefined && state.savedAfter === seen.after;
+    const ours = landed && draft === state.saved;
     const typed = draft !== seen.text && draft !== text && !ours;
     setSeen({ after, text });
     if (typed) {
       // Words typed while this box's own save was going aren't overtaken by
       // it: they're just not saved yet.
-      setNote(sent === null ? "overtaken" : null);
+      setNote(landed ? null : "overtaken");
     } else {
       setDraft(text);
       setNote(null);
@@ -133,9 +134,6 @@ export function CopyForm({
     }
     setReady(true);
   }, [ready, stored, after, text]);
-  useEffect(() => {
-    if (!pending) setSent(null);
-  }, [pending]);
   useEffect(() => {
     if (!ready) return;
     setKept(
@@ -158,7 +156,7 @@ export function CopyForm({
   // A whole document gets room and keeps its lines; a piece is one line.
   const document = kind === "bot_text";
   return (
-    <form action={action} onSubmit={() => setSent(draft)} className="space-y-2">
+    <form action={action} className="space-y-2">
       <Target kind={kind} id={copyKey} />
       <input type="hidden" name="after" value={after} />
       <textarea
