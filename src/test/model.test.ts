@@ -14,9 +14,16 @@ const TARGET_SURFACE_MAX = 25;
 export type Row = { tool: string; noun: string; fate: string };
 
 export function registeredTools(source: string): string[] {
-  return [...source.matchAll(/registerTool\(\s*"([a-z_]+)"/g)].map(
-    (m) => m[1] ?? "",
-  );
+  const names = [
+    ...source.matchAll(/registerTool\(\s*(["'`])([^"'`]+)\1/g),
+  ].map((m) => m[2] ?? "");
+  const calls = source.match(/registerTool\(/g)?.length ?? 0;
+  if (names.length !== calls) {
+    throw new Error(
+      `registerTool is called ${calls} times but only ${names.length} have a literal name`,
+    );
+  }
+  return names;
 }
 
 export function toolMap(model: string): Row[] {
@@ -28,8 +35,10 @@ export function toolMap(model: string): Row[] {
   const section = end < 0 ? rest : rest.slice(0, end);
   const rows: Row[] = [];
   for (const line of section.split("\n")) {
+    if (!line.startsWith("| `")) continue;
     const m = line.match(/^\| `([a-z_]+)` \| ([A-Za-z]+) \| (.+?) \|$/);
-    if (m) rows.push({ tool: m[1] ?? "", noun: m[2] ?? "", fate: m[3] ?? "" });
+    if (!m) throw new Error(`malformed tool map row: ${line}`);
+    rows.push({ tool: m[1] ?? "", noun: m[2] ?? "", fate: m[3] ?? "" });
   }
   return rows;
 }
@@ -175,6 +184,19 @@ describe("the model check refuses drift", () => {
     );
     expect(problems([], rows)).toEqual([
       `target surface is ${TARGET_SURFACE_MAX + 1} tools, more than ${TARGET_SURFACE_MAX}`,
+    ]);
+  });
+
+  it("refuses a malformed row and a tool registered without a literal name", () => {
+    const md = "# M\n## Connector tools\n\n| `post` |  Post | keep |\n";
+    expect(() => toolMap(md)).toThrow("malformed tool map row");
+    expect(() =>
+      registeredTools(
+        'server.registerTool(\n  "post", {});\nserver.registerTool(name, {});',
+      ),
+    ).toThrow("only 1 have a literal name");
+    expect(registeredTools("server.registerTool(\n  'vote_2', {});")).toEqual([
+      "vote_2",
     ]);
   });
 
