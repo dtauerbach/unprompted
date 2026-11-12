@@ -2,6 +2,7 @@
 // "Trial" under each). Each arm is one way of running the same story: which
 // kind of host the subject has, or one change to what it's told.
 
+import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { enterLinkCode } from "../../src/lib/link-codes";
@@ -9,6 +10,7 @@ import { type Actor, act, api, makeActor, sleep, until } from "./actors";
 import type { Profile } from "./agent";
 import { allowApp } from "./oauth";
 import type { BotSpec, Ctx, Scenario, Setup, SetupTouch } from "./run";
+import type { Site } from "./site";
 import { startDinner } from "./table";
 
 // Behaviour trials run on a top-tier model: the people this site is for use
@@ -590,10 +592,15 @@ const NOISE: [string, string, string][] = [
   ],
 ];
 
-// Arm "leader": the owner signed in once, linked all three bots to their
-// account, and sends one line, to the leader only. The owner never sets a
-// time: the followers run only when their own app starts them, on a visit
-// they booked themselves or when their wake number rises (a push listener).
+// Arms "leader" and "leader-cold": the owner signed in once, linked all three
+// bots to their account, put them in a group on the account page with duet
+// as its leader (#119), and sends one line, to the leader only. The line
+// says only "you lead", not where: finding the group is the bots' part. The
+// owner never sets a time: the followers run only when their own app starts
+// them, on a visit they booked themselves or when their wake number rises (a
+// push listener). In "leader" their apps start listening after the group is
+// made, so their first wake is something said in it; in "leader-cold" they
+// were listening before, so being put in the group wakes them.
 const LEADER_LINE =
   "My other two assistants, scout and quill, are linked to my Unprompted account too. You lead: get the three of you working together over the next two hours on one project, a short, current guide to the five trickiest parts of brewing beer at home for a beginner, and tell me at the end where it is and how it went. I'll only talk to you.";
 // The app's own words when it starts a chat on a wake, not the owner's.
@@ -646,7 +653,11 @@ async function connectorCall(
 async function joinAndLink(
   ctx: Ctx,
   owner: string,
-): Promise<{ bots: Record<string, Joined>; touches: SetupTouch[] }> {
+): Promise<{
+  bots: Record<string, Joined>;
+  touches: SetupTouch[];
+  human: string;
+}> {
   const { site, dir } = ctx;
   const human = `story-human-${owner.toLowerCase()}`;
   const touches: SetupTouch[] = [{ kind: "sign_in", detail: "Google, once" }];
@@ -691,7 +702,64 @@ async function joinAndLink(
     touches.push({ kind: "link", bot: m.name });
     bots[m.name] = joined;
   }
-  return { bots, touches };
+  return { bots, touches, human };
+}
+
+// The site under test must serve groups (#119); the last set ran on a
+// stale build. Checked before the clock, from what the site serves and the
+// database it runs on.
+async function assertServesGroups(site: Site): Promise<void> {
+  const spec = await fetch(`${site.base}/openapi.json`).then((r) => r.json());
+  const [db] = await site.sql<{ groups: string | null }[]>`
+    SELECT to_regclass('group_channels')::text AS groups`;
+  if (!spec?.paths?.["/v1/private-channels/{id}"] || !db?.groups)
+    throw new Error(
+      "this site doesn't serve groups (#119): rebuild it from a tree that has them (npx next build) before an s5 leader arm",
+    );
+}
+
+// The person starts a group of their bots on the account page, picking a
+// leader: played exactly as the evals play it (evals/person-groups.ts, the
+// account page's own server action's work for a made-up sign-in id), against
+// this run's throwaway database.
+function startGroup(
+  site: Site,
+  human: string,
+  leader: string,
+  handles: string[],
+): { channel: string; members: string[]; leader: string | null } {
+  const run = spawnSync(
+    "npx",
+    [
+      "tsx",
+      "--conditions=react-server",
+      "evals/person-groups.ts",
+      human,
+      "start",
+      leader,
+      ...handles,
+    ],
+    {
+      cwd: path.resolve(
+        path.dirname(new URL(import.meta.url).pathname),
+        "../..",
+      ),
+      env: { ...process.env, EVAL_DATABASE_URL: site.db },
+      encoding: "utf8",
+    },
+  );
+  if (run.status !== 0) throw new Error(`person-groups: ${run.stderr}`);
+  const out = JSON.parse(run.stdout);
+  if (out.refused || out.leader !== leader)
+    throw new Error(`group not started: ${run.stdout}`);
+  return out;
+}
+
+async function wakeOf(site: Site, key: string): Promise<number> {
+  const r = await api(site.base, "GET", "/v1/me/wake", key);
+  const n = Number(r.json?.wake);
+  if (!Number.isFinite(n)) throw new Error(`wake: ${r.status}`);
+  return n;
 }
 
 async function story5(ctx: Ctx): Promise<Setup> {
@@ -714,8 +782,30 @@ async function story5(ctx: Ctx): Promise<Setup> {
       title,
       body,
     });
-  const leader = arm === "leader";
+  const leader = arm === "leader" || arm === "leader-cold";
+  if (leader) await assertServesGroups(site);
   const joined = leader ? await joinAndLink(ctx, owner) : undefined;
+  // What each follower's app had last seen, in leader-cold: before the group.
+  const heardFrom = new Map<string, number>();
+  let group: { channel: string } | undefined;
+  if (joined) {
+    if (arm === "leader-cold")
+      for (const m of TEAM)
+        heardFrom.set(
+          m.name,
+          await wakeOf(site, (joined.bots[m.name] as Joined).key),
+        );
+    group = startGroup(
+      site,
+      joined.human,
+      "duet",
+      TEAM.map((t) => t.name),
+    );
+    joined.touches.push({
+      kind: "group",
+      detail: "started a group of the three, duet leads",
+    });
+  }
   // The story's clock starts as setup returns; the news lands at its minute 50.
   const start = Date.now();
   let psa: { id: number; at: string } | { error: string } | undefined;
@@ -752,7 +842,11 @@ async function story5(ctx: Ctx): Promise<Setup> {
         line: isLeader ? line(site.base, m.profile, LEADER_LINE) : "",
         wake: isLeader
           ? undefined
-          : { key: j.key, prompt: line(site.base, m.profile, WAKE_LINE) },
+          : {
+              key: j.key,
+              prompt: line(site.base, m.profile, WAKE_LINE),
+              from: heardFrom.get(m.name),
+            },
         token: j.token,
         answer: "I'm busy, use your judgment.",
         visitsAllowed: 8,
@@ -802,6 +896,21 @@ async function story5(ctx: Ctx): Promise<Setup> {
             LEFT JOIN humans h ON h.id = b.owner_id
             WHERE b.handle = ANY(${TEAM.map((t) => t.name)}) ORDER BY b.id`
         : undefined,
+      // The group at the end: who is in it and who leads.
+      group: group
+        ? {
+            channel: group.channel,
+            ...(
+              await site.sql`
+                SELECT
+                  (SELECT b.handle FROM bots b
+                   WHERE b.id = channel_leader(${Number(group.channel.replace("private:", ""))})) AS leader,
+                  (SELECT array_agg(b.handle ORDER BY b.handle)
+                   FROM channel_roster(${Number(group.channel.replace("private:", ""))}) r
+                   JOIN bots b ON b.id = r.bot_id) AS members`
+            )[0],
+          }
+        : undefined,
       psa_minute: PSA_AT_MIN,
       psa: { ...PSA, post: psa ?? null },
       psa_keywords: ["BrewClean", "2611"],
@@ -843,7 +952,7 @@ export const SCENARIOS: Scenario[] = [
     id: "s5",
     title: "One owner's three assistants share a project",
     minutes: 120,
-    arms: ["a", "b", "leader"],
+    arms: ["a", "b", "leader", "leader-cold"],
     setup: story5,
   },
 ];

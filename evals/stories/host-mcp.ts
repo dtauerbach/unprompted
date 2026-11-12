@@ -1,6 +1,9 @@
 // The bot's host, as a tiny MCP server over stdio: the few things any
 // assistant app gives a bot besides the site. Every call is logged to
 // $HOST_LOG as JSON lines, which is how the harness counts owner touches.
+// That log is for people, so it's redacted (redact.ts); the runner gets each
+// entry whole at $HOST_INBOX (inbox.ts), since a message passed between
+// owners may carry a code the other bot needs.
 //   ask_owner     a question to the person; answered from the scenario's
 //                 script (the owner is busy and never volunteers anything)
 //   tell_owner    a message to the person; with pass_to, the person passes
@@ -13,11 +16,14 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { type HostEntry, tellRunner } from "./inbox";
+import { redact } from "./redact";
 
 const LOG = process.env.HOST_LOG ?? "/dev/null";
 const SCRIPT = process.env.HOST_SCRIPT ?? "";
 const ALLOW = (process.env.HOST_HTTP_ALLOW ?? "").split(",").filter(Boolean);
 const OTHERS = (process.env.HOST_OTHERS ?? "").split(",").filter(Boolean);
+const INBOX = process.env.HOST_INBOX || undefined;
 
 type Script = { answer: string; visits_allowed: number };
 function script(): Script {
@@ -27,11 +33,10 @@ function script(): Script {
       : {};
   return { answer: "I'm busy, use your judgment.", visits_allowed: 1, ...s };
 }
-function log(e: object) {
-  appendFileSync(
-    LOG,
-    `${JSON.stringify({ at: new Date().toISOString(), ...e })}\n`,
-  );
+async function log(e: { kind: string } & Record<string, unknown>) {
+  const entry: HostEntry = { at: new Date().toISOString(), ...e };
+  appendFileSync(LOG, `${redact(JSON.stringify(entry))}\n`);
+  await tellRunner(INBOX, entry);
 }
 function count(kind: string): number {
   if (!existsSync(LOG)) return 0;
@@ -51,7 +56,7 @@ server.registerTool(
   },
   async ({ question }) => {
     const { answer } = script();
-    log({ kind: "ask_owner", question, answer });
+    await log({ kind: "ask_owner", question, answer });
     return text(answer);
   },
 );
@@ -71,10 +76,15 @@ server.registerTool(
     const { message } = args as { message: string };
     const passTo = (args as { pass_to?: string }).pass_to;
     if (passTo && !OTHERS.includes(passTo)) {
-      log({ kind: "tell_owner", message, pass_to: passTo, delivered: false });
+      await log({
+        kind: "tell_owner",
+        message,
+        pass_to: passTo,
+        delivered: false,
+      });
       return text(`Your person doesn't know who "${passTo}" is.`);
     }
-    log({
+    await log({
       kind: "tell_owner",
       message,
       pass_to: passTo ?? null,
@@ -101,7 +111,7 @@ server.registerTool(
   },
   async ({ in_minutes, note }) => {
     const granted = count("schedule_visit_granted") < script().visits_allowed;
-    log({
+    await log({
       kind: granted ? "schedule_visit_granted" : "schedule_visit_refused",
       in_minutes,
       note,
@@ -135,7 +145,7 @@ if (ALLOW.length > 0) {
         origin = new URL(url).origin;
       } catch {}
       if (!ALLOW.includes(origin)) {
-        log({ kind: "http_refused", url });
+        await log({ kind: "http_refused", url });
         return text(`error: can't reach ${url} from here`);
       }
       try {
@@ -146,7 +156,7 @@ if (ALLOW.length > 0) {
           redirect: "manual",
         });
         const t = await r.text();
-        log({ kind: "http", method, url, status: r.status });
+        await log({ kind: "http", method, url, status: r.status });
         return text(
           `HTTP ${r.status}\ncontent-type: ${r.headers.get("content-type") ?? ""}${
             r.headers.get("location")
@@ -167,7 +177,7 @@ if (ALLOW.length > 0) {
       inputSchema: { seconds: z.number().min(1).max(300) },
     },
     async ({ seconds }) => {
-      log({ kind: "wait", seconds });
+      await log({ kind: "wait", seconds });
       await new Promise((r) => setTimeout(r, seconds * 1000));
       return text(`slept ${seconds}s`);
     },

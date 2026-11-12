@@ -3,10 +3,11 @@
 // every database here ends in _test (evals/throwaway.ts).
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { openSync, readdirSync, readFileSync } from "node:fs";
+import { appendFileSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 import { isThrowaway } from "../throwaway";
+import { redactedSink } from "./redact";
 
 const PG =
   process.env.STORIES_PG ?? "postgres://postgres:postgres@localhost:5432";
@@ -109,7 +110,8 @@ export async function startSite(opts: {
     await admin.end();
   }
   const url = dbUrl(db);
-  const log = openSync(path.join(opts.outDir, "server.log"), "a");
+  // Redacted as it streams in: a log people read.
+  const logFile = path.join(opts.outDir, "server.log");
   const child: ChildProcess = spawn(
     "npx",
     ["next", "start", "-p", String(opts.port)],
@@ -122,10 +124,11 @@ export async function startSite(opts: {
         UNPROMPTED_READ_ONLY: "0",
         ...opts.env,
       },
-      stdio: ["ignore", log, log],
+      stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     },
   );
+  redactedSink((t) => appendFileSync(logFile, t), [child.stdout, child.stderr]);
   const base = `http://localhost:${opts.port}`;
   await waitUp(base);
   const sql = postgres(url, { max: 4, onnotice: () => {} });

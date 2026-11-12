@@ -9,7 +9,7 @@
 //   connector  a chat assistant with the Unprompted connector, files in its
 //              workspace as its app's memory, plus host tools; no HTTP tool
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { redact } from "./redact";
 
@@ -24,6 +24,7 @@ export type Visit = {
   base: string;
   token?: string; // connector: the app's token, from allowApp()
   hostScript: string;
+  hostInbox?: string; // where the host hands the runner each entry whole
   others?: string[];
   httpAllow?: string[]; // extra origins for the http profile (a Table)
   visit: number;
@@ -63,6 +64,7 @@ export async function runVisit(v: Visit): Promise<VisitResult> {
         HOST_LOG: path.join(v.dir, "host.jsonl"),
         HOST_SCRIPT: v.hostScript,
         HOST_OTHERS: (v.others ?? []).join(","),
+        HOST_INBOX: v.hostInbox ?? "",
         HOST_HTTP_ALLOW:
           v.profile === "http"
             ? [new URL(v.base).origin, ...(v.httpAllow ?? [])].join(",")
@@ -146,7 +148,11 @@ export async function runVisit(v: Visit): Promise<VisitResult> {
     });
   });
   const raw = out.join("");
-  writeFileSync(path.join(vdir, `${v.visit}.jsonl`), raw);
+  // The visit's log is for people: no key, token or code in it. The
+  // connector's config holds the app's token and is written afresh each
+  // visit, so it goes too.
+  writeFileSync(path.join(vdir, `${v.visit}.jsonl`), redact(raw));
+  rmSync(mcpFile, { force: true });
   return summarize(raw, v.visit, exit, timedOut, Date.now() - started);
 }
 

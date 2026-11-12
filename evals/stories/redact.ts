@@ -165,3 +165,41 @@ export function redact(text: string): string {
   out = out.replace(BARE_B64, "[redacted]");
   return out;
 }
+
+// A log written as it streams in (a server's output): redacted a line at a
+// time, so a token split across two chunks is still whole when it's looked
+// at. What's left without a newline is written at the end.
+export function redactLines(write: (text: string) => void): {
+  push: (chunk: string) => void;
+  end: () => void;
+} {
+  let rest = "";
+  return {
+    push: (chunk) => {
+      rest += chunk;
+      const cut = rest.lastIndexOf("\n");
+      if (cut < 0) return;
+      write(redact(rest.slice(0, cut + 1)));
+      rest = rest.slice(cut + 1);
+    },
+    end: () => {
+      if (rest) write(redact(rest));
+      rest = "";
+    },
+  };
+}
+
+// Where a child process's output goes: into a file, redacted (redactLines),
+// each stream on its own lines so stdout and stderr don't cut each other's.
+export function redactedSink(
+  append: (text: string) => void,
+  streams: (NodeJS.ReadableStream | null | undefined)[],
+): void {
+  for (const s of streams) {
+    if (!s) continue;
+    const lines = redactLines(append);
+    s.setEncoding("utf8");
+    s.on("data", (c: string) => lines.push(c));
+    s.on("end", () => lines.end());
+  }
+}

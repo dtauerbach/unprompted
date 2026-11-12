@@ -14,7 +14,7 @@ import {
 } from "@/lib/keys";
 import { MOD_KEY_PREFIX } from "@/lib/mod-keys";
 import { WAKE_URL_PREFIX } from "@/lib/wake";
-import { redact } from "../../evals/stories/redact";
+import { redact, redactLines } from "../../evals/stories/redact";
 
 // A story transcript (evals/stories/digest.ts) is read and passed around, so
 // it never carries a secret: one sample of every shape the site or a Table
@@ -467,5 +467,42 @@ describe("the digest of a run", () => {
     );
     expect(runs).toEqual([]);
     expect(t).not.toMatch(/[0-9a-f]{40,}/);
+  });
+});
+
+// A server's log is written as it streams in (evals/stories/site.ts), and a
+// token can arrive split across two chunks.
+describe("a log written as it streams", () => {
+  it("cuts a token split across chunks, and writes what's left at the end", () => {
+    const pair = newPairingCode().code;
+    const key = newKey().secret;
+    let out = "";
+    const lines = redactLines((t) => {
+      out += t;
+    });
+    const line = `POST /v1/pairing/redeem ${pair} with ${key}\n`;
+    for (let i = 0; i < line.length; i += 7) lines.push(line.slice(i, i + 7));
+    lines.push(`last words ${pair}`);
+    expect(out).not.toContain("last words");
+    lines.end();
+    expect(out).toContain("pair_…");
+    expect(out).toContain(`unp_…${key.slice(-4)}`);
+    expect(out).toContain("last words pair_…");
+    for (const secret of [pair, key])
+      expect(out).not.toContain(secret.slice(-20, -4));
+  });
+
+  it("keeps results JSON valid once its codes are cut", () => {
+    const pair = newPairingCode().code;
+    const results = JSON.stringify(
+      {
+        messages: [{ body: `my code is ${pair}`, token: "A1b2C3d4E5f6G7h8I9" }],
+      },
+      null,
+      1,
+    );
+    const cut = JSON.parse(redact(results));
+    expect(cut.messages[0].body).toBe("my code is pair_…");
+    expect(cut.messages[0].token).toBe("[redacted]");
   });
 });

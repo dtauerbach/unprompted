@@ -8,6 +8,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { api } from "./actors";
 import { hostLog, type Profile, runVisit, type VisitResult } from "./agent";
+import { startHostInbox } from "./inbox";
 import { allowApp } from "./oauth";
 import { redact } from "./redact";
 import { SCENARIOS } from "./scenarios";
@@ -29,7 +30,10 @@ export type BotSpec = {
   // The bot's app listens for its wake number, standing in for a push
   // listener: when the number rises, the app starts a fresh chat on the
   // scheduled lane with this prompt. Nobody sets a time for it.
-  wake?: { key: string; prompt: string };
+  // from: the number the app last saw, if it was listening before the
+  // story's setup ended (so a rise during setup starts a chat); otherwise it
+  // reads the number when the story starts.
+  wake?: { key: string; prompt: string; from?: number };
 };
 
 // Something the person did before the story's clock started (signing in,
@@ -95,6 +99,9 @@ async function main() {
   });
   const t0 = Date.now();
   const ctx: Ctx = { site, dir, t0, arm };
+  // What each bot's host asks of its person's app, whole, in memory only:
+  // host.jsonl on disk is redacted.
+  const inbox = await startHostInbox();
   const events: object[] = [];
   const note = (e: object) => {
     const line = { min: +((Date.now() - t0) / 60000).toFixed(2), ...e };
@@ -151,7 +158,7 @@ async function main() {
     // ends, and a granted visit is booked now.
     const scanHost = () => {
       for (const b of setup.bots) {
-        const log = hostLog(path.join(dir, b.name));
+        const log = inbox.entries(b.name);
         for (const e of log.slice(seen.get(b.name) ?? 0)) {
           if (e.kind === "schedule_visit_granted")
             queue.get(b.name)?.push({
@@ -219,6 +226,7 @@ async function main() {
           base: site.base,
           token: tokens.get(b.name),
           hostScript: script,
+          hostInbox: inbox.urlFor(b.name),
           others: b.others,
           httpAllow: b.httpAllow,
           visit: k,
@@ -267,7 +275,7 @@ async function main() {
                 ?.wake ?? Number.NaN,
             )
           : Number.NaN;
-      let wakeSeen = await readWake().catch(() => Number.NaN);
+      let wakeSeen = b.wake?.from ?? (await readWake().catch(() => Number.NaN));
       let wakeNext = Date.now() + 30_000;
       while (true) {
         if (b.wake && !wakeBusy && Date.now() >= wakeNext) {
@@ -341,10 +349,13 @@ async function main() {
       WHERE a.at >= ${new Date(t0)} GROUP BY 1, 2 ORDER BY 2, 1`.catch(
       () => [],
     );
-    // Bots that work together may talk off the board too.
+    // Bots that work together may talk off the board too: to one bot, or in
+    // a group (no to; its channel instead).
     const messages = await site.sql`
-      SELECT m.id, f.handle AS from_handle, t.handle AS to_handle, m.body, m.created_at
-      FROM messages m JOIN bots f ON f.id = m.bot_id JOIN bots t ON t.id = m.to_bot_id
+      SELECT m.id, f.handle AS from_handle, t.handle AS to_handle,
+        CASE WHEN m.to_bot_id IS NULL THEN 'private:' || m.channel_id END AS channel,
+        m.body, m.created_at
+      FROM messages m JOIN bots f ON f.id = m.bot_id LEFT JOIN bots t ON t.id = m.to_bot_id
       WHERE m.created_at >= ${new Date(t0)} ORDER BY m.id`.catch(() => []);
     const presence = await site.sql`
       SELECT p.id, f.handle AS from_handle, t.handle AS to_handle, p.state, p.next_check, p.note, p.created_at
@@ -378,9 +389,14 @@ async function main() {
       collected,
       events,
     };
-    writeFileSync(path.join(dir, "results.json"), JSON.stringify(out, null, 1));
+    // Posts, messages and finals are the bots' words, which may hold a code.
+    writeFileSync(
+      path.join(dir, "results.json"),
+      redact(JSON.stringify(out, null, 1)),
+    );
     note({ done: true, dir });
   } finally {
+    await inbox.close();
     await site.stop();
   }
 }

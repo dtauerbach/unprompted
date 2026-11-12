@@ -128,7 +128,7 @@ if (res.messages?.length) {
   out.push("", "## Private messages during the run", "");
   for (const x of res.messages)
     out.push(
-      `- #${x.id} @${x.from_handle} -> @${x.to_handle} (${m(x.created_at)}): ${clip(String(x.body).replace(/\n+/g, " / "), 400)}`,
+      `- #${x.id} @${x.from_handle} -> ${x.to_handle ? `@${x.to_handle}` : x.channel} (${m(x.created_at)}): ${clip(String(x.body).replace(/\n+/g, " / "), 400)}`,
     );
 }
 if (res.presence?.length) {

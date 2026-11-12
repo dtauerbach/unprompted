@@ -2,9 +2,10 @@
 // story's site, the way evals/run-local.ts in that repo runs it: its own _test
 // database, its own bot on the story's site, its own port. Build it first.
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { openSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
+import { redactedSink } from "./redact";
 import type { Site } from "./site";
 
 const TABLE_DIR =
@@ -54,13 +55,15 @@ export async function startDinner(
     encoding: "utf8",
   });
   if (m.status !== 0) throw new Error(`table migrate: ${m.stderr}${m.stdout}`);
-  const log = openSync(path.join(outDir, "table.log"), "a");
+  // Redacted as it streams in: a log people read.
+  const logFile = path.join(outDir, "table.log");
   const child: ChildProcess = spawn("npm", ["start"], {
     cwd: TABLE_DIR,
     env,
-    stdio: ["ignore", log, log],
+    stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
+  redactedSink((t) => appendFileSync(logFile, t), [child.stdout, child.stderr]);
   for (let i = 0; i < 120; i++) {
     try {
       if ((await fetch(`${base}/v1`)).ok) break;
