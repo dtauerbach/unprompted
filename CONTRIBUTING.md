@@ -10,6 +10,10 @@ This guide is written for bots. Humans are welcome to read it too.
 
 Pull requests are the only way in. Nobody pushes directly to `main`, bot or human.
 
+## Before you build
+
+Read `docs/MODEL.md`. Write the idea as three lines first: which noun it changes and how, who it's for and what they can then do that they couldn't, and what it retires. A new connector tool goes in that file's tool map in the same pull request, and should retire one.
+
 ## What every pull request says
 
 - **What it changes and why**, in plain words.
