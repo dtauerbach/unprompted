@@ -113,12 +113,8 @@ function localTables(): Watchable[] {
   }
 }
 
-// The Tables people can watch: those with a spectator feed. The deployed
-// site (on Vercel) watches the hosted Tables; a run on this machine watches
-// only the local ones, so tests and evals never reach a real Table.
-export function watchable(): Watchable[] {
-  if (!process.env.VERCEL) return localTables();
-  const hosted = TABLES.flatMap((t) =>
+function hostedTables(): Watchable[] {
+  return TABLES.flatMap((t) =>
     t.spectate
       ? [
           {
@@ -130,5 +126,21 @@ export function watchable(): Watchable[] {
         ]
       : [],
   );
-  return hosted;
+}
+
+// The Tables people can watch: those with a spectator feed. Only the
+// production site reads the hosted Tables. A preview (whose database is a
+// branch, with hides as old as the branch), a run on this machine and CI
+// read only the local ones, so none of them reaches a real Table.
+export function watchable(): Watchable[] {
+  if (process.env.VERCEL_ENV === "production") return hostedTables();
+  return localTables();
+}
+
+// The slugs a moderator can hide, on any machine: every hosted Table's and
+// every local one's. A hide never fetches anything, so knowing a hosted
+// slug off production reaches no Table; it lets `npm run admin` on a
+// moderator's own machine hide a match the production site shows.
+export function hideableSlugs(): Set<string> {
+  return new Set([...hostedTables(), ...localTables()].map((t) => t.slug));
 }

@@ -28,7 +28,7 @@ import {
   listSchema,
   visibleText,
 } from "@/lib/spectator";
-import { TABLE_SLUG, TABLES, watchable } from "@/lib/tables";
+import { hideableSlugs, TABLE_SLUG, TABLES, watchable } from "@/lib/tables";
 import { register, resetDb } from "./helpers";
 
 vi.mock("next/server", async (original) => ({
@@ -117,6 +117,7 @@ const visible = (html: string) =>
 
 beforeEach(() => {
   vi.stubEnv("VERCEL", "");
+  vi.stubEnv("VERCEL_ENV", "");
   vi.stubEnv(
     "UNPROMPTED_LOCAL_TABLES",
     JSON.stringify([{ slug: "dinner", name: "Dinner party", url: LOCAL }]),
@@ -264,8 +265,9 @@ describe("which Tables people can watch", () => {
     expect(watchable()).toEqual([]);
   });
 
-  it("watches the hosted dinner Table, finished matches only, on Vercel, and ignores the local list there", () => {
+  it("watches the hosted dinner Table, finished matches only, in production, and ignores the local list there", () => {
     vi.stubEnv("VERCEL", "1");
+    vi.stubEnv("VERCEL_ENV", "production");
     expect(watchable()).toEqual([
       {
         slug: "dinner",
@@ -274,6 +276,28 @@ describe("which Tables people can watch", () => {
         show: "over",
       },
     ]);
+  });
+
+  it("watches no real Table on a preview or a development deploy", () => {
+    // A preview's database is a branch, its hides as old as the branch.
+    for (const env of ["preview", "development"]) {
+      vi.stubEnv("VERCEL", "1");
+      vi.stubEnv("VERCEL_ENV", env);
+      expect(watchable(), env).toEqual([]);
+    }
+  });
+
+  it("lets a moderator's own machine hide any hosted or local Table's slug", () => {
+    // Off production, with a local Table of another name: the hosted slug is
+    // still hideable, so `npm run admin` reaches what production shows.
+    vi.stubEnv(
+      "UNPROMPTED_LOCAL_TABLES",
+      JSON.stringify([{ slug: "supper", name: "Supper", url: LOCAL }]),
+    );
+    expect(watchable().map((x) => x.slug)).toEqual(["supper"]);
+    expect([...hideableSlugs()].sort()).toEqual(["dinner", "supper"]);
+    vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "");
+    expect([...hideableSlugs()]).toEqual(["dinner"]);
   });
 
   it("reads each hosted feed over https from its Table's own host, with no query", () => {
@@ -1109,23 +1133,46 @@ describe("hiding a match or a Table", () => {
   });
 
   it("works while the Table is down, and still lets go of a Table no longer listed", async () => {
+    // A local Table that isn't hosted, so taking it off the list unlists it.
+    vi.stubEnv(
+      "UNPROMPTED_LOCAL_TABLES",
+      JSON.stringify([{ slug: "supper", name: "Supper", url: LOCAL }]),
+    );
     const calls = serve({});
-    await setMatchHidden(db(), "dinner", ID, true, "x");
-    await setTableHidden(db(), "dinner", true, "x");
+    await setMatchHidden(db(), "supper", ID, true, "x");
+    await setTableHidden(db(), "supper", true, "x");
     expect(calls).toEqual([]);
     vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "[]");
     await expect(
-      setMatchHidden(db(), "dinner", "m_other", true, "x"),
-    ).rejects.toThrow("There is no Table dinner.");
-    expect((await setMatchHidden(db(), "dinner", ID, false, "x")).changed).toBe(
+      setMatchHidden(db(), "supper", "m_other", true, "x"),
+    ).rejects.toThrow("There is no Table supper.");
+    expect((await setMatchHidden(db(), "supper", ID, false, "x")).changed).toBe(
       true,
     );
-    expect((await setTableHidden(db(), "dinner", false, "x")).changed).toBe(
+    expect((await setTableHidden(db(), "supper", false, "x")).changed).toBe(
       true,
     );
-    await expect(setTableHidden(db(), "dinner", false, "x")).rejects.toThrow(
-      "There is no Table dinner.",
+    await expect(setTableHidden(db(), "supper", false, "x")).rejects.toThrow(
+      "There is no Table supper.",
     );
+  });
+
+  it("hides the production site's dinner Table from a moderator's own machine", async () => {
+    // Not production, and no local Table: what `npm run admin` sees.
+    vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "");
+    expect(watchable()).toEqual([]);
+    const calls = serve({});
+    expect((await setMatchHidden(db(), "dinner", ID, true, "x")).changed).toBe(
+      true,
+    );
+    expect((await setTableHidden(db(), "dinner", true, "x")).changed).toBe(
+      true,
+    );
+    await expect(setTableHidden(db(), "chess", true, "x")).rejects.toThrow(
+      "There is no Table chess.",
+    );
+    expect(await rows()).toEqual({ matches: 1, tables: 1 });
+    expect(calls).toEqual([]);
   });
 
   it("makes a hidden match missing without asking the Table", async () => {
