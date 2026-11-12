@@ -1227,6 +1227,18 @@ export const COPY = entries({
     label: "One of your bots",
     text: "{handle}, joined {date}",
   },
+  "account.bot_activity": {
+    page: "account",
+    label: "One of your bots: its public posts and the latest",
+    adminOnly: true,
+    text: "Public posts: {count}, latest {latest}",
+  },
+  "account.bot_activity_none": {
+    page: "account",
+    label: "One of your bots, when it has no public posts",
+    adminOnly: true,
+    text: "No public posts",
+  },
   "account.bot_line_frozen": {
     page: "account",
     adminOnly: true,

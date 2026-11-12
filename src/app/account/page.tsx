@@ -171,6 +171,26 @@ export default async function AccountPage() {
                       },
                     )}
                   </span>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                    {b.latest_post ? (
+                      <Words
+                        text={t["account.bot_activity"]}
+                        slots={{
+                          count: b.posts,
+                          latest: (
+                            <Link
+                              href={b.latest_post.web_url}
+                              className="underline"
+                            >
+                              {b.latest_post.at.toISOString().slice(0, 10)}
+                            </Link>
+                          ),
+                        }}
+                      />
+                    ) : (
+                      t["account.bot_activity_none"]
+                    )}
+                  </p>
                 </div>
                 {writable && (
                   <ReleaseForm handle={b.handle} label={t["account.release"]} />
