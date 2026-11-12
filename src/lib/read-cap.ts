@@ -12,7 +12,7 @@ export const READ_MAX_BYTES = 60_000;
 
 // Room kept for the cursors, whose values change once a page is cut short:
 // a null next_after becomes an id, more turns true, next_before becomes
-// "votes:id" or "ms:id".
+// "votes:id" or "ms:id". Only for the first guess: cutToFit measures.
 const CURSOR_ROOM = 120;
 
 export function sizeOf(value: unknown): number {
@@ -29,12 +29,18 @@ export function roomBeside(envelope: unknown): number {
 // JSON array (commas included). At least one when there is any, so a cursor
 // always moves on: one item is at most a post's worth, far under the cap.
 export function fitting(items: readonly unknown[], room: number): number {
+  return fittingSizes(sizesOf(items), room);
+}
+
+// The same, from each item's bytes (sizesOf), so a read measures its items
+// once for the guess and the cut alike.
+export function fittingSizes(sizes: readonly number[], room: number): number {
   let used = 0;
-  for (let i = 0; i < items.length; i++) {
-    used += sizeOf(items[i]) + (i > 0 ? 1 : 0);
+  for (let i = 0; i < sizes.length; i++) {
+    used += (sizes[i] ?? 0) + (i > 0 ? 1 : 0);
     if (used > room) return Math.max(i, 1);
   }
-  return items.length;
+  return sizes.length;
 }
 
 // The same for the last items, for a page read newest first and shown
@@ -43,20 +49,99 @@ export function fittingFromEnd(
   items: readonly unknown[],
   room: number,
 ): number {
-  return fitting([...items].reverse(), room);
+  return fittingSizes(sizesOf(items).reverse(), room);
 }
 
 // Two lists in one answer, each on its own cursor (the digest's posts and
-// its messages): each gets half the room and whatever the other leaves, and
-// at least one item when it has any.
+// its messages), from each one's item sizes: each gets half the room and
+// whatever the other leaves, and at least one item when it has any.
 export function fittingBoth(
-  a: readonly unknown[],
-  b: readonly unknown[],
+  a: readonly number[],
+  b: readonly number[],
   room: number,
 ): [number, number] {
-  const bytes = (items: readonly unknown[]) =>
-    items.reduce<number>((n, x, i) => n + sizeOf(x) + (i > 0 ? 1 : 0), 0);
-  const na = fitting(a, Math.max(room / 2, room - bytes(b)));
-  const nb = fitting(b, room - bytes(a.slice(0, na)));
+  const na = fittingSizes(a, Math.max(room / 2, room - bytesOf(b, b.length)));
+  const nb = fittingSizes(b, room - bytesOf(a, na));
   return [na, nb];
+}
+
+// The hard ceiling. fitting's count is a first guess: the parts of an
+// answer outside its list (cursors that move once a page is cut, counts
+// worked out to the new cursor) can still change with the cut. So a read
+// builds the answer for that many items, measures it as it will be sent
+// (`bytes`, its JSON by default), and while it's over, drops items from the
+// end of its list, at least as many bytes as it was over, and measures
+// again. Never below one item when there is any, so the cursor always moves
+// on. Every part of an answer outside its list is bounded (a capped list, a
+// post's or a message's worth) so that one item always fits beside it,
+// which src/test/read-cap.test.ts holds at the largest the site allows.
+export async function cutToFit<T>(
+  sizes: readonly number[],
+  guess: number,
+  build: (n: number) => T | Promise<T>,
+  bytes: (answer: T) => number = sizeOf,
+  least = Math.min(1, sizes.length),
+): Promise<T> {
+  let n = Math.max(least, Math.min(guess, sizes.length));
+  for (;;) {
+    const answer = await build(n);
+    const over = bytes(answer) - READ_MAX_BYTES;
+    if (over <= 0 || n <= least) return answer;
+    n = dropFor(sizes, n, least, over);
+  }
+}
+
+// The same for an answer with two lists on their own cursors, like the
+// digest's posts and messages: it drops from whichever kept list is bigger.
+// `least` says how few of each it may give, so that between them a cursor
+// always moves on.
+export async function cutBothToFit<T>(
+  a: readonly number[],
+  b: readonly number[],
+  guess: readonly [number, number],
+  least: readonly [number, number],
+  build: (na: number, nb: number) => T | Promise<T>,
+  bytes: (answer: T) => number = sizeOf,
+): Promise<T> {
+  let na = Math.max(least[0], Math.min(guess[0], a.length));
+  let nb = Math.max(least[1], Math.min(guess[1], b.length));
+  for (;;) {
+    const answer = await build(na, nb);
+    const over = bytes(answer) - READ_MAX_BYTES;
+    if (over <= 0) return answer;
+    const canA = na > least[0];
+    const canB = nb > least[1];
+    if (!canA && !canB) return answer;
+    if (canA && (!canB || bytesOf(a, na) >= bytesOf(b, nb)))
+      na = dropFor(a, na, least[0], over);
+    else nb = dropFor(b, nb, least[1], over);
+  }
+}
+
+// The bytes of the first n items as a JSON array's elements.
+function bytesOf(sizes: readonly number[], n: number): number {
+  let total = Math.max(n - 1, 0);
+  for (let i = 0; i < n; i++) total += sizes[i] ?? 0;
+  return total;
+}
+
+// How many items to keep, from n, to save at least `over` bytes.
+function dropFor(
+  sizes: readonly number[],
+  n: number,
+  least: number,
+  over: number,
+): number {
+  let saved = 0;
+  let k = n;
+  while (k > least && saved < over) {
+    k -= 1;
+    saved += (sizes[k] ?? 0) + (k > 0 ? 1 : 0);
+  }
+  return k;
+}
+
+// Each item's bytes, for fittingSizes and cutToFit.
+export function sizesOf(items: readonly unknown[]): number[] {
+  return items.map(sizeOf);
 }
