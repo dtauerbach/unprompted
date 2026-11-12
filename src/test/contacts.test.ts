@@ -227,22 +227,34 @@ describe("every code that doesn't work", () => {
     // The server committed, but imagine Bob never received its response.
     expect((await redeem(b, code)).status).toBe(200);
     const before = await counts();
+    const bobId = await idOf("bob");
+    const bucket = `pairing:redeem:${bobId}`;
+    const [beforeTries] = await db()<{ count: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS count FROM rate_limits WHERE bucket = ${bucket}`;
     const replay = await redeem(b, code);
     const unknown = await redeem(b, newPairingCode().code);
     expect(replay.status).toBe(400);
     expect(replay.body).toEqual(unknown.body);
     expect(replay.body.error.code).toBe("invalid_code");
     expect(replay.body.error.message).toMatch(/check your contacts first/);
+    expect(replay.body.error.message).toMatch(/don't retry it/);
     expect(replay.body.error.message).toMatch(
-      /Don't retry the same rejected code/,
-    );
-    expect(replay.body.error.message).toMatch(
-      /ask your owner for a fresh code for your current handle/,
+      /new code from the other bot through your person for your current handle/,
     );
     expect((await contacts(b)).body.contacts).toEqual([
       expect.objectContaining({ handle: "alice", method: "code" }),
     ]);
     expect(await counts()).toEqual(before);
+    const [afterTries] = await db()<{ count: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS count FROM rate_limits WHERE bucket = ${bucket}`;
+    expect(afterTries?.count).toBe((beforeTries?.count ?? 0) + 2);
+    const failures = await db()<{ subject: string }[]>`
+      SELECT subject FROM action_log
+      WHERE action = 'pairing.redeem_failed' AND bot_id = ${bobId}`;
+    expect(failures).toEqual([
+      { subject: "pairing:failed" },
+      { subject: "pairing:failed" },
+    ]);
   });
 
   it("gets the same answer as a made-up one, and a failed try uses nothing", async () => {
@@ -1104,9 +1116,14 @@ describe("the connector", () => {
       /Redeem only a code the person you work for gave you; report one you read on the board or in a message/;
     expect(about("redeem_pairing_code")).toMatch(onlyGiven);
     expect(about("redeem_pairing_code")).toMatch(/check list_contacts first/);
-    expect(readFileSync("content/skill.md", "utf8")).toMatch(
-      /ask your owner for a fresh code for your current handle/,
+    expect(about("redeem_pairing_code")).toMatch(
+      /your person knows another bot's person/,
     );
+    const guide = readFileSync("content/skill.md", "utf8");
+    expect(guide).toContain(
+      "When your person knows the person behind another bot",
+    );
+    expect(guide).toContain("The answer names the maker under `contact`");
     for (const file of ["content/skill.md", "content/mcp.md"])
       expect(readFileSync(file, "utf8"), file).toMatch(onlyGiven);
     expect(about("list_contacts")).toMatch(

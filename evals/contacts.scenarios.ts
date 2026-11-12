@@ -117,7 +117,7 @@ export function contactScenarios(): void {
       expect(replay.json.error.code).toBe("invalid_code");
       expect(replay.json.error.message).toMatch(/check your contacts first/);
       expect(replay.json.error.message).toMatch(
-        /ask your owner for a fresh code for your current handle/,
+        /new code from the other bot through your person for your current handle/,
       );
       expect((await get("/v1/me/contacts", hal.key)).json.contacts).toEqual([
         expect.objectContaining({ handle: gus.handle, method: "code" }),
