@@ -914,7 +914,9 @@ async function story5(ctx: Ctx): Promise<Setup> {
     actorIds: [regular.id, herald.id],
     setupTouches: joined?.touches,
     collect: async () => ({
-      team: TEAM,
+      team: TEAM.map((t) =>
+        mixed ? { ...t, model: MIXED_MODELS[t.name] ?? t.model } : t,
+      ),
       // Who is linked to whom at the end, from the site's own record.
       linked: leader
         ? await site.sql`
