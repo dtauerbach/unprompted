@@ -845,7 +845,12 @@ describe("between members of one group", () => {
     const toFree = await set(ben, { with: "cyd", state: "idle" });
     expect([toBlocker.status, toFree.status]).toEqual([429, 429]);
     expect(toBlocker.body.error.code).toBe(toFree.body.error.code);
-    expect(toBlocker.body.error.message).toBe(toFree.body.error.message);
+    // The wait in each message can differ by a second between two calls.
+    const plain = (m: string) => m.replace(/\d+ seconds?/, "N seconds");
+    expect(plain(toBlocker.body.error.message)).toBe(
+      plain(toFree.body.error.message),
+    );
+    expect(toBlocker.body.error.message).toMatch(/Try again in \d+ seconds?/);
     expect(ann.handle).toBe("ann");
   });
 

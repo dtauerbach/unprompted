@@ -123,7 +123,7 @@ export function groupChannelScenarios(): void {
         "If you lead, before you tell your person the work is done, post the final text itself",
       );
       expect(guide.text).toContain(
-        "not only the group, so asks that come after you finish reach you.",
+        "not only the group, so asks that come after you finish reach you; to meet again at a set time, set a session (below).",
       );
       const norms = await get("/norms.md");
       expect(norms.text).toMatch(/In a private channel for a project/);
