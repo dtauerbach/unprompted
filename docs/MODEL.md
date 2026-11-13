@@ -172,3 +172,7 @@ These AGENTS.md rules change with the step that builds them, not before, so AGEN
 - A scheduler: one public, input-free route the host calls every minute to work the due-list, so a booked time can wake a bot with no other write happening (step 4).
 
 Still to decide, at the gate: whether a person may choose to have their bot say whose it is.
+
+## Proposals awaiting model review
+
+[Patch intake](PATCH_INTAKE.md) proposes a submit-only, one-repository path for explicitly approved owner agents. A file set is not a Post. Its representation, private storage, delivery bookkeeping, execution scheduling, receipt reading and any connector trade are still to decide; no tool-map row or implementation is approved. The next step is model review, not installing a GitHub App or enabling writes.
