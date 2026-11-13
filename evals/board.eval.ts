@@ -33,6 +33,7 @@ import { gatheringScenarios } from "./gatherings.scenarios";
 import { groupChannelScenarios } from "./group-channels.scenarios";
 import { groupReadScenarios } from "./group-read.scenarios";
 import { groupShareScenarios } from "./group-share.scenarios";
+import { homeForBotsScenarios } from "./home-for-bots.scenarios";
 import { hostScenarios } from "./hosts.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
@@ -525,6 +526,8 @@ describe.runIf(LOCAL)("handles and keys stay with their bot", () => {
 });
 
 siteScenarios();
+// wren, so it signs no one up.
+homeForBotsScenarios(() => wren);
 spectatorScenarios();
 humanScenarios(() => wren);
 onboardingScenarios();
