@@ -14,6 +14,12 @@ import { orCacheMarks, orOverBudget, orSpent, runOrVisit } from "./or-agent";
 import { redact } from "./redact";
 import { SCENARIOS } from "./scenarios";
 import { type Site, startSite } from "./site";
+import {
+  arrivalRead,
+  groupArrivals,
+  seenAfterWakeVisit,
+  type WakeSample,
+} from "./wake";
 
 export type BotSpec = {
   name: string; // the harness's name for it, and its owner's name
@@ -265,20 +271,57 @@ async function main() {
         scanHost();
       };
       let wakeBusy = false;
+      // What the listener read while a chat it started runs (wake.ts).
+      let wakeSamples: WakeSample[] = [];
+      // When a chat started on a wake ends, what the bot read in it is seen:
+      // the number as it stood before the reads that showed what arrived,
+      // not when the chat began. Anything unknown keeps that number.
+      const settleWake = async (hostFrom: number, since: number) => {
+        try {
+          if (b.wake)
+            wakeSeen = seenAfterWakeVisit({
+              prev: wakeSeen,
+              samples: wakeSamples,
+              reads: inbox
+                .entries(b.name)
+                .slice(hostFrom)
+                .flatMap((e) => arrivalRead(e) ?? []),
+              groups: await groupArrivals(site.sql, b.wake.key, since),
+            });
+        } catch (e) {
+          note({ bot: b.name, wake_settle_error: String(e) });
+        }
+        wakeSamples = [];
+        wakeBusy = false;
+        wakeNext = Date.now();
+      };
       const launch = (due: Pending[], lane: "owner" | "scheduled") => {
         const woke = due.some((d) => d.cause === "wake");
+        const since = wakeSeenAt;
         if (lane === "owner") ownerBusy = true;
-        if (woke) wakeBusy = true;
-        const p = visit(due, lane).finally(() => {
+        if (woke) {
+          wakeBusy = true;
+          wakeSamples = [];
+          // Sample from the chat's first seconds: a bot often reads its
+          // group right away, and a read with no sample before it changes
+          // nothing.
+          wakeNext = Date.now();
+        }
+        const hostFrom = inbox.entries(b.name).length;
+        const p = visit(due, lane).finally(async () => {
           if (lane === "owner") ownerBusy = false;
-          if (woke) wakeBusy = false;
+          if (woke) await settleWake(hostFrom, since);
           running.delete(p);
         });
         running.add(p);
       };
       // The app's wake listener: about every 30 seconds it reads the bot's
-      // wake number, and when it has risen it starts a chat. Rises while
-      // that chat still runs wait for it, then start one more.
+      // wake number, and when it has passed the last one it took as seen it
+      // starts a chat. While that chat runs it only keeps reading, every 5
+      // seconds, and when the chat ends takes as seen the number from just
+      // before the bot's reads of what arrived (wake.ts): a rise the bot read
+      // in that chat starts nothing, a rise after its last read of where it
+      // landed starts one more.
       const readWake = async () =>
         b.wake
           ? Number(
@@ -287,17 +330,25 @@ async function main() {
             )
           : Number.NaN;
       let wakeSeen = b.wake?.from ?? (await readWake().catch(() => Number.NaN));
+      // When the number taken as seen came back (epoch ms).
+      let wakeSeenAt = Date.now();
       let wakeNext = Date.now() + 30_000;
       while (true) {
-        if (b.wake && !wakeBusy && Date.now() >= wakeNext) {
-          wakeNext = Date.now() + 30_000;
+        if (b.wake && Date.now() >= wakeNext) {
+          wakeNext = Date.now() + (wakeBusy ? 5_000 : 30_000);
           const w = await readWake().catch(() => Number.NaN);
-          if (
+          // Busy is read after the answer: a chat that ended meanwhile has
+          // set what's seen, and this number is weighed against it.
+          if (wakeBusy) {
+            if (Number.isFinite(w))
+              wakeSamples.push({ at: Date.now(), wake: w });
+          } else if (
             Number.isFinite(w) &&
             (!Number.isFinite(wakeSeen) || w > wakeSeen)
           ) {
             const rose = Number.isFinite(wakeSeen) && w > wakeSeen;
             wakeSeen = w;
+            wakeSeenAt = Date.now();
             if (rose)
               queue.get(b.name)?.push({
                 at: Date.now(),

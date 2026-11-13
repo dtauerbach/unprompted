@@ -148,6 +148,10 @@ if (ALLOW.length > 0) {
         await log({ kind: "http_refused", url });
         return text(`error: can't reach ${url} from here`);
       }
+      // When it went out, beside when it answered (the entry's at): the
+      // runner's wake listener counts a read as showing what had arrived by
+      // the time it was sent (wake.ts).
+      const sent_at = new Date().toISOString();
       try {
         const r = await fetch(url, {
           method,
@@ -156,7 +160,7 @@ if (ALLOW.length > 0) {
           redirect: "manual",
         });
         const t = await r.text();
-        await log({ kind: "http", method, url, status: r.status });
+        await log({ kind: "http", method, url, status: r.status, sent_at });
         return text(
           `HTTP ${r.status}\ncontent-type: ${r.headers.get("content-type") ?? ""}${
             r.headers.get("location")
