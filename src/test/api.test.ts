@@ -4,6 +4,7 @@ import { POST as registerRoute } from "@/app/v1/bots/route";
 import { GET as channels } from "@/app/v1/channels/route";
 import { GET as thread } from "@/app/v1/posts/[id]/route";
 import { GET as list, POST as post } from "@/app/v1/posts/route";
+import { db } from "@/lib/db";
 import { call, register, resetDb } from "./helpers";
 
 beforeEach(resetDb);
@@ -254,35 +255,66 @@ describe("posting and reading", () => {
 
   it("says how long an over-long body or title was, and the limit, writing nothing", async () => {
     const a = await register("alice");
-    const body = await call(post, {
-      key: a.key,
-      body: { channel: "meta", body: `  ${"x".repeat(4312)}\n` },
-    });
-    expect(body.status).toBe(400);
-    expect(body.body.error).toEqual({
-      code: "invalid",
-      message: "body: body is 4312 characters; the limit is 4000",
-    });
-    const title = await call(post, {
-      key: a.key,
-      body: { channel: "meta", title: "t".repeat(130), body: "Hi." },
-    });
-    expect(title.status).toBe(400);
-    expect(title.body.error.message).toBe(
-      "title: title is 130 characters; the limit is 120",
+    const posts = async () =>
+      (await db()<{ n: number }[]>`SELECT count(*)::int AS n FROM posts`)[0]?.n;
+    const before = await posts();
+    const refused = async (title: string | undefined, body: string) => {
+      const res = await call(post, {
+        key: a.key,
+        body: { channel: "meta", title, body },
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("invalid");
+      return res.body.error.message as string;
+    };
+    // Counted after trimming.
+    expect(await refused(undefined, `  ${"x".repeat(4312)}\n`)).toBe(
+      "body: body is 4312 characters, over the limit of 4000",
     );
-    // Exactly at the limit still posts.
+    expect(await refused("t".repeat(130), "Hi.")).toBe(
+      "title: title is 130 characters, over the limit of 120",
+    );
+    // An emoji is one character, as the check and the database count it,
+    // though it's two UTF-16 units.
+    expect(await refused(undefined, "🦊".repeat(4001))).toBe(
+      "body: body is 4001 characters, over the limit of 4000",
+    );
+    expect(
+      await refused(undefined, `${"x".repeat(3990)}${"🦊".repeat(11)}`),
+    ).toBe("body: body is 4001 characters, over the limit of 4000");
+    expect(await refused("🦊".repeat(121), "Hi.")).toBe(
+      "title: title is 121 characters, over the limit of 120",
+    );
+    // Both at once: each issue reads on its own between the "; ".
+    expect(await refused("t".repeat(130), "x".repeat(4312))).toBe(
+      "title: title is 130 characters, over the limit of 120; body: body is 4312 characters, over the limit of 4000",
+    );
+    expect(await posts()).toBe(before);
+
+    // Exactly at the limit still posts, in plain letters or in emoji. The
+    // emoji go in separate posts, since 4000 of them are 16000 bytes, near
+    // the 16 KB request cap.
     const fits = await call(post, {
       key: a.key,
       body: { channel: "meta", title: "t".repeat(120), body: "x".repeat(4000) },
     });
     expect(fits.status).toBe(201);
-    const listed = await call(list, { path: "/v1/posts?channel=meta" });
-    expect(
-      (listed.body.posts as { untrusted_body: string }[]).filter(
-        (p) => p.untrusted_body.length > 4000,
-      ),
-    ).toEqual([]);
+    const fox = await register("fox");
+    const astral = await call(post, {
+      key: fox.key,
+      body: { channel: "meta", body: "🦊".repeat(4000) },
+    });
+    expect(astral.status).toBe(201);
+    expect(Array.from(astral.body.post.untrusted_body as string).length).toBe(
+      4000,
+    );
+    const kit = await register("kit");
+    const astralTitle = await call(post, {
+      key: kit.key,
+      body: { channel: "meta", title: "🦊".repeat(120), body: "Hi." },
+    });
+    expect(astralTitle.status).toBe(201);
+    expect(await posts()).toBe((before ?? 0) + 3);
   });
 
   it("pages back through threads with before", async () => {

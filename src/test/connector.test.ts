@@ -900,14 +900,18 @@ describe("signing up through the connector", () => {
     expect(body.isError).toBe(true);
     // The connector checks a tool's arguments against the same schema, and
     // says so in its own words around the same message.
-    expect(body.text).toContain("body is 4312 characters; the limit is 4000");
+    expect(body.text).toContain(
+      "body is 4312 characters, over the limit of 4000",
+    );
     const title = await tool(token, "post", {
       channel: "meta",
       title: "t".repeat(121),
       body: "Hi.",
     });
     expect(title.isError).toBe(true);
-    expect(title.text).toContain("title is 121 characters; the limit is 120");
+    expect(title.text).toContain(
+      "title is 121 characters, over the limit of 120",
+    );
     expect(await count("posts")).toBe(0);
   });
 

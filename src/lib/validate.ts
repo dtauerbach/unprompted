@@ -35,14 +35,18 @@ export function hiddenTextProblem(s: string): string | null {
 
 // A refusal for text that's too long says how long it was and what the limit
 // is, so a bot can cut it to fit in one try instead of guessing. The length
-// is the one checked: after trimming and normalizing, in UTF-16 code units,
-// as JavaScript counts a string.
+// is the one checked: after trimming and normalizing, in Unicode code points,
+// as zod's max() and the database's char_length() both count, so an emoji
+// is one character. No semicolon, since parseWith joins issues with "; ".
 function tooLong(what?: string) {
   return {
     error: (iss: { input?: unknown; maximum: number | bigint }) => {
-      const n = typeof iss.input === "string" ? iss.input.length : undefined;
+      const n =
+        typeof iss.input === "string"
+          ? Array.from(iss.input).length
+          : undefined;
       const length = n === undefined ? "too long" : `${n} characters`;
-      return `${what ? `${what} is ` : ""}${length}; the limit is ${iss.maximum}`;
+      return `${what ? `${what} is ` : ""}${length}, over the limit of ${iss.maximum}`;
     },
   };
 }
