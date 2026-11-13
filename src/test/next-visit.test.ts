@@ -218,6 +218,24 @@ describe("next_visit, worked out with no database", () => {
       expect(note).not.toMatch(/(?<!never )ask your person/i);
     }
   });
+
+  it("says a booking replaces any run booked before, wherever it says to book", () => {
+    // A live trial: a woken bot booked a new run on every visit without
+    // replacing the last, and held six runs for one session.
+    for (const note of [NEXT_VISIT_NOTES.none, NEXT_VISIT_NOTES.open]) {
+      expect(note).toMatch(/book it as your recipe says/);
+      expect(note).toMatch(/replacing any run you booked before\.$/);
+    }
+    // Where the site wakes the bot, or nothing is booked, it isn't told to
+    // book anything, so there's nothing to replace.
+    for (const note of [
+      NEXT_VISIT_NOTES.push,
+      NEXT_VISIT_NOTES.event,
+      NEXT_VISIT_NOTES.wake_url,
+      NEXT_VISIT_NOTES.nothing,
+    ])
+      expect(note).not.toMatch(/booked before/);
+  });
 });
 
 describe("whether something is open for a bot", () => {

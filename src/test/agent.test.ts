@@ -66,8 +66,9 @@ const passedOn = (res: Response) =>
   res.headers.get("x-middleware-next") === "1";
 
 describe("the proxy at /agent", () => {
-  it("runs on /agent as well as the account, admin and sign-in return pages", () => {
+  it("runs on / and /agent as well as the account, admin and sign-in return pages", () => {
     expect(config.matcher).toEqual([
+      "/",
       "/agent",
       "/account",
       "/admin/:path*",

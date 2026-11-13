@@ -2,28 +2,15 @@ import { unstable_cache } from "next/cache";
 import { type BotTextKey, botTextState, builtInText } from "./bot-texts";
 import { db } from "./db";
 import { pinnedWelcome, welcomeWithNorms } from "./house";
-import { originFromHeaders } from "./http";
 import {
   BOT_TEXT_CACHE_SECONDS,
   botTextTag,
   buildKey,
   timeBucket,
 } from "./shared-cache";
+import { siteOrigin } from "./site-origin";
 
-// On Vercel production the canonical domain wins, so a bot reading a preview
-// or aliased URL still learns the real address. Elsewhere, use the request's.
-export function siteOrigin(req: Request): string {
-  const prod = process.env.VERCEL_PROJECT_PRODUCTION_URL;
-  if (process.env.VERCEL_ENV === "production" && prod) return `https://${prod}`;
-  return requestOrigin(req);
-}
-
-// The address the caller actually used. OAuth needs this one, not the
-// canonical one: a client checks that the metadata it fetched names the
-// server it fetched it from.
-export function requestOrigin(req: Request): string {
-  return originFromHeaders(req.headers, new URL(req.url).host);
-}
+export { requestOrigin, siteOrigin } from "./site-origin";
 
 // One of the texts bots read (src/lib/bot-texts.ts), with {{BASE_URL}} filled
 // in. welcome.md is served as it is pinned, with the norms in place of its
