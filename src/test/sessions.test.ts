@@ -147,16 +147,22 @@ async function used(bucket: string): Promise<number> {
 }
 
 // Moves every session row's times back, as if they had been set `minutes`
-// earlier: the table is append-only, so the trigger is off for one
-// transaction (test files run one at a time).
+// earlier, and every membership so far with them (a member's item is never
+// due before it joined): the tables are append-only, so their triggers are
+// off for one transaction (test files run one at a time).
 async function age(minutes: number) {
   await db().begin(async (tx) => {
     await tx`ALTER TABLE channel_sessions DISABLE TRIGGER channel_sessions_append_only`;
+    await tx`ALTER TABLE channel_members DISABLE TRIGGER channel_members_append_only`;
     await tx`
       UPDATE channel_sessions SET
         created_at = created_at - make_interval(mins => ${minutes}),
         chain_until = chain_until - make_interval(mins => ${minutes}),
         first_at = first_at - make_interval(mins => ${minutes})`;
+    await tx`
+      UPDATE channel_members SET
+        created_at = created_at - make_interval(mins => ${minutes})`;
+    await tx`ALTER TABLE channel_members ENABLE TRIGGER channel_members_append_only`;
     await tx`ALTER TABLE channel_sessions ENABLE TRIGGER channel_sessions_append_only`;
   });
 }
@@ -482,6 +488,67 @@ describe("a session's occurrences", () => {
       [await idOf(b), await idOf(c)].sort(),
     );
     expect((await workDue(at(Date.now() + 2000))).fired).toBe(0);
+  });
+
+  it("leaves no item for a member put in once the channel has met", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    const d = await bot("dan");
+    const g = await group("google-p", [a, b], b);
+    await event(b, { action: "session", channel: g, in_minutes: 20 });
+    await age(25);
+    await person("google-p", d);
+    await setOwnBots(db(), "google-p", g, [d.handle], [], null);
+    expect(
+      (await dueFor(db(), await idOf(d))).filter((x) => x.kind === "session"),
+    ).toEqual([]);
+    // The others', due before it met, still fire late in its window.
+    const run = await workDue(at(Date.now() + 1000));
+    expect(run.fired).toBe(2);
+    expect(run.missed).toBe(0);
+    expect((await fires()).map((x) => Number(x.bot_id)).sort()).toEqual(
+      [await idOf(a), await idOf(b)].sort(),
+    );
+    expect((await workDue(at(Date.now() + 2000))).fired).toBe(0);
+  });
+
+  it("wakes a member put in before the channel meets: at its notice, or at once if that had passed", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    const d = await bot("dan");
+    const e = await bot("eve");
+    const g = await group("google-p", [a, b], b);
+    await person("google-p", d, e);
+    const r = await event(b, { action: "session", channel: g, in_minutes: 20 });
+    const first = Date.parse(r.body.session.at);
+    // Put in well before the notice time: due at the notice, like the rest.
+    await setOwnBots(db(), "google-p", g, [d.handle], [], null);
+    const early = (await dueFor(db(), await idOf(d))).find(
+      (x) => x.kind === "session",
+    );
+    expect(
+      Math.abs(
+        (early?.at.getTime() ?? 0) - (first - SESSION_DEFAULT_NOTICE * MIN),
+      ),
+    ).toBeLessThan(1000);
+    await age(17);
+    const met = first - 17 * MIN;
+    // Put in after the notice time had passed but before it meets: at once.
+    const before = Date.now() - 1000;
+    await setOwnBots(db(), "google-p", g, [e.handle], [], null);
+    const late = (await dueFor(db(), await idOf(e))).find(
+      (x) => x.kind === "session",
+    );
+    expect(late?.at.getTime()).toBeGreaterThanOrEqual(before);
+    expect(late?.at.getTime()).toBeLessThan(met);
+    const we = await wake(e);
+    const run = await workDue(at(Date.now() + 1000));
+    expect(run.fired).toBe(4);
+    expect((await fires()).map((x) => Number(x.bot_id)).sort()).toEqual(
+      [await idOf(a), await idOf(b), await idOf(d), await idOf(e)].sort(),
+    );
+    // Read after it was put in: the session's wake is one more.
+    expect(await wake(e)).toBe(we + 1);
   });
 
   it("fires only the latest occurrence after the clock was away, never the older ones", async () => {

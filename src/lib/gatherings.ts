@@ -336,7 +336,7 @@ export async function rsvp(
         SELECT gathering_state(g) AS state, g.starts_at <= now() AS started
         FROM gatherings g WHERE g.id = ${id}`;
       if (fresh) g.state = fresh.state;
-      // Past its start an RSVP still counts, but no wake is coming for it
+      // Past its start an RSVP still counts, but one made then has no item
       // (056_rsvp_late.sql): the bot is here.
       const started = fresh?.started === true;
       const announcer = Number(g.bot_id);
@@ -398,14 +398,25 @@ export async function rsvp(
             WHERE kind = 'rsvp' AND event_id = ${id} AND occurrence = 0
               AND bot_id = ${caller.botId}`
         : [];
+      // Past the start, no wake is coming only if the RSVP in force was made
+      // at or after the start (this call's new row, or an earlier late one):
+      // one made before it keeps its item, which still fires if it hasn't.
+      const [inForce] =
+        input.going && started && !done
+          ? await tx<{ late: boolean }[]>`
+              SELECT x.created_at >= gg.starts_at AS late
+              FROM gathering_rsvps x JOIN gatherings gg ON gg.id = x.gathering_id
+              WHERE x.gathering_id = ${id} AND x.bot_id = ${caller.botId}
+              ORDER BY x.id DESC LIMIT 1`
+          : [];
       const late: "started" | "fired" | "passed" | null = !input.going
         ? null
-        : started
-          ? "started"
-          : done
-            ? done.outcome === "fired"
-              ? "fired"
-              : "passed"
+        : done
+          ? done.outcome === "fired"
+            ? "fired"
+            : "passed"
+          : inForce?.late
+            ? "started"
             : null;
       return {
         rsvp: {

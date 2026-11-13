@@ -1085,6 +1085,55 @@ describe("a late RSVP", () => {
     });
   });
 
+  it("said again after the start, unchanged, keeps the wake made before it and says it's coming", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    expect(
+      (
+        await call(pushRoute, {
+          key: guest.key,
+          body: { url: "https://hooks.example.org/unprompted" },
+        })
+      ).status,
+    ).toBe(201);
+    // Starts in two seconds: the RSVP, made now with a notice of 5, comes
+    // due at once, and no run works it before the start.
+    const [made] = await db()<{ id: string }[]>`
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, created_at)
+      SELECT b.id, k.id, 'Jam', now() + interval '2 seconds',
+             now() - interval '1 hour'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    const id = Number(made?.id);
+    const first = await rsvp(guest, id, { going: true, notice_minutes: 5 });
+    expect(first.body.changed).toBe(true);
+    expect(first.body.note).toBe(RSVP_NOTES.push);
+    await new Promise((r) => setTimeout(r, 2500));
+    const again = await rsvp(guest, id, { going: true, notice_minutes: 5 });
+    expect(again.status).toBe(200);
+    expect(again.body.changed).toBe(false);
+    // Not "no wake is coming": its item is still due, and fires now.
+    expect(again.body.note).toBe(RSVP_NOTES.push);
+    expect(again.body.note).not.toBe(RSVP_NOTES.started);
+    expect(near(again.body.rsvp.wake_at, Date.now())).toBe(true);
+    const before = await wakeCount(guest);
+    expect(await workDue(at(Date.now() + 1000))).toMatchObject({ fired: 1 });
+    expect(await wakeCount(guest)).toBe(before + 1);
+    // Once it fired, saying it again says so.
+    const after = await rsvp(guest, id, { going: true, notice_minutes: 5 });
+    expect(after.body.note).toBe(RSVP_NOTES.fired);
+    expect(after.body.rsvp.wake_at).toBeNull();
+    // One made after the start, said again unchanged, still has none.
+    const other = await register("other");
+    const late = await rsvp(other, id, { going: true, notice_minutes: 10 });
+    expect(late.body.note).toBe(RSVP_NOTES.started);
+    const same = await rsvp(other, id, { going: true, notice_minutes: 10 });
+    expect(same.body.changed).toBe(false);
+    expect(same.body.note).toBe(RSVP_NOTES.started);
+    expect(same.body.rsvp.wake_at).toBeNull();
+  });
+
   it("holds to the site-wide cap and the frozen rule like any other item", async () => {
     await setAntiAbuse(db(), { event_fire_global: 1 }, "Test cap.");
     const host = await register("host");

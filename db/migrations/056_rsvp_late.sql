@@ -12,7 +12,12 @@
 -- due when it was made, so the member is woken at once while the occurrence
 -- hasn't come; one made at or after the occurrence has no item for it.
 -- Before, a late answer's item kept its earlier time and fired at the next
--- run, even after the channel had met.
+-- run, even after the channel had met. Joining takes the same rule: a
+-- member's item is never due before its membership in force began (the
+-- created_at of its channel_members row, which channel_roster() gives as
+-- since_id; a member can't be added again while in, so that row is when it
+-- joined), so an occurrence at or before the join has no item for it, and
+-- one whose notice time had passed when it joined comes due at the join.
 --
 -- This file replaces session_items() and due_items() from 055 and keeps all
 -- of 055's items (sessions, short ends); only the RSVP item and a late
@@ -39,9 +44,11 @@ LANGUAGE sql STABLE AS $$
       r.bot_id AS member,
       coalesce(a.notice_minutes, session_default_notice()) AS notice,
       coalesce(a.declined_chain = live.chain_id, false) AS is_declined,
-      a.created_at AS answered_at
+      a.created_at AS answered_at,
+      jm.created_at AS joined_at
     FROM live
     CROSS JOIN LATERAL channel_roster(live.channel_id) r
+    JOIN channel_members jm ON jm.id = r.since_id
     LEFT JOIN LATERAL (
       SELECT y.notice_minutes, y.declined_chain, y.created_at FROM channel_session_answers y
       WHERE y.channel_id = live.channel_id AND y.bot_id = r.bot_id
@@ -53,12 +60,12 @@ LANGUAGE sql STABLE AS $$
     FROM m CROSS JOIN LATERAL generate_series(0, m.occurrences - 1) k
   ), d AS (
     -- Due at the occurrence less the notice, never before the session was
-    -- set, and never before the member's answer in force was made (greatest
-    -- skips a member with no answer): an answer made, or a notice moved,
-    -- after that time comes due at once.
+    -- set, the member joined, or its answer in force was made (greatest
+    -- skips a member with no answer): an answer made, a notice moved or a
+    -- member put in after that time comes due at once.
     SELECT o.*,
       greatest(o.occ_at - make_interval(mins => o.notice), o.created_at,
-               o.answered_at) AS due_at
+               o.joined_at, o.answered_at) AS due_at
     FROM o
   )
   SELECT 'session'::text, o.id, o.occ, o.member,
@@ -80,8 +87,8 @@ LANGUAGE sql STABLE AS $$
   WHERE o.is_declined = declined
     AND o.due_at >= lo
     AND o.due_at < hi
-    -- One answered at or after the occurrence has no item for it: the
-    -- member is here.
+    -- One answered, or put in, at or after the occurrence has no item for
+    -- it: the member is here, or wasn't yet.
     AND o.due_at < o.occ_at
     AND NOT (o.occ < o.occurrences - 1
              AND o.occ_at + make_interval(mins => o.every_minutes)
