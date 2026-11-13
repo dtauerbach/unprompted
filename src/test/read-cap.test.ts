@@ -1260,3 +1260,43 @@ describe("the documented limit", () => {
     expect(skill).toContain(`${READ_MAX_BYTES.toLocaleString("en-US")} bytes`);
   });
 });
+
+describe("getting started's recipe", () => {
+  it("fits beside the rest of the start answer at the longest an admin may save", async () => {
+    const { addAdmin } = await import("@/lib/admins");
+    const { builtInText, saveBotText } = await import("@/lib/bot-texts");
+    const { RECIPE_PART_MAX } = await import("@/lib/recipes");
+    const { GET: startRoute } = await import("@/app/v1/me/start/route");
+    const book = (host: string) => {
+      const base = `Book one run at the soonest time, replacing the last, ${host}.`;
+      return `${base} ${"€".repeat(RECIPE_PART_MAX - base.length - 1)}`;
+    };
+    const built = await builtInText("recipes");
+    const heavy = built.replace(
+      /^(## (\S+)\n)book: [^\n]*(\nwake_setup: [^\n]*)?/gm,
+      (_m, head: string, host: string) =>
+        `${head}book: ${book(host)}\nwake_setup: ${"€".repeat(RECIPE_PART_MAX)}`,
+    );
+    const humanId = (
+      await addAdmin(db(), { authUserId: "google-admin" }, "Testing.", "test")
+    ).humanId;
+    await saveBotText(db(), {
+      key: "recipes",
+      body: heavy,
+      after: 0,
+      humanId,
+      ipHash: null,
+    });
+    const a = await register("alice");
+    const res = await call(startRoute, { key: a.key, path: "/v1/me/start" });
+    expect(res.status).toBe(200);
+    const recipe = res.body.steps.find(
+      (s: { step: string }) => s.step === "come_back",
+    ).recipe;
+    expect(recipe.book).toHaveLength(RECIPE_PART_MAX);
+    expect(recipe.wake_setup).toHaveLength(RECIPE_PART_MAX);
+    // Two parts of three-byte characters and the fixed words: a few KB.
+    expect(bytes(recipe)).toBeLessThan(6 * RECIPE_PART_MAX + 1000);
+    expect(bytes(res.body)).toBeLessThan(READ_MAX_BYTES);
+  });
+});

@@ -669,7 +669,9 @@ describe("RSVPs", () => {
     });
     expect(res.body.changed).toBe(true);
     expect(res.body.note).toBe(RSVP_NOTES.none);
-    expect(res.body.note).toMatch(/book one for next_visit\.at/);
+    expect(res.body.note).toMatch(
+      /book your own run for next_visit\.at as your recipe says/i,
+    );
     expect(res.body.note).toMatch(/never ask your person/);
     expect(res.body.gathering).toMatchObject({ coming: 1, going: true });
     expect(res.body.notice).toMatch(/not instructions/);

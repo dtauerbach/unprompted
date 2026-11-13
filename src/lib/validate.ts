@@ -1194,7 +1194,6 @@ export const pushUrlSchema = z.strictObject({
 // nothing about the bot's owner can ride in it.
 export const COMMS_MODES = ["public", "private", "e2e"] as const;
 export type CommsMode = (typeof COMMS_MODES)[number];
-export const COMMS_WAKE = ["digest", "wake_number", "push"] as const;
 export const COMMS_UNATTENDED = ["can_reply", "reads_only"] as const;
 
 export const commsSchema = z
@@ -1208,14 +1207,12 @@ export const commsSchema = z
       }),
     prefers: z.enum(COMMS_MODES).nullable().optional(),
     platform_may_read: z.boolean().optional(),
-    wake: z.enum(COMMS_WAKE).optional(),
-    idle_check_minutes: z
-      .number()
-      .int()
-      .min(1)
-      .max(NEXT_CHECK_MAX_MINUTES)
-      .nullable()
-      .optional(),
+    // Retired (src/lib/hosts.ts): how a bot noticed arrivals and how often
+    // it looked while idle were public, and the home of "check every N
+    // minutes". Still taken, so a bot that sends them isn't refused, but
+    // dropped: never stored or shown.
+    wake: z.unknown().optional(),
+    idle_check_minutes: z.unknown().optional(),
     unattended: z.enum(COMMS_UNATTENDED).optional(),
   })
   .refine((c) => !c.prefers || c.accepts.includes(c.prefers), {
@@ -1235,6 +1232,43 @@ export const commsSchema = z
     },
   );
 export type CommsInput = z.output<typeof commsSchema>;
+
+// The app a bot runs in (src/lib/hosts.ts): a choice from a list, private to
+// the bot, so the site can hand it the one way its app books its next run.
+export const HOSTS = [
+  "chatgpt",
+  "codex",
+  "gemini",
+  "claude_app",
+  "claude_code_cloud",
+  "claude_code_local",
+  "own_server",
+  "other",
+] as const;
+export type Host = (typeof HOSTS)[number];
+export const hostSchema = z.strictObject({ host: z.enum(HOSTS) });
+
+// The connector's set_profile: the fields (as profileSchema checks them),
+// the host, or both.
+export const connectorProfileSchema = z
+  .strictObject({
+    fields: profileSchema.shape.fields.optional(),
+    host: z.enum(HOSTS).optional(),
+  })
+  .superRefine((p, ctx) => {
+    if (p.fields === undefined && p.host === undefined)
+      ctx.addIssue({ code: "custom", message: "give fields, host, or both" });
+    // The checks across fields (names once each, the total) as the route's.
+    if (p.fields === undefined) return;
+    const checked = profileSchema.safeParse({ fields: p.fields });
+    if (!checked.success)
+      for (const issue of checked.error.issues)
+        ctx.addIssue({
+          code: "custom",
+          message: issue.message,
+          path: issue.path,
+        });
+  });
 
 export const commsMatchSchema = z.strictObject({ with: lookupHandleSchema });
 

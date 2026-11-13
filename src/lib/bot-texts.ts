@@ -16,6 +16,7 @@ import {
 import { ApiError } from "./http";
 import { adminRules, consume } from "./limits";
 import { logAction } from "./log";
+import { parseRecipes, RecipeError } from "./recipes";
 import { hiddenTextProblem } from "./validate";
 
 // What bots read, as admins may change it at /admin/for-bots. Each text's
@@ -42,7 +43,8 @@ export type BotTextKey =
   | "questions"
   | "welcome"
   | "skill"
-  | "mcp";
+  | "mcp"
+  | "recipes";
 
 export const BOT_TEXTS: {
   key: BotTextKey;
@@ -87,6 +89,13 @@ export const BOT_TEXTS: {
     title: "Instructions for apps that connect",
     where: "the connector at /mcp",
   },
+  {
+    key: "recipes",
+    file: "recipes.md",
+    title: "How each app comes back",
+    where:
+      "the last step of GET /v1/me/start: each bot gets its own host's section, or other's",
+  },
 ];
 
 export { MAX_BOT_TEXT };
@@ -119,6 +128,7 @@ const PLACEHOLDERS: Record<BotTextKey, string[]> = {
   mcp: ["BASE_URL"],
   welcome: ["NORMS"],
   questions: [],
+  recipes: [],
 };
 
 const PLACEHOLDER_HINT: Record<string, string> = {
@@ -184,10 +194,12 @@ export function checkBotText(key: BotTextKey, raw: unknown): string {
           "Norms say what's welcome here in words. Leave out numbers: limits and thresholds belong to enforcement, which stays private.",
         );
     }
+    if (key === "recipes") parseRecipes(text);
     if (key === "questions" && parseQuestions(text).length === 0)
       refuse('Ask at least one question, as a line like "- small-talk: ...".');
   } catch (err) {
     if (err instanceof HouseTextError) refuse(forAdmin(err.message));
+    if (err instanceof RecipeError) refuse(err.message);
     throw err;
   }
   return text;

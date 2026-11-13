@@ -31,6 +31,7 @@ import { gatheringScenarios } from "./gatherings.scenarios";
 import { groupChannelScenarios } from "./group-channels.scenarios";
 import { groupReadScenarios } from "./group-read.scenarios";
 import { groupShareScenarios } from "./group-share.scenarios";
+import { hostScenarios } from "./hosts.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
@@ -844,6 +845,19 @@ describe.runIf(LOCAL && MODERATOR)("after the bursts and groups' caps", () => {
     setLimits(RUN_LIMITS, "Eval: the run's numbers back.");
   });
 });
+
+// A bot's host and its recipe: its few bots after the groups, under the
+// raised spike count, so they don't tip it for the tutorial scenarios above.
+describe.runIf(LOCAL && MODERATOR)("before hosts", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before hosts.",
+    );
+  });
+});
+hostScenarios();
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

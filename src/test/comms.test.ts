@@ -223,10 +223,20 @@ describe("saving comms rules", () => {
       accepts: ["private", "public"],
       prefers: "private",
       platform_may_read: true,
-      wake: "wake_number",
-      idle_check_minutes: 60,
       unattended: "reads_only",
     });
+    // wake and idle_check_minutes are retired: still taken, so a bot that
+    // sends them isn't refused, but never kept or shown (src/lib/hosts.ts).
+    expect(saved.body.comms).not.toHaveProperty("wake");
+    expect(saved.body.comms).not.toHaveProperty("idle_check_minutes");
+    const [kept] = await db()<{ rules: Record<string, unknown> }[]>`
+      SELECT rules FROM comms_rules ORDER BY id DESC LIMIT 1`;
+    expect(Object.keys(kept?.rules ?? {}).sort()).toEqual([
+      "accepts",
+      "platform_may_read",
+      "prefers",
+      "unattended",
+    ]);
     const changedAt = saved.body.comms.changed_at;
     expect(changedAt).toBeTruthy();
     // The same set again, in another order, changes nothing.
@@ -277,9 +287,6 @@ describe("saving comms rules", () => {
         platform_may_read: false,
         prefers: "private",
       },
-      { accepts: ["public"], idle_check_minutes: 0 },
-      { accepts: ["public"], idle_check_minutes: 7 * 24 * 60 + 1 },
-      { accepts: ["public"], wake: "pager" },
       { accepts: ["public"], note: "my owner is in Lisbon" },
     ]) {
       const res = await setRules(a, body);
@@ -335,7 +342,7 @@ describe("saving comms rules", () => {
     for (let i = 0; i < 11; i++) {
       const res = await setRules(a, {
         accepts: ["public", "private"],
-        idle_check_minutes: i + 1,
+        unattended: i % 2 === 0 ? "reads_only" : "can_reply",
       });
       last = res.status;
       if (res.status !== 200) {
@@ -561,7 +568,6 @@ describe("the connector, the guide and the API description", () => {
       "accepts",
       "prefers",
       "platform_may_read",
-      "idle_check_minutes",
       "unattended",
       "comms_rules",
       "changed_at",
@@ -579,5 +585,30 @@ describe("the connector, the guide and the API description", () => {
       "post",
     ]);
     expect(OPERATIONS["/v1/me/comms/match"]?.get).toBeDefined();
+    // The retired fields aren't offered anywhere a bot reads.
+    for (const word of ["idle_check_minutes", "wake_number"]) {
+      expect(skill).not.toContain(word);
+      expect(mcp).not.toContain(word);
+    }
+  });
+
+  it("takes the retired fields with any value and keeps none of them", async () => {
+    const a = await bot("alice");
+    for (const body of [
+      { accepts: ["public"], idle_check_minutes: 0 },
+      { accepts: ["public"], idle_check_minutes: 7 * 24 * 60 + 1 },
+      { accepts: ["public"], wake: "pager" },
+      { accepts: ["public"], wake: "push", idle_check_minutes: 120 },
+    ]) {
+      const res = await setRules(a, body);
+      expect(res.status, JSON.stringify(body)).toBe(200);
+      expect(res.body.comms).not.toHaveProperty("wake");
+      expect(res.body.comms).not.toHaveProperty("idle_check_minutes");
+    }
+    // The same rules each time, once the retired fields are dropped.
+    expect(await rows()).toBe(1);
+    const shown = await page(a.handle);
+    expect(shown.status).toBe(200);
+    expect(JSON.stringify(shown.body)).not.toMatch(/idle_check|"wake"/);
   });
 });
