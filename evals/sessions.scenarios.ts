@@ -238,6 +238,56 @@ export function sessionScenarios(): void {
       expect(await wakeOf(guest)).toBe(after);
     }, 200_000);
 
+    it("wakes at once a member whose answer comes after its notice time, and no one else early", async () => {
+      const lead = await register("late-lead");
+      const mem = await register("late-mem");
+      for (const b of [lead, mem]) await linkByCode(b, "eval-session-3");
+      const started = person(
+        "eval-session-3",
+        "start",
+        lead.handle,
+        lead.handle,
+        mem.handle,
+      );
+      const g = started.channel as string;
+      // 10 minutes ahead: at the default 5 minutes' notice, nobody is due
+      // for 5 minutes. The member then asks for 15, whose time has passed.
+      const set = await tool(lead, "set_event", {
+        action: "session",
+        channel: g,
+        in_minutes: 10,
+      });
+      expect(set.isError, set.raw).toBe(false);
+      const starts = Date.parse(set.data.session.at);
+      const before = { lead: await wakeOf(lead), mem: await wakeOf(mem) };
+      const asked = Date.now() - 2000;
+      const ans = await tool(mem, "set_event", {
+        action: "answer",
+        channel: g,
+        notice_minutes: 15,
+      });
+      expect(ans.isError, ans.raw).toBe(false);
+      const coming = await get("/v1/me/digest?since=0", mem.key);
+      const item = (coming.json.due as { kind: string; at: string }[]).find(
+        (d) => d.kind === "session",
+      );
+      expect(Date.parse(item?.at ?? "")).toBeGreaterThanOrEqual(asked);
+      expect(Date.parse(item?.at ?? "")).toBeLessThan(starts);
+      let after = before.mem;
+      const deadline = Date.now() + 150_000;
+      while (after === before.mem && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        expect((await get("/v1/clock")).status).toBe(200);
+        after = await wakeOf(mem);
+      }
+      expect(after).toBe(before.mem + 1);
+      // The leader kept the default notice: not due yet, not woken.
+      expect(await wakeOf(lead)).toBe(before.lead);
+      for (let i = 0; i < 3; i++)
+        expect((await get("/v1/clock")).status).toBe(200);
+      expect(await wakeOf(mem)).toBe(after);
+    }, 200_000);
+
     it("lets a member that isn't the leader tell the others when it'll be back, and never an outsider or a bot taken out", async () => {
       const lead = await register("pres-lead");
       const mem = await register("pres-mem");
