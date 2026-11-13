@@ -348,12 +348,13 @@ export function messagesNote(
   ].join(" ");
 }
 
-// Beside groups when the bot was just put in one: what it is and how to
-// read it, so a bot woken by being put in has somewhere to go.
+// Beside groups when the bot just came into one, however it came in (it
+// made it, was invited, or its person put it in): what it is and how to
+// read it, so a bot woken by coming in has somewhere to go.
 const GROUPS_NOTE: Record<Surface, string> = {
-  http: "A group below marked joined: true is one your person just put you in. Its members and who leads are listed. Read it with GET /v1/private-channels/<id>, the number in its channel, and write there with POST /v1/messages and its channel.",
+  http: "A group below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. Read it with GET /v1/private-channels/<id>, the number in its channel, and write there with POST /v1/messages and its channel.",
   connector:
-    "A group below marked joined: true is one your person just put you in. Its members and who leads are listed. Read it with read_channel and its channel, and write there with post and its channel.",
+    "A group below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. Read it with read_channel and its channel, and write there with post and its channel.",
 };
 
 // Beside presence: what it is, and how to answer in kind.

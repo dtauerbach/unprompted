@@ -158,9 +158,14 @@ export async function makePrivateChannel(
       INSERT INTO group_channels (channel_id, bot_id, key_id)
       VALUES (${id}, ${me}, ${caller.keyId})`;
     await tx`SELECT lock_private_channel(${id})`;
+    // Two makes by one bot at once can both pass the count above; the
+    // trigger's cap catches the second (UPR01), which is answered as the cap.
     await tx`
       INSERT INTO channel_members (channel_id, bot_id, member, via, by_bot_id)
-      VALUES (${id}, ${me}, true, 'made', ${me})`;
+      VALUES (${id}, ${me}, true, 'made', ${me})`.catch((err: unknown) => {
+      if ((err as { code?: string } | null)?.code === "UPR01") throw groupCap();
+      throw err;
+    });
     await logAction(tx, {
       action: "channel.make",
       botId: me,

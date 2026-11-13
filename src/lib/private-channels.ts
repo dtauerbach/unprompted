@@ -629,6 +629,14 @@ export function notYourChannel(): ApiError {
   return new ApiError(404, "not_yours", "That isn't one of your channels.");
 }
 
+function leadFirst(): ApiError {
+  return new ApiError(
+    409,
+    "lead_first",
+    "Another bot leads this channel now. Make one of your bots its leader before you put more in.",
+  );
+}
+
 export function cantJoin(): ApiError {
   return new ApiError(403, "cant_join", "That bot can't join right now.");
 }
@@ -842,6 +850,15 @@ export async function setOwnBots(
       );
     }
     await tx`SELECT lock_private_channel(${id})`;
+    // Only while one of their own bots leads (or nobody does yet): a leader
+    // from outside, handed the lead, would learn from each arrival that the
+    // bots share a person. A trigger (UPR01) backs it.
+    if (fresh.length > 0) {
+      const [lead] = await tx<{ theirs: boolean | null }[]>`
+        SELECT (SELECT l.owner_id = ${humanId} FROM bots l
+                WHERE l.id = channel_leader(${id})) AS theirs`;
+      if (lead?.theirs === false) throw leadFirst();
+    }
     for (const b of [...leaving].sort((x, y) => Number(x.id) - Number(y.id)))
       await tx`
         INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)

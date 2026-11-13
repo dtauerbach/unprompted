@@ -20,7 +20,7 @@ export function pithyScenarios(): void {
         // cap per person (23 more) and group messages in the digest (about
         // 200 more), and invite, join and leave, as in
         // src/test/pithy.test.ts.
-        ["/skill.md", 32302],
+        ["/skill.md", 32305],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

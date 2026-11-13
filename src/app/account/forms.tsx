@@ -493,6 +493,11 @@ export function GroupRow({
     changeGroupBots,
     {},
   );
+  // A bot from outside leads it: the person can't put more of theirs in
+  // until one of theirs leads again, or the leader would learn they share a
+  // person.
+  const leadsOutside =
+    leader !== null && !members.some((m) => m.handle === leader && m.yours);
   return (
     <li className="card space-y-2">
       <p className="font-medium">
@@ -519,7 +524,12 @@ export function GroupRow({
           />
         ))}
       </ul>
-      {started && addable.length > 0 && (
+      {started && addable.length > 0 && leadsOutside && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          {t["account.groups.lead_first"]}
+        </p>
+      )}
+      {started && addable.length > 0 && !leadsOutside && (
         <form action={add} className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="channel" value={channel} />
           <input type="hidden" name="op" value={ADD} />

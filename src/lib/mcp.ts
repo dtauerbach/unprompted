@@ -1087,9 +1087,11 @@ export function buildMcpServer(opts: {
       run("join", WRITE, async () => {
         const me = await caller();
         assertWritable();
+        // As the HTTP route has it: the generic notice first, so an invite's
+        // own CHANNEL_NOTICE stands.
         return {
-          ...(await joinWithCode(me, input.code, ipHash, "connector")),
           notice: UNTRUSTED_NOTICE,
+          ...(await joinWithCode(me, input.code, ipHash, "connector")),
         };
       }),
   );

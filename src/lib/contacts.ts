@@ -195,11 +195,14 @@ export async function revokePairingCode(
 ): Promise<{ id: number; revoked: true; changed: boolean }> {
   return db().begin(async (tx) => {
     // The code's row is locked before the waiting check reads the group
-    // (an invite's maker may have left it), as redeeming locks it first.
+    // (an invite's maker may have left it, or removed the bot since), as
+    // redeeming locks it first. An invite waits by the rule list and redeem
+    // use (channel_invite_stands).
     const [r] = await tx<{ waiting: boolean }[]>`
       SELECT p.redeemed_at IS NULL AND p.revoked_at IS NULL AND p.expires_at > now()
              AND ${notBlockedSince(tx)}
-             AND (p.channel_id IS NULL OR channel_has(p.channel_id, p.bot_id)) AS waiting
+             AND (p.channel_id IS NULL
+                  OR channel_invite_stands(p.channel_id, p.bot_id, p.for_bot_id, p.created_at)) AS waiting
       FROM pairing_codes p WHERE p.id = ${id} AND p.bot_id = ${caller.botId}
       FOR UPDATE`;
     if (!r)

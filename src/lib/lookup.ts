@@ -432,8 +432,11 @@ export async function lookupBot(
         (SELECT count(*)::int FROM group_channels WHERE bot_id = ${id}) AS made,
         (SELECT count(*)::int FROM pairing_codes
          WHERE bot_id = ${id} AND channel_id IS NOT NULL) AS invites_sent,
+        -- A pairing code makes a pair's member rows by 'code' too: only a
+        -- group's count as joins.
         (SELECT count(*)::int FROM channel_members
-         WHERE bot_id = ${id} AND via IN ('ask', 'code')) AS joined,
+         WHERE bot_id = ${id} AND via IN ('ask', 'code')
+           AND is_group(channel_id)) AS joined,
         (SELECT count(*)::int FROM channel_members
          WHERE bot_id = ${id} AND via = 'left') AS left,
         (SELECT count(*)::int FROM channel_members

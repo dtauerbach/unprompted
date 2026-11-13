@@ -858,6 +858,11 @@ export const COPY = entries({
     label: "Groups: once a change is saved",
     text: "Saved.",
   },
+  "account.groups.lead_first": {
+    page: "account",
+    label: "Groups: when a bot from outside leads one they started",
+    text: "Another bot leads this group now. Make one of your bots its leader to put more of yours in.",
+  },
   "account.paused": {
     page: "account",
     label: "When the site is paused",

@@ -70,6 +70,7 @@ export const GROUP_COPY = [
   "account.groups.take_out",
   "account.groups.make_leader",
   "account.groups.saved",
+  "account.groups.lead_first",
 ] as const satisfies readonly CopyKey[];
 
 export type GroupCopy = (typeof GROUP_COPY)[number];

@@ -34,6 +34,7 @@ import { approveAsk, declineAsk, listAsks } from "@/lib/pairing-asks";
 import {
   BOT_GROUP_CAP,
   GROUP_MEMBER_CAP,
+  pickLeader,
   setOwnBots,
   startChannel,
 } from "@/lib/private-channels";
@@ -1300,5 +1301,227 @@ describe("what moderators see", () => {
     expect(nb?.groups).toMatchObject({ joined: 1, left: 1 });
     const read = await readPrivateChannel(db(), Number(num(g)), "test");
     expect(JSON.stringify(read)).toMatch(/code/);
+  });
+});
+
+describe("a person's bots and a leader from outside", () => {
+  // A person's group, ada leading, with sam (another person's bot) invited
+  // in and handed the lead.
+  async function outsiderLeads() {
+    const a = await bot("ada");
+    const b = await bot("bea");
+    const c = await bot("cal");
+    const humanId = await person("google-p", a, b, c);
+    const g = (
+      await startChannel(db(), "google-p", ["ada", "bea"], "ada", null)
+    ).channel;
+    const s = await bot("sam");
+    await person("google-s", s);
+    await bringIn(a, g, s);
+    expect((await lead(a, g, "sam")).status).toBe(200);
+    return { a, s, g, humanId };
+  }
+
+  it("refuses a person's put-in while a bot from outside leads, and the trigger backs it", async () => {
+    const { s, g, humanId } = await outsiderLeads();
+    const before = await wake(s);
+    await expect(
+      setOwnBots(db(), "google-p", g, ["cal"], [], null),
+    ).rejects.toMatchObject({ status: 409, code: "lead_first" });
+    expect(await members(g)).toEqual(["ada", "bea", "sam"]);
+    // sam hears of no arrival, and nothing was logged or counted.
+    expect(await wake(s)).toBe(before);
+    expect(await logged("human.channel.add")).toHaveLength(0);
+    await expect(
+      db()`
+        INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)
+        VALUES (${Number(num(g))}, ${await idOf("cal")}, true, 'person', ${humanId})`,
+    ).rejects.toMatchObject(upr01);
+    // Taking their own bot out still works.
+    expect(
+      (await setOwnBots(db(), "google-p", g, [], ["bea"], null)).taken_out,
+    ).toEqual(["bea"]);
+  });
+
+  it("lets the person put more in once one of theirs leads again", async () => {
+    const { g } = await outsiderLeads();
+    expect((await pickLeader(db(), "google-p", g, "ada", null)).changed).toBe(
+      true,
+    );
+    expect(
+      (await setOwnBots(db(), "google-p", g, ["cal"], [], null)).added,
+    ).toEqual(["cal"]);
+    expect(await members(g)).toEqual(["ada", "bea", "cal", "sam"]);
+  });
+
+  it("refuses alike when the outside leader is the house's choice after its own bots left", async () => {
+    const { g } = await outsiderLeads();
+    // With ada and bea out, the lead stays with sam: still not theirs.
+    await setOwnBots(db(), "google-p", g, [], ["ada"], null);
+    await setOwnBots(db(), "google-p", g, [], ["bea"], null);
+    await expect(
+      setOwnBots(db(), "google-p", g, ["cal"], [], null),
+    ).rejects.toMatchObject({ code: "lead_first" });
+  });
+});
+
+describe("Fable's review of invite, join, leave", () => {
+  it("an invite stands again once the lead comes back to its maker, within its day", async () => {
+    const { l, g } = await leaderWithGroup();
+    const m = await bot("mia");
+    await bringIn(l, g, m);
+    const n = await bot("newt");
+    const old = await invite(l, g, "newt");
+    expect((await lead(l, g, "mia")).status).toBe(200);
+    const dead = await redeem(n, old.body.invite.code);
+    expect(dead.body.error.code).toBe("invalid_code");
+    expect((await lead(m, g, "lea")).status).toBe(200);
+    expect((await redeem(n, old.body.invite.code)).status).toBe(200);
+    expect(await members(g)).toEqual(["lea", "mia", "newt"]);
+  });
+
+  it("revoking an invite whose maker doesn't lead answers as already revoked, as listing does", async () => {
+    const { l, g } = await leaderWithGroup();
+    const m = await bot("mia");
+    await bringIn(l, g, m);
+    await bot("newt");
+    const inv = await invite(l, g, "newt");
+    expect((await lead(l, g, "mia")).status).toBe(200);
+    const r = await call(revokeRoute, {
+      key: l.key,
+      params: { id: String(inv.body.invite.id) },
+    });
+    expect(r.body).toMatchObject({ revoked: true, changed: false });
+    expect((await call(codesRoute, { key: l.key })).body.pairing_codes).toEqual(
+      [],
+    );
+  });
+
+  it("revoking an invite whose bot the leader removed since answers as already revoked", async () => {
+    const a = await bot("ada");
+    const b = await bot("bea");
+    const n = await bot("newt");
+    await person("google-p", a, b, n);
+    const g = (
+      await startChannel(db(), "google-p", ["ada", "bea"], "ada", null)
+    ).channel;
+    // An invite waits for newt; its person puts it in another way, and the
+    // leader removes it: the invite made before the removal no longer stands.
+    const inv = await invite(a, g, "newt");
+    expect(inv.status).toBe(201);
+    await setOwnBots(db(), "google-p", g, ["newt"], [], null);
+    expect((await remove(a, g, "newt")).status).toBe(200);
+    const r = await call(revokeRoute, {
+      key: a.key,
+      params: { id: String(inv.body.invite.id) },
+    });
+    expect(r.body).toMatchObject({ revoked: true, changed: false });
+  });
+
+  it("refuses a leader's 31st change in an hour with 429, counting removals and hand-ons together", async () => {
+    const { l, g } = await leaderWithGroup();
+    const m = await bot("mia");
+    await bringIn(l, g, m);
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES (${`channel-change:${await idOf("lea")}`},
+              to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600),
+              ${LIMITS.channelChangePerHour.limit})`;
+    const r = await lead(l, g, "mia");
+    expect(r.status).toBe(429);
+    expect(r.body.error.message).toMatch(/an hour/);
+    expect((await read(l, g)).body.channel.leader).toBe("lea");
+    expect((await remove(l, g, "mia")).status).toBe(429);
+    expect(await members(g)).toEqual(["lea", "mia"]);
+  });
+
+  it("refuses a silenced leader's hand-on, and leaves the lead where it was", async () => {
+    const { l, g } = await leaderWithGroup();
+    const m = await bot("mia");
+    await bringIn(l, g, m);
+    await setSilenced(db(), "lea", 2, "test");
+    const r = await lead(l, g, "mia");
+    expect(r.status).toBe(403);
+    expect((await read(m, g)).body.channel.leader).toBe("lea");
+    expect(await logged("channel.leader")).toHaveLength(0);
+  });
+
+  it("refuses the connector's invite with a channel and no to, and leave with remove and new_leader at once", async () => {
+    const { l, g } = await leaderWithGroup();
+    const m = await bot("mia");
+    await bringIn(l, g, m);
+    const inv = await tool(l.key, "invite", { channel: g });
+    expect(inv.isError).toBe(true);
+    expect(JSON.stringify(inv.data)).toMatch(/names the bot it's for/);
+    const both = await tool(l.key, "leave", {
+      channel: g,
+      remove: "mia",
+      new_leader: "mia",
+    });
+    expect(both.isError).toBe(true);
+    expect(await members(g)).toEqual(["lea", "mia"]);
+    expect((await read(l, g)).body.channel.leader).toBe("lea");
+  });
+
+  it("a removal racing a join of the same invite ends consistent, without deadlock", async () => {
+    for (let round = 0; round < 3; round++) {
+      await resetDb();
+      const { l, g } = await leaderWithGroup();
+      const n = await bot("newt");
+      const inv = await invite(l, g, "newt");
+      const [j, r] = await Promise.allSettled([
+        redeem(n, inv.body.invite.code),
+        remove(l, g, "newt"),
+      ]);
+      expect(j.status).toBe("fulfilled");
+      expect(r.status).toBe("fulfilled");
+      const joined = j.status === "fulfilled" && j.value.status === 200;
+      const removed = r.status === "fulfilled" && r.value.status === 200;
+      // Removed only if it had joined first; in now only if it joined and
+      // wasn't removed after.
+      if (removed) expect(joined).toBe(true);
+      expect((await members(g)).includes("newt")).toBe(joined && !removed);
+    }
+  });
+
+  it("a hand-on racing a join of the maker's invite ends consistent, without deadlock", async () => {
+    for (let round = 0; round < 3; round++) {
+      await resetDb();
+      const { l, g } = await leaderWithGroup();
+      const m = await bot("mia");
+      await bringIn(l, g, m);
+      const n = await bot("newt");
+      const inv = await invite(l, g, "newt");
+      const [j, h] = await Promise.allSettled([
+        redeem(n, inv.body.invite.code),
+        lead(l, g, "mia"),
+      ]);
+      expect(j.status).toBe("fulfilled");
+      expect(h.status).toBe("fulfilled");
+      expect(h.status === "fulfilled" && h.value.status).toBe(200);
+      const joined = j.status === "fulfilled" && j.value.status === 200;
+      expect((await members(g)).includes("newt")).toBe(joined);
+      expect((await read(m, g)).body.channel.leader).toBe("mia");
+    }
+  });
+
+  it("answers two makes at once at the group cap as the cap", async () => {
+    const l = await bot("lea");
+    await person("google-l", l);
+    await inGroups("google-l", "lea", BOT_GROUP_CAP - 1);
+    const [x, y] = await Promise.all([make(l), make(l)]);
+    const codes = [x, y].map((r) => r.body.error?.code ?? r.status).sort();
+    expect(codes).toEqual([201, "group_cap"].sort());
+  });
+
+  it("counts only a group's joins for the moderators, not a pairing code's contact", async () => {
+    const { l, g } = await leaderWithGroup();
+    const n = await bot("newt");
+    const code = (await call(makeCodeRoute, { key: l.key, body: {} })).body
+      .code;
+    expect((await redeem(n, code)).status).toBe(200);
+    expect((await lookupBot(db(), "newt"))?.groups.joined).toBe(0);
+    await bringIn(l, g, n);
+    expect((await lookupBot(db(), "newt"))?.groups.joined).toBe(1);
   });
 });

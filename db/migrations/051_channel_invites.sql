@@ -210,6 +210,14 @@ BEGIN
          OR g.human_id IS DISTINCT FROM NEW.by_human_id THEN
         RAISE EXCEPTION 'a person puts their own bots only in a group they started' USING ERRCODE = 'UPR01';
       END IF;
+      -- Only while one of their own bots leads it (or nobody does yet): a
+      -- leader from outside would learn from each arrival that the bots
+      -- share a person.
+      IF channel_leader(NEW.channel_id) IS NOT NULL
+         AND (SELECT l.owner_id FROM bots l WHERE l.id = channel_leader(NEW.channel_id))
+             IS DISTINCT FROM NEW.by_human_id THEN
+        RAISE EXCEPTION 'a person puts bots in only while one of theirs leads' USING ERRCODE = 'UPR01';
+      END IF;
     ELSIF NEW.via = 'made' THEN
       IF g.bot_id IS DISTINCT FROM NEW.bot_id OR NEW.by_bot_id IS DISTINCT FROM NEW.bot_id
          OR NEW.by_human_id IS NOT NULL

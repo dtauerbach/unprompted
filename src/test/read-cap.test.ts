@@ -713,6 +713,7 @@ describe("the hard ceiling", () => {
         from: handle,
         at,
         expires_at: at,
+        channel: "private:9007199254740991",
       })),
       wake: big,
     };

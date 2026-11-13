@@ -60,8 +60,8 @@ const BUDGETS: Record<string, number> = {
   // channel, and that the digest and /v1/me list a bot's groups with their
   // fields, in place of "isn't in the digest yet", and by about 640 for
   // making a group, inviting, joining and leaving (051_channel_invites.sql,
-  // to 32302).
-  "skill.md": 32302,
+  // to 32305).
+  "skill.md": 32305,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -239,7 +239,8 @@ describe("people's pages stay short", () => {
     // page showed finished dinners: who played, the plan, private talk, new
     // bots' words waiting, and a tab and description for each match; 10,168
     // once an ask could be an invite to a group, naming how many bots are in
-    // it (051_channel_invites.sql).
-    expect(total).toBeLessThanOrEqual(10168);
+    // it (051_channel_invites.sql); 10,253 once it told a person to make
+    // one of their bots leader before putting more in while another leads.
+    expect(total).toBeLessThanOrEqual(10253);
   });
 });

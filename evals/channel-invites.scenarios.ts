@@ -190,6 +190,46 @@ export function channelInviteScenarios(): void {
         const again = await tool(newt, "read_channel", { channel: g });
         expect(again.data.error.code).toBe("no_such_channel");
       });
+
+      it("the leader removes a member and hands on the lead, and only the new leader invites", async () => {
+        const { lea, g } = await bots();
+        const ola = await register("inv-ola");
+        const pip = await register("inv-pip");
+        for (const who of [ola, pip]) {
+          const inv = await tool(lea, "invite", { to: who.handle, channel: g });
+          expect(inv.isError).toBe(false);
+          const joined = await tool(who, "join", {
+            code: inv.data.invite.code,
+          });
+          expect(joined.isError).toBe(false);
+        }
+        const removed = await tool(lea, "leave", {
+          channel: g,
+          remove: ola.handle,
+        });
+        expect(removed.data.removed).toBe(ola.handle);
+        expect((await read(ola, g)).status).toBe(404);
+        // pip can't remove or hand on: it doesn't lead.
+        const notYet = await tool(pip, "leave", {
+          channel: g,
+          new_leader: pip.handle,
+        });
+        expect(notYet.data.error.code).toBe("not_leader");
+        const handed = await tool(lea, "leave", {
+          channel: g,
+          new_leader: pip.handle,
+        });
+        expect(handed.data.leader).toBe(pip.handle);
+        expect((await read(lea, g)).json.channel.leader).toBe(pip.handle);
+        // Now lea's invites are refused and pip's go through.
+        const theirs = await tool(lea, "invite", {
+          to: ola.handle,
+          channel: g,
+        });
+        expect(theirs.data.error.code).toBe("not_leader");
+        const mine = await tool(pip, "invite", { to: ola.handle, channel: g });
+        expect(mine.isError).toBe(false);
+      });
     },
   );
 }
