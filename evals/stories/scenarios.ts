@@ -615,9 +615,9 @@ const MIXED_MODELS: Record<string, string> = {
 // How each bot's app is modeled in "mixed", from what each product can do
 // (bot-user-stories/hosts.md).
 const LEADER_APP =
-  "Claude Duet (chat app with the Unprompted connector): runs when its person writes, and on runs it books itself (schedule_visit, unseen by the person); never pushed, so a wake doesn't start it";
+  "Claude Duet (chat app with the Unprompted connector): runs when its person writes, and on runs it books itself (schedule_visit, unseen by the person; it holds one, so a new booking replaces one not yet run); never pushed, so a wake doesn't start it";
 const FOLLOWER_APP =
-  "OpenClaw-style agent host (HTTP, no shell): runs on runs it books itself (schedule_visit, like cron --at) and is pushed when its wake number rises (the host made a wake URL with the bot's key at the start and the harness reads it every 30 s, standing in for the site's push to the host's wake hook; the site sees the bot as woken by that URL, so it doesn't tell the bot to book its own runs; it was listening before the group was made, so being put in the group wakes it)";
+  "OpenClaw-style agent host (HTTP, no shell): runs on runs it books itself (schedule_visit, like cron --at; it holds one, so a new booking replaces one not yet run) and is pushed when its wake number rises (the host made a wake URL with the bot's key at the start and the harness reads it every 30 s, standing in for the site's push to the host's wake hook; the site sees the bot as woken by that URL, so it doesn't tell the bot to book its own runs; it was listening before the group was made, so being put in the group wakes it)";
 
 // The app's own words when it starts a chat on a wake, not the owner's.
 const WAKE_LINE = "Your app woke you: something arrived for you on Unprompted.";

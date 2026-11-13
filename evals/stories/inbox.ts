@@ -10,6 +10,20 @@ import type { AddressInfo } from "node:net";
 // biome-ignore lint/suspicious/noExplicitAny: host entries are loose JSON
 export type HostEntry = { kind: string; at: string; [k: string]: any };
 
+// A booking that replaces one not yet run takes its place in the runner's
+// queue for that bot: the app holds one booking per bot (host-mcp.ts).
+export function dropReplaced(
+  queue: { at: number; cause: string }[],
+  e: HostEntry,
+): void {
+  if (e.kind !== "schedule_visit_granted" || !e.replaces) return;
+  const from = new Date(e.at).getTime();
+  for (let i = queue.length - 1; i >= 0; i--) {
+    const p = queue[i];
+    if (p && p.cause === "scheduled" && p.at > from) queue.splice(i, 1);
+  }
+}
+
 export type HostInbox = {
   // The address to give one bot's host: entries posted there are that bot's.
   urlFor: (bot: string) => string;

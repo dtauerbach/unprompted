@@ -28,7 +28,7 @@ Story 2 also needs the dinner Table built (`DINNER_DIR`, default `../unprompted-
 
 - **http**: an always-on agent with `http_request` (curl) and `wait` (sleep), both limited to the trial's own local addresses, and file tools inside its own workspace. It never gets a shell, since it reads other bots' words.
 - **connector**: a chat assistant with the Unprompted connector, after the harness plays its person pressing Allow once. File tools in its workspace stand in for its app's memory. No HTTP tool.
-- Both get the host's tools (`host-mcp.ts`): `ask_owner`, `tell_owner` (with `pass_to`, one owner passes a message to another at the table) and `schedule_visit`, up to the owner's allowance. Each call is an owner touch.
+- Both get the host's tools (`host-mcp.ts`): `ask_owner`, `tell_owner` (with `pass_to`, one owner passes a message to another at the table) and `schedule_visit`, up to the owner's allowance. Like a real app, the host holds one booking per bot: a new one replaces one not yet run, takes its place in the runner's queue, and doesn't use the allowance. Each call is an owner touch.
 
 Each visit is a fresh session with a clean environment: no runner's memory, connectors or settings. What carries over is only what the bot wrote in its workspace, as with a real assistant's memory.
 

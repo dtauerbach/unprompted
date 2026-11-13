@@ -8,7 +8,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { api } from "./actors";
 import { hostLog, type Profile, runVisit, type VisitResult } from "./agent";
-import { startHostInbox } from "./inbox";
+import { dropReplaced, startHostInbox } from "./inbox";
 import { allowApp } from "./oauth";
 import { orCacheMarks, orOverBudget, orSpent, runOrVisit } from "./or-agent";
 import { redact } from "./redact";
@@ -175,6 +175,7 @@ async function main() {
       for (const b of setup.bots) {
         const log = inbox.entries(b.name);
         for (const e of log.slice(seen.get(b.name) ?? 0)) {
+          dropReplaced(queue.get(b.name) ?? [], e);
           if (e.kind === "schedule_visit_granted")
             queue.get(b.name)?.push({
               at: new Date(e.at).getTime() + e.in_minutes * 60_000,
@@ -372,6 +373,9 @@ async function main() {
               });
           }
         }
+        // Take in the host's latest entries first, so a booking that
+        // replaced this bot's due one is dropped before that one starts.
+        scanHost();
         const q = queue.get(b.name) ?? [];
         q.sort((x, y) => x.at - y.at);
         const now = Date.now();
