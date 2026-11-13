@@ -325,6 +325,7 @@ export const mcpEventsAdapter: WakeAdapter = {
     const gap = (await antiAbuse(sql)).mcp_event_gap_seconds;
     return {
       address: r.callback_url,
+      generation: r.id,
       secret: JSON.stringify(material),
       failures: r.failures ?? 0,
       notBefore: r.last_sent_at
@@ -366,12 +367,17 @@ export const mcpEventsAdapter: WakeAdapter = {
   // Every try starts the gap again. A 410 says the app dropped the
   // subscription: it ends here too, and the drain goes on to the next
   // method.
-  async record(sql, botId, outcome) {
+  async record(sql, botId, outcome, registration) {
     await sql.begin(async (tx) => {
-      // A 410 ends the subscription, which takes the bot's lock: taken
-      // first, in the order subscribe takes it, before this row's.
-      if (outcome.status === 410)
-        await tx`SELECT pg_advisory_xact_lock(hashtext(${`event_sub:${botId}`}))`;
+      // Delivery happens outside the claim transaction. A subscribe can
+      // replace this registration while the old callback is answering.
+      // Fence every outcome (including counters) under subscribe's lock.
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`event_sub:${botId}`}))`;
+      const [current] = await tx<{ id: string }[]>`
+        SELECT id FROM event_subscriptions
+        WHERE bot_id = ${botId} ORDER BY id DESC LIMIT 1`;
+      if (!registration.generation || current?.id !== registration.generation)
+        return;
       await tx`
         INSERT INTO event_sub_state
           (bot_id, last_sent_at, last_status, failures, delivered, failed)
@@ -392,14 +398,17 @@ export const mcpEventsAdapter: WakeAdapter = {
   // for retries), so every retry is spaced like an event, until the pause.
   // A 410 ended the subscription and isn't, and nor is a 413, which the
   // provider asks not to retry; both still count as failures.
-  async retryAt(sql, botId, outcome) {
+  async retryAt(sql, botId, outcome, registration) {
     if (outcome.delivered || outcome.status === 410 || outcome.status === 413)
       return null;
     const gap = (await antiAbuse(sql)).mcp_event_gap_seconds;
     const [r] = await sql<{ at: Date | null }[]>`
       SELECT st.last_sent_at + make_interval(secs => ${gap}) AS at
       FROM event_sub_state st
-      WHERE st.bot_id = ${botId} AND event_sub_usable(${botId}, ${PUSH_MAX_FAILURES})`;
+      WHERE st.bot_id = ${botId} AND event_sub_usable(${botId}, ${PUSH_MAX_FAILURES})
+        AND (SELECT id::text FROM event_subscriptions
+             WHERE bot_id = ${botId} ORDER BY id DESC LIMIT 1)
+            = ${registration.generation ?? null}`;
     return r?.at ?? null;
   },
 

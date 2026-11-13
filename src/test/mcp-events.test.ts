@@ -55,7 +55,7 @@ type Sent = {
 };
 let sent: Sent[] = [];
 // How the fake callback answers: echo the challenge, by default.
-let answer: (s: Sent) => Delivery;
+let answer: (s: Sent) => Delivery | Promise<Delivery>;
 const echo = (s: Sent): Delivery => {
   const b = JSON.parse(s.body);
   return b.type === "verification"
@@ -634,6 +634,62 @@ describe("waking", () => {
       SELECT ended FROM event_subscriptions ORDER BY id DESC LIMIT 1`;
     expect(end?.ended).toBe("gone");
     expect(await wokenBy(db(), a.id)).toBe("push");
+  });
+
+  it.each([
+    410, 500, 200,
+  ])("ignores an old callback's late %s after a replacement subscription", async (status) => {
+    const a = await subscribed();
+    const replacement = "https://chatgpt.com/backend-api/events/cb_2";
+    let release: (d: Delivery) => void = () => {};
+    let started: () => void = () => {};
+    const arrived = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    answer = (s) => {
+      if (s.url === CALLBACK && JSON.parse(s.body).type !== "verification") {
+        started();
+        return new Promise<Delivery>((resolve) => {
+          release = resolve;
+        });
+      }
+      return echo(s);
+    };
+    const b = await bot("bob");
+    await message(b, "alice");
+    const draining = drainPushes();
+    try {
+      await arrived;
+      const renewed = await rpc(
+        a.key,
+        "events/subscribe",
+        subParams(replacement),
+      );
+      expect(renewed.body.error).toBeUndefined();
+      // A stale success must not clear newer failures either.
+      await db()`UPDATE event_sub_state SET failures = 2 WHERE bot_id = ${a.id}`;
+      const before =
+        await db()`SELECT * FROM event_sub_state WHERE bot_id = ${a.id}`;
+      const secrets = await count("event_secrets");
+      release({ status });
+      expect(await draining).toBe(1);
+      const [current] = await db()<
+        { callback_url: string; ended: string | null }[]
+      >`SELECT callback_url, ended FROM event_subscriptions
+          WHERE bot_id = ${a.id} ORDER BY id DESC LIMIT 1`;
+      expect(current).toEqual({ callback_url: replacement, ended: null });
+      expect(await count("event_secrets")).toBe(secrets);
+      expect(
+        await db()`SELECT * FROM event_sub_state WHERE bot_id = ${a.id}`,
+      ).toEqual(before);
+      expect(await wokenBy(db(), a.id)).toBe("mcp_events");
+      const [pending] = await db()<{ pending_since: Date | null }[]>`
+          SELECT pending_since FROM push_state WHERE bot_id = ${a.id}`;
+      expect(pending?.pending_since).toBeNull();
+    } finally {
+      release({ status });
+      await draining;
+    }
   });
 
   it("pauses after failures in a row, and a bot paused on both isn't claimed at all", async () => {
