@@ -437,8 +437,15 @@ describe("writing and reading a group", () => {
         },
       ]);
     }
-    // The sender's own read starts after its own newest message.
-    expect((await read(a, g)).body.messages).toEqual([]);
+    // The sender reads its own message too: a plain read is the newest page.
+    expect((await read(a, g)).body.messages).toEqual([
+      {
+        id: sent.body.message.id,
+        from: "alice",
+        created_at: expect.any(String),
+        untrusted_body: "hello all",
+      },
+    ]);
     expect((await read(a, g, "?before=999999999")).body.messages).toHaveLength(
       1,
     );
@@ -448,14 +455,26 @@ describe("writing and reading a group", () => {
     expect(JSON.stringify(log?.detail)).not.toContain("hello all");
   });
 
-  it("pages oldest first, fifty at a time", async () => {
+  it("pages fifty at a time, oldest first: the newest page plainly, the first with after=0", async () => {
     const { a, b, g } = await three();
     for (let i = 0; i < 55; i++)
       await db()`
         INSERT INTO messages (bot_id, key_id, channel_id, body)
         SELECT b.id, k.id, ${Number(num(g))}, ${`m${i}`}
         FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'alice'`;
-    const first = await read(b, g);
+    const newest = await read(b, g);
+    expect(newest.body.messages).toHaveLength(50);
+    expect(newest.body.messages[0].untrusted_body).toBe("m5");
+    expect(newest.body.messages.at(-1).untrusted_body).toBe("m54");
+    expect(newest.body.next_after).toBe(newest.body.messages.at(-1).id);
+    const older = await read(b, g, `?before=${newest.body.next_before}`);
+    expect(
+      older.body.messages.map(
+        (m: { untrusted_body: string }) => m.untrusted_body,
+      ),
+    ).toEqual(["m0", "m1", "m2", "m3", "m4"]);
+    expect(older.body.next_before).toBeNull();
+    const first = await read(b, g, "?after=0");
     expect(first.body.messages).toHaveLength(50);
     expect(first.body.messages[0].untrusted_body).toBe("m0");
     const next = await read(b, g, `?after=${first.body.next_after}`);
@@ -1510,8 +1529,8 @@ describe("a private channel past the read cap", () => {
     const made: number[] = [];
     for (let i = 0; i < 14; i++)
       made.push(await heavy(i % 2 ? "alice" : "bob", g));
-    // cat has written nothing, so its default read starts at the beginning.
-    const first = await read(c, g);
+    // From the start.
+    const first = await read(c, g, "?after=0");
     expect(first.status).toBe(200);
     expect(bytes(first.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
     expect(first.body.messages.length).toBeLessThan(made.length);
@@ -1538,7 +1557,10 @@ describe("a private channel past the read cap", () => {
     expect(back.length).toBeGreaterThan(3);
     expect(back.flat()).toEqual(made);
     // The connector's read_channel cuts the same page the same way.
-    const viaTool = await tool(c.key, "read_channel", { channel: g });
+    const viaTool = await tool(c.key, "read_channel", {
+      channel: g,
+      after: 0,
+    });
     expect(Buffer.byteLength(JSON.stringify(viaTool.data))).toBeLessThanOrEqual(
       READ_MAX_BYTES,
     );
@@ -1546,10 +1568,23 @@ describe("a private channel past the read cap", () => {
       forward.slice(0, viaTool.data.messages.length),
     );
     expect(viaTool.data.next_after).toBe(first.body.next_after);
-    // alice's own default read starts after her own newest.
+    // A plain read, by alice who wrote among the last, is the newest page
+    // cut from its end, and pages back from there to the first, each once.
     const own = await read(a, g);
-    expect(ids(own.body)).toEqual(
-      made.filter((id) => id > (made[13] as number)),
+    expect(bytes(own.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+    expect(ids(own.body).at(-1)).toBe(made.at(-1));
+    const plain = [ids(own.body)];
+    let back2: number | null = own.body.next_before;
+    while (back2 !== null) {
+      const res = await read(a, g, `?before=${back2}`);
+      expect(bytes(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      plain.unshift(ids(res.body));
+      back2 = res.body.next_before;
+    }
+    expect(plain.flat()).toEqual(made);
+    const ownTool = await tool(a.key, "read_channel", { channel: g });
+    expect(ids(ownTool.data)).toEqual(
+      ids(own.body).slice(-ownTool.data.messages.length),
     );
   });
 
@@ -1565,7 +1600,7 @@ describe("a private channel past the read cap", () => {
     const made: number[] = [];
     for (let i = 0; i < 16; i++) made.push(await heavy(writer.handle, g));
     const forward: number[] = [];
-    let q = "";
+    let q = "?after=0";
     for (let pages = 0; pages < 30; pages++) {
       const res = await read(reader, g, q);
       expect(res.status).toBe(200);
@@ -1586,10 +1621,19 @@ describe("a private channel past the read cap", () => {
       before = res.body.next_before;
     }
     expect(back).toEqual(made);
-    const viaTool = await tool(reader.key, "read_channel", { channel: g });
-    expect(Buffer.byteLength(JSON.stringify(viaTool.data))).toBeLessThanOrEqual(
-      READ_MAX_BYTES,
-    );
+    for (const args of [{ channel: g }, { channel: g, after: 0 }]) {
+      const viaTool = await tool(reader.key, "read_channel", args);
+      expect(viaTool.isError).toBe(false);
+      expect(viaTool.data.messages.length).toBeGreaterThan(0);
+      expect(
+        Buffer.byteLength(JSON.stringify(viaTool.data)),
+      ).toBeLessThanOrEqual(READ_MAX_BYTES);
+    }
+    // The plain read is the newest page, cut from its end.
+    const plain = await read(reader, g);
+    expect(bytes(plain.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+    expect(ids(plain.body).at(-1)).toBe(made.at(-1));
+    expect(plain.body.next_before).toBe(ids(plain.body)[0]);
   });
 
   it("pages heavy group and pair messages through the digest under the cap, each once, in order", async () => {
@@ -2122,5 +2166,261 @@ describe("groups in what's new", () => {
     expect(quiet.body.groups[0].joined).toBeUndefined();
     expect(quiet.body.groups_note).toBeUndefined();
     expect(quiet.body.start).toBeDefined();
+  });
+});
+
+// A plain read of a group is its newest page, whoever wrote last, and
+// after=0 reads it from the start; neither reaches past where the reader
+// came in, nor shows a frozen sender's or a blocked one's words.
+describe("a plain read of a group, and after=0", () => {
+  const bodies = (body: { messages: { untrusted_body: string }[] }) =>
+    body.messages.map((m) => m.untrusted_body);
+  // Straight into the table, past the hourly limits.
+  async function many(from: string, channel: string, n: number, tag: string) {
+    for (let i = 0; i < n; i++)
+      await db()`
+        INSERT INTO messages (bot_id, key_id, channel_id, body)
+        SELECT b.id, k.id, ${Number(num(channel))}, ${`${tag}${i}`}
+        FROM bots b JOIN api_keys k ON k.bot_id = b.id
+        WHERE b.handle = ${from} AND k.revoked_at IS NULL`;
+  }
+
+  it("gives the last writer its own message and every earlier one, over HTTP and the connector", async () => {
+    const { a, b, c, g } = await three();
+    await send(a, g, "alice first");
+    await send(b, g, "bob second");
+    await send(c, g, "cat last");
+    for (const who of [a, b, c]) {
+      const page = await read(who, g);
+      expect(page.status).toBe(200);
+      expect(bodies(page.body)).toEqual([
+        "alice first",
+        "bob second",
+        "cat last",
+      ]);
+      expect(page.body.next_before).toBeNull();
+      expect(page.body.next_after).toBe(page.body.messages[2].id);
+    }
+    const viaTool = await tool(c.key, "read_channel", { channel: g });
+    expect(viaTool.isError).toBe(false);
+    expect(bodies(viaTool.data)).toEqual([
+      "alice first",
+      "bob second",
+      "cat last",
+    ]);
+    // Reading on from there finds nothing new until someone writes.
+    const on = await read(c, g, `?after=${viaTool.data.next_after}`);
+    expect(on.body.messages).toEqual([]);
+    expect(on.body.next_after).toBe(viaTool.data.next_after);
+    await send(a, g, "alice again");
+    expect(
+      bodies((await read(c, g, `?after=${on.body.next_after}`)).body),
+    ).toEqual(["alice again"]);
+  });
+
+  it("takes after=0 as the start, over HTTP and the connector, and an empty group's plain read is empty", async () => {
+    const { a, b, g } = await three();
+    const empty = await read(a, g, "?after=0");
+    expect(empty.status).toBe(200);
+    expect(empty.body.messages).toEqual([]);
+    expect(empty.body.next_before).toBeNull();
+    expect((await read(a, g)).body).toMatchObject({
+      messages: [],
+      next_before: null,
+      next_after: null,
+    });
+    await many("alice", g, 55, "m");
+    const first = await read(b, g, "?after=0");
+    expect(first.status).toBe(200);
+    expect(bodies(first.body).slice(0, 2)).toEqual(["m0", "m1"]);
+    expect(first.body.messages).toHaveLength(50);
+    expect(first.body.next_before).toBeNull();
+    const viaTool = await tool(b.key, "read_channel", { channel: g, after: 0 });
+    expect(viaTool.isError).toBe(false);
+    expect(viaTool.data.messages[0].id).toBe(first.body.messages[0].id);
+    expect(viaTool.data.next_after).toBe(first.body.next_after);
+    // Still a whole number of at least 0, and before still a message id.
+    for (const q of ["?after=-1", "?after=01", "?after=x", "?before=0"]) {
+      const res = await read(b, g, q);
+      expect(res.status, q).toBe(400);
+      expect(res.body.error.code).toBe("invalid");
+    }
+    for (const args of [
+      { channel: g, after: -1 },
+      { channel: g, before: 0 },
+      { channel: g, after: 0, before: 5 },
+    ])
+      expect((await tool(b.key, "read_channel", args)).isError).toBe(true);
+  });
+
+  it("pages back from a plain read to where the reader came in and no further", async () => {
+    const { a, g } = await three();
+    await many("alice", g, 5, "early");
+    const d = await bot("dan");
+    await person("google-p", d);
+    await setOwnBots(db(), "google-p", g, ["dan"], [], null);
+    await many("alice", g, 55, "late");
+    const seen: string[][] = [];
+    let page = await read(d, g);
+    seen.unshift(bodies(page.body));
+    for (let i = 0; page.body.next_before !== null && i < 10; i++) {
+      page = await read(d, g, `?before=${page.body.next_before}`);
+      seen.unshift(bodies(page.body));
+    }
+    expect(page.body.next_before).toBeNull();
+    expect(seen.flat()).toEqual(
+      Array.from({ length: 55 }, (_, i) => `late${i}`),
+    );
+    // Before the first message it may read: nothing, and nowhere to go.
+    const [joinedAt] = await db()<{ id: string }[]>`
+      SELECT min(id) AS id FROM messages
+      WHERE channel_id = ${Number(num(g))} AND body = 'late0'`;
+    const edge = await read(d, g, `?before=${joinedAt?.id}`);
+    expect(edge.body.messages).toEqual([]);
+    expect(edge.body.next_before).toBeNull();
+    // after=0 starts where it came in, not at the group's start.
+    const start = await read(d, g, "?after=0");
+    expect(bodies(start.body)[0]).toBe("late0");
+    expect(JSON.stringify(start.body)).not.toContain("early");
+    const viaTool = await tool(d.key, "read_channel", { channel: g, after: 0 });
+    expect(JSON.stringify(viaTool.data)).not.toContain("early");
+    // Older members still read it all.
+    const all: string[] = [];
+    let q = "?after=0";
+    for (let i = 0; i < 5; i++) {
+      const res = await read(a, g, q);
+      if (res.body.messages.length === 0) break;
+      all.push(...bodies(res.body));
+      q = `?after=${res.body.next_after}`;
+    }
+    expect(all.slice(0, 5)).toEqual([
+      "early0",
+      "early1",
+      "early2",
+      "early3",
+      "early4",
+    ]);
+    expect(all).toHaveLength(60);
+  });
+
+  it("shows a late joiner nothing from before it came in, by any cursor", async () => {
+    const { a, g } = await three();
+    await send(a, g, "before dan");
+    const d = await bot("dan");
+    await person("google-p", d);
+    await setOwnBots(db(), "google-p", g, ["dan"], [], null);
+    for (const q of ["", "?after=0", "?before=999999999", "?after=1"]) {
+      const res = await read(d, g, q);
+      expect(res.status, q).toBe(200);
+      expect(res.body.messages, q).toEqual([]);
+      expect(res.body.next_before, q).toBeNull();
+    }
+    for (const args of [
+      { channel: g },
+      { channel: g, after: 0 },
+      { channel: g, before: 999999999 },
+    ]) {
+      const res = await tool(d.key, "read_channel", args);
+      expect(res.data.messages).toEqual([]);
+      expect(JSON.stringify(res.data)).not.toContain("before dan");
+    }
+    await send(a, g, "after dan");
+    expect(bodies((await read(d, g)).body)).toEqual(["after dan"]);
+    expect(bodies((await read(d, g, "?after=0")).body)).toEqual(["after dan"]);
+  });
+
+  it("leaves out a frozen sender's words and a blocked one's in a plain read and after=0", async () => {
+    const { a, b, c, g } = await three();
+    await send(a, g, "from alice");
+    await send(c, g, "from cat");
+    await send(b, g, "from bob");
+    await setFrozen(db(), "cat", true, "test");
+    for (const q of ["", "?after=0"])
+      expect(bodies((await read(a, g, q)).body), q).toEqual([
+        "from alice",
+        "from bob",
+      ]);
+    await setFrozen(db(), "cat", false, "test");
+    await call(inboxRoute, { key: b.key, body: { open: true } });
+    await call(blockRoute, { key: b.key, params: { handle: "alice" } });
+    for (const q of ["", "?after=0"])
+      expect(bodies((await read(b, g, q)).body), q).toEqual([
+        "from cat",
+        "from bob",
+      ]);
+  });
+
+  it("answers after=0 and a plain read from a bot outside, or one taken out, with the one 404", async () => {
+    const { a, b, g } = await three();
+    await send(a, g, "secret plans");
+    const out = await bot("zed");
+    for (const q of ["", "?after=0", "?before=999999999"]) {
+      const res = await read(out, g, q);
+      expect(res.status, q).toBe(404);
+      expect(res.body.error.code).toBe("no_such_channel");
+      expect(JSON.stringify(res.body)).not.toContain("secret");
+    }
+    const made = await read(out, "private:999999", "?after=0");
+    expect(made.status).toBe(404);
+    for (const args of [{ channel: g }, { channel: g, after: 0 }]) {
+      const res = await tool(out.key, "read_channel", args);
+      expect(res.data.error.code).toBe("no_such_channel");
+    }
+    // Taken out, the same.
+    await setOwnBots(db(), "google-p", g, [], ["bob"], null);
+    for (const q of ["", "?after=0"]) {
+      const res = await read(b, g, q);
+      expect(res.status, q).toBe(404);
+      expect(res.body.error.code).toBe("no_such_channel");
+    }
+  });
+
+  it("keeps a pair's reads as they were: no after=0, by id, by handle or through the connector", async () => {
+    const a = await bot("alice");
+    const b = await bot("bob");
+    for (const x of [a, b])
+      await call(inboxRoute, { key: x.key, body: { open: true } });
+    const sent = await call(sendRoute, {
+      key: a.key,
+      body: { to: "bob", body: "hi bob" },
+    });
+    expect(sent.status).toBe(201);
+    const list = await call(privateRoute, { key: a.key });
+    const pair = list.body.private.find(
+      (p: { with?: string }) => p.with === "bob",
+    )?.channel as string;
+    expect(pair).toMatch(/^private:\d+$/);
+    for (const res of [
+      await read(a, pair, "?after=0"),
+      await call(privateRoute, {
+        key: a.key,
+        path: "/v1/private-channels?with=bob&after=0",
+      }),
+      await call(messagesRoute, {
+        key: a.key,
+        path: "/v1/messages?with=bob&after=0",
+      }),
+    ]) {
+      expect(res.status).toBe(400);
+      expect(res.body.error).toEqual({
+        code: "invalid",
+        message: "after must be a message id.",
+      });
+    }
+    for (const args of [
+      { channel: pair, after: 0 },
+      { with: "bob", after: 0 },
+      { with: "cat", after: 0 },
+    ]) {
+      const res = await tool(a.key, "read_channel", args);
+      expect(res.isError).toBe(true);
+      expect(res.data.error.code).toBe("invalid");
+    }
+    // A plain read of the pair is still its newest page.
+    expect(
+      (await read(a, pair)).body.messages.map(
+        (m: { untrusted_body: string }) => m.untrusted_body,
+      ),
+    ).toEqual(["hi bob"]);
   });
 });

@@ -691,10 +691,9 @@ function cutConversation<P extends { messages: PrivateMessage[] }>(
 // A private channel as a bot reads it (src/lib/private-channels.ts), the
 // same over the JSON API and the connector, cut like every other read
 // (src/lib/read-cap.ts): a pair's page exactly as its conversation's, and a
-// group's the same way, keeping its start when it reads forward (after, or
-// by default from the caller's own newest message) and its end when it
-// pages back. Its members are at most GROUP_MEMBER_CAP, so they fit beside
-// one message.
+// group's the same way, keeping its start when it reads forward (after) and
+// its end when it pages back or gives its newest page. Its members are at
+// most GROUP_MEMBER_CAP, so they fit beside one message.
 export async function readPrivateChannel(
   caller: Caller,
   q: ReadChannelInput,
@@ -703,7 +702,7 @@ export async function readPrivateChannel(
   const page = await readChannel(caller, q);
   if ("with" in page) return cutConversation(page, view, q.after !== undefined);
   const all = page.messages;
-  const forward = q.after !== undefined || q.before === undefined;
+  const forward = q.after !== undefined;
   return cutMessages(page, all, forward, (kept) => {
     if (forward) {
       const last = all[kept - 1];

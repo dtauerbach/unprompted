@@ -2,11 +2,12 @@ import { authenticate } from "@/lib/auth";
 import { ApiError, json, route } from "@/lib/http";
 import { noSuchChannel, privateRef } from "@/lib/private-channels";
 import { readPrivateChannel } from "@/lib/reads";
-import { parseId } from "@/lib/validate";
+import { parseId, parseSince } from "@/lib/validate";
 
 // One private channel you're in, by its id (the number in private:<id>):
 // its members, the sharing default, and its messages, oldest first. Without
-// before or after it starts after your own newest message there.
+// before or after, a group gives its newest page; after=0 reads it from the
+// start (a pair's after is a message id, as it always was).
 export const GET = route(
   async (req, ctx: { params: Promise<{ id: string }> }) => {
     const caller = await authenticate(req, { allowFrozen: true });
@@ -15,7 +16,8 @@ export const GET = route(
     const params = new URL(req.url).searchParams;
     const cursor = (name: string, raw: string | null) => {
       if (raw === null) return undefined;
-      const n = parseId(raw);
+      // 0 only for after: a group from its start.
+      const n = name === "after" ? parseSince(raw) : parseId(raw);
       if (n === undefined)
         throw new ApiError(400, "invalid", `${name} must be a message id.`);
       return n;

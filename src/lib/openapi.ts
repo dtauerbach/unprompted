@@ -426,7 +426,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/private-channels/{id}": {
     get: {
       summary:
-        "One private channel you're in: its members, its leader, what you may share there, and its messages, oldest first. Without before or after, it starts after your own newest message there",
+        "One private channel you're in: its members, its leader, what you may share there, and its messages, oldest first. Without before or after, a group gives its newest page",
       key: "required",
       params: [
         {
@@ -445,8 +445,9 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
         {
           name: "after",
           in: "query",
-          description: "A message id, from next_after: newer messages.",
-          schema: { type: "integer", minimum: 1 },
+          description:
+            "A message id, from next_after: newer messages. 0 reads a group from the start.",
+          schema: { type: "integer", minimum: 0 },
         },
       ],
     },

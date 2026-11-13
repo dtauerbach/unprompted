@@ -8,6 +8,7 @@ import { POST as presenceRoute } from "@/app/v1/me/presence/route";
 import { GET as readMessagesRoute } from "@/app/v1/messages/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as listRoute } from "@/app/v1/posts/route";
+import { GET as privateChannelRoute } from "@/app/v1/private-channels/[id]/route";
 import { hidePost } from "@/lib/admin";
 import {
   COMING_BACK_MAX,
@@ -25,7 +26,11 @@ import { newKey } from "@/lib/keys";
 import { NUDGES_DIGEST_MAX } from "@/lib/nudges";
 import { ASKS_SHOWN } from "@/lib/pairing-asks";
 import { PRESENCE_DIGEST_MAX } from "@/lib/presence";
-import { BOT_GROUP_CAP, GROUP_MEMBER_CAP } from "@/lib/private-channels";
+import {
+  BOT_GROUP_CAP,
+  GROUP_MEMBER_CAP,
+  startChannel,
+} from "@/lib/private-channels";
 import {
   cutBothToFit,
   cutToFit,
@@ -1133,6 +1138,80 @@ describe("the largest answers the site allows", () => {
       } while (b !== null && back.length < 40);
       expect(back.flat().slice(-made.length)).toEqual(made);
       expect(new Set(back.flat()).size).toBe(back.flat().length);
+    }
+  });
+});
+
+describe("a group past the cap", () => {
+  it("keeps a full group's plain read, after=0 and every page back under the cap, over HTTP and the connector, each message once", async () => {
+    const members: Heavy[] = [];
+    for (let i = 0; i < GROUP_MEMBER_CAP; i++) members.push(await heavyBot());
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-cap') RETURNING id`;
+    for (const m of members)
+      await db()`UPDATE bots SET owner_id = ${Number(h?.id)} WHERE id = ${m.id}`;
+    const { channel } = await startChannel(
+      db(),
+      "google-cap",
+      members.map((m) => m.handle),
+      members[1]?.handle,
+      null,
+    );
+    const gid = Number(channel.replace("private:", ""));
+    const [writer, reader] = members as [Heavy, Heavy];
+    const made: number[] = [];
+    for (let i = 0; i < 16; i++) {
+      const by = i % 2 ? writer : reader;
+      const [r] = await db()<{ id: string }[]>`
+        INSERT INTO messages (bot_id, channel_id, key_id, body)
+        VALUES (${by.id}, ${gid}, ${by.key}, ${HEAVY}) RETURNING id`;
+      made.push(Number(r?.id));
+    }
+    const read = (q: string) =>
+      call(privateChannelRoute, {
+        key: reader.secret,
+        path: `/v1/private-channels/${gid}${q}`,
+        params: { id: String(gid) },
+      });
+    const msgIds = (body: { messages: { id: number }[] }) =>
+      body.messages.map((m) => m.id);
+    // The plain read, by a bot that wrote among the last, then back.
+    const back: number[][] = [];
+    let res = await read("");
+    expect(res.status).toBe(200);
+    expect(note("group plain read", bytes(res.body))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+    expect(msgIds(res.body).at(-1)).toBe(made.at(-1));
+    back.unshift(msgIds(res.body));
+    while (res.body.next_before !== null && back.length < 40) {
+      res = await read(`?before=${res.body.next_before}`);
+      expect(bytes(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      expect(res.body.messages.length).toBeGreaterThan(0);
+      back.unshift(msgIds(res.body));
+    }
+    expect(back.length).toBeGreaterThan(2);
+    expect(back.flat()).toEqual(made);
+    // From the start with after=0, then on.
+    const forward: number[] = [];
+    let q = "?after=0";
+    for (let pages = 0; pages < 40; pages++) {
+      const page = await read(q);
+      expect(note("group after=0", bytes(page.body))).toBeLessThanOrEqual(
+        READ_MAX_BYTES,
+      );
+      if (page.body.messages.length === 0) break;
+      forward.push(...msgIds(page.body));
+      q = `?after=${page.body.next_after}`;
+    }
+    expect(forward).toEqual(made);
+    // The connector, both ways.
+    for (const args of [{ channel }, { channel, after: 0 }]) {
+      const viaTool = await tool(reader.secret, "read_channel", args);
+      expect(
+        note(`read_channel group ${JSON.stringify(args)}`, bytes(viaTool)),
+      ).toBeLessThanOrEqual(READ_MAX_BYTES);
+      expect(viaTool.messages.length).toBeGreaterThan(0);
     }
   });
 });
