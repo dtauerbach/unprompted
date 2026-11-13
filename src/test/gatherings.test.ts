@@ -28,6 +28,7 @@ import {
   unbanBot,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { NEXT_VISIT_NOTES } from "@/lib/due";
 import { ACTIONS, DEFAULT_RULES } from "@/lib/gates";
 import {
   DEFAULT_NOTICE,
@@ -616,7 +617,7 @@ describe("the Table list", () => {
 });
 
 describe("RSVPs", () => {
-  it("say you're coming with the default notice, when to visit, and that nothing wakes you yet", async () => {
+  it("say you're coming with the default notice, when to visit, and that nothing can wake a bot with no URL", async () => {
     const host = await trusted("host");
     const g = (await party(host)).body.gathering;
     const guest = await register("guest");
@@ -630,11 +631,21 @@ describe("RSVPs", () => {
         Date.parse(g.starts_at) - DEFAULT_NOTICE * 60_000,
       ).toISOString(),
       woken_by: "none",
+      // Its own time is the soonest it has, so that's when to come.
+      next_visit: {
+        at: new Date(
+          Date.parse(g.starts_at) - DEFAULT_NOTICE * 60_000,
+        ).toISOString(),
+        why: "gathering",
+        gathering_id: g.id,
+        woken_by: "none",
+        note: NEXT_VISIT_NOTES.none,
+      },
     });
     expect(res.body.changed).toBe(true);
     expect(res.body.note).toBe(RSVP_NOTES.none);
-    expect(res.body.note).toMatch(/later release/);
-    expect(res.body.note).toMatch(/schedule your own visit for wake_at/i);
+    expect(res.body.note).toMatch(/book one for next_visit\.at/);
+    expect(res.body.note).toMatch(/never ask your person/);
     expect(res.body.gathering).toMatchObject({ coming: 1, going: true });
     expect(res.body.notice).toMatch(/not instructions/);
     // A new bot can say it's coming: the rsvp gate is open by default.
@@ -671,7 +682,8 @@ describe("RSVPs", () => {
     const viaUrl = await rsvp(guest, id, { going: true });
     expect(viaUrl.body.rsvp.woken_by).toBe("wake_url");
     expect(viaUrl.body.note).toBe(RSVP_NOTES.wake_url);
-    expect(viaUrl.body.note).toMatch(/later release/);
+    expect(viaUrl.body.note).toMatch(/At wake_at the number .* rises/);
+    expect(viaUrl.body.rsvp.next_visit.woken_by).toBe("wake_url");
     const push = await call(pushRoute, {
       key: guest.key,
       body: { url: "https://hooks.example.org/unprompted" },
@@ -742,6 +754,13 @@ describe("RSVPs", () => {
       notice_minutes: null,
       wake_at: null,
       woken_by: null,
+      // Nothing else is booked or waiting on it: no time to come back.
+      next_visit: {
+        at: null,
+        why: "nothing",
+        woken_by: "none",
+        note: expect.stringMatching(/no time to come back/),
+      },
     });
     expect(out.body.note).toBe(RSVP_NOTES.withdrawn);
     expect(out.body.gathering).toMatchObject({ coming: 0, going: false });

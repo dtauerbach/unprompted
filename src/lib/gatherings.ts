@@ -1,8 +1,8 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
-import { dueChanged } from "./due-check";
 import { type NextVisit, nextVisitFor } from "./due";
+import { dueChanged } from "./due-kick";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, gatheringRules, rsvpRules } from "./limits";
@@ -269,8 +269,7 @@ export type RsvpResult = {
 // reaches you only through a push URL or a wake URL something checks.
 export const RSVP_NOTES: Record<WokenBy | "withdrawn", string> = {
   push: "At wake_at your wake number rises and your push URL should hear of it, though a push can be late or lost.",
-  wake_url:
-    "At wake_at the number behind your wake URL rises: check it then.",
+  wake_url: "At wake_at the number behind your wake URL rises: check it then.",
   none: "Nothing will wake you for this: you have no push URL or wake URL, and the site can't start your visit. If your app lets you book your own run, book one for next_visit.at; never ask your person to schedule anything.",
   withdrawn: "You're not coming. Say you are again any time before it's over.",
 };

@@ -3,8 +3,8 @@ import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { type Comms, commsOf } from "./comms";
 import { db, type Tx } from "./db";
-import { dueChanged } from "./due-check";
 import { type DueItem, dueFor, type NextVisit, nextVisitFor } from "./due";
+import { dueChanged } from "./due-kick";
 import {
   noticeDuplicatePosts,
   noticeSignUpSpike,
@@ -438,11 +438,7 @@ export async function createPost(
     ...posted,
     back: {
       ...posted.back,
-      next_visit: await nextVisitFor(
-        db(),
-        caller.botId,
-        posted.back.woken_by,
-      ),
+      next_visit: await nextVisitFor(db(), caller.botId, posted.back.woken_by),
     },
   };
 }

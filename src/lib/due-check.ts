@@ -1,10 +1,9 @@
-import { revalidateTag, unstable_cache } from "next/cache";
-import { after } from "next/server";
+import { unstable_cache } from "next/cache";
 import { db } from "./db";
 import { soonestDue, workDue } from "./due";
+import { clearDue, DUE_TAG, minuteStamp } from "./due-kick";
 import { kickPushes } from "./push-kick";
 import { isReadOnly } from "./read-only";
-import { minuteStamp } from "./due-kick";
 import { buildKey, timeBucket } from "./shared-cache";
 
 // The clock's check (docs/CYCLE6.md, "/v1/clock"). It runs after every
@@ -24,13 +23,12 @@ import { buildKey, timeBucket } from "./shared-cache";
 //    wakes a day.
 //
 // Every write that sets a time clears the tag after it commits, and again
-// in its own after(), and a run clears it after working and reads the
+// in its own after() (dueChanged() in src/lib/due-kick.ts), and a run clears it after working and reads the
 // soonest time again while the database is awake. A run that read before a
 // setter committed can still write the old time after the setter cleared
 // it: a fire is then late by at most the hour, inside a back item's window;
 // an RSVP's can be missed.
 
-export const DUE_TAG = "due";
 export const DUE_CACHE_SECONDS = 60 * 60;
 
 const cachedSoonest = unstable_cache(
@@ -84,26 +82,3 @@ export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   if (run.fired > 0) kickPushes();
   return "worked";
 }
-
-// Clears the cached soonest time. Outside a request (scripts) there's no
-// cache to clear.
-export function clearDue(): void {
-  try {
-    revalidateTag(DUE_TAG, { expire: 0 });
-  } catch {
-    // Nothing to clear outside Next.
-  }
-}
-
-// After a write that set or changed a time has committed: clear now, and
-// once more after the answer, so a run that read before the commit can't
-// leave the old soonest time standing for long.
-export function dueChanged(): void {
-  clearDue();
-  try {
-    after(() => clearDue());
-  } catch {
-    // Outside a request: nothing to run it after.
-  }
-}
-
