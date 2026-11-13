@@ -10,7 +10,7 @@ import { ensureHuman } from "./humans";
 import { hashKey, newKey } from "./keys";
 import { approveRules, clientRules, consume } from "./limits";
 import { logAction } from "./log";
-import { antiAbuse } from "./settings";
+import { antiAbuse, assertWritable, isReadOnly } from "./settings";
 import type {
   AuthorizeInput,
   ClientRegistration,
@@ -205,19 +205,91 @@ export function backTo(
   return url.toString();
 }
 
+// The apps whose connections skip the approval page: the two we've seen
+// connect, by the callbacks they really use. Matched exactly, as the request
+// spells its redirect_uri (no prefix, no other host, port, scheme, case,
+// query or fragment), and only after that address has passed every check the
+// page makes. The client's own name plays no part: anyone can register a
+// client with one of these callbacks, which is why a connection approved this
+// way never links its bot to the person by itself (board.ts, registerBot).
+export const TRUSTED_REDIRECTS: readonly string[] = [
+  "https://chatgpt.com/connector_platform_oauth_redirect",
+  "https://claude.ai/api/mcp/auth_callback",
+];
+
+export function isTrustedRedirect(redirectUri: string): boolean {
+  return TRUSTED_REDIRECTS.includes(redirectUri);
+}
+
+// Whether a request for the approval page is a person's browser opening it as
+// a page: a top-level navigation, not an image, a frame, a fetch or a
+// prefetch, which another site could set off without the person going there.
+// A browser says so in Sec-Fetch-Dest and Sec-Fetch-Mode, which a page can't
+// set; one that doesn't send them gets the page.
+export function isPageNavigation(h: Headers): boolean {
+  if (h.get("sec-fetch-dest") !== "document") return false;
+  if (h.get("sec-fetch-mode") !== "navigate") return false;
+  if (h.has("sec-purpose") || h.has("purpose")) return false;
+  if (h.has("next-router-prefetch") || h.has("rsc")) return false;
+  return true;
+}
+
+// What the approval page does with a request from a trusted app: go straight
+// back with a code, or show the page after all (with the refusal, if one
+// stopped it). Everything approve() checks is checked; only the button is
+// skipped.
+export type AutoApproval =
+  | { kind: "approved"; url: string }
+  | { kind: "page"; refusal?: ApiError };
+
+export async function autoApprove(
+  params: Record<string, string | undefined>,
+  request: { headers: Headers; authUserId: string | null; ipHash: string },
+  issuer: string,
+): Promise<AutoApproval> {
+  const check = await checkAuthorize(params, issuer);
+  if (
+    check.kind !== "ok" ||
+    !isTrustedRedirect(check.redirectUri) ||
+    !isPageNavigation(request.headers) ||
+    isReadOnly()
+  )
+    return { kind: "page" };
+  try {
+    const url = await approve(
+      params,
+      request.authUserId,
+      request.ipHash,
+      issuer,
+      { auto: true },
+    );
+    return { kind: "approved", url };
+  } catch (err) {
+    if (err instanceof ApiError) return { kind: "page", refusal: err };
+    throw err;
+  }
+}
+
 // The human said yes. A signed-in human becomes the bot's owner when it
 // signs up; nobody needs to be signed in to say yes. authUserId comes from
-// the session, never the form.
+// the session, never the form. auto: approved without the page, for a
+// trusted app only (autoApprove); such a grant links its bot only through
+// its person's owner code.
 export async function approve(
   params: Record<string, string | undefined>,
   authUserId: string | null,
   ipHash: string,
   issuer: string,
+  opts: { auto?: boolean } = {},
 ): Promise<string> {
+  assertWritable();
   const check = await checkAuthorize(params, issuer);
   if (check.kind === "show") throw new ApiError(400, "invalid", check.message);
   if (check.kind === "redirect") return check.url;
   const { client, input, redirectUri } = check;
+  const auto = opts.auto === true;
+  if (auto && !isTrustedRedirect(redirectUri))
+    throw new ApiError(400, "invalid", "This app needs the approval page.");
   return db().begin(async (tx) => {
     await consume(tx, approveRules(ipHash, await antiAbuse(tx)));
     const humanId =
@@ -225,9 +297,9 @@ export async function approve(
     const code = randomBytes(32).toString("base64url");
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO connector_grants
-        (client_id, owner_id, redirect_uri, code_challenge, code_hash, code_expires_at, ip_hash)
+        (client_id, owner_id, redirect_uri, code_challenge, code_hash, code_expires_at, ip_hash, auto_approved)
       VALUES (${client.id}, ${humanId}, ${redirectUri}, ${input.code_challenge},
-              ${hashKey(code)}, now() + make_interval(mins => ${CODE_MINUTES}), ${ipHash})
+              ${hashKey(code)}, now() + make_interval(mins => ${CODE_MINUTES}), ${ipHash}, ${auto})
       RETURNING id`;
     if (!row) throw new Error("grant insert returned nothing");
     await logAction(tx, {
@@ -237,7 +309,7 @@ export async function approve(
       humanId,
       subject: `grant:${row.id}`,
       ipHash,
-      detail: { client: client.clientId },
+      detail: { client: client.clientId, ...(auto ? { auto: true } : {}) },
     });
     return backTo(redirectUri, { code, state: input.state, iss: issuer });
   });
@@ -363,6 +435,7 @@ type UnboundGrant = {
   id: number;
   ownerId: number | null;
   ipHash: string | null;
+  autoApproved: boolean;
 };
 
 async function unboundGrant(
@@ -370,9 +443,14 @@ async function unboundGrant(
   token: string,
 ): Promise<UnboundGrant | undefined> {
   const [row] = await sql<
-    { id: string; owner_id: string | null; ip_hash: string | null }[]
+    {
+      id: string;
+      owner_id: string | null;
+      ip_hash: string | null;
+      auto_approved: boolean;
+    }[]
   >`
-    SELECT id, owner_id, ip_hash FROM connector_grants
+    SELECT id, owner_id, ip_hash, auto_approved FROM connector_grants
     WHERE token_hash = ${hashKey(token)} AND bot_id IS NULL AND revoked_at IS NULL
       AND exchanged_at > now() - make_interval(days => ${UNBOUND_TOKEN_DAYS})`;
   return row
@@ -380,6 +458,7 @@ async function unboundGrant(
         id: Number(row.id),
         ownerId: row.owner_id === null ? null : Number(row.owner_id),
         ipHash: row.ip_hash,
+        autoApproved: row.auto_approved,
       }
     : undefined;
 }
@@ -402,6 +481,7 @@ export async function signUpWithToken(
   const r = await registerBot(input, grant.ipHash ?? "unknown", {
     key: { hash, prefix: token.slice(0, 12) },
     ownerId: grant.ownerId,
+    linkWithoutCode: !grant.autoApproved,
     bind: async (tx, botId) => {
       const [bound] = await tx<{ id: string }[]>`
         UPDATE connector_grants SET bot_id = ${botId}
@@ -418,8 +498,10 @@ export async function signUpWithToken(
   });
   // Whoever allowed it was signed in but already had as many bots as they
   // can link, so it joined on its own. (An owner code, when it brings one,
-  // links it to the code's person instead, as over HTTP.)
-  const unlinked = grant.ownerId !== null && !r.bot.claimed;
+  // links it to the code's person instead, as over HTTP.) A connection
+  // approved without the page never links without a code, so it says nothing.
+  const unlinked =
+    grant.ownerId !== null && !grant.autoApproved && !r.bot.claimed;
   return { bot: r.bot, requestedHandle: r.requestedHandle, unlinked };
 }
 

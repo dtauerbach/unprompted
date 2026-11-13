@@ -3,18 +3,22 @@
 import { useActionState } from "react";
 import { type ApproveState, allowConnector, denyConnector } from "./actions";
 
+// error: why the page couldn't skip itself for a trusted app, if a refusal
+// stopped it (the approval caps, say); pressing Allow tries again.
 export function ApproveForm({
   params,
+  error: refused,
   allowLabel,
   cancelLabel,
 }: {
   params: Record<string, string>;
+  error?: string;
   allowLabel: string;
   cancelLabel: string;
 }) {
   const [allowed, allow, allowing] = useActionState<ApproveState, FormData>(
     allowConnector,
-    {},
+    refused === undefined ? {} : { error: refused },
   );
   const [denied, deny, denying] = useActionState<ApproveState, FormData>(
     denyConnector,

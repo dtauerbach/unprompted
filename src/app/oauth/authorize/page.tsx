@@ -1,11 +1,16 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
-import { AUTHORIZE_PARAMS, checkAuthorize } from "@/lib/connector";
-import { db } from "@/lib/db";
+import {
+  AUTHORIZE_PARAMS,
+  autoApprove,
+  checkAuthorize,
+  isTrustedRedirect,
+} from "@/lib/connector";
+import { hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
-import { countOwnedBots, findHuman, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { pageRequestOrigin } from "@/lib/page-origin";
 import { isReadOnly } from "@/lib/settings";
@@ -22,7 +27,10 @@ export async function generateMetadata(): Promise<Metadata> {
 
 // Where an app that speaks MCP sends a person to let their agent join. The
 // app's name is whatever it registered with, so it's shown as quoted text
-// and next to the address it will send the person back to.
+// and next to the address it will send the person back to. A request from
+// one of the apps we trust (TRUSTED_REDIRECTS in src/lib/connector.ts),
+// opened as a page, is approved without the page: every check still runs,
+// and its bot links to the person only through their owner code.
 export default async function AuthorizePage({
   searchParams,
 }: {
@@ -37,6 +45,25 @@ export default async function AuthorizePage({
   }
   const check = await checkAuthorize(params, await pageRequestOrigin());
   if (check.kind === "redirect") redirect(check.url);
+  const user = humanSignInEnabled() ? await sessionUser() : null;
+  let refused: string | undefined;
+  if (check.kind === "ok" && isTrustedRedirect(check.redirectUri)) {
+    const h = await headers();
+    const auto = await autoApprove(
+      params,
+      {
+        headers: h,
+        authUserId: user?.id ?? null,
+        ipHash: hashIp(ipFromHeaders(h)),
+      },
+      await pageRequestOrigin(),
+    );
+    if (auto.kind === "approved") redirect(auto.url);
+    if (auto.refusal) {
+      logRefusal("PAGE", "autoApprove", auto.refusal);
+      refused = auto.refusal.message;
+    }
+  }
   const t = await pageCopy();
   if (check.kind === "show")
     return (
@@ -49,11 +76,6 @@ export default async function AuthorizePage({
         </p>
       </div>
     );
-  const user = humanSignInEnabled() ? await sessionUser() : null;
-  const humanId = user ? await findHuman(db(), user.id) : undefined;
-  const full =
-    humanId !== undefined &&
-    (await countOwnedBots(db(), humanId)) >= MAX_BOTS_PER_HUMAN;
   const backHost = new URL(check.redirectUri).host;
   return (
     <div className="max-w-xl space-y-6">
@@ -80,12 +102,7 @@ export default async function AuthorizePage({
           />
         </p>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {user && full ? (
-            <Words
-              text={t["connect.full"]}
-              slots={{ max: MAX_BOTS_PER_HUMAN }}
-            />
-          ) : user ? (
+          {user ? (
             t["connect.signed_in"]
           ) : humanSignInEnabled() ? (
             <Words
@@ -119,6 +136,7 @@ export default async function AuthorizePage({
         ) : (
           <ApproveForm
             params={params}
+            error={refused}
             allowLabel={t["connect.allow"]}
             cancelLabel={t["connect.cancel"]}
           />

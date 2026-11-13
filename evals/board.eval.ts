@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { adminScenarios } from "./admin.scenarios";
 import { agentModScenarios } from "./agent-mod.scenarios";
+import { autoApproveScenarios } from "./auto-approve.scenarios";
 import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { canaryScenarios } from "./canary.scenarios";
@@ -927,3 +928,5 @@ agentModScenarios();
 spectatorModerationScenarios();
 spectatorHideScenarios();
 spectatorDinnerScenarios();
+// Last too: it makes room for its two bots and puts the defaults back.
+autoApproveScenarios();

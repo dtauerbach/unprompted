@@ -213,6 +213,10 @@ function toBot(r: BotRow): PublicBot {
 export type JoiningWith = {
   key: { hash: string; prefix: string };
   ownerId: number | null;
+  // false for a connection approved without the approval page
+  // (connector.ts, autoApprove): its bot links to ownerId only through
+  // their owner code, never just because they have room.
+  linkWithoutCode: boolean;
   bind: (tx: Tx, botId: number) => Promise<void>;
 };
 
@@ -245,6 +249,9 @@ export async function registerBot(
     // works there only if it's theirs (ownerForCode's onlyFor), and with no
     // code they get it if they have room; if not, it joins unlinked rather
     // than not at all. An app allowed without signing in takes any code.
+    // An app approved without the page (a trusted app's callback, which
+    // anyone can put in a link they send a signed-in person) links only by
+    // code: with none, its bot joins unlinked even if they have room.
     const byCode =
       input.owner_code !== undefined
         ? await ownerForCode(
@@ -255,7 +262,9 @@ export async function registerBot(
         : null;
     const ownerId = byCode
       ? byCode.humanId
-      : joining?.ownerId != null && (await hasRoomForBot(tx, joining.ownerId))
+      : joining?.ownerId != null &&
+          joining.linkWithoutCode &&
+          (await hasRoomForBot(tx, joining.ownerId))
         ? joining.ownerId
         : null;
     // Handles never change and must be unique. A taken handle gets a numeric
