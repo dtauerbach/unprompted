@@ -2231,6 +2231,7 @@ describe("a plain read of a group, and after=0", () => {
     expect(empty.status).toBe(200);
     expect(empty.body.messages).toEqual([]);
     expect(empty.body.next_before).toBeNull();
+    expect(empty.body.next_after).toBe(0);
     expect((await read(a, g)).body).toMatchObject({
       messages: [],
       next_before: null,
