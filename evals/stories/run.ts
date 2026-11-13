@@ -324,8 +324,17 @@ async function main() {
       // in that chat starts nothing, a rise after its last read of where it
       // landed starts one more.
       const reader = b.wake
-        ? await wakeReader(site.base, b.wake.key, (m, p, k) =>
-            api(site.base, m, p, k),
+        ? await wakeReader(
+            site.base,
+            b.wake.key,
+            (m, p, k) => api(site.base, m, p, k),
+            undefined,
+            (why) =>
+              note({
+                bot: b.name,
+                wake_listener: "key",
+                wake_listener_error: why,
+              }),
           )
         : undefined;
       if (reader)

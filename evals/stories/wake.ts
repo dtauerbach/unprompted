@@ -160,7 +160,10 @@ export async function groupArrivals(
 // your wake URL" instead of telling it to book its own runs, which in mixed-6
 // left a follower booking a run on every wake and being woken as well. If the
 // site won't make a URL, the app reads /v1/me/wake with the key, as before,
-// and says so.
+// and says so. If the URL stops working mid-run (the bot made or removed its
+// own, which the guide shows it how to do, replacing the app's), the app
+// reads with the key from then on and says so once through `stopped`; it
+// doesn't remake the URL, which would end the bot's own.
 export type WakeReader = {
   via: "wake_url" | "key";
   read: () => Promise<number>;
@@ -179,6 +182,7 @@ export async function wakeReader(
   key: string,
   call: Api,
   get: (url: string) => Promise<Response> = (u) => fetch(u),
+  stopped: (why: string) => void = () => {},
 ): Promise<WakeReader> {
   const byKey = async () =>
     Number((await call("GET", "/v1/me/wake", key)).json?.wake ?? Number.NaN);
@@ -199,13 +203,22 @@ export async function wakeReader(
   // the trial's own base so a proxy or host name can't send it elsewhere.
   const p = new URL(url);
   const at = `${base}${p.pathname}`;
+  let dead = false;
   return {
     via: "wake_url",
     read: async () => {
+      if (dead) return byKey();
       const r = await get(at);
-      if (!r.ok) return Number.NaN;
-      const j = (await r.json().catch(() => ({}))) as { wake?: unknown };
-      return Number(j.wake ?? Number.NaN);
+      if (r.ok) {
+        const j = (await r.json().catch(() => ({}))) as { wake?: unknown };
+        return Number(j.wake ?? Number.NaN);
+      }
+      // 404 is the site's one answer for a URL that no longer works; any
+      // other failure (the site restarting, say) is one missed reading.
+      if (r.status !== 404) return Number.NaN;
+      dead = true;
+      stopped(`wake URL stopped (${r.status})`);
+      return byKey();
     },
   };
 }

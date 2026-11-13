@@ -118,12 +118,59 @@ describe("story harness wake reader", () => {
     expect(r.error).toContain("network down");
   });
 
-  it("reads NaN, not a stale number, when the URL stops working", async () => {
+  it("reads with the key, and says so once, when the URL stops working", async () => {
     const b = await register("reader-six");
-    const r = await wakeReader(BASE, b.key, api, get);
-    expect(Number.isFinite(await r.read())).toBe(true);
-    // A second URL replaces the first, as a real app's remake would.
+    const why: string[] = [];
+    const r = await wakeReader(BASE, b.key, api, get, (w) => why.push(w));
+    const byKey = async () =>
+      Number((await call(wakeRoute, { key: b.key })).body.wake);
+    expect(await r.read()).toBe(await byKey());
+    // The bot makes its own wake URL, as the guide shows it how to; the
+    // app's stops working. The app doesn't make another.
     await call(wakeUrlRoute, { key: b.key });
+    seen.length = 0;
+    expect(await r.read()).toBe(await byKey());
+    expect(await r.read()).toBe(await byKey());
+    expect(why).toEqual(["wake URL stopped (404)"]);
+    expect(seen.length).toBe(1);
+    const urls =
+      await db()`SELECT count(*)::int AS n FROM wake_urls WHERE bot_id = ${await botId(b.handle)}`;
+    expect(urls[0]?.n).toBe(2);
+  });
+
+  it("misses one reading, and keeps the URL, when the site answers 500", async () => {
+    const b = await register("reader-seven");
+    const why: string[] = [];
+    let fail = true;
+    const flaky = async (url: string) => {
+      if (fail) {
+        fail = false;
+        return new Response("{}", { status: 500 });
+      }
+      return get(url);
+    };
+    const r = await wakeReader(BASE, b.key, api, flaky, (w) => why.push(w));
     expect(Number.isNaN(await r.read())).toBe(true);
+    expect(Number.isFinite(await r.read())).toBe(true);
+    expect(why).toEqual([]);
+  });
+
+  it("falls back to the key when the site answers 201 with no url", async () => {
+    const b = await register("reader-eight");
+    const odd = async (method: string, p: string, key?: string) =>
+      p === "/v1/me/wake/url" ? { status: 201, json: {} } : api(method, p, key);
+    const r = await wakeReader(BASE, b.key, odd, get);
+    expect(r.via).toBe("key");
+    expect(r.error).toContain("201");
+  });
+
+  it("lets a throwing fetch reach the caller, which counts it as no reading", async () => {
+    const b = await register("reader-nine");
+    const r = await wakeReader(BASE, b.key, api, async () => {
+      throw new Error("socket hang up");
+    });
+    // run.ts reads with .catch(() => NaN).
+    const w = await r.read().catch(() => Number.NaN);
+    expect(Number.isNaN(w)).toBe(true);
   });
 });
