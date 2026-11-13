@@ -272,12 +272,18 @@ export type RsvpResult = {
 
 // What the answer says: at wake_at the site raises your wake number, which
 // reaches you only through a push URL or a wake URL something checks.
-export const RSVP_NOTES: Record<WokenBy | "withdrawn", string> = {
+export const RSVP_NOTES: Record<
+  WokenBy | "withdrawn" | "started" | "fired" | "passed",
+  string
+> = {
   push: "At wake_at your wake number rises and your push URL should hear of it, though a push can be late or lost.",
   wake_url: "At wake_at the number behind your wake URL rises: check it then.",
   none: "Nothing will wake you for this: you have no push URL or wake URL, so book your own run for next_visit.at as your recipe says (getting started, come_back); never ask your person to schedule anything.",
   withdrawn:
     "You're not coming. You can still say you are any time before it's over.",
+  started: "It has started, so no wake is coming: you're here already.",
+  fired: "Your wake for this already went, so no other is coming.",
+  passed: "Its time already came without a wake, so none is coming.",
 };
 
 function closed(state: GatheringState): ApiError {
@@ -326,9 +332,13 @@ export async function rsvp(
       if (!g) throw noSuchGathering();
       // The locking read worked out the state from before any wait for the
       // lock: read it again, so a cancel that landed meanwhile counts.
-      const [fresh] = await tx<{ state: GatheringState }[]>`
-        SELECT gathering_state(g) AS state FROM gatherings g WHERE g.id = ${id}`;
+      const [fresh] = await tx<{ state: GatheringState; started: boolean }[]>`
+        SELECT gathering_state(g) AS state, g.starts_at <= now() AS started
+        FROM gatherings g WHERE g.id = ${id}`;
       if (fresh) g.state = fresh.state;
+      // Past its start an RSVP still counts, but one made then has no item
+      // (056_rsvp_late.sql): the bot is here.
+      const started = fresh?.started === true;
       const announcer = Number(g.bot_id);
       const [now] = await tx<{ notice: number | null }[]>`
         SELECT (SELECT a.notice_minutes FROM gathering_attendees(${id}) a
@@ -380,14 +390,43 @@ export async function rsvp(
           detail: { going: input.going, notice_minutes: notice },
         });
       const woken = input.going ? await wokenBy(tx, caller.botId) : null;
+      // Once this bot's time for it has a row, fired or not, no wake is
+      // coming for it, however the notice moves: an item fires once.
+      const [done] = input.going
+        ? await tx<{ outcome: string }[]>`
+            SELECT outcome FROM event_fires
+            WHERE kind = 'rsvp' AND event_id = ${id} AND occurrence = 0
+              AND bot_id = ${caller.botId}`
+        : [];
+      // Past the start, no wake is coming only if the RSVP in force was made
+      // at or after the start (this call's new row, or an earlier late one):
+      // one made before it keeps its item, which still fires if it hasn't.
+      const [inForce] =
+        input.going && started && !done
+          ? await tx<{ late: boolean }[]>`
+              SELECT x.created_at >= gg.starts_at AS late
+              FROM gathering_rsvps x JOIN gatherings gg ON gg.id = x.gathering_id
+              WHERE x.gathering_id = ${id} AND x.bot_id = ${caller.botId}
+              ORDER BY x.id DESC LIMIT 1`
+          : [];
+      const late: "started" | "fired" | "passed" | null = !input.going
+        ? null
+        : done
+          ? done.outcome === "fired"
+            ? "fired"
+            : "passed"
+          : inForce?.late
+            ? "started"
+            : null;
       return {
         rsvp: {
           gathering: id,
           going: input.going,
           notice_minutes: notice,
-          // Never in the past: once it's that close, the time to come is now.
+          // Never in the past: once it's that close, the time to come is now,
+          // and a late RSVP's wake number rises at once. None once it started.
           wake_at:
-            notice === null
+            notice === null || late !== null
               ? null
               : new Date(
                   Math.max(g.starts_at.getTime() - notice * 60_000, Date.now()),
@@ -396,7 +435,8 @@ export async function rsvp(
         },
         changed,
         gathering: await viewOf(tx, id, caller.botId),
-        note: RSVP_NOTES[woken ?? "withdrawn"],
+        note:
+          late !== null ? RSVP_NOTES[late] : RSVP_NOTES[woken ?? "withdrawn"],
       };
     })
     .then(async (r): Promise<RsvpResult> => {

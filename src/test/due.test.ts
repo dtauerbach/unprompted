@@ -25,6 +25,7 @@ import {
 } from "@/lib/due";
 import { checkDue, DUE_NEAR_MS, forgetDueMinute } from "@/lib/due-check";
 import { DUE_TAG } from "@/lib/due-kick";
+import { RSVP_NOTES } from "@/lib/gatherings";
 import {
   NEXT_VISIT_FALLBACK_HOURS,
   NEXT_VISIT_FLOOR_MINUTES,
@@ -876,30 +877,6 @@ describe("Fable's review", () => {
     expect(p.id).toBeGreaterThan(0);
   });
 
-  it("doesn't fire an RSVP made after its notice time", async () => {
-    const host = await register("host");
-    const guest = await register("guest");
-    const id = await gathering(host, 30);
-    expect(
-      (await rsvp(guest, id, { going: true, notice_minutes: 10 })).status,
-    ).toBe(200);
-    const g = await botId(guest);
-    expect(await dueFor(db(), g)).toEqual([
-      expect.objectContaining({ kind: "rsvp", event: id, state: "coming" }),
-    ]);
-    // The same notice said again, by a row made after its time: written
-    // straight to the table, since a route can't date one ahead.
-    await db()`
-      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes, created_at)
-      SELECT ${id}, b.id, k.id, 10, now() + interval '25 minutes'
-      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
-      WHERE b.id = ${g}`;
-    expect(await dueFor(db(), g)).toEqual([]);
-    const run = await workDue(at((await startsAt(id)) - 5 * MIN));
-    expect(run).toMatchObject({ fired: 0, skipped: 0, missed: 0 });
-    expect(await wakeCount(guest)).toBe(0);
-  });
-
   it("never deadlocks a run against a post that mentions the bot it fires for", async () => {
     const a = await register("alice");
     const b = await register("bob");
@@ -970,5 +947,237 @@ describe("Fable's review", () => {
       SELECT action FROM action_log WHERE id > ${max} ORDER BY id`;
     expect(lines.map((l) => l.action)).toEqual(["event.fire"]);
     expect(await wakeCount(a)).toBe(1);
+  });
+});
+
+// Fable's notes on 6a: an RSVP made after its notice time, or a notice moved
+// earlier than now, used to fire nothing, though its answer said the number
+// would rise (056_rsvp_late.sql). It now comes due when it's made, so it fires
+// at once while the gathering hasn't started; after the start it has no item
+// and its answer says no wake is coming.
+describe("a late RSVP", () => {
+  const near = (iso: string | null, ms: number) =>
+    Math.abs(Date.parse(iso ?? "") - ms) < 5_000;
+
+  it("made after its notice time fires at once, and answers wake_at now", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    expect(
+      (
+        await call(pushRoute, {
+          key: guest.key,
+          body: { url: "https://hooks.example.org/unprompted" },
+        })
+      ).status,
+    ).toBe(201);
+    // Starts in ten minutes: a notice of 15 was due five minutes ago.
+    const id = await gathering(host, 10);
+    const said = await rsvp(guest, id, { going: true, notice_minutes: 15 });
+    expect(said.status).toBe(200);
+    expect(said.body.changed).toBe(true);
+    expect(near(said.body.rsvp.wake_at, Date.now())).toBe(true);
+    expect(said.body.rsvp.woken_by).toBe("push");
+    expect(said.body.note).toBe(RSVP_NOTES.push);
+    const g = await botId(guest);
+    expect(await dueFor(db(), g)).toEqual([
+      expect.objectContaining({ kind: "rsvp", event: id, state: "coming" }),
+    ]);
+    const before = await wakeCount(guest);
+    const run = await workDue(at(Date.now() + 1000));
+    expect(run).toMatchObject({ fired: 1, skipped: 0, missed: 0 });
+    expect(await wakeCount(guest)).toBe(before + 1);
+    expect(await fires()).toEqual([
+      expect.objectContaining({ kind: "rsvp", outcome: "fired" }),
+    ]);
+    // Saying it again, or a run at the old notice time, fires nothing more.
+    const again = await rsvp(guest, id, { going: true, notice_minutes: 15 });
+    expect(again.body.changed).toBe(false);
+    // Its wake already went: the answer says so, with no wake_at, rather
+    // than "At wake_at your wake number rises".
+    expect(again.body.rsvp.wake_at).toBeNull();
+    expect(again.body.note).toBe(RSVP_NOTES.fired);
+    expect(again.body.note).not.toMatch(/At wake_at/);
+    expect(await workDue(at((await startsAt(id)) - MIN))).toMatchObject({
+      fired: 0,
+    });
+    expect(await wakeCount(guest)).toBe(before + 1);
+  });
+
+  it("moved earlier than now, after one made in good time, fires at once, and only once", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const id = await gathering(host, 12);
+    // Notice 5: due seven minutes from now, in good time.
+    const first = await rsvp(guest, id, { going: true, notice_minutes: 5 });
+    expect(first.status).toBe(200);
+    expect(first.body.note).toBe(RSVP_NOTES.none);
+    expect(await workDue(at(Date.now() + 1000))).toMatchObject({ fired: 0 });
+    // Moved to 15: its notice time passed three minutes ago.
+    const moved = await rsvp(guest, id, { going: true, notice_minutes: 15 });
+    expect(moved.body.changed).toBe(true);
+    expect(near(moved.body.rsvp.wake_at, Date.now())).toBe(true);
+    const before = await wakeCount(guest);
+    expect(await workDue(at(Date.now() + 1000))).toMatchObject({ fired: 1 });
+    expect(await wakeCount(guest)).toBe(before + 1);
+    // Moving it again, back and forth, and the old notice time coming,
+    // fire nothing more: an item fires once per bot and gathering.
+    for (const n of [5, 0, 10, 15]) {
+      await db()`DELETE FROM rate_limits`;
+      const r = await rsvp(guest, id, { going: true, notice_minutes: n });
+      expect(r.status).toBe(200);
+      expect(r.body.changed).toBe(true);
+      expect(r.body.rsvp.wake_at).toBeNull();
+      expect(r.body.note).toBe(RSVP_NOTES.fired);
+    }
+    expect(await workDue(at((await startsAt(id)) - 4 * MIN))).toMatchObject({
+      fired: 0,
+    });
+    expect(await wakeCount(guest)).toBe(before + 1);
+  });
+
+  it("moved later fires at the new time, not at once", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const id = await gathering(host, 30);
+    await rsvp(guest, id, { going: true, notice_minutes: 15 });
+    await rsvp(guest, id, { going: true, notice_minutes: 5 });
+    const start = await startsAt(id);
+    expect(await workDue(at(start - 10 * MIN))).toMatchObject({ fired: 0 });
+    expect(await workDue(at(start - 4 * MIN))).toMatchObject({ fired: 1 });
+  });
+
+  it("made once the gathering has started has no item, and says no wake is coming", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    expect(
+      (
+        await call(pushRoute, {
+          key: guest.key,
+          body: { url: "https://hooks.example.org/unprompted" },
+        })
+      ).status,
+    ).toBe(201);
+    const id = await gathering(host, -5);
+    const said = await rsvp(guest, id, { going: true, notice_minutes: 10 });
+    expect(said.status).toBe(200);
+    expect(said.body.changed).toBe(true);
+    expect(said.body.gathering.coming).toBe(1);
+    expect(said.body.rsvp.wake_at).toBeNull();
+    expect(said.body.note).toBe(RSVP_NOTES.started);
+    expect(await dueFor(db(), await botId(guest))).toEqual([]);
+    expect(await workDue(at(Date.now() + 1000))).toMatchObject({
+      fired: 0,
+      skipped: 0,
+      missed: 0,
+    });
+    // A row dated after the start, written straight to the table, has none
+    // either, whatever its notice.
+    const later = await gathering(host, 10);
+    await db()`
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes, created_at)
+      SELECT ${later}, b.id, k.id, 10, now() + interval '11 minutes'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${guest.handle}`;
+    expect(await workDue(at((await startsAt(later)) + 2 * MIN))).toMatchObject({
+      fired: 0,
+      skipped: 0,
+      missed: 0,
+    });
+  });
+
+  it("said again after the start, unchanged, keeps the wake made before it and says it's coming", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    expect(
+      (
+        await call(pushRoute, {
+          key: guest.key,
+          body: { url: "https://hooks.example.org/unprompted" },
+        })
+      ).status,
+    ).toBe(201);
+    // Starts in two seconds: the RSVP, made now with a notice of 5, comes
+    // due at once, and no run works it before the start.
+    const [made] = await db()<{ id: string }[]>`
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, created_at)
+      SELECT b.id, k.id, 'Jam', now() + interval '2 seconds',
+             now() - interval '1 hour'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    const id = Number(made?.id);
+    const first = await rsvp(guest, id, { going: true, notice_minutes: 5 });
+    expect(first.body.changed).toBe(true);
+    expect(first.body.note).toBe(RSVP_NOTES.push);
+    await new Promise((r) => setTimeout(r, 2500));
+    const again = await rsvp(guest, id, { going: true, notice_minutes: 5 });
+    expect(again.status).toBe(200);
+    expect(again.body.changed).toBe(false);
+    // Not "no wake is coming": its item is still due, and fires now.
+    expect(again.body.note).toBe(RSVP_NOTES.push);
+    expect(again.body.note).not.toBe(RSVP_NOTES.started);
+    expect(near(again.body.rsvp.wake_at, Date.now())).toBe(true);
+    const before = await wakeCount(guest);
+    expect(await workDue(at(Date.now() + 1000))).toMatchObject({ fired: 1 });
+    expect(await wakeCount(guest)).toBe(before + 1);
+    // Once it fired, saying it again says so.
+    const after = await rsvp(guest, id, { going: true, notice_minutes: 5 });
+    expect(after.body.note).toBe(RSVP_NOTES.fired);
+    expect(after.body.rsvp.wake_at).toBeNull();
+    // One made after the start, said again unchanged, still has none.
+    const other = await register("other");
+    const late = await rsvp(other, id, { going: true, notice_minutes: 10 });
+    expect(late.body.note).toBe(RSVP_NOTES.started);
+    const same = await rsvp(other, id, { going: true, notice_minutes: 10 });
+    expect(same.body.changed).toBe(false);
+    expect(same.body.note).toBe(RSVP_NOTES.started);
+    expect(same.body.rsvp.wake_at).toBeNull();
+  });
+
+  it("holds to the site-wide cap and the frozen rule like any other item", async () => {
+    await setAntiAbuse(db(), { event_fire_global: 1 }, "Test cap.");
+    const host = await register("host");
+    const a = await register("alice");
+    const b = await register("bob");
+    const c = await register("carol");
+    const id = await gathering(host, 10);
+    for (const bot of [a, b, c])
+      expect(
+        (await rsvp(bot, id, { going: true, notice_minutes: 15 })).status,
+      ).toBe(200);
+    await setFrozen(db(), c.handle, true, "Test.");
+    const run = await workDue(at(Date.now() + 1000));
+    expect(run).toMatchObject({ fired: 1, skipped: 2, capped: 1 });
+    const rows = await fires();
+    expect(rows.map((r) => r.reason).sort()).toEqual(
+      ["cap", "frozen", null].sort(),
+    );
+    // Said again, each answer is true to its row: the fired one's wake
+    // went, the capped one's time came without one.
+    const firedBot = rows.find((r) => r.outcome === "fired")?.bot_id;
+    for (const bot of [a, b]) {
+      const r = await rsvp(bot, id, { going: true, notice_minutes: 15 });
+      expect(r.body.changed).toBe(false);
+      expect(r.body.rsvp.wake_at).toBeNull();
+      expect(r.body.note).toBe(
+        String(await botId(bot)) === String(firedBot)
+          ? RSVP_NOTES.fired
+          : RSVP_NOTES.passed,
+      );
+    }
+  });
+
+  it("over the connector, answers the same as the route", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const id = await gathering(host, 10);
+    const r = await tool(guest.key, "rsvp", {
+      gathering: id,
+      going: true,
+      notice_minutes: 15,
+    });
+    expect(r.isError, JSON.stringify(r.data)).toBe(false);
+    expect(near(r.data.rsvp.wake_at, Date.now())).toBe(true);
+    expect(await workDue(at(Date.now() + 1000))).toMatchObject({ fired: 1 });
   });
 });

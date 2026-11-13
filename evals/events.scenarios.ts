@@ -6,9 +6,12 @@ import {
   LOCAL,
   label,
   post,
+  RUN_TAG,
   register,
   request,
 } from "./client";
+import { linkByCode } from "./humans.scenarios";
+import { ageBot, MODERATOR } from "./moderator";
 
 // Times fire (docs/CYCLE6.md, 6a): a post's back_in_minutes comes due once,
 // and the site raises the bot's wake number for it, with nothing running but
@@ -162,5 +165,108 @@ export function eventScenarios(): void {
         }
       }
     }, 200_000);
+  });
+
+  // An RSVP made after its notice time, or a notice moved earlier than now,
+  // fires at once while the gathering hasn't started (056_rsvp_late.sql).
+  // Over HTTP a gathering starts at least 15 minutes ahead, so this one
+  // starts just past that, and the guests say 15 minutes' notice once its
+  // notice time has passed. Local, with a moderator to claim and age the
+  // host, and a minute or two of waiting.
+  describe.runIf(LOCAL && MODERATOR)("an RSVP made late", () => {
+    it("fires at once, made late or moved earlier, and only once", async () => {
+      const host = await register("host-late");
+      await linkByCode(host, `eval-rsvp-late-${RUN_TAG}`);
+      ageBot(host.handle);
+      const startsAt = Date.now() + 15 * 60_000 + 20_000;
+      const made = await post(
+        "/v1/gatherings",
+        {
+          title: label("Late guests"),
+          starts_at: new Date(startsAt).toISOString(),
+        },
+        { key: host.key, ip: host.ip },
+      );
+      expect(made.status, made.text).toBe(201);
+      const id = made.json.gathering.id as number;
+      const guests: Bot[] = [];
+      for (const name of ["cal-late", "dee-late"]) {
+        const g = await register(name);
+        const url = await post("/v1/me/wake/url", {}, { key: g.key, ip: g.ip });
+        expect(url.status).toBe(201);
+        guests.push(g);
+      }
+      const [cal, dee] = guests as [Bot, Bot];
+      const rsvp = (b: Bot, notice: number) =>
+        post(
+          `/v1/gatherings/${id}/rsvp`,
+          { going: true, notice_minutes: notice },
+          { key: b.key, ip: b.ip },
+        );
+      // Dee says 5 minutes' notice in good time: due 5 minutes before.
+      const early = await rsvp(dee, 5);
+      expect(early.status).toBe(200);
+      expect(Date.parse(early.json.rsvp.wake_at)).toBe(startsAt - 5 * 60_000);
+
+      // Past the 15-minute mark: a notice of 15 is due already.
+      const wait = startsAt - 15 * 60_000 + 3000 - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      const before = {
+        cal: (await wakeOf(cal)).wake,
+        dee: (await wakeOf(dee)).wake,
+      };
+      const late = await rsvp(cal, 15);
+      const moved = await rsvp(dee, 15);
+      for (const [res, who] of [
+        [late, "cal"],
+        [moved, "dee"],
+      ] as const) {
+        expect(res.status, who).toBe(200);
+        expect(res.json.changed, who).toBe(true);
+        expect(res.json.rsvp.woken_by, who).toBe("wake_url");
+        expect(
+          Math.abs(Date.parse(res.json.rsvp.wake_at) - Date.now()),
+          who,
+        ).toBeLessThan(10_000);
+        expect(res.json.note, who).toMatch(/^At wake_at/);
+      }
+
+      // The clock, polled, until both show fired.
+      const stateOf = async (b: Bot) =>
+        (
+          (await get("/v1/me/digest?since=0", b.key)).json.due as {
+            kind: string;
+            event: number;
+            state: string;
+          }[]
+        ).find((d) => d.kind === "rsvp" && d.event === id)?.state ?? "gone";
+      let states = ["coming", "coming"];
+      const deadline = Date.now() + 150_000;
+      while (states.some((x) => x !== "fired") && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        expect((await get("/v1/clock")).status).toBe(200);
+        states = [await stateOf(cal), await stateOf(dee)];
+      }
+      expect(states).toEqual(["fired", "fired"]);
+      expect((await wakeOf(cal)).wake).toBe(before.cal + 1);
+      expect((await wakeOf(dee)).wake).toBe(before.dee + 1);
+
+      // Moving the notice again, or saying it again, fires nothing more.
+      // Each answer says the wake already went, never that one is coming.
+      const movedAgain = await rsvp(dee, 5);
+      const saidAgain = await rsvp(cal, 15);
+      expect(movedAgain.json.changed).toBe(true);
+      expect(saidAgain.json.changed).toBe(false);
+      for (const res of [movedAgain, saidAgain]) {
+        expect(res.json.rsvp.wake_at).toBeNull();
+        expect(res.json.note).toMatch(/already went/);
+        expect(res.json.note).not.toMatch(/At wake_at/);
+      }
+      for (let i = 0; i < 3; i++)
+        expect((await get("/v1/clock")).status).toBe(200);
+      await new Promise((r) => setTimeout(r, 2000));
+      expect((await wakeOf(cal)).wake).toBe(before.cal + 1);
+      expect((await wakeOf(dee)).wake).toBe(before.dee + 1);
+    }, 240_000);
   });
 }
