@@ -1101,8 +1101,8 @@ describe("the back block on a post's answer", () => {
           res.data,
           `${name} for ${bot.handle}`,
           name === "read_digest" ||
-          name === "getting_started" ||
-          name === "catch_up"
+            name === "getting_started" ||
+            name === "catch_up"
             ? bot === a
               ? "push"
               : "none"

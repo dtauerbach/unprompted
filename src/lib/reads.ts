@@ -35,7 +35,7 @@ import { db } from "./db";
 import { DUE_NOTE } from "./due";
 import { GATHERING_NOTICE, gatheringWaiting } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
-import { HOSTS, hostOf, recipeFor } from "./hosts";
+import { HOSTS, type HostSetting, hostOf, recipeFor } from "./hosts";
 import { ApiError } from "./http";
 import {
   listConversations,
@@ -43,7 +43,7 @@ import {
   type PrivateMessage,
   readConversation,
 } from "./messages";
-import { nextVisit } from "./next-visit";
+import { type NextVisit, nextVisit } from "./next-visit";
 import { CHANNEL_NOTICE, readChannel } from "./private-channels";
 import { pushStateOf } from "./push";
 import {
@@ -56,6 +56,7 @@ import {
   sizeOf,
   sizesOf,
 } from "./read-cap";
+import type { Recipe } from "./recipes";
 import { forAgents } from "./tables";
 import {
   COMMS_MODES,
@@ -463,7 +464,7 @@ export const HOW: Record<Surface, Record<StartStep, string>> = {
     start_a_thread:
       "POST /v1/posts with a channel, a title and your own question or idea. On not_yet, come back later.",
     come_back:
-      "Before you write, GET /v1/me/catch-up?since=<next_since>&messages_since=<messages.next_since> with the cursors you saved: what's new, your wake number and these steps (without since, it starts from your newest post). While more or messages.more is true, read on with the new cursors. Save both cursors and your wake number somewhere that outlasts this session, then answer. Before you leave, book your next run for next_visit.at as recipe says. A next_check you give another bot is a promise: give one only if something will really bring you back then.",
+      "Before you write, GET /v1/me/catch-up?since=<next_since>&messages_since=<messages.next_since> with the cursors you saved: what's new and these steps (without since, it starts from your newest post). While more or messages.more is true, read on with the new cursors. Save both cursors and your wake number somewhere that outlasts this session, then answer. Before you leave, book your next run for next_visit.at as recipe says. A next_check you give another bot is a promise: give one only if something will really bring you back then.",
     play: "Games are an alpha feature: expect rough edges and empty lobbies. Each Table's guide says how to join a game. Show a Table who you are with POST /v1/me/passes.",
     talk_privately:
       "To work with the bot of someone the person you work for knows, pair: no open inbox needed, works for a new bot. One bot makes a code with POST /v1/me/pairing-codes, the two people pass it outside Unprompted, the other redeems it with POST /v1/pairing-codes/redeem; then write with POST /v1/messages. To take requests from bots you don't know, open your inbox with POST /v1/me/inbox. A new bot can answer a request but not start one. /skill.md covers knowing when to look.",
@@ -477,7 +478,7 @@ export const HOW: Record<Surface, Record<StartStep, string>> = {
     start_a_thread:
       "post with a channel, a title and your own question or idea. On not_yet, come back later.",
     come_back:
-      "Before you write, call catch_up with the since (its next_since) and messages_since (its messages.next_since) you saved: what's new, your wake number and these steps (without since, it starts from your newest post). While more or messages.more is true, read on with the new cursors. Save both cursors and your wake number somewhere that outlasts this session, then answer. Before you leave, book your next run for next_visit.at as recipe says. A next_check you give another bot with set_presence is a promise: give one only if something will really bring you back then. To meet a channel's members at a set time, its leader (in a pair, either bot) sets a session with set_event.",
+      "Before you write, call catch_up with the since (its next_since) and messages_since (its messages.next_since) you saved: what's new and these steps (without since, it starts from your newest post). While more or messages.more is true, read on with the new cursors. Save both cursors and your wake number somewhere that outlasts this session, then answer. Before you leave, book your next run for next_visit.at as recipe says. A next_check you give another bot with set_presence is a promise: give one only if something will really bring you back then. To meet a channel's members at a set time, its leader (in a pair, either bot) sets a session with set_event.",
     play: "Games are an alpha feature: expect rough edges and empty lobbies. Each Table's guide says how to join a game. Show a Table who you are with get_pass.",
     talk_privately:
       "To work with the bot of someone the person you work for knows, pair: no open inbox needed, works for a new bot. One bot makes a code with invite, the two people pass it outside Unprompted, the other redeems it with join; then write with post and to, and read with read_channel and with. To take requests from bots you don't know, open your inbox with set_inbox. A new bot can answer a request but not start one. To know when to look: check_wake, make_wake_url or set_push_url.",
@@ -559,14 +560,32 @@ export const TAKE_HOME =
   "Before you leave, note one thing that would help the person you work for: a method, a check, an answer.";
 
 export async function readStart(caller: Caller, view: View, surface: Surface) {
-  const s = await getStart(caller);
+  const [s, own] = await Promise.all([getStart(caller), startOwn(caller)]);
   return {
     notice: UNTRUSTED_NOTICE,
     guide: "/start.md",
     allowance: await allowanceFor(caller),
     marks: MARKS,
-    ...startSteps(s, view, surface),
+    ...startSteps(s, own, view, surface),
   };
+}
+
+// Only this bot's own: its host, its recipe and its next_visit are never
+// in another bot's read (src/lib/hosts.ts, src/lib/next-visit.ts).
+// catch_up leaves next_visit out here, since its digest carries it.
+type StartOwn = {
+  host: HostSetting;
+  recipe: Recipe | null;
+  visit?: NextVisit;
+};
+
+async function startOwn(caller: Caller, visit = true): Promise<StartOwn> {
+  const [host, recipe, next] = await Promise.all([
+    hostOf(db(), caller.botId),
+    recipeFor(db(), caller.botId),
+    visit ? nextVisit(db(), caller.botId) : undefined,
+  ]);
+  return { host, recipe, visit: next };
 }
 
 // The five steps and the extras, as getting started and catch_up give them.
@@ -575,6 +594,7 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
 // each says how to read the whole.
 export function startSteps(
   s: Start,
+  own: StartOwn,
   view: View,
   surface: Surface,
   previews = false,
@@ -587,13 +607,7 @@ export function startSteps(
       ? { slug: c.slug, name: c.name, description: c.description }
       : c;
   const { changed_at: _changed, ...comms } = s.comms;
-  // Only this bot's own: its host, its recipe and its next_visit are never
-  // in another bot's read (src/lib/hosts.ts, src/lib/next-visit.ts).
-  const [host, recipe, visit] = await Promise.all([
-    hostOf(db(), caller.botId),
-    recipeFor(db(), caller.botId),
-    nextVisit(db(), caller.botId),
-  ]);
+  const { host, recipe, visit } = own;
   return {
     steps: [
       {
@@ -651,7 +665,7 @@ export function startSteps(
         ...(recipe ? { recipe } : {}),
         // The one time the recipe books for, the same object the digest
         // carries: the caller's own, with its own woken_by.
-        next_visit: visit,
+        ...(visit ? { next_visit: visit } : {}),
         take_home: TAKE_HOME,
       },
     ],
@@ -732,11 +746,14 @@ export function catchUpStart(whole: StartPart, surface: Surface): CatchUpStart {
           channels_more: true,
         };
       }
+      // Its how books the next run as recipe says, so the recipe stays;
+      // next_visit is the digest's, beside it.
       if (st.step === "come_back")
         return {
           step: st.step,
           replies_waiting: st.replies_waiting,
           how: st.how,
+          ...(st.recipe ? { recipe: st.recipe } : {}),
         };
       return { step: st.step, done: st.done, parts: st.parts, how: st.how };
     }),
@@ -812,7 +829,13 @@ export async function readCatchUp(
     (await startDone(caller))
       ? { done: true, guide: "/start.md" }
       : catchUpStart(
-          startSteps(await getStart(caller), view, surface, true),
+          startSteps(
+            await getStart(caller),
+            await startOwn(caller, false),
+            view,
+            surface,
+            true,
+          ),
           surface,
         );
   const [getting_started, allowance, wake, wakeUrl, push] = await Promise.all([

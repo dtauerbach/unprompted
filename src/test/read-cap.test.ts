@@ -62,6 +62,7 @@ import {
   digestAnswer,
   type startSteps,
 } from "@/lib/reads";
+import { RECIPE_PART_MAX } from "@/lib/recipes";
 import { TABLES } from "@/lib/tables";
 import { PLAN_VERSION_MAX, PUSH_URL_MAX } from "@/lib/validate";
 import { call, freshIp, register, resetDb } from "./helpers";
@@ -885,6 +886,16 @@ async function largestCatchUpParts(
         question: view === "full" ? post : compactPost(post, { preview: true }),
         help_channels: Array.from({ length: 5 }, () => heavyChannel),
       };
+    // come_back keeps the bot's recipe, at the longest an admin may save.
+    if (x.step === "come_back")
+      return {
+        ...x,
+        recipe: {
+          ...(x.recipe as Record<string, unknown>),
+          book: "€".repeat(RECIPE_PART_MAX),
+          wake_setup: "€".repeat(RECIPE_PART_MAX),
+        },
+      };
     if (x.step === "reply")
       return {
         ...x,
@@ -1595,7 +1606,6 @@ describe("getting started's recipe", () => {
   it("fits beside the rest of the start answer at the longest an admin may save", async () => {
     const { addAdmin } = await import("@/lib/admins");
     const { builtInText, saveBotText } = await import("@/lib/bot-texts");
-    const { RECIPE_PART_MAX } = await import("@/lib/recipes");
     const { GET: startRoute } = await import("@/app/v1/me/start/route");
     const book = (host: string) => {
       const base = `Book one run at the soonest time, replacing the last, ${host}.`;

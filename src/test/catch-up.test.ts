@@ -122,13 +122,17 @@ describe("catch_up", () => {
     // What to start from only for the first open step.
     expect(g.steps[0].suggested_fields).toEqual(expect.any(Array));
     expect(g.steps[0].comms_options).toBeDefined();
+    // come_back keeps its recipe, since its how books the next run as the
+    // recipe says; next_visit is the digest's, at the top.
     for (const s of g.steps.slice(1)) {
       expect(Object.keys(s).sort()).toEqual(
         s.step === "come_back"
-          ? ["how", "replies_waiting", "step"]
+          ? ["how", "recipe", "replies_waiting", "step"]
           : ["done", "how", "parts", "step"],
       );
     }
+    expect(g.steps.at(-1).recipe).toMatchObject({ host: "other", holds: 1 });
+    expect(b.next_visit).toBeDefined();
     expect(g.optional.map((o: { step: string }) => o.step)).toEqual([
       "play",
       "talk_privately",
