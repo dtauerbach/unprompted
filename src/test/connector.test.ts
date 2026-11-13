@@ -28,6 +28,7 @@ import { findHuman, issueOwnerCode, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
 import { enterLinkCode } from "@/lib/link-codes";
+import { startChannel } from "@/lib/private-channels";
 import { SIGNED_UP_NEXT } from "@/lib/reads";
 import { LOOPBACK_HOSTS } from "@/lib/validate";
 import {
@@ -994,10 +995,56 @@ describe("signing up through the connector", () => {
     expect(await count("bots")).toBe(0);
     const extra = await tool(token, "sign_up", {
       handle: "alice",
-      owner_code: "own_AAAAAAAAAAAAAAAAAAAAAA",
+      color: "blue",
     });
     expect(extra.isError).toBe(true);
     expect(await count("bots")).toBe(0);
+  });
+
+  it("links the bot with the owner code its person pasted, as over HTTP, though the app was allowed by no one signed in", async () => {
+    const token = await connect();
+    const { code } = await issueOwnerCode(db(), "google-1", null);
+    const r = await tool(token, "sign_up", {
+      handle: "alice",
+      owner_code: code,
+    });
+    expect(r.isError).toBe(false);
+    expect(r.data.bot.claimed).toBe(true);
+    expect(r.data.owner_note).toBeUndefined();
+    const [b] = await db()<{ owner_id: string }[]>`
+      SELECT owner_id FROM bots WHERE handle = 'alice'`;
+    expect(Number(b?.owner_id)).toBe(await findHuman(db(), "google-1"));
+    // The code linked one bot: another connection can't use it again.
+    const again = await tool(await connect(), "sign_up", {
+      handle: "bob",
+      owner_code: code,
+    });
+    expect(again.data.error.code).toBe("invalid_owner_code");
+    expect(await count("bots")).toBe(1);
+  });
+
+  it("refuses an owner code that doesn't work, writing nothing, and one beside a connect code", async () => {
+    const token = await connect({ user: "google-1" });
+    const bad = await tool(token, "sign_up", {
+      handle: "alice",
+      owner_code: "own_AAAAAAAAAAAAAAAAAAAAAA",
+    });
+    expect(bad.data.error.code).toBe("invalid_owner_code");
+    expect(await count("bots")).toBe(0);
+    const { code } = await issueOwnerCode(db(), "google-1", null);
+    const both = await tool(token, "sign_up", {
+      handle: "alice",
+      owner_code: code,
+      connect_code: `conn_${"a".repeat(26)}`,
+    });
+    expect(both.data.error.code).toBe("invalid");
+    expect(await count("bots")).toBe(0);
+    // The code still works for the sign-up it was meant for.
+    const ok = await tool(token, "sign_up", {
+      handle: "alice",
+      owner_code: code,
+    });
+    expect(ok.data.bot.claimed).toBe(true);
   });
 
   it("signs up once per connection", async () => {
@@ -1032,6 +1079,57 @@ describe("signing up through the connector", () => {
     });
     expect(await tokenHolder(token)).toEqual({ kind: "bot" });
     expect(await tokenHolder(`${token}x`)).toEqual({ kind: "none" });
+  });
+
+  it("puts one person's bots from four kinds of agent in one group, each from the same line", async () => {
+    // Each agent gets the account page's one line with a fresh owner code,
+    // got just before it's pasted: a chat app allowed while signed in, a
+    // chat app allowed by no one signed in, and two agents that make web
+    // requests.
+    const line = async () =>
+      (await issueOwnerCode(db(), "google-p", null)).code;
+    const claude = await connect({ user: "google-p" });
+    const chat = await tool(claude, "sign_up", {
+      handle: "pat-claude",
+      owner_code: await line(),
+    });
+    expect(chat.data.bot.claimed).toBe(true);
+    const gpt = await connect({ user: null });
+    const other = await tool(gpt, "sign_up", {
+      handle: "pat-gpt",
+      owner_code: await line(),
+    });
+    expect(other.data.bot.claimed).toBe(true);
+    const code = await register("pat-code", { owner_code: await line() });
+    const custom = await register("pat-own", { owner_code: await line() });
+    const human = Number(await findHuman(db(), "google-p"));
+    const owned = await db()<{ handle: string }[]>`
+      SELECT handle FROM bots WHERE owner_id = ${human} ORDER BY handle`;
+    expect(owned.map((b) => b.handle)).toEqual([
+      "pat-claude",
+      "pat-code",
+      "pat-gpt",
+      "pat-own",
+    ]);
+    const g = await startChannel(
+      db(),
+      "google-p",
+      ["pat-claude", "pat-gpt", "pat-code", "pat-own"],
+      "pat-code",
+      null,
+    );
+    expect(g.members).toHaveLength(4);
+    expect(g.leader).toBe("pat-code");
+    // Each finds it at once, through its own door.
+    for (const t of [claude, gpt]) {
+      const read = await tool(t, "read_channel", { channel: g.channel });
+      expect(read.isError).toBe(false);
+      expect(read.data.channel.leader).toBe("pat-code");
+    }
+    for (const k of [code.key, custom.key]) {
+      const me = await call(meRoute, { key: k });
+      expect(me.status).toBe(200);
+    }
   });
 
   it("links the bot to whoever allowed it, if they were signed in", async () => {

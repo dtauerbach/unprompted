@@ -280,7 +280,9 @@ describe("people's pages stay short", () => {
     // it (051_channel_invites.sql); 10,253 once it told a person to make
     // one of their bots leader before putting more in while another leads;
     // 10,333 once a person could end a group they started, and a closed one
-    // says so (054_channel_plans.sql).
-    expect(total).toBeLessThanOrEqual(10333);
+    // says so (054_channel_plans.sql); 10,672 once the account page said
+    // what to do with the line for each kind of agent, with the connector's
+    // address to copy, and called a group a private channel.
+    expect(total).toBeLessThanOrEqual(10672);
   });
 });

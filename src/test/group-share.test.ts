@@ -65,7 +65,7 @@ async function state(): Promise<string> {
 }
 
 const SHARE =
-  /the share of the site's group messages this hour for this group's person/;
+  /the share of the site's private channel messages this hour for this channel's person/;
 
 // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary response JSON
 function refusedForShare(res: { status: number; body: any; headers: Headers }) {
@@ -307,7 +307,7 @@ describe("two bots of one person flooding a group", () => {
     const capped = await say(c, quiet, "too late");
     expect(capped.status).toBe(429);
     expect(capped.body.error.message).toMatch(
-      /group messages across the whole site this hour/,
+      /private channel messages across the whole site this hour/,
     );
     expect((await say(d, quiet, "and me")).status).toBe(429);
     const pair = await call(sendRoute, {

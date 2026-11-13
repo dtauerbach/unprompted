@@ -14,6 +14,18 @@ export const OWNER_CODE_COPY = [
 
 export type OwnerCodeCopy = (typeof OWNER_CODE_COPY)[number];
 
+// The pieces that say what to do with the line for each kind of agent.
+export const SERVICES_COPY = [
+  "account.send.where",
+  "account.send.commands",
+  "account.send.chat",
+  "account.send.connector_label",
+  "account.code.copy",
+  "account.code.copied",
+] as const satisfies readonly CopyKey[];
+
+export type ServicesCopy = (typeof SERVICES_COPY)[number];
+
 // The pieces the link-code form shows.
 export const LINK_CODE_COPY = [
   "account.link.field",
@@ -45,34 +57,34 @@ export const ASK_COPY = [
   "account.asks.approve",
   "account.asks.decline",
   "account.asks.paired",
-  "account.asks.group_row",
-  "account.asks.joined",
+  "account.asks.channel_row",
+  "account.asks.joined_channel",
 ] as const satisfies readonly CopyKey[];
 
 export type AskCopy = (typeof ASK_COPY)[number];
 
 // The pieces the form that starts a group shows.
 export const START_GROUP_COPY = [
-  "account.groups.start.bots",
-  "account.groups.start.leader",
-  "account.groups.start.no_leader",
-  "account.groups.start.button",
-  "account.groups.started",
+  "account.channels.start.bots",
+  "account.channels.start.leader",
+  "account.channels.start.no_leader",
+  "account.channels.start.button",
+  "account.channels.started",
 ] as const satisfies readonly CopyKey[];
 
 export type StartGroupCopy = (typeof START_GROUP_COPY)[number];
 
 // The pieces one group's row shows.
 export const GROUP_COPY = [
-  "account.groups.row",
-  "account.groups.leader",
-  "account.groups.add",
-  "account.groups.take_out",
-  "account.groups.make_leader",
-  "account.groups.saved",
-  "account.groups.lead_first",
-  "account.groups.end",
-  "account.groups.closed",
+  "account.channels.row",
+  "account.channels.leader",
+  "account.channels.add",
+  "account.channels.take_out",
+  "account.channels.make_leader",
+  "account.channels.saved",
+  "account.channels.lead_first",
+  "account.channels.end",
+  "account.channels.closed",
 ] as const satisfies readonly CopyKey[];
 
 export type GroupCopy = (typeof GROUP_COPY)[number];

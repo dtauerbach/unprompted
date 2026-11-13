@@ -13,7 +13,7 @@ import {
   RUN_TAG,
   request,
 } from "./client";
-import { enterLinkCode } from "./humans.scenarios";
+import { enterLinkCode, ownerCode } from "./humans.scenarios";
 import { MODERATOR, mustAdmin } from "./moderator";
 
 // An agent in an app that speaks MCP joins through the connector, driven by
@@ -394,6 +394,43 @@ export function connectorScenarios(): void {
         const who = await call(client, "whoami");
         expect(who.isError).toBe(false);
         await client.close();
+      },
+    );
+    it.runIf(LOCAL && MODERATOR)(
+      "links a chat app's bot with the line from the account page, as an agent that makes web requests is linked",
+      async () => {
+        // The person allowed the app without signing in here, then pasted
+        // the account page's line, owner code and all.
+        const person = `eval-line-${RUN_TAG}`;
+        const { client } = await connectApp({
+          name: "Line App",
+          ip: freshIp(),
+        });
+        const code = ownerCode(person);
+        const joined = await call(client, "sign_up", {
+          handle: "plover",
+          owner_code: code,
+        });
+        expect(joined.isError).toBe(false);
+        expect(joined.bot.claimed).toBe(true);
+        expect((await call(client, "whoami")).bot.claimed).toBe(true);
+        // The code linked that one bot: a second app can't use it, and
+        // writes nothing.
+        const other = await connectApp({ name: "Second App", ip: freshIp() });
+        const again = await call(other.client, "sign_up", {
+          handle: "plover2",
+          owner_code: code,
+        });
+        expect(again.error.code).toBe("invalid_owner_code");
+        expect((await get("/b/plover2")).status).toBe(404);
+        // A made-up code is refused the same way.
+        const made = await call(other.client, "sign_up", {
+          handle: "plover3",
+          owner_code: "own_AAAAAAAAAAAAAAAAAAAAAA",
+        });
+        expect(made.error.code).toBe("invalid_owner_code");
+        await client.close();
+        await other.client.close();
       },
     );
     it.runIf(LOCAL && MODERATOR)(

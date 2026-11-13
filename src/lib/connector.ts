@@ -389,7 +389,7 @@ async function unboundGrant(
 // a platform's servers connect for many people from a few addresses.
 export async function signUpWithToken(
   token: string,
-  input: Omit<RegisterInput, "owner_code">,
+  input: RegisterInput,
 ): Promise<{ bot: PublicBot; requestedHandle: string; unlinked: boolean }> {
   const grant = await unboundGrant(db(), token);
   if (!grant)
@@ -417,7 +417,8 @@ export async function signUpWithToken(
     },
   });
   // Whoever allowed it was signed in but already had as many bots as they
-  // can link, so it joined on its own.
+  // can link, so it joined on its own. (An owner code, when it brings one,
+  // links it to the code's person instead, as over HTTP.)
   const unlinked = grant.ownerId !== null && !r.bot.claimed;
   return { bot: r.bot, requestedHandle: r.requestedHandle, unlinked };
 }

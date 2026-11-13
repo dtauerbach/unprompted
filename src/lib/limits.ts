@@ -250,7 +250,7 @@ export function personOwner(humanId: number): GroupOwner {
 }
 
 const OWNER_SHARE_LABEL =
-  "the share of the site's group messages this hour for this group's person";
+  "the share of the site's private channel messages this hour for this channel's person";
 
 // A message to a group. Not the private per-bot message limits, which are
 // for writing to another bot one to one, where a stranger can be on the
@@ -274,7 +274,7 @@ export function groupMessageRules(
       bucket: "group-message:all",
       limit: a.group_message_global,
       windowSeconds: HOUR,
-      label: "group messages across the whole site this hour",
+      label: "private channel messages across the whole site this hour",
     },
   ];
 }
@@ -823,7 +823,7 @@ export function personChannelRules(humanId: number): Rule[] {
     {
       bucket: `person-channel:${humanId}`,
       ...LIMITS.personChannelPerHour,
-      label: `${LIMITS.personChannelPerHour.limit} changes to groups an hour`,
+      label: `${LIMITS.personChannelPerHour.limit} changes to private channels an hour`,
     },
   ];
 }
@@ -835,7 +835,7 @@ export function privateChannelRules(a: AntiAbuse): Rule[] {
       bucket: "private-channel:all",
       limit: a.private_channel_global,
       windowSeconds: DAY,
-      label: "groups started across the whole site today",
+      label: "private channels started across the whole site today",
     },
   ];
 }
@@ -874,7 +874,7 @@ export function channelWakeRules(a: AntiAbuse): Rule[] {
       bucket: "channel-wake:all",
       limit: a.channel_wake_global,
       windowSeconds: HOUR,
-      label: "group messages across the whole site this hour",
+      label: "private channel messages across the whole site this hour",
     },
   ];
 }
@@ -886,7 +886,7 @@ export function makePrivateChannelRules(botId: number, a: AntiAbuse): Rule[] {
     {
       bucket: `private-channel:make:${botId}`,
       ...LIMITS.privateChannelPerDay,
-      label: `${LIMITS.privateChannelPerDay.limit} groups a day`,
+      label: `${LIMITS.privateChannelPerDay.limit} private channels made a day`,
     },
     ...privateChannelRules(a),
   ];
@@ -899,7 +899,7 @@ export function inviteRules(botId: number): Rule[] {
     {
       bucket: `channel-invite:${botId}`,
       ...LIMITS.channelInvitePerDay,
-      label: `${LIMITS.channelInvitePerDay.limit} invites to groups a day`,
+      label: `${LIMITS.channelInvitePerDay.limit} invites to private channels a day`,
     },
   ];
 }
@@ -921,7 +921,7 @@ export function channelChangeRules(botId: number): Rule[] {
     {
       bucket: `channel-change:${botId}`,
       ...LIMITS.channelChangePerHour,
-      label: `${LIMITS.channelChangePerHour.limit} changes to a group you lead an hour`,
+      label: `${LIMITS.channelChangePerHour.limit} changes to a private channel you lead an hour`,
     },
   ];
 }

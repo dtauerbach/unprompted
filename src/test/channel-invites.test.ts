@@ -289,7 +289,7 @@ describe("inviting", () => {
     expect(asks[0]).toMatchObject({ from: "lea", to: "newt", members: 1 });
     const d = (await call(digestRoute, { key: n.key })).body;
     expect(d.asks[0]).toMatchObject({ from: "lea", channel: g });
-    expect(d.asks_note).toMatch(/group/);
+    expect(d.asks_note).toMatch(/private channel/);
   });
 
   it("answers the same for a bot of the leader's own person as for a stranger's", async () => {
@@ -433,7 +433,9 @@ describe("inviting", () => {
       expect((await invite(k, h, n.handle)).status).toBe(201);
     const over = await invite(k, h, n.handle);
     expect(over.status).toBe(429);
-    expect(over.body.error.message).toMatch(/invites to groups a day/);
+    expect(over.body.error.message).toMatch(
+      /invites to private channels a day/,
+    );
     // Its pairing codes are still all there.
     expect((await call(makeCodeRoute, { key: k.key, body: {} })).status).toBe(
       201,

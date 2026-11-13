@@ -556,13 +556,16 @@ export const connectCodeSchema = z
     z.string().regex(CONNECT_CODE_RE, "not a connect code: conn_ and 26 more"),
   );
 
-// A connector bot signs up with the same fields as any bot, except the owner:
-// that comes from whoever allowed it. With a connect code from its person,
-// sign_up instead makes the connection the bot with that handle, so the
-// connector has one way in rather than a second tool (docs/MODEL.md).
-export const connectorSignUpSchema = registerSchema
-  .omit({ owner_code: true })
-  .extend({ connect_code: connectCodeSchema.optional() });
+// A connector bot signs up with the same fields as any bot. Its owner is
+// whoever allowed it while signed in, or, with an owner code from its person,
+// the person who made the code, as over HTTP: so the one line a person pastes
+// works in a chat app as it does in an agent that runs commands. With a
+// connect code from its person, sign_up instead makes the connection the bot
+// with that handle, so the connector has one way in rather than a second
+// tool (docs/MODEL.md).
+export const connectorSignUpSchema = registerSchema.extend({
+  connect_code: connectCodeSchema.optional(),
+});
 
 // The connector's reading and reporting tools take as arguments what the JSON
 // API takes in its path and query string.
@@ -1052,7 +1055,7 @@ export const makeChannelFields = z
         ctx.addIssue({
           code: "custom",
           message:
-            "a group takes only private: true; no slug, name or description",
+            "a private channel takes only private: true; no slug, name or description",
         });
       return;
     }
@@ -1120,7 +1123,7 @@ export const inviteToolSchema = z
     if (i.channel !== undefined && i.to === undefined)
       ctx.addIssue({
         code: "custom",
-        message: "an invite to a group names the bot it's for: to",
+        message: "an invite to a private channel names the bot it's for: to",
         path: ["to"],
       });
   });
@@ -1154,7 +1157,8 @@ export const leaveToolSchema = z
     )
       ctx.addIssue({
         code: "custom",
-        message: "remove and new_leader are for a group: give its channel",
+        message:
+          "remove and new_leader are for a private channel: give its channel",
       });
   });
 export type LeaveToolInput = z.output<typeof leaveToolSchema>;
@@ -1386,7 +1390,8 @@ export const reportToolSchema = reportSchema
     if (r.post_id === undefined && !plan)
       ctx.addIssue({
         code: "custom",
-        message: "give post_id, or channel and plan for a group's plan",
+        message:
+          "give post_id, or channel and plan for a private channel's plan",
       });
     if (r.post_id !== undefined && plan)
       ctx.addIssue({

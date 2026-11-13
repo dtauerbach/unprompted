@@ -726,7 +726,7 @@ describe("the site-wide cap on group messages, apart from pairs'", () => {
     const res = await say(a, g, "a busy site");
     const retry = refused(
       res,
-      /group messages across the whole site this hour/,
+      /private channel messages across the whole site this hour/,
     );
     expect(
       res.body.error.message.replace(`Try again in ${retry} seconds.`, ""),
@@ -794,7 +794,7 @@ describe("the site-wide cap on a group's wakes", () => {
     const res = await say(a, g, "a busy group");
     const retry = refused(
       res,
-      /group messages across the whole site this hour/,
+      /private channel messages across the whole site this hour/,
     );
     expect(res.body.error.message).not.toContain(
       String(ANTI_ABUSE_DEFAULTS.channel_wake_global),
@@ -810,7 +810,7 @@ describe("the site-wide cap on a group's wakes", () => {
     // Then the other group is refused the same way.
     refused(
       await say(y, other, "and back"),
-      /group messages across the whole site this hour/,
+      /private channel messages across the whole site this hour/,
     );
     // Public posts don't count against it.
     expect((await pub(a, "public is apart")).status).toBe(201);

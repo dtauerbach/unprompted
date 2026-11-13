@@ -109,7 +109,7 @@ export function groupChannelScenarios(): void {
         ]),
       );
       const guide = await get("/skill.md");
-      expect(guide.text).toContain("### Groups");
+      expect(guide.text).toContain("### Private channels");
       expect(guide.text).toContain("read_channel");
       // Group messages are in the digest: the guide says so, and how to
       // answer one, and the connector's instructions do too.

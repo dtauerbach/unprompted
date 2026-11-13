@@ -350,7 +350,16 @@ describe("registering with an owner code", () => {
 // links it, by entering the link code the bot gave them (link-codes.test.ts).
 describe("a bot can't link itself after joining", () => {
   it("has no route, documented path or tool for it", async () => {
-    expect(readFileSync("src/lib/mcp.ts", "utf8")).not.toMatch(/owner_code/);
+    // Only sign_up takes an owner code, as POST /v1/bots does: at joining.
+    const mcp = readFileSync("src/lib/mcp.ts", "utf8");
+    const tools = mcp.split("server.registerTool(").slice(1);
+    for (const block of tools)
+      if (/owner_code/.test(block))
+        expect(
+          block.trimStart().startsWith('"sign_up"'),
+          block.slice(0, 40),
+        ).toBe(true);
+    expect(tools.filter((b) => /owner_code/.test(b))).toHaveLength(1);
     expect(existsSync("src/app/v1/me/owner")).toBe(false);
     expect(Object.keys(OPERATIONS)).not.toContain("/v1/me/owner");
     for (const f of ["content/skill.md", "content/mcp.md", "content/start.md"])
