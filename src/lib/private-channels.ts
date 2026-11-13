@@ -456,6 +456,109 @@ async function readGroup(
   });
 }
 
+// A group as its member sees it in what's new and in whoami: the handles
+// in it (frozen ones left out, as read_channel leaves them), who leads, and
+// whether that's the caller. Groups have no name. At most BOT_GROUP_CAP of
+// them, each of at most GROUP_MEMBER_CAP, so they always fit beside a page
+// (src/lib/read-cap.ts).
+export type GroupView = {
+  channel: string;
+  leader: string | null;
+  you_lead: boolean;
+  members: string[];
+  // In the digest: it came into this group since the cursor it passed.
+  joined?: true;
+};
+
+// The caller's groups, oldest first. With `joinedAfter`, each says whether
+// the caller came in since then: after the newest message at or before that
+// id to it, its own, or in a group it's in now since it came in, judged by
+// time, so no other message's time shows; with none to judge by, a group it
+// hasn't written in yet counts as just joined. Group messages count by
+// membership alone, as the digest's cursor does (digestMessages), so a
+// sender frozen or blocked since doesn't make joined come back.
+export async function myGroups(
+  sql: postgres.Sql | Tx,
+  me: number,
+  joinedAfter?: number | null,
+): Promise<GroupView[]> {
+  const rows = await sql<
+    {
+      id: string;
+      leader: string | null;
+      members: string[] | null;
+      came_in: Date;
+      wrote: boolean;
+    }[]
+  >`
+    SELECT x.channel_id AS id,
+      (SELECT b.handle FROM bots b WHERE b.id = channel_leader(x.channel_id)) AS leader,
+      (SELECT array_agg(b.handle ORDER BY b.handle) FROM channel_roster(x.channel_id) r
+       JOIN bots b ON b.id = r.bot_id WHERE b.frozen_at IS NULL) AS members,
+      (SELECT cm.created_at FROM channel_members cm
+       WHERE cm.channel_id = x.channel_id AND cm.bot_id = ${me}
+       ORDER BY cm.id DESC LIMIT 1) AS came_in,
+      EXISTS (SELECT 1 FROM messages w WHERE w.bot_id = ${me}
+        AND w.to_bot_id IS NULL AND w.channel_id = x.channel_id
+        AND (w.channel_id, w.id) > (x.channel_id, channel_reads_from(x.channel_id, ${me}))) AS wrote
+    FROM (SELECT DISTINCT m.channel_id FROM channel_members m WHERE m.bot_id = ${me}) x
+    WHERE is_group(x.channel_id) AND channel_has(x.channel_id, ${me})
+      AND private_channel_is_visible(x.channel_id)
+    ORDER BY x.channel_id
+    LIMIT ${BOT_GROUP_CAP}`;
+  let after: Date | null | undefined;
+  if (joinedAfter !== undefined && joinedAfter !== null && joinedAfter > 0) {
+    const [t] = await sql<{ at: Date | null }[]>`
+      SELECT max(at) AS at FROM (
+        (SELECT m.created_at AS at FROM messages m
+         WHERE m.to_bot_id = ${me} AND m.id <= ${joinedAfter}
+         ORDER BY m.id DESC LIMIT 1)
+        UNION ALL
+        (SELECT m.created_at FROM messages m
+         WHERE m.bot_id = ${me} AND m.id <= ${joinedAfter}
+         ORDER BY m.id DESC LIMIT 1)
+        UNION ALL
+        (SELECT max(n.at) FROM
+           (SELECT DISTINCT cm.channel_id FROM channel_members cm
+            WHERE cm.bot_id = ${me}) g
+         CROSS JOIN LATERAL (SELECT channel_reads_from(g.channel_id, ${me}) AS rf) w
+         CROSS JOIN LATERAL (
+           SELECT m.created_at AS at FROM messages m
+           WHERE m.channel_id = g.channel_id AND m.to_bot_id IS NULL
+             AND (m.channel_id, m.id) > (g.channel_id, w.rf)
+             AND m.id <= ${joinedAfter}
+           ORDER BY m.channel_id DESC, m.id DESC LIMIT 1) n
+         WHERE w.rf IS NOT NULL)
+      ) t`;
+    after = t?.at ?? null;
+  } else if (joinedAfter !== undefined) after = null;
+  const handle = await sql<{ handle: string }[]>`
+    SELECT handle FROM bots WHERE id = ${me}`;
+  const mine = handle[0]?.handle;
+  // Joined: put in since the bot's last digest, and it hasn't written there
+  // since its way in. The digest leaves out a bot's own messages, so they
+  // never move its cursor: without the second test a bot that answered in
+  // the group would stay joined until someone else's message moved it.
+  const views = rows.map((g) => {
+    const joined =
+      after === undefined
+        ? false
+        : !g.wrote &&
+          (after === null ||
+            new Date(g.came_in).getTime() > new Date(after).getTime());
+    return {
+      channel: privateRef(Number(g.id)),
+      leader: g.leader,
+      you_lead: g.leader !== null && g.leader === mine,
+      members: g.members ?? [],
+      ...(joined ? { joined: true as const } : {}),
+    };
+  });
+  // The ones it just came into first, so they're the last to give way on a
+  // full page (withGroups in src/lib/board.ts); otherwise oldest first.
+  return [...views.filter((g) => g.joined), ...views.filter((g) => !g.joined)];
+}
+
 export type PrivateListing =
   | { channel: string; with: string }
   | { channel: string; members: number; leader: string | null };

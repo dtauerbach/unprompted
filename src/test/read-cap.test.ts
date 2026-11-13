@@ -17,6 +17,7 @@ import {
   type Digest,
   type PublicPost,
   REPLY_PAGE,
+  withGroups,
   withPresence,
 } from "@/lib/board";
 import { db } from "@/lib/db";
@@ -24,6 +25,7 @@ import { newKey } from "@/lib/keys";
 import { NUDGES_DIGEST_MAX } from "@/lib/nudges";
 import { ASKS_SHOWN } from "@/lib/pairing-asks";
 import { PRESENCE_DIGEST_MAX } from "@/lib/presence";
+import { BOT_GROUP_CAP, GROUP_MEMBER_CAP } from "@/lib/private-channels";
 import {
   cutBothToFit,
   cutToFit,
@@ -32,6 +34,7 @@ import {
   fittingFromEnd,
   READ_MAX_BYTES,
   sizeOf,
+  sizesOf,
 } from "@/lib/read-cap";
 import { digestAnswer } from "@/lib/reads";
 import { TABLES } from "@/lib/tables";
@@ -600,7 +603,7 @@ describe("the hard ceiling", () => {
     });
   });
 
-  it("leaves room for a whole post and a whole message beside the largest digest the site allows, once presence gives way", () => {
+  it("leaves room for a whole post and a whole message beside the largest digest the site allows, once presence gives way", async () => {
     // Everything outside the two paged lists at its largest: every list at
     // its cap, every string at its longest in three-byte characters, every
     // number at its widest, every note shown.
@@ -636,12 +639,14 @@ describe("the hard ceiling", () => {
       untrusted_body: HEAVY,
       because: ["your_thread", "thread_you_joined", "mention"],
     };
+    // A group's message names its channel too: the heavier of the two.
     const message = {
       id: big,
       from: handle,
-      to: handle,
+      to: `private:${big}`,
       request: true,
       created_at: at,
+      channel: `private:${big}`,
       untrusted_body: HEAVY,
     };
     const envelope: Digest = {
@@ -665,6 +670,14 @@ describe("the hard ceiling", () => {
       })),
       channels_more: true,
       messages: { since: big, next_since: big, more: true, new: [] },
+      // Every group a bot may be in, each full, every handle the longest.
+      groups: Array.from({ length: BOT_GROUP_CAP }, () => ({
+        channel: `private:${big}`,
+        leader: handle,
+        you_lead: false,
+        members: Array.from({ length: GROUP_MEMBER_CAP }, () => handle),
+        joined: true as const,
+      })),
       presence: Array.from({ length: PRESENCE_DIGEST_MAX }, () => ({
         with: handle,
         id: big,
@@ -714,14 +727,31 @@ describe("the hard ceiling", () => {
         };
         // Everything at its largest is too much for both...
         expect(page(both)).toBeGreaterThan(READ_MAX_BYTES);
-        // ...so presence gives way, and with none of it left both fit.
-        const fits = withPresence(both, 0);
-        expect(fits.presence_more).toBe(true);
+        // ...so presence gives way, then the groups from the end (whoami
+        // lists them all), and with none of either left both fit: the floor
+        // the digest may cut the groups to.
+        const noPresence = withPresence(both, 0);
+        expect(noPresence.presence_more).toBe(true);
+        const fits = withGroups(noPresence, 0);
+        expect(fits.groups_more).toBe(true);
         expect(page(fits), `${view} ${surface}`).toBeLessThanOrEqual(
           READ_MAX_BYTES,
         );
+        // The cut the digest makes over the groups, every one full, lands
+        // under the cap and keeps some of them.
+        const cut = await cutToFit(
+          sizesOf(noPresence.groups),
+          noPresence.groups.length,
+          (n) => withGroups(noPresence, n),
+          page,
+          0,
+        );
+        expect(page(cut), `${view} ${surface}, cut`).toBeLessThanOrEqual(
+          READ_MAX_BYTES,
+        );
+        expect(cut.groups.length, `${view} ${surface}, cut`).toBeGreaterThan(0);
         sizesSeen[
-          `digest envelope without presence + 1 post + 1 message (${view}, ${surface})`
+          `digest envelope without presence or groups + 1 post + 1 message (${view}, ${surface})`
         ] = page(fits);
         sizesSeen[
           `digest envelope with presence + 1 post + 1 message (${view}, ${surface})`
