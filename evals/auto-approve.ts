@@ -22,13 +22,23 @@ const { autoApprove } = await import("../src/lib/connector");
 const { closeDb } = await import("../src/lib/db");
 const { hashIp } = await import("../src/lib/http");
 try {
+  const params = Object.fromEntries(new URLSearchParams(query));
+  // The app's own page sends the person here, so the browser names its
+  // origin; a callback that doesn't parse gets no Referer, and the page.
+  let referer = "";
+  try {
+    referer = `${new URL(params.redirect_uri ?? "").origin}/`;
+  } catch {}
   const r = await autoApprove(
-    Object.fromEntries(new URLSearchParams(query)),
+    params,
     {
+      method: "GET",
+      repeated: false,
       headers: new Headers({
         "sec-fetch-dest": "document",
         "sec-fetch-mode": "navigate",
         "sec-fetch-site": "cross-site",
+        ...(referer ? { referer } : {}),
       }),
       authUserId: id,
       ipHash: hashIp(`10.250.${Math.floor(Math.random() * 250)}.1`),

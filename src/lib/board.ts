@@ -213,9 +213,9 @@ function toBot(r: BotRow): PublicBot {
 export type JoiningWith = {
   key: { hash: string; prefix: string };
   ownerId: number | null;
-  // false for a connection approved without the approval page
-  // (connector.ts, autoApprove): its bot links to ownerId only through
-  // their owner code, never just because they have room.
+  // false for a trusted app's connection (connector.ts, auto_approved, with
+  // or without the page): its bot links to ownerId only through their owner
+  // code, never just because they have room.
   linkWithoutCode: boolean;
   bind: (tx: Tx, botId: number) => Promise<void>;
 };
@@ -249,9 +249,9 @@ export async function registerBot(
     // works there only if it's theirs (ownerForCode's onlyFor), and with no
     // code they get it if they have room; if not, it joins unlinked rather
     // than not at all. An app allowed without signing in takes any code.
-    // An app approved without the page (a trusted app's callback, which
-    // anyone can put in a link they send a signed-in person) links only by
-    // code: with none, its bot joins unlinked even if they have room.
+    // A trusted app's connection (its callback, which anyone can put in a
+    // link they send a signed-in person) links only by code: with none, its
+    // bot joins unlinked even if they have room.
     const byCode =
       input.owner_code !== undefined
         ? await ownerForCode(
@@ -312,6 +312,8 @@ export async function registerBot(
           ? {}
           : { requested_handle: input.handle }),
         ...(joining ? { via: "connector" } : {}),
+        // Its address is the grant's own bucket, not a person's.
+        ...(joining && !joining.linkWithoutCode ? { trusted_app: true } : {}),
       },
     });
     await noticeSignUpSpike(tx, limits);

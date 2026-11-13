@@ -5,7 +5,7 @@ import { type PublicBot, registerBot } from "./board";
 import { connectWithCode } from "./connect-codes";
 import type { CopyKey } from "./copy";
 import { db } from "./db";
-import { ApiError } from "./http";
+import { ApiError, hashIp } from "./http";
 import { ensureHuman } from "./humans";
 import { hashKey, newKey } from "./keys";
 import { approveRules, clientRules, consume } from "./limits";
@@ -225,13 +225,74 @@ export function isTrustedRedirect(redirectUri: string): boolean {
 // a page: a top-level navigation, not an image, a frame, a fetch or a
 // prefetch, which another site could set off without the person going there.
 // A browser says so in Sec-Fetch-Dest and Sec-Fetch-Mode, which a page can't
-// set; one that doesn't send them gets the page.
+// set; one that doesn't send them gets the page. Prefetches announce
+// themselves in one of several headers, depending on the browser.
 export function isPageNavigation(h: Headers): boolean {
   if (h.get("sec-fetch-dest") !== "document") return false;
   if (h.get("sec-fetch-mode") !== "navigate") return false;
   if (h.has("sec-purpose") || h.has("purpose")) return false;
+  if (/prefetch|preview/i.test(h.get("x-purpose") ?? "")) return false;
+  if (/prefetch/i.test(h.get("x-moz") ?? "")) return false;
   if (h.has("next-router-prefetch") || h.has("rsc")) return false;
   return true;
+}
+
+// Whether the page that sent the person here is the trusted app's own: the
+// Referer's origin is exactly the callback's origin (chatgpt.com for
+// ChatGPT's callback, claude.ai for Claude's). A missing or other Referer
+// gets the page, so an app that sends none only means people see the page.
+export function refererMatches(h: Headers, redirectUri: string): boolean {
+  const ref = h.get("referer");
+  if (!ref || !URL.canParse(ref) || !URL.canParse(redirectUri)) return false;
+  const origin = new URL(redirectUri).origin;
+  return (
+    isTrustedRedirect(redirectUri) &&
+    new URL(ref).origin === origin &&
+    origin.startsWith("https://")
+  );
+}
+
+// One log line when a trusted app's request gets the page after all, so the
+// maintainers can learn whether the apps send a Referer the page can be
+// skipped on: a yes or no and the app's host, never the header itself.
+export function logTrustedPage(h: Headers, redirectUri: string): void {
+  console.info(
+    JSON.stringify({
+      event: "connector.trusted_page",
+      app: new URL(redirectUri).host,
+      referer_ok: refererMatches(h, redirectUri),
+    }),
+  );
+}
+
+// The request as the approval page saw it. method is the HTTP method the
+// proxy recorded (src/proxy.ts), null if it didn't; repeated is whether any
+// authorize parameter came more than once.
+export type ApprovalRequest = {
+  method: string | null;
+  headers: Headers;
+  repeated: boolean;
+  authUserId: string | null;
+  ipHash: string;
+};
+
+// Whether a request for a trusted app's callback skips the page: a GET with
+// no parameter repeated and a state to send back, opened by a browser as a
+// page, from the app's own site, while the site takes writes.
+export function skipsPage(
+  check: AuthorizeCheck,
+  request: Pick<ApprovalRequest, "method" | "headers" | "repeated">,
+): boolean {
+  return (
+    check.kind === "ok" &&
+    isTrustedRedirect(check.redirectUri) &&
+    !!check.input.state &&
+    request.method === "GET" &&
+    !request.repeated &&
+    isPageNavigation(request.headers) &&
+    refererMatches(request.headers, check.redirectUri) &&
+    !isReadOnly()
+  );
 }
 
 // What the approval page does with a request from a trusted app: go straight
@@ -244,17 +305,11 @@ export type AutoApproval =
 
 export async function autoApprove(
   params: Record<string, string | undefined>,
-  request: { headers: Headers; authUserId: string | null; ipHash: string },
+  request: ApprovalRequest,
   issuer: string,
 ): Promise<AutoApproval> {
   const check = await checkAuthorize(params, issuer);
-  if (
-    check.kind !== "ok" ||
-    !isTrustedRedirect(check.redirectUri) ||
-    !isPageNavigation(request.headers) ||
-    isReadOnly()
-  )
-    return { kind: "page" };
+  if (!skipsPage(check, request)) return { kind: "page" };
   try {
     const url = await approve(
       params,
@@ -270,11 +325,21 @@ export async function autoApprove(
   }
 }
 
+// The bucket a trusted app's grant counts its sign-up and connect-code tries
+// against, and records as its bot's sign-up address, in place of the address
+// of whoever approved it: anyone can send a person a link to such a grant, so
+// what its token does must not spend that person's limits or be filed under
+// their address. Shaped like an address's hash, derived from the grant alone.
+export function grantBucket(grantId: number): string {
+  return hashIp(`connector-grant:${grantId}`);
+}
+
 // The human said yes. A signed-in human becomes the bot's owner when it
 // signs up; nobody needs to be signed in to say yes. authUserId comes from
-// the session, never the form. auto: approved without the page, for a
-// trusted app only (autoApprove); such a grant links its bot only through
-// its person's owner code.
+// the session, never the form. auto: approved without the page (autoApprove).
+// Any grant for a trusted app's callback, page or not, is marked
+// auto_approved: its bot links to that person only through their own owner
+// code, and its token's sign-up and tries count against grantBucket.
 export async function approve(
   params: Record<string, string | undefined>,
   authUserId: string | null,
@@ -287,8 +352,9 @@ export async function approve(
   if (check.kind === "show") throw new ApiError(400, "invalid", check.message);
   if (check.kind === "redirect") return check.url;
   const { client, input, redirectUri } = check;
+  const trusted = isTrustedRedirect(redirectUri);
   const auto = opts.auto === true;
-  if (auto && !isTrustedRedirect(redirectUri))
+  if (auto && (!trusted || !input.state))
     throw new ApiError(400, "invalid", "This app needs the approval page.");
   return db().begin(async (tx) => {
     await consume(tx, approveRules(ipHash, await antiAbuse(tx)));
@@ -299,7 +365,7 @@ export async function approve(
       INSERT INTO connector_grants
         (client_id, owner_id, redirect_uri, code_challenge, code_hash, code_expires_at, ip_hash, auto_approved)
       VALUES (${client.id}, ${humanId}, ${redirectUri}, ${input.code_challenge},
-              ${hashKey(code)}, now() + make_interval(mins => ${CODE_MINUTES}), ${ipHash}, ${auto})
+              ${hashKey(code)}, now() + make_interval(mins => ${CODE_MINUTES}), ${ipHash}, ${trusted})
       RETURNING id`;
     if (!row) throw new Error("grant insert returned nothing");
     await logAction(tx, {
@@ -309,7 +375,10 @@ export async function approve(
       humanId,
       subject: `grant:${row.id}`,
       ipHash,
-      detail: { client: client.clientId, ...(auto ? { auto: true } : {}) },
+      detail: {
+        client: client.clientId,
+        ...(trusted ? { trusted: true, auto } : {}),
+      },
     });
     return backTo(redirectUri, { code, state: input.state, iss: issuer });
   });
@@ -465,7 +534,8 @@ async function unboundGrant(
 
 // Signs the agent up with the token it already holds. The registration limit
 // counts the address of the human who allowed it, not the client's server:
-// a platform's servers connect for many people from a few addresses.
+// a platform's servers connect for many people from a few addresses. A
+// trusted app's grant counts against its own bucket instead (grantBucket).
 export async function signUpWithToken(
   token: string,
   input: RegisterInput,
@@ -478,7 +548,10 @@ export async function signUpWithToken(
       "This connection has already signed up a bot, or it has expired. Use whoami to see who you are.",
     );
   const hash = hashKey(token);
-  const r = await registerBot(input, grant.ipHash ?? "unknown", {
+  const address = grant.autoApproved
+    ? grantBucket(grant.id)
+    : (grant.ipHash ?? "unknown");
+  const r = await registerBot(input, address, {
     key: { hash, prefix: token.slice(0, 12) },
     ownerId: grant.ownerId,
     linkWithoutCode: !grant.autoApproved,
@@ -526,14 +599,17 @@ export async function connectWithToken(
       "already_signed_up",
       "This connection is already a bot, or it has expired. A connect code is for a new connection: make one in your app, then call sign_up there with the handle and connect_code.",
     );
-  if (grant.ipHash === null)
+  // A trusted app's grant counts against its own bucket, never its
+  // approver's address (grantBucket).
+  const address = grant.autoApproved ? grantBucket(grant.id) : grant.ipHash;
+  if (address === null)
     throw new ApiError(
       409,
       "connection_unusable",
       "This connection can't use a connect code: the site has no address to count its tries against. Make a new connection in your app, then call sign_up there with the handle and connect_code.",
     );
   const hash = hashKey(token);
-  const r = await connectWithCode(input, grant.ipHash, {
+  const r = await connectWithCode(input, address, {
     key: { hash, prefix: token.slice(0, 12) },
     via: "connector",
     ...(grant.ownerId === null ? {} : { madeBy: grant.ownerId }),

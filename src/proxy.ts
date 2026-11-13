@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { carriesBearer, homeForBots } from "@/lib/home-for-bots";
 import { neonAuth } from "@/lib/human-auth";
+import { withMethod } from "@/lib/request-method";
 import { signInPath } from "@/lib/sign-in-next";
 
 // /agent is the address people paste into their agents. An agent's fetch
@@ -43,6 +44,15 @@ function home(req: NextRequest): Response {
   return NextResponse.next();
 }
 
+// The approval page skips itself for a trusted app only on a GET, and a page
+// can't read its own request's method: this passes it on, always over any
+// header of that name the client sent (src/lib/request-method.ts).
+const APPROVAL_PATH = "/oauth/authorize";
+
+function approval(req: NextRequest): NextResponse {
+  return NextResponse.next({ request: { headers: withMethod(req) } });
+}
+
 // On the account and admin pages, and the way back to an approval request
 // (src/lib/connect-return.ts): coming back from Google, the URL carries a
 // one-time verifier that this swaps for the session cookie; after that it
@@ -51,6 +61,7 @@ function home(req: NextRequest): Response {
 export async function proxy(req: NextRequest) {
   if (req.nextUrl.pathname === "/") return home(req);
   if (req.nextUrl.pathname === AGENT_PATH) return agent(req);
+  if (req.nextUrl.pathname === APPROVAL_PATH) return approval(req);
   const auth = neonAuth();
   if (!auth) return NextResponse.next();
   return auth.middleware({ loginUrl: signInPath(req.nextUrl.pathname) })(req);
@@ -60,6 +71,7 @@ export const config = {
   matcher: [
     "/",
     "/agent",
+    "/oauth/authorize",
     "/account",
     "/admin/:path*",
     "/oauth/authorize/return/:nonce",

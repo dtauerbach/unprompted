@@ -18,12 +18,15 @@ import { MODERATOR, setLimits } from "./moderator";
 const CHATGPT = "https://chatgpt.com/connector_platform_oauth_redirect";
 const CLAUDE = "https://claude.ai/api/mcp/auth_callback";
 
-// What a browser sends for a page it opens.
-const OPENS = {
-  "sec-fetch-dest": "document",
-  "sec-fetch-mode": "navigate",
-  "sec-fetch-site": "cross-site",
-};
+// What a browser sends for a page it opens, from the app's own site.
+function opens(redirect: string): Record<string, string> {
+  return {
+    "sec-fetch-dest": "document",
+    "sec-fetch-mode": "navigate",
+    "sec-fetch-site": "cross-site",
+    referer: `${new URL(redirect).origin}/`,
+  };
+}
 
 function pkce() {
   const verifier = randomBytes(32).toString("base64url");
@@ -58,7 +61,8 @@ function query(clientId: string, redirect: string, challenge: string) {
 // page is opened with node:http, which sends the headers as a browser would.
 async function open(
   q: string,
-  headers: Record<string, string> = OPENS,
+  headers: Record<string, string>,
+  method = "GET",
 ): Promise<{ status: number; location: string | null; text: string }> {
   const url = new URL(`/oauth/authorize?${q}`, BASE_URL);
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
@@ -71,7 +75,7 @@ async function open(
   return new Promise((resolve, reject) => {
     const req = (url.protocol === "https:" ? https : http).request(
       url,
-      { method: "GET", headers: all },
+      { method, headers: all },
       (res) => {
         let text = "";
         res.setEncoding("utf8");
@@ -175,7 +179,7 @@ export function autoApproveScenarios(): void {
       it(`sends a browser straight back to ${new URL(redirect).host} with a code`, async () => {
         const id = await client(redirect);
         const { verifier, challenge } = pkce();
-        const res = await open(query(id, redirect, challenge));
+        const res = await open(query(id, redirect, challenge), opens(redirect));
         expect([303, 307]).toContain(res.status);
         const back = new URL(res.location ?? "");
         expect(back.origin + back.pathname).toBe(redirect);
@@ -187,14 +191,57 @@ export function autoApproveScenarios(): void {
 
     it("shows the page to anything that isn't a browser opening it", async () => {
       const id = await client(CHATGPT);
+      const OPENS = opens(CHATGPT);
       for (const headers of [
         {},
         { ...OPENS, "sec-fetch-dest": "iframe" },
         { ...OPENS, "sec-fetch-dest": "image", "sec-fetch-mode": "no-cors" },
         { ...OPENS, "sec-purpose": "prefetch" },
+        { ...OPENS, "x-purpose": "preview" },
+        { ...OPENS, "x-moz": "prefetch" },
       ] as Record<string, string>[]) {
         const res = await open(query(id, CHATGPT, pkce().challenge), headers);
         expect(res.status, JSON.stringify(headers)).toBe(200);
+        expect(res.text).toContain("Let your agent join?");
+      }
+    });
+
+    it("shows the page unless the person came from the app's own site", async () => {
+      const id = await client(CLAUDE);
+      const { referer: _, ...none } = opens(CLAUDE);
+      for (const headers of [
+        none,
+        { ...none, referer: "https://chatgpt.com/" },
+        { ...none, referer: "https://evil.example/" },
+        { ...none, referer: "https://claude.ai.evil.example/" },
+      ]) {
+        const res = await open(query(id, CLAUDE, pkce().challenge), headers);
+        expect(res.status, JSON.stringify(headers)).toBe(200);
+        expect(res.text).toContain("Let your agent join?");
+      }
+    });
+
+    it("skips the page only on a GET", async () => {
+      const id = await client(CHATGPT);
+      for (const method of ["HEAD", "POST"]) {
+        const res = await open(
+          query(id, CHATGPT, pkce().challenge),
+          { ...opens(CHATGPT), "x-unprompted-method": "GET" },
+          method,
+        );
+        const back = res.location ? new URL(res.location, BASE_URL) : null;
+        expect(back?.searchParams.get("code") ?? null, method).toBeNull();
+      }
+    });
+
+    it("shows the page with no state, or a parameter named twice", async () => {
+      const id = await client(CHATGPT);
+      const q = new URLSearchParams(query(id, CHATGPT, pkce().challenge));
+      q.delete("state");
+      const twice = `${query(id, CHATGPT, pkce().challenge)}&state=another`;
+      for (const s of [q.toString(), twice]) {
+        const res = await open(s, opens(CHATGPT));
+        expect(res.status, s).toBe(200);
         expect(res.text).toContain("Let your agent join?");
       }
     });
@@ -209,13 +256,19 @@ export function autoApproveScenarios(): void {
         "https://chatgpt.com/connector_platform_oauth_redirect?x=1",
       ]) {
         const id = await client(redirect, "ChatGPT");
-        const res = await open(query(id, redirect, pkce().challenge));
+        const res = await open(
+          query(id, redirect, pkce().challenge),
+          opens(CHATGPT),
+        );
         expect(res.status, redirect).toBe(200);
         expect(res.text, redirect).toContain("Let your agent join?");
       }
       // A client that didn't register the callback can't name it.
       const other = await client("https://agent.example/callback", "ChatGPT");
-      const res = await open(query(other, CHATGPT, pkce().challenge));
+      const res = await open(
+        query(other, CHATGPT, pkce().challenge),
+        opens(CHATGPT),
+      );
       expect(res.status).toBe(200);
       expect(res.text).not.toContain("Let your agent join?");
       expect(res.location).toBeNull();
@@ -225,7 +278,7 @@ export function autoApproveScenarios(): void {
       const id = await client(CLAUDE);
       const q = new URLSearchParams(query(id, CLAUDE, "x"));
       q.delete("code_challenge");
-      const res = await open(q.toString());
+      const res = await open(q.toString(), opens(CLAUDE));
       const back = new URL(res.location ?? "");
       expect(back.searchParams.get("error")).toBe("invalid_request");
       expect(back.searchParams.get("code")).toBeNull();

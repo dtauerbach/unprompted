@@ -8,14 +8,17 @@ import { issueConnectCode } from "@/lib/connect-codes";
 import {
   approve,
   autoApprove,
+  grantBucket,
   isPageNavigation,
   isTrustedRedirect,
+  refererMatches,
   TRUSTED_REDIRECTS,
 } from "@/lib/connector";
 import { db } from "@/lib/db";
 import { hashIp } from "@/lib/http";
 import { findHuman, issueOwnerCode, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { LIMITS } from "@/lib/limits";
+import { METHOD_HEADER } from "@/lib/request-method";
 import {
   ageLink,
   awayFromWindowEdge,
@@ -43,9 +46,25 @@ const NAVIGATION = {
   "sec-fetch-site": "cross-site",
 };
 
+// What the page sees from a person who followed the app's own link: a GET
+// (the proxy's header, src/proxy.ts), a navigation, from the app's site.
+function opened(redirect: string): Headers {
+  return new Headers({
+    ...NAVIGATION,
+    [METHOD_HEADER]: "GET",
+    referer: `${new URL(redirect).origin}/`,
+  });
+}
+
 const session = vi.hoisted(() => ({ user: null as null | { id: string } }));
 const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
-const req = vi.hoisted(() => ({ headers: {} as Record<string, string> }));
+// headers: what the browser sent. referer: undefined sends the origin of the
+// request's own callback, as the app's page would; null sends none.
+const req = vi.hoisted(() => ({
+  headers: {} as Record<string, string>,
+  referer: undefined as string | null | undefined,
+  sent: null as string | null,
+}));
 
 vi.mock("@/lib/human-auth", () => ({
   humanSignInEnabled: () => true,
@@ -58,6 +77,8 @@ vi.mock("next/headers", () => ({
     new Headers({
       "x-real-ip": "10.9.9.9",
       host: "unprompted.test",
+      "x-unprompted-method": "GET",
+      ...(req.sent === null ? {} : { referer: req.sent }),
       ...req.headers,
     }),
 }));
@@ -81,6 +102,7 @@ beforeEach(async () => {
   session.user = null;
   nav.redirects = [];
   req.headers = { ...NAVIGATION };
+  req.referer = undefined;
 });
 afterEach(() => {
   delete process.env.UNPROMPTED_READ_ONLY;
@@ -121,7 +143,14 @@ function params(
   };
 }
 
-async function page(fields: Record<string, string>) {
+function originOf(url: string | string[] | undefined): string | null {
+  if (typeof url !== "string" || !URL.canParse(url)) return null;
+  return `${new URL(url).origin}/`;
+}
+
+async function page(fields: Record<string, string | string[]>) {
+  req.sent =
+    req.referer === undefined ? originOf(fields.redirect_uri) : req.referer;
   const Page = (await import("@/app/oauth/authorize/page")).default;
   try {
     return {
@@ -269,8 +298,15 @@ describe("a page navigation", () => {
       { ...NAVIGATION, purpose: "prefetch" },
       { ...NAVIGATION, "next-router-prefetch": "1" },
       { ...NAVIGATION, rsc: "1" },
+      { ...NAVIGATION, "x-purpose": "preview" },
+      { ...NAVIGATION, "x-purpose": "Prefetch" },
+      { ...NAVIGATION, "x-moz": "prefetch" },
     ] as Record<string, string>[])
       expect(isPageNavigation(new Headers(h)), JSON.stringify(h)).toBe(false);
+    // Other values of those headers say nothing about a prefetch.
+    expect(
+      isPageNavigation(new Headers({ ...NAVIGATION, "x-moz": "other" })),
+    ).toBe(true);
   });
 });
 
@@ -299,13 +335,14 @@ describe("approving a trusted app without the page", () => {
         else expect(g?.owner_id).toBeNull();
         const [log] = await db()<{ detail: Record<string, unknown> }[]>`
           SELECT detail FROM action_log WHERE action = 'connector.approve'`;
-        expect(log?.detail).toEqual({ client: id, auto: true });
+        expect(log?.detail).toEqual({ client: id, trusted: true, auto: true });
       });
 
   it("takes the client's one registered callback when the request leaves it out", async () => {
     const id = await clientFor([CLAUDE]);
     const p = params(id, CLAUDE, pkce().challenge);
     delete (p as Record<string, string | undefined>).redirect_uri;
+    req.referer = "https://claude.ai/";
     const r = await page(p);
     expect(r.redirect?.origin).toBe("https://claude.ai");
   });
@@ -317,6 +354,8 @@ describe("approving a trusted app without the page", () => {
       { ...NAVIGATION, "sec-fetch-dest": "iframe" },
       { ...NAVIGATION, "sec-fetch-dest": "image", "sec-fetch-mode": "no-cors" },
       { ...NAVIGATION, "sec-purpose": "prefetch" },
+      { ...NAVIGATION, "x-purpose": "preview" },
+      { ...NAVIGATION, "x-moz": "prefetch" },
     ] as Record<string, string>[]) {
       req.headers = h;
       const r = await page(params(id, CHATGPT, pkce().challenge));
@@ -440,7 +479,13 @@ describe("approving a trusted app without the page", () => {
     expect(
       await autoApprove(
         p,
-        { headers: new Headers(NAVIGATION), authUserId: null, ipHash: "x" },
+        {
+          method: "GET",
+          headers: opened(CHATGPT),
+          repeated: false,
+          authUserId: null,
+          ipHash: "x",
+        },
         ISS,
       ),
     ).toEqual({ kind: "page" });
@@ -470,20 +515,26 @@ describe("approving a trusted app without the page", () => {
     await awayFromWindowEdge(3600);
     const id = await clientFor([CLAUDE]);
     const ipHash = hashIp(freshIp());
-    const headers = new Headers(NAVIGATION);
+    const headers = opened(CLAUDE);
     for (let i = 0; i < 10; i++)
       expect(
         (
           await autoApprove(
             params(id, CLAUDE, pkce().challenge),
-            { headers, authUserId: null, ipHash },
+            {
+              method: "GET",
+              headers,
+              repeated: false,
+              authUserId: null,
+              ipHash,
+            },
             ISS,
           )
         ).kind,
       ).toBe("approved");
     const over = await autoApprove(
       params(id, CLAUDE, pkce().challenge),
-      { headers, authUserId: null, ipHash },
+      { method: "GET", headers, repeated: false, authUserId: null, ipHash },
       ISS,
     );
     expect(over.kind).toBe("page");
@@ -638,5 +689,359 @@ describe("the approval page", () => {
     const r = await page(params(id, OTHER, pkce().challenge));
     expect(r.html).toContain("Allow");
     expect(r.html).not.toMatch(/the most you can link/);
+  });
+});
+
+async function grants() {
+  return db()<
+    {
+      id: string;
+      redirect_uri: string;
+      auto_approved: boolean;
+      owner_id: string | null;
+    }[]
+  >`SELECT id, redirect_uri, auto_approved, owner_id FROM connector_grants ORDER BY id`;
+}
+
+describe("what a trusted app's request must carry to skip the page", () => {
+  it("needs a state to send back", async () => {
+    const id = await clientFor([CHATGPT]);
+    session.user = { id: "google-1" };
+    for (const state of [undefined, ""]) {
+      const p = params(id, CHATGPT, pkce().challenge);
+      if (state === undefined)
+        delete (p as Record<string, string | undefined>).state;
+      else p.state = state;
+      const r = await page(p);
+      expect(r.redirect, String(state)).toBeUndefined();
+      expect(r.html).toContain("Allow");
+      await expect(
+        approve(p, null, "x", ISS, { auto: true }),
+      ).rejects.toMatchObject({ status: 400, code: "invalid" });
+    }
+    expect(await count("connector_grants")).toBe(0);
+    expect(await count("humans")).toBe(0);
+  });
+
+  it("is a GET: HEAD, POST, anything else or no method gets the page, writing nothing", async () => {
+    const id = await clientFor([CLAUDE]);
+    session.user = { id: "google-1" };
+    for (const method of ["HEAD", "POST", "PUT", "get", ""]) {
+      req.headers = { ...NAVIGATION, [METHOD_HEADER]: method };
+      const r = await page(params(id, CLAUDE, pkce().challenge));
+      expect(r.redirect, method).toBeUndefined();
+      expect(r.html, method).toContain("Allow");
+    }
+    for (const method of [null, "HEAD", "POST"])
+      expect(
+        await autoApprove(
+          params(id, CLAUDE, pkce().challenge),
+          {
+            method,
+            headers: opened(CLAUDE),
+            repeated: false,
+            authUserId: "google-1",
+            ipHash: "x",
+          },
+          ISS,
+        ),
+      ).toEqual({ kind: "page" });
+    expect(await count("connector_grants")).toBe(0);
+    expect(await count("humans")).toBe(0);
+  });
+
+  it("names no parameter twice", async () => {
+    const id = await clientFor([CHATGPT]);
+    session.user = { id: "google-1" };
+    const { challenge } = pkce();
+    for (const twice of [
+      { state: ["their-state-1", "their-state-2"] },
+      { client_id: [id, id] },
+      { redirect_uri: [CHATGPT, CHATGPT] },
+      { code_challenge: [challenge, challenge] },
+      { response_type: ["code", "code"] },
+    ] as Record<string, string[]>[]) {
+      req.referer = "https://chatgpt.com/";
+      const r = await page({ ...params(id, CHATGPT, challenge), ...twice });
+      expect(r.redirect?.searchParams.get("code") ?? null).toBeNull();
+    }
+    expect(
+      await autoApprove(
+        params(id, CHATGPT, challenge),
+        {
+          method: "GET",
+          headers: opened(CHATGPT),
+          repeated: true,
+          authUserId: null,
+          ipHash: "x",
+        },
+        ISS,
+      ),
+    ).toEqual({ kind: "page" });
+    expect(await count("connector_grants")).toBe(0);
+  });
+
+  it("comes from the app's own site, by the Referer's origin", async () => {
+    for (const [redirect, ref] of [
+      [CHATGPT, "https://chatgpt.com/"],
+      [CHATGPT, "https://chatgpt.com/c/abc?model=x#y"],
+      [CLAUDE, "https://claude.ai/chat/123"],
+    ] as const)
+      expect(refererMatches(new Headers({ referer: ref }), redirect), ref).toBe(
+        true,
+      );
+    for (const [redirect, ref] of [
+      [CHATGPT, null],
+      [CHATGPT, ""],
+      [CHATGPT, "not a url"],
+      [CHATGPT, "https://claude.ai/"],
+      [CLAUDE, "https://chatgpt.com/"],
+      [CHATGPT, "http://chatgpt.com/"],
+      [CHATGPT, "https://chatgpt.com:8443/"],
+      [CHATGPT, "https://chatgpt.com.evil.example/"],
+      [CHATGPT, "https://evil.chatgpt.com/"],
+      [CHATGPT, "https://evil.example/https://chatgpt.com/"],
+      [CHATGPT, "https://unprompted.test/oauth/authorize"],
+      [OTHER, "https://agent.example/"],
+    ] as const)
+      expect(
+        refererMatches(
+          new Headers(ref === null ? {} : { referer: ref }),
+          redirect,
+        ),
+        `${redirect} ${ref}`,
+      ).toBe(false);
+  });
+
+  it("gets the page with a missing or other Referer, writing nothing", async () => {
+    const id = await clientFor([CHATGPT]);
+    session.user = { id: "google-1" };
+    for (const ref of [
+      null,
+      "https://claude.ai/",
+      "https://evil.example/",
+      "https://chatgpt.com.evil.example/",
+    ]) {
+      req.referer = ref;
+      const r = await page(params(id, CHATGPT, pkce().challenge));
+      expect(r.redirect, String(ref)).toBeUndefined();
+      expect(r.html, String(ref)).toContain("Allow");
+    }
+    expect(await count("connector_grants")).toBe(0);
+    req.referer = "https://chatgpt.com/g/some-gpt";
+    expect(
+      (await page(params(id, CHATGPT, pkce().challenge))).redirect,
+    ).toBeDefined();
+    expect(await count("connector_grants")).toBe(1);
+  });
+
+  it("logs whether a trusted app's request that got the page had a matching Referer, never the Referer", async () => {
+    const id = await clientFor([CHATGPT]);
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      req.referer = "https://evil.example/secret-path";
+      await page(params(id, CHATGPT, pkce().challenge));
+      req.referer = undefined;
+      req.headers = { ...NAVIGATION, [METHOD_HEADER]: "HEAD" };
+      await page(params(id, CHATGPT, pkce().challenge));
+      const lines = info.mock.calls
+        .map((c) => String(c[0]))
+        .filter((l) => l.includes("connector.trusted_page"));
+      expect(lines.map((l) => JSON.parse(l))).toEqual([
+        {
+          event: "connector.trusted_page",
+          app: "chatgpt.com",
+          referer_ok: false,
+        },
+        {
+          event: "connector.trusted_page",
+          app: "chatgpt.com",
+          referer_ok: true,
+        },
+      ]);
+      expect(lines.join("\n")).not.toContain("secret-path");
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it("works for a client that registered other callbacks too, when it asks for the trusted one", async () => {
+    const id = await clientFor([OTHER, CHATGPT, CLAUDE]);
+    session.user = { id: "google-1" };
+    const r = await page(params(id, CHATGPT, pkce().challenge));
+    expect(r.redirect?.origin).toBe("https://chatgpt.com");
+    const asked = await page(params(id, OTHER, pkce().challenge));
+    expect(asked.redirect).toBeUndefined();
+    expect(asked.html).toContain("Allow");
+    // Leaving the callback out, with several registered, is refused as today.
+    const p = params(id, CLAUDE, pkce().challenge);
+    delete (p as Record<string, string | undefined>).redirect_uri;
+    req.referer = "https://claude.ai/";
+    const none = await page(p);
+    expect(none.redirect).toBeUndefined();
+    expect(none.html).not.toContain("Allow");
+    const g = await grants();
+    expect(g.map((x) => [x.redirect_uri, x.auto_approved])).toEqual([
+      [CHATGPT, true],
+    ]);
+  });
+});
+
+describe("a trusted app's grant approved on the page", () => {
+  it("is marked like one that skipped it, and links only by the person's own owner code", async () => {
+    const id = await clientFor([CHATGPT]);
+    const { verifier, challenge } = pkce();
+    const url = new URL(
+      await approve(
+        params(id, CHATGPT, challenge),
+        "google-1",
+        hashIp(freshIp()),
+        ISS,
+      ),
+    );
+    const [g] = await grants();
+    expect(g?.auto_approved).toBe(true);
+    expect(Number(g?.owner_id)).toBe(await findHuman(db(), "google-1"));
+    const [log] = await db()<{ detail: Record<string, unknown> }[]>`
+      SELECT detail FROM action_log WHERE action = 'connector.approve'`;
+    expect(log?.detail).toEqual({ client: id, trusted: true, auto: false });
+    const token = (
+      await exchange({
+        grant_type: "authorization_code",
+        code: url.searchParams.get("code") ?? "",
+        client_id: id,
+        code_verifier: verifier,
+        redirect_uri: CHATGPT,
+      })
+    ).body.access_token;
+    const r = await tool(token, "sign_up", { handle: "alice" });
+    expect(r.data.bot.claimed).toBe(false);
+    expect(r.data.owner_note).toBeUndefined();
+  });
+
+  it("isn't promised on the page: no line about the account, and no sign-in to link", async () => {
+    // The page escapes the apostrophes, so these leave them out.
+    const signedIn = "signed in, so the bot will show up on your account";
+    const signedOut = "not signed in, so the bot";
+    const trusted = await clientFor([CHATGPT]);
+    const other = await clientFor([OTHER]);
+    for (const user of [null, "google-1"]) {
+      session.user = user ? { id: user } : null;
+      req.referer = null;
+      const t = await page(params(trusted, CHATGPT, pkce().challenge));
+      expect(t.html).toContain("Allow");
+      expect(t.html).not.toContain(signedIn);
+      expect(t.html).not.toContain(signedOut);
+      expect(t.html).not.toContain('id="connect-sign-in"');
+      const o = await page(params(other, OTHER, pkce().challenge));
+      expect(o.html).toContain(user ? signedIn : signedOut);
+    }
+  });
+});
+
+describe("a trusted app's token", () => {
+  async function bucketsFor(ipHash: string) {
+    return db()<{ bucket: string }[]>`
+      SELECT bucket FROM rate_limits WHERE bucket LIKE ${`%${ipHash}%`}`;
+  }
+
+  async function connectAs(user: string | null, ip: string, redirect: string) {
+    req.headers = { ...NAVIGATION, "x-real-ip": ip };
+    const token = await autoConnect(user, redirect);
+    const [g] = (await grants()).slice(-1);
+    return { token, grant: Number(g?.id) };
+  }
+
+  it("signs up against its grant's own bucket, never the approver's address", async () => {
+    await awayFromWindowEdge(3600);
+    const ip = freshIp();
+    const approver = hashIp(ip);
+    const { token, grant } = await connectAs("google-victim", ip, CHATGPT);
+    const r = await tool(token, "sign_up", { handle: "mallory" });
+    expect(r.isError).toBe(false);
+    expect((await bucketsFor(approver)).map((b) => b.bucket)).toEqual([
+      `approve:ip:${approver}`,
+    ]);
+    const own = grantBucket(grant);
+    expect(own).toMatch(/^[0-9a-f]{32}$/);
+    expect((await bucketsFor(own)).map((b) => b.bucket)).toContain(
+      `register:ip:${own}`,
+    );
+    const [log] = await db()<
+      { ip_hash: string; detail: Record<string, unknown> }[]
+    >`SELECT ip_hash, detail FROM action_log WHERE action = 'bot.register'`;
+    expect(log?.ip_hash).toBe(own);
+    expect(log?.detail.trusted_app).toBe(true);
+  });
+
+  it("tries connect codes against its grant's own bucket, never the approver's address", async () => {
+    await awayFromWindowEdge(3600);
+    const ip = freshIp();
+    const approver = hashIp(ip);
+    const { token, grant } = await connectAs("google-victim", ip, CLAUDE);
+    const r = await tool(token, "sign_up", {
+      handle: "alice",
+      connect_code: `conn_${"a".repeat(26)}`,
+    });
+    expect(r.data.error.code).toBe("invalid_connect_code");
+    expect((await bucketsFor(approver)).map((b) => b.bucket)).toEqual([
+      `approve:ip:${approver}`,
+    ]);
+    const own = grantBucket(grant);
+    expect((await bucketsFor(own)).map((b) => b.bucket)).toEqual([
+      `connect-try:${own}`,
+    ]);
+    const [log] = await db()<{ ip_hash: string }[]>`
+      SELECT ip_hash FROM action_log WHERE action = 'bot.connect_failed'`;
+    expect(log?.ip_hash).toBe(own);
+  });
+
+  it("leaves another app's grant counting against its approver's address, as today", async () => {
+    await awayFromWindowEdge(3600);
+    const ip = freshIp();
+    const approver = hashIp(ip);
+    const id = await clientFor([OTHER]);
+    const { verifier, challenge } = pkce();
+    const url = new URL(
+      await approve(params(id, OTHER, challenge), null, approver, ISS),
+    );
+    const token = (
+      await exchange({
+        grant_type: "authorization_code",
+        code: url.searchParams.get("code") ?? "",
+        client_id: id,
+        code_verifier: verifier,
+        redirect_uri: OTHER,
+      })
+    ).body.access_token;
+    await tool(token, "sign_up", { handle: "alice" });
+    expect((await bucketsFor(approver)).map((b) => b.bucket).sort()).toEqual(
+      [`approve:ip:${approver}`, `register:ip:${approver}`].sort(),
+    );
+  });
+});
+
+describe("a grant's core", () => {
+  it("never changes: approver, client, callback, challenge and kind", async () => {
+    await autoConnect("google-1");
+    const [g] = await grants();
+    const other = await clientFor([OTHER]);
+    const [c] = await db()<{ id: string }[]>`
+      SELECT id FROM oauth_clients WHERE client_id = ${other}`;
+    for (const set of [
+      db()`UPDATE connector_grants SET auto_approved = false WHERE id = ${g?.id ?? 0}`,
+      db()`UPDATE connector_grants SET owner_id = NULL WHERE id = ${g?.id ?? 0}`,
+      db()`UPDATE connector_grants SET client_id = ${c?.id ?? 0} WHERE id = ${g?.id ?? 0}`,
+      db()`UPDATE connector_grants SET redirect_uri = ${OTHER} WHERE id = ${g?.id ?? 0}`,
+      db()`UPDATE connector_grants SET code_challenge = ${pkce().challenge} WHERE id = ${g?.id ?? 0}`,
+    ])
+      await expect(set).rejects.toThrow(/never change/);
+    // The rest still moves as it must, and the same value is no change.
+    await db()`
+      UPDATE connector_grants SET auto_approved = true, revoked_at = now()
+      WHERE id = ${g?.id ?? 0}`;
+    const [after] = await grants();
+    expect(after?.auto_approved).toBe(true);
+    expect(after?.owner_id).toBe(g?.owner_id);
   });
 });
