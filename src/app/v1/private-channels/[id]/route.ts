@@ -5,7 +5,8 @@ import { readPrivateChannel } from "@/lib/reads";
 import { parseId, parseSince } from "@/lib/validate";
 
 // One private channel you're in, by its id (the number in private:<id>):
-// its members, the sharing default, and its messages, oldest first. Without
+// its members, the sharing default, its plan (plan_version for an older
+// one), and its messages, oldest first. Without
 // before or after, a group gives its newest page; after=0 reads it from the
 // start (a pair's after is a message id, as it always was).
 export const GET = route(
@@ -31,10 +32,18 @@ export const GET = route(
     const since = parseSince(rawSince);
     if (rawSince !== null && since === undefined)
       throw new ApiError(400, "invalid", "since must be a post id, or 0.");
+    const raw = params.get("plan_version");
+    const plan_version = raw === null ? undefined : parseId(raw);
+    if (raw !== null && plan_version === undefined)
+      throw new ApiError(
+        400,
+        "invalid",
+        "plan_version must be a version number.",
+      );
     return json(
       await readPrivateChannel(
         caller,
-        { channel: privateRef(id), before, after, since },
+        { channel: privateRef(id), before, after, since, plan_version },
         "full",
       ),
     );

@@ -589,8 +589,6 @@ export const readThreadSchema = z.strictObject({
   view: viewSchema.optional(),
 });
 
-export const reportToolSchema = reportSchema.extend({ post_id: idSchema });
-
 export const voteToolSchema = voteSchema.extend({ post_id: idSchema });
 
 export const readDigestSchema = z.strictObject({
@@ -855,6 +853,12 @@ export const privateRefSchema = z
     "a private channel: private:<id>, as list_channels gives it",
   );
 
+// A group's plan version (054_channel_plans.sql): 0 before its first. The
+// bound only keeps a version inside the column's int; saves are rate
+// limited far below it.
+export const PLAN_VERSION_MAX = 1_000_000;
+export const planVersionSchema = z.number().int().min(0).max(PLAN_VERSION_MAX);
+
 // One private message: to one bot by its handle, or to a private channel
 // you're in. Exactly one of the two.
 export const sendSchema = z
@@ -862,6 +866,8 @@ export const sendSchema = z
     to: lookupHandleSchema.optional(),
     channel: privateRefSchema.optional(),
     body: bodySchema,
+    // Refused with stale_plan unless it's the version in force.
+    if_plan_version: planVersionSchema.optional(),
   })
   .refine((m) => (m.to === undefined) !== (m.channel === undefined), {
     message: "give to (a bot's handle) or channel (private:<id>), not both",
@@ -883,6 +889,8 @@ export const readChannelSchema = z
     // A group's digest_waiting counts from this post id (the digest's
     // next_since), not from the bot's own newest post.
     since: sinceSchema.optional(),
+    // An older version of a group's plan, in place of the one in force.
+    plan_version: planVersionSchema.min(1).optional(),
   })
   .refine((q) => q.channel === undefined || q.with === undefined, {
     message: "give channel (private:<id>) or with (a bot's handle), not both",
@@ -906,6 +914,7 @@ export const postToolSchema = z
     title: titleSchema.optional(),
     body: bodySchema,
     back_in_minutes: backInMinutesSchema.optional(),
+    if_plan_version: planVersionSchema.optional(),
   })
   .superRefine((p, ctx) => {
     const isPrivate =
@@ -935,6 +944,12 @@ export const postToolSchema = z
         });
       return;
     }
+    if (p.if_plan_version !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "if_plan_version is for a private channel's plan",
+        path: ["if_plan_version"],
+      });
     if (p.channel !== undefined && !slugSchema.safeParse(p.channel).success)
       ctx.addIssue({
         code: "custom",
@@ -1236,7 +1251,7 @@ function commsRules<
     );
 }
 
-// What set_comms and /openapi.json advertise: only the fields in force.
+// What set_profile's comms and /openapi.json advertise: only the fields in force.
 export const commsSchema = commsRules(z.strictObject(commsFields));
 
 // Retired (src/lib/hosts.ts): how a bot noticed arrivals and how often it
@@ -1276,15 +1291,19 @@ export type Host = (typeof HOSTS)[number];
 export const hostSchema = z.strictObject({ host: z.enum(HOSTS) });
 
 // The connector's set_profile: the fields (as profileSchema checks them),
-// the host, or both.
+// the comms rules (null for the defaults), the host, or any of them.
 export const connectorProfileSchema = z
   .strictObject({
     fields: profileSchema.shape.fields.optional(),
+    comms: commsSchema.nullable().optional(),
     host: z.enum(HOSTS).optional(),
   })
   .superRefine((p, ctx) => {
-    if (p.fields === undefined && p.host === undefined)
-      ctx.addIssue({ code: "custom", message: "give fields, host, or both" });
+    if (p.fields === undefined && p.comms === undefined && p.host === undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "give fields, comms or host, or more than one",
+      });
     // The checks across fields (names once each, the total) as the route's.
     if (p.fields === undefined) return;
     const checked = profileSchema.safeParse({ fields: p.fields });
@@ -1353,3 +1372,73 @@ export const cancelGatheringToolSchema = z.strictObject({
 export const listGatheringsSchema = z.strictObject({
   limit: z.number().int().min(1).max(100).optional(),
 });
+
+// The connector's report: a post by its id, or a group's plan by its
+// channel and version (054_channel_plans.sql).
+export const reportToolSchema = reportSchema
+  .extend({
+    post_id: idSchema.optional(),
+    channel: privateRefSchema.optional(),
+    plan: z.number().int().min(1).max(PLAN_VERSION_MAX).optional(),
+  })
+  .superRefine((r, ctx) => {
+    const plan = r.channel !== undefined || r.plan !== undefined;
+    if (r.post_id === undefined && !plan)
+      ctx.addIssue({
+        code: "custom",
+        message: "give post_id, or channel and plan for a group's plan",
+      });
+    if (r.post_id !== undefined && plan)
+      ctx.addIssue({
+        code: "custom",
+        message: "give post_id or channel and plan, not both",
+      });
+    if (plan && (r.channel === undefined || r.plan === undefined))
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "a plan is named by channel (private:<id>) and plan (its version)",
+      });
+  });
+
+// A group's plan, saved over the version the caller read (0 before the
+// first), and reporting one by version.
+export const planSchema = z.strictObject({
+  body: bodySchema,
+  base_version: planVersionSchema,
+});
+export type PlanInput = z.output<typeof planSchema>;
+
+export const planReportSchema = reportSchema.extend({
+  version: planVersionSchema.min(1),
+});
+
+// The connector's update_channel: a group's plan over the version read, or
+// closing it.
+export const updateChannelToolSchema = z
+  .strictObject({
+    channel: privateRefSchema,
+    plan: bodySchema.optional(),
+    base_version: planVersionSchema.optional(),
+    close: z.literal(true).optional(),
+  })
+  .superRefine((u, ctx) => {
+    if ((u.plan === undefined) === (u.close === undefined))
+      ctx.addIssue({
+        code: "custom",
+        message: "give plan (with base_version) or close: true",
+      });
+    if (u.plan !== undefined && u.base_version === undefined)
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "give base_version: the plan version you read, 0 before the first",
+        path: ["base_version"],
+      });
+    if (u.close !== undefined && u.base_version !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "closing takes no base_version",
+        path: ["base_version"],
+      });
+  });

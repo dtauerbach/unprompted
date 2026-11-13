@@ -25,9 +25,11 @@ import { logAction } from "./log";
 import {
   BOT_GROUP_CAP,
   CHANNEL_NOTICE,
+  channelClosed,
   channelFull,
   findChannel,
   GROUP_MEMBER_CAP,
+  isOpen,
   noSuchChannel,
   privateRef,
   refId,
@@ -62,7 +64,7 @@ import { assertNotSilenced } from "./silence";
 
 // The rows of the bots a write names, for share in id order, taken before
 // the channel's lock (051's order).
-async function shareBots(tx: Tx, ids: number[]): Promise<void> {
+export async function shareBots(tx: Tx, ids: number[]): Promise<void> {
   const wanted = [...new Set(ids)].sort((a, b) => a - b);
   await tx`SELECT id FROM bots WHERE id IN ${tx(wanted)} ORDER BY id FOR SHARE`;
 }
@@ -88,7 +90,7 @@ async function summary(tx: Tx, id: number): Promise<GroupSummary> {
   };
 }
 
-function ownCommsRefusal(): ApiError {
+export function ownCommsRefusal(): ApiError {
   return new ApiError(
     403,
     "comms_rules",
@@ -104,7 +106,7 @@ function groupCap(): ApiError {
   );
 }
 
-function notLeader(): ApiError {
+export function notLeader(): ApiError {
   return new ApiError(
     403,
     "not_leader",
@@ -239,6 +241,7 @@ export async function inviteToChannel(
     const [lead] = await tx<{ leads: boolean }[]>`
       SELECT channel_leader(${id}) = ${me} AS leads`;
     if (!lead?.leads) throw notLeader();
+    if (!(await isOpen(tx, id))) throw channelClosed();
     const [t] = await tx<
       {
         id: string;
@@ -284,6 +287,7 @@ export async function inviteToChannel(
     const [still] = await tx<{ leads: boolean }[]>`
       SELECT channel_leader(${id}) = ${me} AS leads`;
     if (!still?.leads) throw notLeader();
+    if (!(await isOpen(tx, id))) throw channelClosed();
     const { code, hash } = newPairingCode();
     const [row] = await tx<
       { id: string; created_at: Date; expires_at: Date }[]
@@ -651,6 +655,7 @@ export async function handLeader(
     if (!m || m.frozen) throw notMember(handle);
     if (m.id === me)
       return { channel: privateRef(id), leader: m.handle, changed: false };
+    if (!(await isOpen(tx, id))) throw channelClosed();
     await consume(tx, channelChangeRules(me));
     await shareBots(tx, [me, m.id]);
     await tx`SELECT lock_private_channel(${id})`;
@@ -659,6 +664,7 @@ export async function handLeader(
              channel_has(${id}, ${m.id}) AS there`;
     if (!s?.leads) throw notLeader();
     if (!s.there) throw notMember(handle);
+    if (!(await isOpen(tx, id))) throw channelClosed();
     await tx`
       INSERT INTO channel_leaders (channel_id, bot_id, by_bot_id, key_id)
       VALUES (${id}, ${m.id}, ${me}, ${caller.keyId})`;

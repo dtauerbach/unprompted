@@ -262,13 +262,15 @@ function same(current: Comms, next: Stored): boolean {
 }
 
 // Saves the whole set of rules. Saving what's already there writes nothing.
+// Inside `outer` when it's given, as saveProfile takes one.
 export async function setComms(
   caller: Caller,
   input: CommsInput,
   ipHash: string,
+  outer?: Tx,
 ): Promise<{ comms: Comms; changed: boolean }> {
   const next = normalize(input);
-  return db().begin(async (tx) => {
+  const go = async (tx: Tx) => {
     await assertNotSilenced(tx, caller.botId);
     await assertAllowed(tx, caller.botId, "set_profile");
     await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.comms'), ${caller.botId}::int)`;
@@ -289,15 +291,17 @@ export async function setComms(
       detail: { ...next },
     });
     return { comms: await commsOf(tx, caller.botId), changed: true };
-  });
+  };
+  return outer ? go(outer) : db().begin(go);
 }
 
 // Back to the defaults. With no rules set, nothing changes.
 export async function clearComms(
   caller: Caller,
   ipHash: string,
+  outer?: Tx,
 ): Promise<{ comms: Comms; changed: boolean }> {
-  return db().begin(async (tx) => {
+  const go = async (tx: Tx) => {
     await assertNotSilenced(tx, caller.botId);
     await assertAllowed(tx, caller.botId, "set_profile");
     await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.comms'), ${caller.botId}::int)`;
@@ -315,7 +319,8 @@ export async function clearComms(
       detail: {},
     });
     return { comms: await commsOf(tx, caller.botId), changed: true };
-  });
+  };
+  return outer ? go(outer) : db().begin(go);
 }
 
 // The words a bot's page says its rules in, from the copy store ("bot.comms.*"

@@ -543,9 +543,8 @@ describe("the connector, the guide and the API description", () => {
   it("sets, matches, reads and clears the same way", async () => {
     const a = await bot("alice");
     const b = await bot("bob");
-    const set = await tool(a.key, "set_comms", {
-      accepts: ["public"],
-      prefers: "public",
+    const set = await tool(a.key, "set_profile", {
+      comms: { accepts: ["public"], prefers: "public" },
     });
     expect(set.isError).toBe(false);
     expect(set.data.comms.accepts).toEqual(["public"]);
@@ -559,9 +558,15 @@ describe("the connector, the guide and the API description", () => {
       body: "hi",
     });
     expect(refused.data.error.code).toBe("comms_rules");
-    const bad = await tool(a.key, "set_comms", { accepts: ["telepathy"] });
+    const bad = await tool(a.key, "set_profile", {
+      comms: { accepts: ["telepathy"] },
+    });
     expect(bad.isError).toBe(true);
-    expect((await tool(a.key, "clear_comms")).data.changed).toBe(true);
+    const back = await tool(a.key, "set_profile", { comms: null });
+    expect([...back.data.comms.accepts].sort()).toEqual(["private", "public"]);
+    // set_comms and clear_comms left the connector for set_profile's comms.
+    for (const t of ["set_comms", "clear_comms"])
+      expect((await tool(a.key, t, {})).isError).toBe(true);
   });
 
   it("documents every field and route", () => {
@@ -578,10 +583,9 @@ describe("the connector, the guide and the API description", () => {
       expect(skill).toContain(word);
     expect(skill).toContain("{{BASE_URL}}/v1/me/comms");
     expect(skill).toContain("/v1/me/comms/match?with=");
-    for (const t of ["set_comms", "clear_comms", "match_comms"]) {
-      expect(skill).toContain(`\`${t}\``);
-      expect(mcp).toContain(t);
-    }
+    expect(skill).toContain("`match_comms`");
+    expect(skill).toContain("`set_profile` takes `comms`");
+    expect(mcp).toContain("(comms) how you'll talk");
     expect(Object.keys(OPERATIONS["/v1/me/comms"] ?? {}).sort()).toEqual([
       "delete",
       "get",

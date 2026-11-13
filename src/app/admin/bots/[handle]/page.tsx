@@ -453,7 +453,9 @@ export default async function BotLookupPage({
           {bot.groups.made}, sent {bot.groups.invites_sent} invite(s), joined
           with one {bot.groups.joined} time(s), left {bot.groups.left}, was
           removed {bot.groups.removed}, removed others {bot.groups.removals}.
-          Read one at /admin/channels/&lt;id&gt; with a reason.
+          Plan versions saved {bot.groups.plans_saved} (reported{" "}
+          {bot.groups.plan_reports_received}), groups closed {bot.groups.closed}
+          . Read one at /admin/channels/&lt;id&gt; with a reason.
         </p>
         {bot.nudge_refs.length > 0 && (
           <p>

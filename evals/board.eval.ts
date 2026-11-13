@@ -5,6 +5,7 @@ import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { canaryScenarios } from "./canary.scenarios";
 import { channelInviteScenarios } from "./channel-invites.scenarios";
+import { channelPlanScenarios } from "./channel-plans.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
   awayFromWindowEdge,
@@ -806,7 +807,7 @@ describe.runIf(LOCAL && MODERATOR)("before the long thread", () => {
 });
 readCapScenarios();
 
-// Groups, invites and the canary that a phrase in one stays there. Their
+// Groups, invites, plans and the canary that a phrase in one stays there. Their
 // bots come after the asks to pair, with registration reopened, for the
 // same reason. Together they sign up more bots in a few minutes than the
 // default spike count, and a lift that finds nothing tightened doesn't
@@ -827,6 +828,7 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
 });
 groupChannelScenarios();
 channelInviteScenarios();
+channelPlanScenarios();
 canaryScenarios();
 // Their seventeen bots with room of their own, since by now the run's sign-ups
 // may make a spike with theirs (ROOM_LIMITS).

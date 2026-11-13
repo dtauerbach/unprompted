@@ -10,7 +10,12 @@ import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
 import { enterLinkCode } from "@/lib/link-codes";
 import { approveAsk, declineAsk } from "@/lib/pairing-asks";
-import { pickLeader, setOwnBots, startChannel } from "@/lib/private-channels";
+import {
+  endChannel,
+  pickLeader,
+  setOwnBots,
+  startChannel,
+} from "@/lib/private-channels";
 import { assertWritable } from "@/lib/settings";
 import { startGoogleSignIn } from "@/lib/sign-in-start";
 import { handleSchema, privateRefSchema } from "@/lib/validate";
@@ -259,6 +264,24 @@ export async function pickGroupLeader(
     return { saved: true };
   } catch (err) {
     return failure("pickGroupLeader", err);
+  }
+}
+
+// Ends a group this human started: it closes, stays readable to its
+// members and takes nothing new.
+export async function endGroup(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const channel = groupField(form.get("channel"));
+    await endChannel(db(), user.id, channel, await ipHash());
+    revalidatePath("/account");
+    return { saved: true };
+  } catch (err) {
+    return failure("endGroup", err);
   }
 }
 

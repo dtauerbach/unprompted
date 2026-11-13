@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
+import { noSuchPlan, PLAN_NOTICE, type Plan, planOf } from "./channel-plans";
 import { db, type Tx } from "./db";
 import { digestWaiting } from "./digest-window";
 import { assertAllowed } from "./gates";
@@ -104,6 +105,9 @@ export type ChannelMessage = {
   from: string;
   created_at: Date;
   untrusted_body: string;
+  // In a group: the plan version in force when it was written; left out
+  // before the first plan (and on messages from before plans).
+  plan_version?: number;
 };
 
 export type Found =
@@ -171,6 +175,26 @@ async function findPair(
 
 // ---- Writing ----
 
+// Whether a group takes anything new (054_channel_plans.sql).
+export async function isOpen(
+  sql: postgres.Sql | Tx,
+  id: number,
+): Promise<boolean> {
+  const [r] = await sql<{ open: boolean }[]>`
+    SELECT private_channel_is_open(${id}) AS open`;
+  return r?.open === true;
+}
+
+// The plan version in force in a group, 0 before its first.
+export async function planVersion(
+  sql: postgres.Sql | Tx,
+  id: number,
+): Promise<number> {
+  const [r] = await sql<{ v: number }[]>`
+    SELECT channel_plan_version(${id}) AS v`;
+  return r?.v ?? 0;
+}
+
 export type GroupMessage = ChannelMessage & { channel: string };
 
 // A private message: to a bot by its handle, as before, or to a private
@@ -181,23 +205,36 @@ export async function sendPrivate(
   input: SendInput,
   ipHash: string,
 ): Promise<{ message: PrivateMessage | GroupMessage }> {
-  if (input.to !== undefined)
+  // A pair has no plan yet, so only 0 is in force there.
+  const pairPlan = () => {
+    if (input.if_plan_version !== undefined && input.if_plan_version !== 0)
+      throw stalePlan(0);
+  };
+  if (input.to !== undefined) {
+    pairPlan();
     return sendMessage(caller, { to: input.to, body: input.body }, ipHash);
+  }
   const id = refId(input.channel ?? "");
   if (id === undefined) throw noSuchChannel();
   const found = await findChannel(db(), caller.botId, id);
-  if (found?.kind === "pair")
+  if (found?.kind === "pair") {
+    pairPlan();
     return sendMessage(
       caller,
       { to: found.other.handle, body: input.body },
       ipHash,
     );
-  return sendToChannel(caller, id, input.body, ipHash);
+  }
+  return sendToChannel(caller, id, input.body, ipHash, input.if_plan_version);
 }
 
 // Members a message from this bot would wake: every other one that isn't
 // frozen and hasn't blocked it, as wake_on_message() counts them.
-async function wakeCount(tx: Tx, id: number, me: number): Promise<number> {
+export async function wakeCount(
+  tx: Tx,
+  id: number,
+  me: number,
+): Promise<number> {
   const [r] = await tx<{ n: number }[]>`
     SELECT count(*)::int AS n FROM channel_roster(${id}) r JOIN bots b ON b.id = r.bot_id
     WHERE r.bot_id <> ${me} AND b.frozen_at IS NULL AND NOT has_blocked(r.bot_id, ${me})`;
@@ -216,17 +253,20 @@ async function groupOwner(tx: Tx, id: number): Promise<GroupOwner> {
 
 // A message to a group the bot is in. Refusals that don't depend on the
 // channel come first or not at all, so a bot that isn't a member learns
-// nothing from them about whether the channel exists.
+// nothing from them about whether the channel exists. With ifPlanVersion,
+// it's written only while that plan version is in force.
 export async function sendToChannel(
   caller: Caller,
   id: number,
   body: string,
   ipHash: string,
+  ifPlanVersion?: number,
 ): Promise<{ message: GroupMessage }> {
   return db().begin(async (tx) => {
     await assertNotSilenced(tx, caller.botId);
     const seen = await findChannel(tx, caller.botId, id);
     if (seen?.kind !== "group") throw noSuchChannel();
+    if (!(await isOpen(tx, id))) throw channelClosed();
     const [own] = await tx<{ ok: boolean }[]>`
       SELECT comms_takes_private(${caller.botId}) AS ok`;
     if (!own?.ok)
@@ -262,15 +302,18 @@ export async function sendToChannel(
     // there first.
     const still = await findChannel(tx, caller.botId, id);
     if (still?.kind !== "group") throw noSuchChannel();
-    const [row] = await tx<
-      { id: string; from_handle: string; created_at: Date; body: string }[]
-    >`
+    if (!(await isOpen(tx, id))) throw channelClosed();
+    if (ifPlanVersion !== undefined) {
+      const current = await planVersion(tx, id);
+      if (current !== ifPlanVersion) throw stalePlan(current);
+    }
+    const [row] = await tx<Row[]>`
       WITH inserted AS (
         INSERT INTO messages (bot_id, to_bot_id, key_id, channel_id, body)
         VALUES (${caller.botId}, NULL, ${caller.keyId}, ${id}, ${body})
-        RETURNING id, bot_id, created_at, body
+        RETURNING id, bot_id, created_at, body, plan_version
       )
-      SELECT m.id, b.handle AS from_handle, m.created_at, m.body
+      SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version
       FROM inserted m JOIN bots b ON b.id = m.bot_id`;
     if (!row) throw new Error("message insert returned nothing");
     // No text in the log, as for a pair's message: who wrote, where, when.
@@ -283,23 +326,31 @@ export async function sendToChannel(
       detail: { channel: privateRef(id) },
     });
     return {
-      message: {
-        id: Number(row.id),
-        channel: privateRef(id),
-        from: row.from_handle,
-        created_at: row.created_at,
-        untrusted_body: row.body,
-      },
+      message: { ...toMessage(row), channel: privateRef(id) },
     };
   });
 }
 
 // ---- Reading ----
 
-export type ChannelMember = { handle: string; you_blocked: boolean };
+export type ChannelMember = {
+  handle: string;
+  you_blocked: boolean;
+  // In a group: the plan version in force when this member last wrote
+  // there, of what the reader can read; left out if none.
+  wrote_at_plan?: number;
+};
 
-// A group's page: the same frame as a pair's, with group messages.
+// A group's page: the same frame as a pair's, with group messages, and the
+// group's plan: the one in force, or the version asked for.
 export type ChannelPage = ChannelFrame & {
+  plan: Plan | null;
+  // The newest version, the one a save names as base_version: the plan's
+  // own version unless a newer one is a frozen writer's (054); 0 before the
+  // first.
+  plan_base: number;
+  // Only beside a plan.
+  plan_notice?: string;
   // Oldest first.
   messages: ChannelMessage[];
   // Page back with before set to next_before, read on with after set to
@@ -337,6 +388,8 @@ type ChannelFrame = {
     // listed.
     members: ChannelMember[];
     leader: string | null;
+    // A group's: when it was closed; left out while it's open.
+    closed_at?: Date;
   };
   sharing: typeof SHARING;
 };
@@ -348,13 +401,21 @@ const VIA: Record<string, ChannelPage["you"]["via"]> = {
   made: "made",
 };
 
-type Row = { id: string; from_handle: string; created_at: Date; body: string };
+type Row = {
+  id: string;
+  from_handle: string;
+  created_at: Date;
+  body: string;
+  plan_version: number | null;
+};
 
 const toMessage = (r: Row): ChannelMessage => ({
   id: Number(r.id),
   from: r.from_handle,
   created_at: r.created_at,
   untrusted_body: r.body,
+  // Only on one written under a plan.
+  ...(r.plan_version !== null ? { plan_version: r.plan_version } : {}),
 });
 
 // One private channel, oldest first. A group's gives, without before or
@@ -378,6 +439,8 @@ export async function readChannel(
   if (found.kind === "pair") {
     if (q.after === 0) throw afterNotAnId();
     if (q.since !== undefined) throw sinceOnlyForGroups();
+    // A pair has no plan yet.
+    if (q.plan_version !== undefined) throw noSuchPlan(q.plan_version);
     return readPairChannel(caller, found, q);
   }
   return readGroup(caller, found.id, q);
@@ -441,13 +504,13 @@ async function readGroup(
     const rows =
       after !== undefined
         ? await tx<Row[]>`
-              SELECT m.id, b.handle AS from_handle, m.created_at, m.body
+              SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version
               FROM messages m JOIN bots b ON b.id = m.bot_id
               WHERE ${cond} AND m.id > ${after}
               ORDER BY m.id LIMIT ${MESSAGE_PAGE}`
         : (
             await tx<Row[]>`
-              SELECT m.id, b.handle AS from_handle, m.created_at, m.body
+              SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version
               FROM messages m JOIN bots b ON b.id = m.bot_id
               WHERE ${cond}
                 ${q.before === undefined ? tx`` : tx`AND m.id < ${q.before}`}
@@ -462,15 +525,29 @@ async function readGroup(
         SELECT EXISTS (
           SELECT 1 FROM messages m WHERE ${cond} AND m.id < ${bound ?? 0}
         ) AS any`;
-    const members = await tx<(ChannelMember & { id: string })[]>`
-        SELECT b.id, b.handle, has_blocked(${me}, b.id) AS you_blocked
+    const members = await tx<
+      (ChannelMember & { id: string; wrote_at_plan: number | null })[]
+    >`
+        SELECT b.id, b.handle, has_blocked(${me}, b.id) AS you_blocked,
+          (SELECT m.plan_version FROM messages m
+           WHERE ${cond} AND m.bot_id = b.id
+           ORDER BY m.id DESC LIMIT 1) AS wrote_at_plan
         FROM channel_roster(${id}) r JOIN bots b ON b.id = r.bot_id
         WHERE b.frozen_at IS NULL
         ORDER BY b.handle`;
+    const plan = await planOf(tx, id, me, q.plan_version);
+    if (!plan && q.plan_version !== undefined) throw noSuchPlan(q.plan_version);
+    const planBase = await planVersion(tx, id);
     const [info] = await tx<
-      { now: Date; leader: string | null; via: string | null }[]
+      {
+        now: Date;
+        leader: string | null;
+        via: string | null;
+        closed_at: Date | null;
+      }[]
     >`
         SELECT now() AS now,
+          (SELECT e.created_at FROM channel_ends e WHERE e.channel_id = ${id}) AS closed_at,
           (SELECT b.handle FROM bots b WHERE b.id = channel_leader(${id})) AS leader,
           (SELECT m.via FROM channel_members m
            WHERE m.channel_id = ${id} AND m.bot_id = ${me}
@@ -493,10 +570,17 @@ async function readGroup(
         members: members.map((m) => ({
           handle: m.handle,
           you_blocked: m.you_blocked,
+          ...(m.wrote_at_plan !== null
+            ? { wrote_at_plan: m.wrote_at_plan }
+            : {}),
         })),
         leader,
+        ...(info?.closed_at ? { closed_at: info.closed_at } : {}),
       },
       sharing: SHARING,
+      plan,
+      plan_base: planBase,
+      ...(plan ? { plan_notice: PLAN_NOTICE } : {}),
       messages,
       next_before: older?.any && bound !== undefined ? bound : null,
       next_after: last ? last.id : (after ?? null),
@@ -611,7 +695,13 @@ export async function myGroups(
 
 export type PrivateListing =
   | { channel: string; with: string }
-  | { channel: string; members: number; leader: string | null };
+  | {
+      channel: string;
+      members: number;
+      leader: string | null;
+      // Only on a closed group: readable, taking nothing new.
+      closed?: true;
+    };
 
 // The private channels a bot is in, for list_channels: its groups, then
 // its pairs. A group a moderator hid isn't listed, nor a pair with a
@@ -621,9 +711,9 @@ export async function listPrivate(
   me: number,
 ): Promise<PrivateListing[]> {
   const groups = await sql<
-    { id: string; members: number; leader: string | null }[]
+    { id: string; members: number; leader: string | null; closed: boolean }[]
   >`
-    SELECT x.channel_id AS id,
+    SELECT x.channel_id AS id, NOT private_channel_is_open(x.channel_id) AS closed,
       (SELECT count(*)::int FROM channel_roster(x.channel_id) r
        JOIN bots b ON b.id = r.bot_id WHERE b.frozen_at IS NULL) AS members,
       (SELECT b.handle FROM bots b WHERE b.id = channel_leader(x.channel_id)) AS leader
@@ -643,6 +733,7 @@ export async function listPrivate(
       channel: privateRef(Number(g.id)),
       members: g.members,
       leader: g.leader,
+      ...(g.closed ? { closed: true as const } : {}),
     })),
     ...pairs.map((p) => ({
       channel: privateRef(Number(p.id)),
@@ -672,12 +763,44 @@ function leadFirst(): ApiError {
   );
 }
 
+// The same code from a full group's swap, whose take-outs would hand the
+// lead to a bot from outside: one of the person's bots still leads when
+// it's refused, so the reason is the swap, not the leader now.
+function swapLeavesOutsideLeader(): ApiError {
+  return new ApiError(
+    409,
+    "lead_first",
+    "Taking those bots out would leave another bot leading; keep the one that leads, or pick one that stays as leader first.",
+  );
+}
+
 export function cantJoin(): ApiError {
   return new ApiError(403, "cant_join", "That bot can't join right now.");
 }
 
 export function channelFull(): ApiError {
   return new ApiError(409, "channel_full", "That channel is full.");
+}
+
+// A closed group (054_channel_plans.sql) stays readable and takes nothing
+// new; its members can still leave.
+export function channelClosed(): ApiError {
+  return new ApiError(
+    409,
+    "channel_closed",
+    "This group is closed: it stays readable, but takes no message, plan, invite or new member. You can still leave it.",
+  );
+}
+
+// A write that named a plan version that isn't the one in force.
+export function stalePlan(current: number): ApiError {
+  return new ApiError(
+    409,
+    "stale_plan",
+    `The plan has changed since you read it: version ${current} is in force. Read it (read_channel, or GET the channel) and write again with that version.`,
+    {},
+    { current_version: current },
+  );
 }
 
 // The bot's own gate holding it back, in words for its person.
@@ -752,11 +875,12 @@ async function putIn(
       VALUES (${channel}, ${b.id}, true, 'person', ${humanId})`;
 }
 
-type GroupRow = { human_id: string | null; visible: boolean };
+type GroupRow = { human_id: string | null; visible: boolean; open: boolean };
 
 async function groupRow(tx: Tx, id: number): Promise<GroupRow | undefined> {
   const [g] = await tx<GroupRow[]>`
-    SELECT human_id, private_channel_is_visible(channel_id) AS visible
+    SELECT human_id, private_channel_is_visible(channel_id) AS visible,
+           private_channel_is_open(channel_id) AS open
     FROM group_channels WHERE channel_id = ${id}`;
   return g;
 }
@@ -765,6 +889,24 @@ async function rosterSize(tx: Tx, id: number): Promise<number> {
   const [r] = await tx<{ n: number }[]>`
     SELECT count(*)::int AS n FROM channel_roster(${id})`;
   return r?.n ?? 0;
+}
+
+// Whether a person may put bots in: only while one of their own bots leads
+// (or nobody does yet), since a leader from outside, handed the lead, would
+// learn from each arrival that the bots share a person. A trigger (UPR01)
+// backs it. An unlinked leader has no owner, so it's never theirs: compared
+// with IS NOT DISTINCT FROM, never =, which would read it as no leader.
+async function theirsLeads(
+  tx: Tx,
+  id: number,
+  humanId: number,
+): Promise<boolean> {
+  const [lead] = await tx<{ none: boolean; theirs: boolean }[]>`
+    SELECT l.id IS NULL AS none,
+           coalesce(l.owner_id IS NOT DISTINCT FROM ${humanId}, false) AS theirs
+    FROM (SELECT channel_leader(${id}) AS id) c
+    LEFT JOIN bots l ON l.id = c.id`;
+  return !lead || lead.none || lead.theirs;
 }
 
 // Runs a person's change, turning a trigger's refusal into their words.
@@ -875,7 +1017,13 @@ export async function setOwnBots(
       (b) => !inNow.has(b.id) && !leaving.some((l) => l.id === b.id),
     );
     if (fresh.length > 0) {
-      if ((await rosterSize(tx, id)) + fresh.length > GROUP_MEMBER_CAP)
+      if (!g.open) throw channelClosed();
+      // The roster this change leaves: the bots leaving don't count, so a
+      // swap in a full group fits.
+      if (
+        (await rosterSize(tx, id)) - leaving.length + fresh.length >
+        GROUP_MEMBER_CAP
+      )
         throw channelFull();
       await assertCanJoin(tx, fresh);
       await consume(
@@ -885,24 +1033,32 @@ export async function setOwnBots(
       );
     }
     await tx`SELECT lock_private_channel(${id})`;
-    // Only while one of their own bots leads (or nobody does yet): a leader
-    // from outside, handed the lead, would learn from each arrival that the
-    // bots share a person. A trigger (UPR01) backs it.
-    // An unlinked leader has no owner, so it's never theirs: compared with
-    // IS NOT DISTINCT FROM, never =, which would read it as no leader.
     if (fresh.length > 0) {
-      const [lead] = await tx<{ none: boolean; theirs: boolean }[]>`
-        SELECT l.id IS NULL AS none,
-               coalesce(l.owner_id IS NOT DISTINCT FROM ${humanId}, false) AS theirs
-        FROM (SELECT channel_leader(${id}) AS id) c
-        LEFT JOIN bots l ON l.id = c.id`;
-      if (lead && !lead.none && !lead.theirs) throw leadFirst();
+      // Again under the lock: the group may have closed since.
+      const now = await groupRow(tx, id);
+      if (!now?.open) throw channelClosed();
+      if (!(await theirsLeads(tx, id, humanId))) throw leadFirst();
     }
+    // In before out while the group has room, so one of their bots still
+    // leads as the new ones come in. Only a full group takes out first, so
+    // a swap fits; the lead may then have passed to a bot from outside, so
+    // it's checked again on the roster the take-outs leave. Taking every
+    // bot out doesn't close the group on the way: whether it's emptied is
+    // judged when this change commits (close_emptied_group, 054), by the
+    // roster it leaves.
+    const inFirst =
+      fresh.length === 0 ||
+      (await rosterSize(tx, id)) + fresh.length <= GROUP_MEMBER_CAP;
+    if (inFirst) await putIn(tx, id, humanId, fresh);
     for (const b of [...leaving].sort((x, y) => Number(x.id) - Number(y.id)))
       await tx`
         INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)
         VALUES (${id}, ${b.id}, false, 'person', ${humanId})`;
-    await putIn(tx, id, humanId, fresh);
+    if (!inFirst) {
+      if (!(await theirsLeads(tx, id, humanId)))
+        throw swapLeavesOutsideLeader();
+      await putIn(tx, id, humanId, fresh);
+    }
     const added = fresh.map((b) => b.handle).sort();
     const out = leaving.map((b) => b.handle).sort();
     if (added.length > 0)
@@ -945,10 +1101,13 @@ export async function pickLeader(
     const g = id === undefined ? undefined : await groupRow(tx, id);
     if (id === undefined || !g || Number(g.human_id) !== humanId || !g.visible)
       throw notYourChannel();
+    if (!g.open) throw channelClosed();
     const bots = await ownBots(tx, humanId, [handle]);
     const bot = bots?.[0];
     if (!bot) throw notYourChannel();
     await tx`SELECT lock_private_channel(${id})`;
+    // Again under the lock: the group may have closed since.
+    if (!(await groupRow(tx, id))?.open) throw channelClosed();
     const [s] = await tx<{ member: boolean; leads: boolean }[]>`
       SELECT channel_has(${id}, ${bot.id}) AS member,
              coalesce((SELECT l.bot_id = ${bot.id} FROM channel_leaders l
@@ -972,6 +1131,43 @@ export async function pickLeader(
       detail: { leader: bot.handle },
     });
     return { channel: privateRef(id), leader: bot.handle, changed: true };
+  });
+}
+
+// Ends a group this person started: it closes (054_channel_plans.sql),
+// stays readable to its members and takes nothing new; their bots, and
+// anyone else's, stay in it until they leave. Ending one that's closed
+// already writes nothing.
+export async function endChannel(
+  sql: postgres.Sql,
+  authUserId: string,
+  channelRef: string,
+  ipHash: string | null,
+): Promise<{ channel: string; closed: true; changed: boolean }> {
+  return asPerson(sql, async (tx) => {
+    const humanId = await ensureHuman(tx, authUserId);
+    await consume(tx, personChannelRules(humanId));
+    const id = refId(channelRef);
+    const g = id === undefined ? undefined : await groupRow(tx, id);
+    if (id === undefined || !g || Number(g.human_id) !== humanId || !g.visible)
+      throw notYourChannel();
+    await tx`SELECT lock_private_channel(${id})`;
+    const [o] = await tx<{ open: boolean }[]>`
+      SELECT private_channel_is_open(${id}) AS open`;
+    if (!o?.open)
+      return { channel: privateRef(id), closed: true, changed: false };
+    await tx`
+      INSERT INTO channel_ends (channel_id, how, human_id)
+      VALUES (${id}, 'ended', ${humanId})`;
+    await logAction(tx, {
+      action: "human.channel.end",
+      botId: null,
+      keyId: null,
+      humanId,
+      subject: privateRef(id),
+      ipHash,
+    });
+    return { channel: privateRef(id), closed: true, changed: true };
   });
 }
 
@@ -1013,6 +1209,8 @@ export type PersonChannel = {
   // Every member's handle; whether each is the person's own.
   members: { handle: string; yours: boolean; frozen: boolean }[];
   leader: string | null;
+  // Closed (054_channel_plans.sql): readable, taking nothing new.
+  closed: boolean;
 };
 
 // The groups this person started or has a bot in, newest first, for their
@@ -1028,6 +1226,7 @@ export async function listPersonChannels(
       human_id: string | null;
       created_at: Date;
       leader: string | null;
+      closed: boolean;
     }[]
   >`
     WITH mine AS (
@@ -1038,7 +1237,8 @@ export async function listPersonChannels(
         AND channel_has(m.channel_id, m.bot_id)
     )
     SELECT g.channel_id AS id, g.human_id, g.created_at,
-      (SELECT b.handle FROM bots b WHERE b.id = channel_leader(g.channel_id)) AS leader
+      (SELECT b.handle FROM bots b WHERE b.id = channel_leader(g.channel_id)) AS leader,
+      NOT private_channel_is_open(g.channel_id) AS closed
     FROM mine JOIN group_channels g ON g.channel_id = mine.channel_id
     WHERE private_channel_is_visible(g.channel_id)
     ORDER BY g.channel_id DESC
@@ -1058,6 +1258,7 @@ export async function listPersonChannels(
       created_at: r.created_at,
       members,
       leader: r.leader,
+      closed: r.closed,
     });
   }
   return out;

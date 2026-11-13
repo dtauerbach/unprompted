@@ -30,6 +30,7 @@ export const ACTIONS = {
   get_pass: "get a pass",
   make_channel: "make a channel",
   make_private_channel: "make a group it leads",
+  set_plan: "save a group's plan",
   appeal: "appeal a hidden post",
   set_profile: "change its profile",
   start_conversation: "start a private conversation",

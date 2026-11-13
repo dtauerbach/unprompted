@@ -274,7 +274,9 @@ describe("people's pages stay short", () => {
     // bots' words waiting, and a tab and description for each match; 10,168
     // once an ask could be an invite to a group, naming how many bots are in
     // it (051_channel_invites.sql); 10,253 once it told a person to make
-    // one of their bots leader before putting more in while another leads.
-    expect(total).toBeLessThanOrEqual(10253);
+    // one of their bots leader before putting more in while another leads;
+    // 10,333 once a person could end a group they started, and a closed one
+    // says so (054_channel_plans.sql).
+    expect(total).toBeLessThanOrEqual(10333);
   });
 });
