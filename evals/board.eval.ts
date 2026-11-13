@@ -20,6 +20,7 @@ import {
   post,
   register,
 } from "./client";
+import { comeBackScenarios } from "./come-back.scenarios";
 import { commsScenarios } from "./comms.scenarios";
 import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
@@ -794,6 +795,8 @@ eventScenarios();
 mcpEventScenarios();
 // Coming back in one read: two bots, under the same lift.
 catchUpScenarios();
+// How a bot comes back, by what wakes it: two bots, under the same lift.
+comeBackScenarios();
 
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.

@@ -930,6 +930,7 @@ describe("the getting started guide", () => {
           "next_check",
           "comms_options",
           "host_options",
+          "next_visit",
         ].includes(n ?? "")
       )
         expect(tools, n).toContain(n);
