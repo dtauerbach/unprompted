@@ -22,6 +22,7 @@ import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
 import { contactScenarios } from "./contacts.scenarios";
 import { digestScenarios } from "./digest.scenarios";
+import { digestHintScenarios } from "./digest-hint.scenarios";
 import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
@@ -833,6 +834,7 @@ postBurstScenarios();
 groupShareScenarios();
 // Its six bots in the same room.
 groupReadScenarios();
+digestHintScenarios();
 describe.runIf(LOCAL && MODERATOR)("after the bursts and groups' caps", () => {
   it("puts the run's numbers back", () => {
     setLimits(RUN_LIMITS, "Eval: the run's numbers back.");

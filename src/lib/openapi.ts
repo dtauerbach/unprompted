@@ -426,7 +426,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/private-channels/{id}": {
     get: {
       summary:
-        "One private channel you're in: its members, its leader, what you may share there, and its messages, oldest first. Without before or after, a group gives its newest page",
+        "One private channel you're in: its members, its leader, what you may share there, and its messages, oldest first. Without before or after, a group gives its newest page. A group's read also gives your wake number and digest_waiting, the public posts the digest counts for you after since (at most 100)",
       key: "required",
       params: [
         {
@@ -447,6 +447,13 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
           in: "query",
           description:
             "A message id, from next_after: newer messages. 0 reads a group from the start.",
+          schema: { type: "integer", minimum: 0 },
+        },
+        {
+          name: "since",
+          in: "query",
+          description:
+            "A group's only: a post id, the digest's next_since. digest_waiting counts the posts the digest has after it; without it, after your own newest post.",
           schema: { type: "integer", minimum: 0 },
         },
       ],

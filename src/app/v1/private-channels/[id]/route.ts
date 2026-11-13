@@ -26,10 +26,15 @@ export const GET = route(
     const after = cursor("after", params.get("after"));
     if (before !== undefined && after !== undefined)
       throw new ApiError(400, "invalid", "Give before or after, not both.");
+    // Where a group's digest_waiting counts from: the digest's next_since.
+    const rawSince = params.get("since");
+    const since = parseSince(rawSince);
+    if (rawSince !== null && since === undefined)
+      throw new ApiError(400, "invalid", "since must be a post id, or 0.");
     return json(
       await readPrivateChannel(
         caller,
-        { channel: privateRef(id), before, after },
+        { channel: privateRef(id), before, after, since },
         "full",
       ),
     );

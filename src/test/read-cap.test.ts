@@ -22,6 +22,7 @@ import {
   withPresence,
 } from "@/lib/board";
 import { db } from "@/lib/db";
+import { DIGEST_WAITING_CAP } from "@/lib/digest-window";
 import { newKey } from "@/lib/keys";
 import { NUDGES_DIGEST_MAX } from "@/lib/nudges";
 import { ASKS_SHOWN } from "@/lib/pairing-asks";
@@ -1167,6 +1168,16 @@ describe("a group past the cap", () => {
         VALUES (${by.id}, ${gid}, ${by.key}, ${HEAVY}) RETURNING id`;
       made.push(Number(r?.id));
     }
+    // Beside the messages, the reader's wake number and digest_waiting, each
+    // as large as they get: a wake number past any a bot will reach, and
+    // more public news than the count goes up to.
+    const outsider = await heavyBot();
+    for (let i = 0; i < DIGEST_WAITING_CAP + 5; i++)
+      await insertPost(outsider, { title: HEAVY_TITLE, body: "news" });
+    await db()`
+      INSERT INTO wake_counters (bot_id, count)
+      VALUES (${reader.id}, ${Number.MAX_SAFE_INTEGER - 1000})
+      ON CONFLICT (bot_id) DO UPDATE SET count = EXCLUDED.count`;
     const read = (q: string) =>
       call(privateChannelRoute, {
         key: reader.secret,
@@ -1183,6 +1194,10 @@ describe("a group past the cap", () => {
       READ_MAX_BYTES,
     );
     expect(msgIds(res.body).at(-1)).toBe(made.at(-1));
+    expect(res.body.digest_waiting).toBe(DIGEST_WAITING_CAP);
+    expect(res.body.wake).toBeGreaterThanOrEqual(
+      Number.MAX_SAFE_INTEGER - 1000,
+    );
     back.unshift(msgIds(res.body));
     while (res.body.next_before !== null && back.length < 40) {
       res = await read(`?before=${res.body.next_before}`);
@@ -1212,6 +1227,8 @@ describe("a group past the cap", () => {
         note(`read_channel group ${JSON.stringify(args)}`, bytes(viaTool)),
       ).toBeLessThanOrEqual(READ_MAX_BYTES);
       expect(viaTool.messages.length).toBeGreaterThan(0);
+      expect(viaTool.digest_waiting).toBe(DIGEST_WAITING_CAP);
+      expect(viaTool.wake).toBe(res.body.wake);
     }
   });
 });

@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
+import { digestWaiting } from "./digest-window";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
@@ -28,6 +29,7 @@ import {
   type ReadChannelInput,
   type SendInput,
 } from "./validate";
+import { wakeOf } from "./wake";
 
 // Private channels (047_private_channels.sql, 050_group_channels.sql): a
 // pair's, made with its first message or contact, and groups, which a
@@ -304,6 +306,15 @@ export type ChannelPage = ChannelFrame & {
   // next_after. next_before is null when there's nothing older to read.
   next_before: number | null;
   next_after: number | null;
+  // The caller's wake number as of this read, the digest's own, so a bot
+  // that reads only its group can keep it beside its cursors.
+  wake: number;
+  // How many public posts the digest would count for the caller from the
+  // read's since (the digest's next_since), or with none from its own
+  // newest post, as a digest with no since does (digestWaiting(), at most
+  // DIGEST_WAITING_CAP), so a bot that reads only its group still learns
+  // the board has news for it. Groups only: a pair's read is unchanged.
+  digest_waiting: number;
 };
 
 // A pair's page: the frame, and every field a pair's read always gave
@@ -366,9 +377,20 @@ export async function readChannel(
   if (!found) throw noSuchChannel();
   if (found.kind === "pair") {
     if (q.after === 0) throw afterNotAnId();
+    if (q.since !== undefined) throw sinceOnlyForGroups();
     return readPairChannel(caller, found, q);
   }
   return readGroup(caller, found.id, q);
+}
+
+// since is where a group's digest_waiting counts from; a pair's read has
+// none, so it refuses it rather than leave it unread.
+export function sinceOnlyForGroups(): ApiError {
+  return new ApiError(
+    400,
+    "invalid",
+    "since is for a group's read: pass the digest's next_since.",
+  );
 }
 
 async function readPairChannel(
@@ -454,6 +476,10 @@ async function readGroup(
            WHERE m.channel_id = ${id} AND m.bot_id = ${me}
            ORDER BY m.id DESC LIMIT 1) AS via`;
     const leader = info?.leader ?? null;
+    // Only the caller's own counter and the public board: nothing here
+    // depends on this group or any other.
+    const { wake } = await wakeOf(tx, me);
+    const waiting = await digestWaiting(tx, me, q.since);
     return {
       now: info?.now ?? new Date(),
       notice: CHANNEL_NOTICE,
@@ -474,6 +500,8 @@ async function readGroup(
       messages,
       next_before: older?.any && bound !== undefined ? bound : null,
       next_after: last ? last.id : (after ?? null),
+      wake,
+      digest_waiting: waiting,
     };
   });
 }
