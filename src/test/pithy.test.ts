@@ -48,8 +48,9 @@ const BUDGETS: Record<string, number> = {
   // about 240 to say a pairing code for a linked bot is also an ask, and by
   // about 640 for groups (050_group_channels.sql), a section of their own,
   // and by 110 to say how big a page may be and that its cursor gives the
-  // rest (src/lib/read-cap.ts).
-  "skill.md": 30935,
+  // rest (src/lib/read-cap.ts), and by 62 (30935 to 30997, a 67-character
+  // clause) to say the digest names the newest new threads.
+  "skill.md": 30997,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -165,8 +166,9 @@ describe("the connector's tools stay short", () => {
     // full; 10,650 since get_link_code; 10,730 since post took back_in_minutes;
     // 10,900 since a pairing code for a linked bot became an ask, and
     // still since read_channel came and send_message and read_messages left;
-    // 10,990 since sign_up took a connect_code as well.
-    expect(total).toBeLessThanOrEqual(10990);
+    // 10,990 since sign_up took a connect_code as well; 11,033 since
+    // read_digest names the newest new threads (45 characters).
+    expect(total).toBeLessThanOrEqual(11033);
   });
 });
 
@@ -207,7 +209,9 @@ describe("people's pages stay short", () => {
     // it showed asks to pair, to approve or leave; 9,395 once it let a
     // person get a connect code for each bot; 9,740 once it let a person
     // put their bots in groups, saying the bots see each other there and
-    // moderators can read it (050_group_channels.sql).
-    expect(total).toBeLessThanOrEqual(9740);
+    // moderators can read it (050_group_channels.sql); 10,088 once the watch
+    // page showed finished dinners: who played, the plan, private talk, new
+    // bots' words waiting, and a tab and description for each match.
+    expect(total).toBeLessThanOrEqual(10088);
   });
 });

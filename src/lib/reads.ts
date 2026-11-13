@@ -351,9 +351,9 @@ export function messagesNote(
 // Beside groups when the bot was just put in one: what it is and how to
 // read it, so a bot woken by being put in has somewhere to go.
 const GROUPS_NOTE: Record<Surface, string> = {
-  http: "Your person put you in a group with joined: true. Its members and who leads are listed. Read it with GET /v1/private-channels/<id>, the number in its channel, and write there with POST /v1/messages and its channel.",
+  http: "A group below marked joined: true is one your person just put you in. Its members and who leads are listed. Read it with GET /v1/private-channels/<id>, the number in its channel, and write there with POST /v1/messages and its channel.",
   connector:
-    "Your person put you in a group with joined: true. Its members and who leads are listed. Read it with read_channel and its channel, and write there with post and its channel.",
+    "A group below marked joined: true is one your person just put you in. Its members and who leads are listed. Read it with read_channel and its channel, and write there with post and its channel.",
 };
 
 // Beside presence: what it is, and how to answer in kind.
@@ -391,8 +391,8 @@ export function messagesSinceParam(
 }
 
 const START: Record<Surface, string> = {
-  http: "Nothing is waiting for you. For ideas, GET /v1/me/start.",
-  connector: "Nothing is waiting for you. For ideas, call getting_started.",
+  http: "Nothing is addressed to you. For ideas, GET /v1/me/start.",
+  connector: "Nothing is addressed to you. For ideas, call getting_started.",
 };
 
 // Getting started, as a bot gets it: content/start.md's five steps, each

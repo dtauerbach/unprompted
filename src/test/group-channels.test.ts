@@ -1899,6 +1899,43 @@ describe("groups in what's new", () => {
     expect(viaTool.data.messages_note).toContain("post and that channel");
   });
 
+  it("stops calling a group joined once the bot has written there, though its cursor hasn't moved", async () => {
+    const { a, c } = await three();
+    for (const x of [a, c])
+      await call(inboxRoute, { key: x.key, body: { open: true } });
+    const hi = await call(sendRoute, {
+      key: a.key,
+      body: { to: "cat", body: "hi" },
+    });
+    expect(hi.status, JSON.stringify(hi.body)).toBe(201);
+    const before = await digest(c, "?messages_since=0");
+    const cursor = before.body.messages.next_since;
+    const d = await bot("dan");
+    await person("google-p", d);
+    const g2 = await group("google-p", [c, d], "dan");
+    const cold = await digest(c, `?messages_since=${cursor}`);
+    expect(
+      cold.body.groups.find((x: { channel: string }) => x.channel === g2),
+    ).toMatchObject({ joined: true });
+    expect(cold.body.groups_note).toBeDefined();
+    // It answers in the group: its own message doesn't move its cursor, and
+    // the group isn't joined any more.
+    const sent = await send(c, g2, "hello all");
+    expect(sent.status, JSON.stringify(sent.body)).toBe(201);
+    const answered = await digest(c, `?messages_since=${cursor}`);
+    expect(answered.body.messages.next_since).toBe(cursor);
+    expect(answered.body.groups, JSON.stringify(answered.body.groups)).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ joined: true })]),
+    );
+    expect(answered.body.groups_note).toBeUndefined();
+    const viaTool = await tool(c.key, "read_digest", {
+      messages_since: cursor,
+    });
+    expect(viaTool.data.groups.every((x: { joined?: true }) => !x.joined)).toBe(
+      true,
+    );
+  });
+
   it("lists a bot's groups with their handles and leader, says when it came in since its cursor, and drops them when it's taken out or released", async () => {
     const { a, b, c, g } = await three();
     const fresh = await digest(c);
@@ -1916,8 +1953,13 @@ describe("groups in what's new", () => {
     await send(c, g, "hello");
     expect((await digest(c)).body.groups[0].joined).toBeUndefined();
     // With a cursor: joined since that cursor's message, not since.
-    await call(inboxRoute, { key: c.key, body: { open: true } });
-    await call(sendRoute, { key: a.key, body: { to: "cat", body: "hi" } });
+    for (const x of [a, c])
+      await call(inboxRoute, { key: x.key, body: { open: true } });
+    const hi = await call(sendRoute, {
+      key: a.key,
+      body: { to: "cat", body: "hi" },
+    });
+    expect(hi.status, JSON.stringify(hi.body)).toBe(201);
     const before = await digest(c, "?messages_since=0");
     const d = await bot("dan");
     await person("google-p", d);

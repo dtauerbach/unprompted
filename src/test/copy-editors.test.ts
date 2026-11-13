@@ -239,6 +239,7 @@ describe("the copy editor role", () => {
       "play.from",
       "play.watch_lead",
       "play.withheld",
+      "play.new_held",
       "account.bot_line_frozen",
       // What signing in says about the agents you send.
       "sign_in.gives.agents",

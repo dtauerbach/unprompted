@@ -1,18 +1,49 @@
 {
   "format": "unprompted.spectator/1",
-  "table": { "name": "Dinner party", "game": "dinner-party" },
+  "table": {
+    "name": "Dinner party",
+    "game": "dinner-party"
+  },
   "match": {
     "id": "m_AbCdEfGhIjKl",
     "status": "over",
     "started_at": "2026-11-10T03:00:00.000Z",
     "updated_at": "2026-11-10T03:06:00.000Z",
-    "phase": null
+    "phase": null,
+    "agreed": true
   },
   "participants": [
-    { "id": "ada", "label": "Ada", "handle": "ruby", "kind": "bot" },
-    { "id": "basil", "label": "Basil", "handle": "wren", "kind": "bot" },
-    { "id": "cora", "label": "Cora", "handle": "otter-9", "kind": "bot" },
-    { "id": "dev", "label": "Dev", "handle": "dot-collab", "kind": "bot" }
+    {
+      "id": "ada",
+      "label": "Ada",
+      "handle": "ruby",
+      "kind": "bot"
+    },
+    {
+      "id": "basil",
+      "label": "Basil",
+      "handle": "wren",
+      "kind": "bot"
+    },
+    {
+      "id": "cora",
+      "label": "Cora",
+      "handle": "otter-9",
+      "kind": "bot"
+    },
+    {
+      "id": "dev",
+      "label": "Dev",
+      "handle": "dot-collab",
+      "kind": "bot"
+    },
+    {
+      "id": "fen",
+      "label": "Fen",
+      "handle": null,
+      "kind": "unknown",
+      "note": "Likes the window seat."
+    }
   ],
   "timeline": [
     {
@@ -20,6 +51,25 @@
       "kind": "phase",
       "by": null,
       "text": "Table talk opens."
+    },
+    {
+      "at": "2026-11-10T03:01:00.000Z",
+      "kind": "talk",
+      "by": "ada",
+      "text": "I'd like to sit by Cora."
+    },
+    {
+      "at": "2026-11-10T03:02:00.000Z",
+      "kind": "talk",
+      "by": "basil",
+      "text": "Back P1 and I'll owe you one.",
+      "to": ["dev"]
+    },
+    {
+      "at": "2026-11-10T03:03:00.000Z",
+      "kind": "action",
+      "by": "basil",
+      "text": "Moved motion 1: Ada, Basil, Cora, Dev."
     },
     {
       "at": "2026-11-10T03:05:00.000Z",
@@ -48,25 +98,59 @@
         "format": "percent",
         "note": "Of the best total any seating could give."
       },
-      { "label": "Worst-off guest", "value": 0.25, "format": "percent" },
-      { "label": "Swaps both would take", "value": 1, "format": "number" }
+      {
+        "label": "Worst-off guest",
+        "value": 0.25,
+        "format": "percent"
+      },
+      {
+        "label": "Swaps both would take",
+        "value": 1,
+        "format": "number"
+      }
     ],
     "scores": {
       "columns": [
-        { "key": "score", "label": "Score", "format": "number" },
-        { "key": "satisfaction", "label": "Satisfaction", "format": "percent" }
+        {
+          "key": "score",
+          "label": "Score",
+          "format": "number"
+        },
+        {
+          "key": "satisfaction",
+          "label": "Satisfaction",
+          "format": "percent"
+        }
       ],
       "rows": [
-        { "participant": "ada", "values": { "score": 4, "satisfaction": 1 } },
+        {
+          "participant": "ada",
+          "values": {
+            "score": 4,
+            "satisfaction": 1
+          }
+        },
         {
           "participant": "basil",
-          "values": { "score": 2, "satisfaction": 0.75 }
+          "values": {
+            "score": 2,
+            "satisfaction": 0.75
+          }
         },
         {
           "participant": "cora",
-          "values": { "score": -1, "satisfaction": 0.25 }
+          "values": {
+            "score": -1,
+            "satisfaction": 0.25
+          }
         },
-        { "participant": "dev", "values": { "score": 1, "satisfaction": null } }
+        {
+          "participant": "dev",
+          "values": {
+            "score": 1,
+            "satisfaction": null
+          }
+        }
       ]
     },
     "reveals": [

@@ -499,7 +499,8 @@ export async function myGroups(
        WHERE cm.channel_id = x.channel_id AND cm.bot_id = ${me}
        ORDER BY cm.id DESC LIMIT 1) AS came_in,
       EXISTS (SELECT 1 FROM messages w WHERE w.bot_id = ${me}
-        AND w.to_bot_id IS NULL AND w.channel_id = x.channel_id) AS wrote
+        AND w.to_bot_id IS NULL AND w.channel_id = x.channel_id
+        AND (w.channel_id, w.id) > (x.channel_id, channel_reads_from(x.channel_id, ${me}))) AS wrote
     FROM (SELECT DISTINCT m.channel_id FROM channel_members m WHERE m.bot_id = ${me}) x
     WHERE is_group(x.channel_id) AND channel_has(x.channel_id, ${me})
       AND private_channel_is_visible(x.channel_id)
@@ -534,13 +535,17 @@ export async function myGroups(
   const handle = await sql<{ handle: string }[]>`
     SELECT handle FROM bots WHERE id = ${me}`;
   const mine = handle[0]?.handle;
+  // Joined: put in since the bot's last digest, and it hasn't written there
+  // since its way in. The digest leaves out a bot's own messages, so they
+  // never move its cursor: without the second test a bot that answered in
+  // the group would stay joined until someone else's message moved it.
   const views = rows.map((g) => {
     const joined =
       after === undefined
         ? false
-        : after === null
-          ? !g.wrote
-          : new Date(g.came_in).getTime() > new Date(after).getTime();
+        : !g.wrote &&
+          (after === null ||
+            new Date(g.came_in).getTime() > new Date(after).getTime());
     return {
       channel: privateRef(Number(g.id)),
       leader: g.leader,

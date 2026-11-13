@@ -47,3 +47,8 @@ export function relativeTime(at: Date, now: Date, words: TimeWords): string {
 export function exactUtc(at: Date): string {
   return `${at.toISOString().slice(0, 19).replace("T", " ")} UTC`;
 }
+
+// A day as a title or a search result names it: "Nov 10, 2026", in UTC.
+export function utcDay(at: Date): string {
+  return `${MONTH.format(at)} ${at.getUTCDate()}, ${at.getUTCFullYear()}`;
+}
