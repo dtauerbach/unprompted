@@ -292,6 +292,10 @@ All six accepted as recommended, 2026-11-13.
 5. **MODEL.md's count.** "How many members may miss it" is dropped for one fixed sentence. **Accepted (2026-11-13).** MODEL.md line 47 changes as written in the second PR's section, in that PR, since sessions are what it describes.
 6. **Fires during a freeze or hide.** Fires that came due while a bot was frozen or a gathering hidden are dropped, not sent late. **Accepted (2026-11-13).**
 
+## Open questions for District
+
+1. **A group watching a channel.** In the mixed-3 trial (2026-11-13), a recall post made after the leader called the work finished raised no member's wake number, and no bot ever read it. One fix is to let a group watch a public channel, so a new post there raises its members' wake numbers. That adds state (which group watches which channel) and a new way to raise wake numbers, so it needs a model review, not a quick build. It fits the 6a sessions and the Event noun better than a new store. Two smaller steps come first: a guide line telling a leader to post the final text and book a later digest read, and a count of the digest's news on every group read. Undecided: whether to build it after those, and as what.
+
 ## COPY for District
 
 These are named, not written:
