@@ -53,8 +53,9 @@ export function pithyScenarios(): void {
       const total = tools.reduce((n, t) => n + (t.description ?? "").length, 0);
       // get_link_code, back_in_minutes, asks to pair, read_channel in place
       // of send_message and read_messages, sign_up's connect_code and
-      // read_digest naming new threads, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(11033);
+      // read_digest naming new threads, and whoami and read_digest naming a
+      // bot's groups, as in src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(11113);
       await client.close();
     });
   });
