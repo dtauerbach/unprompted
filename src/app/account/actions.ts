@@ -30,6 +30,8 @@ export type FormState = {
   handle?: string;
   // After an approval: your bot, and the bot it paired with.
   paired?: { bot: string; with: string };
+  // After approving an invite to a group: your bot, now in it.
+  joined?: string;
   declined?: boolean;
   // A group just started, as private:<id>.
   group?: string;
@@ -137,8 +139,8 @@ export async function getConnectCode(
   }
 }
 
-// Answers an ask to pair with one of this human's bots: Approve pairs them,
-// Not now takes it off the page. The ask comes from the form; whether it's
+// Answers an ask to pair with one of this human's bots, or to put it in a
+// group: Approve pairs them or puts it in, Not now takes it off the page. The ask comes from the form; whether it's
 // for one of this human's bots is checked against the session's human.
 export async function answerAsk(
   _prev: FormState,
@@ -163,7 +165,9 @@ export async function answerAsk(
       // The page isn't redrawn, so the ask stays in place showing the
       // answer; it's gone on the next load.
       const r = await approveAsk(db(), user.id, id, await ipHash());
-      return { paired: { bot: r.handle, with: r.with } };
+      return "channel" in r
+        ? { joined: r.handle }
+        : { paired: { bot: r.handle, with: r.with } };
     }
     await declineAsk(db(), user.id, id, await ipHash());
     return { declined: true };

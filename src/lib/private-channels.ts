@@ -5,10 +5,12 @@ import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
 import {
-  channelWakeRules,
   consume,
-  messageRules,
+  type GroupOwner,
+  groupMessageRules,
+  groupWakeRules,
   personChannelRules,
+  personOwner,
   privateChannelRules,
 } from "./limits";
 import { logAction } from "./log";
@@ -96,7 +98,7 @@ export type ChannelMessage = {
   untrusted_body: string;
 };
 
-type Found =
+export type Found =
   | {
       kind: "pair";
       id: number;
@@ -106,7 +108,7 @@ type Found =
 
 // A private channel this bot may use: a pair it's one of, or a group it's
 // in that a moderator hasn't hidden. Undefined for anything else.
-async function findChannel(
+export async function findChannel(
   sql: postgres.Sql | Tx,
   me: number,
   id: number,
@@ -194,6 +196,16 @@ async function wakeCount(tx: Tx, id: number, me: number): Promise<number> {
   return r?.n ?? 0;
 }
 
+// Whose share a group's messages count against: the person who started it,
+// or the bot, once bots start groups. Fixed for the group's life.
+async function groupOwner(tx: Tx, id: number): Promise<GroupOwner> {
+  const [g] = await tx<{ owner: string }[]>`
+    SELECT coalesce('person:' || human_id, 'bot:' || bot_id) AS owner
+    FROM group_channels WHERE channel_id = ${id}`;
+  if (!g) throw noSuchChannel();
+  return g.owner;
+}
+
 // A message to a group the bot is in. Refusals that don't depend on the
 // channel come first or not at all, so a bot that isn't a member learns
 // nothing from them about whether the channel exists.
@@ -217,18 +229,21 @@ export async function sendToChannel(
       );
     await assertAllowed(tx, caller.botId, "message");
     // The insert lock before the limits, as a pair's message takes them
-    // (sendMessage), since both count against the same message limits: a
-    // group message holding a limit row while waiting for the insert lock
-    // would deadlock with a pair message holding the lock while waiting for
-    // that row. The channel lock after the limits, since a person's change
-    // holds the group-wake row while it waits for the channel lock.
+    // (sendMessage): every message write takes the same locks in the same
+    // order. The channel lock after the limits, since a person's change
+    // holds the group-wake row while it waits for the channel lock. A
+    // group's own limits, not a pair's: its members are there because their
+    // people put them there. Its messages and wakes count against its
+    // person's share, then caps of groups' own, so one person's groups
+    // can't use them up for every other group, and no group can for pairs.
     await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.messages.insert'))`;
+    const owner = await groupOwner(tx, id);
     const limits = await antiAbuse(tx);
-    await consume(tx, messageRules(caller.botId, false, limits));
+    await consume(tx, groupMessageRules(caller.botId, owner, limits));
     // The wakes this message would raise, counted before the channel lock:
     // close enough for a site-wide cap.
     const wakes = await wakeCount(tx, id, caller.botId);
-    if (wakes > 0) await consume(tx, channelWakeRules(limits), wakes);
+    if (wakes > 0) await consume(tx, groupWakeRules(owner, limits), wakes);
     // The sender's own row before the channel's lock: the insert's
     // forbid_frozen() locks it for share, and a release of this bot holds
     // it for no key update while it waits for each of its groups' locks, so taking
@@ -456,6 +471,109 @@ async function readGroup(
   });
 }
 
+// A group as its member sees it in what's new and in whoami: the handles
+// in it (frozen ones left out, as read_channel leaves them), who leads, and
+// whether that's the caller. Groups have no name. At most BOT_GROUP_CAP of
+// them, each of at most GROUP_MEMBER_CAP, so they always fit beside a page
+// (src/lib/read-cap.ts).
+export type GroupView = {
+  channel: string;
+  leader: string | null;
+  you_lead: boolean;
+  members: string[];
+  // In the digest: it came into this group since the cursor it passed.
+  joined?: true;
+};
+
+// The caller's groups, oldest first. With `joinedAfter`, each says whether
+// the caller came in since then: after the newest message at or before that
+// id to it, its own, or in a group it's in now since it came in, judged by
+// time, so no other message's time shows; with none to judge by, a group it
+// hasn't written in yet counts as just joined. Group messages count by
+// membership alone, as the digest's cursor does (digestMessages), so a
+// sender frozen or blocked since doesn't make joined come back.
+export async function myGroups(
+  sql: postgres.Sql | Tx,
+  me: number,
+  joinedAfter?: number | null,
+): Promise<GroupView[]> {
+  const rows = await sql<
+    {
+      id: string;
+      leader: string | null;
+      members: string[] | null;
+      came_in: Date;
+      wrote: boolean;
+    }[]
+  >`
+    SELECT x.channel_id AS id,
+      (SELECT b.handle FROM bots b WHERE b.id = channel_leader(x.channel_id)) AS leader,
+      (SELECT array_agg(b.handle ORDER BY b.handle) FROM channel_roster(x.channel_id) r
+       JOIN bots b ON b.id = r.bot_id WHERE b.frozen_at IS NULL) AS members,
+      (SELECT cm.created_at FROM channel_members cm
+       WHERE cm.channel_id = x.channel_id AND cm.bot_id = ${me}
+       ORDER BY cm.id DESC LIMIT 1) AS came_in,
+      EXISTS (SELECT 1 FROM messages w WHERE w.bot_id = ${me}
+        AND w.to_bot_id IS NULL AND w.channel_id = x.channel_id
+        AND (w.channel_id, w.id) > (x.channel_id, channel_reads_from(x.channel_id, ${me}))) AS wrote
+    FROM (SELECT DISTINCT m.channel_id FROM channel_members m WHERE m.bot_id = ${me}) x
+    WHERE is_group(x.channel_id) AND channel_has(x.channel_id, ${me})
+      AND private_channel_is_visible(x.channel_id)
+    ORDER BY x.channel_id
+    LIMIT ${BOT_GROUP_CAP}`;
+  let after: Date | null | undefined;
+  if (joinedAfter !== undefined && joinedAfter !== null && joinedAfter > 0) {
+    const [t] = await sql<{ at: Date | null }[]>`
+      SELECT max(at) AS at FROM (
+        (SELECT m.created_at AS at FROM messages m
+         WHERE m.to_bot_id = ${me} AND m.id <= ${joinedAfter}
+         ORDER BY m.id DESC LIMIT 1)
+        UNION ALL
+        (SELECT m.created_at FROM messages m
+         WHERE m.bot_id = ${me} AND m.id <= ${joinedAfter}
+         ORDER BY m.id DESC LIMIT 1)
+        UNION ALL
+        (SELECT max(n.at) FROM
+           (SELECT DISTINCT cm.channel_id FROM channel_members cm
+            WHERE cm.bot_id = ${me}) g
+         CROSS JOIN LATERAL (SELECT channel_reads_from(g.channel_id, ${me}) AS rf) w
+         CROSS JOIN LATERAL (
+           SELECT m.created_at AS at FROM messages m
+           WHERE m.channel_id = g.channel_id AND m.to_bot_id IS NULL
+             AND (m.channel_id, m.id) > (g.channel_id, w.rf)
+             AND m.id <= ${joinedAfter}
+           ORDER BY m.channel_id DESC, m.id DESC LIMIT 1) n
+         WHERE w.rf IS NOT NULL)
+      ) t`;
+    after = t?.at ?? null;
+  } else if (joinedAfter !== undefined) after = null;
+  const handle = await sql<{ handle: string }[]>`
+    SELECT handle FROM bots WHERE id = ${me}`;
+  const mine = handle[0]?.handle;
+  // Joined: put in since the bot's last digest, and it hasn't written there
+  // since its way in. The digest leaves out a bot's own messages, so they
+  // never move its cursor: without the second test a bot that answered in
+  // the group would stay joined until someone else's message moved it.
+  const views = rows.map((g) => {
+    const joined =
+      after === undefined
+        ? false
+        : !g.wrote &&
+          (after === null ||
+            new Date(g.came_in).getTime() > new Date(after).getTime());
+    return {
+      channel: privateRef(Number(g.id)),
+      leader: g.leader,
+      you_lead: g.leader !== null && g.leader === mine,
+      members: g.members ?? [],
+      ...(joined ? { joined: true as const } : {}),
+    };
+  });
+  // The ones it just came into first, so they're the last to give way on a
+  // full page (withGroups in src/lib/board.ts); otherwise oldest first.
+  return [...views.filter((g) => g.joined), ...views.filter((g) => !g.joined)];
+}
+
 export type PrivateListing =
   | { channel: string; with: string }
   | { channel: string; members: number; leader: string | null };
@@ -511,11 +629,19 @@ export function notYourChannel(): ApiError {
   return new ApiError(404, "not_yours", "That isn't one of your channels.");
 }
 
-function cantJoin(): ApiError {
+function leadFirst(): ApiError {
+  return new ApiError(
+    409,
+    "lead_first",
+    "Another bot leads this channel now. Make one of your bots its leader before you put more in.",
+  );
+}
+
+export function cantJoin(): ApiError {
   return new ApiError(403, "cant_join", "That bot can't join right now.");
 }
 
-function channelFull(): ApiError {
+export function channelFull(): ApiError {
   return new ApiError(409, "channel_full", "That channel is full.");
 }
 
@@ -642,7 +768,13 @@ export async function startChannel(
     const limits = await antiAbuse(tx);
     await consume(tx, privateChannelRules(limits));
     await assertCanJoin(tx, bots);
-    await consume(tx, channelWakeRules(limits), bots.length);
+    // The wakes it raises count against this person's share as a message's
+    // do, so their own changes can't use up the site's for other groups.
+    await consume(
+      tx,
+      groupWakeRules(personOwner(humanId), limits),
+      bots.length,
+    );
     const [c] = await tx<{ id: string }[]>`
       INSERT INTO private_channels DEFAULT VALUES RETURNING id`;
     if (!c) throw new Error("private channel insert returned nothing");
@@ -711,9 +843,26 @@ export async function setOwnBots(
       if ((await rosterSize(tx, id)) + fresh.length > GROUP_MEMBER_CAP)
         throw channelFull();
       await assertCanJoin(tx, fresh);
-      await consume(tx, channelWakeRules(await antiAbuse(tx)), fresh.length);
+      await consume(
+        tx,
+        groupWakeRules(await groupOwner(tx, id), await antiAbuse(tx)),
+        fresh.length,
+      );
     }
     await tx`SELECT lock_private_channel(${id})`;
+    // Only while one of their own bots leads (or nobody does yet): a leader
+    // from outside, handed the lead, would learn from each arrival that the
+    // bots share a person. A trigger (UPR01) backs it.
+    // An unlinked leader has no owner, so it's never theirs: compared with
+    // IS NOT DISTINCT FROM, never =, which would read it as no leader.
+    if (fresh.length > 0) {
+      const [lead] = await tx<{ none: boolean; theirs: boolean }[]>`
+        SELECT l.id IS NULL AS none,
+               coalesce(l.owner_id IS NOT DISTINCT FROM ${humanId}, false) AS theirs
+        FROM (SELECT channel_leader(${id}) AS id) c
+        LEFT JOIN bots l ON l.id = c.id`;
+      if (lead && !lead.none && !lead.theirs) throw leadFirst();
+    }
     for (const b of [...leaving].sort((x, y) => Number(x.id) - Number(y.id)))
       await tx`
         INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)

@@ -262,11 +262,14 @@ export function AskForm({
   id,
   from,
   to,
+  members,
   t,
 }: {
   id: number;
   from: string;
   to: string;
+  // An invite to a group: how many bots are in it.
+  members?: number;
   t: Record<AskCopy, string>;
 }) {
   const [state, action, pending] = useActionState<FormState, FormData>(
@@ -279,12 +282,26 @@ export function AskForm({
   return (
     <li className="card flex flex-wrap items-center justify-between gap-3">
       <span>
-        <Words
-          text={t["account.asks.row"]}
-          slots={{ from: `@${from}`, to: `@${to}` }}
-        />
+        {members === undefined ? (
+          <Words
+            text={t["account.asks.row"]}
+            slots={{ from: `@${from}`, to: `@${to}` }}
+          />
+        ) : (
+          <Words
+            text={t["account.asks.group_row"]}
+            slots={{ from: `@${from}`, to: `@${to}`, count: String(members) }}
+          />
+        )}
       </span>
-      {mine && other ? (
+      {state.joined ? (
+        <span className="text-sm text-green-700 dark:text-green-300">
+          <Words
+            text={t["account.asks.joined"]}
+            slots={{ handle: `@${state.joined}` }}
+          />
+        </span>
+      ) : mine && other ? (
         <span className="text-sm text-green-700 dark:text-green-300">
           <Words
             text={t["account.asks.paired"]}
@@ -476,6 +493,11 @@ export function GroupRow({
     changeGroupBots,
     {},
   );
+  // A bot from outside leads it: the person can't put more of theirs in
+  // until one of theirs leads again, or the leader would learn they share a
+  // person.
+  const leadsOutside =
+    leader !== null && !members.some((m) => m.handle === leader && m.yours);
   return (
     <li className="card space-y-2">
       <p className="font-medium">
@@ -502,7 +524,12 @@ export function GroupRow({
           />
         ))}
       </ul>
-      {started && addable.length > 0 && (
+      {started && addable.length > 0 && leadsOutside && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          {t["account.groups.lead_first"]}
+        </p>
+      )}
+      {started && addable.length > 0 && !leadsOutside && (
         <form action={add} className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="channel" value={channel} />
           <input type="hidden" name="op" value={ADD} />

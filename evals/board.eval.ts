@@ -4,6 +4,7 @@ import { agentModScenarios } from "./agent-mod.scenarios";
 import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { canaryScenarios } from "./canary.scenarios";
+import { channelInviteScenarios } from "./channel-invites.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import {
   awayFromWindowEdge,
@@ -26,18 +27,26 @@ import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
 import { gatheringScenarios } from "./gatherings.scenarios";
 import { groupChannelScenarios } from "./group-channels.scenarios";
+import { groupShareScenarios } from "./group-share.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
 import { messageScenarios } from "./messages.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
-import { MODERATOR, mustAdmin, RUN_LIMITS, setLimits } from "./moderator";
+import {
+  MODERATOR,
+  mustAdmin,
+  ROOM_LIMITS,
+  RUN_LIMITS,
+  setLimits,
+} from "./moderator";
 import { nudgeScenarios } from "./nudges.scenarios";
 import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { pairingAskScenarios } from "./pairing-asks.scenarios";
 import { passScenarios } from "./passes.scenarios";
 import { pithyScenarios } from "./pithy.scenarios";
+import { postBurstScenarios } from "./post-burst.scenarios";
 import { presenceScenarios } from "./presence.scenarios";
 import { profileScenarios } from "./profiles.scenarios";
 import { promptedRateScenarios } from "./prompted-rate.scenarios";
@@ -45,6 +54,7 @@ import { pushScenarios } from "./push.scenarios";
 import { readCapScenarios } from "./read-cap.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { reconnectScenarios } from "./reconnect.scenarios";
+import { replyNoticeScenarios } from "./reply-notices.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import {
   spectatorDinnerScenarios,
@@ -573,6 +583,8 @@ pithyScenarios();
 lookupScenarios();
 clientScenarios();
 readingScenarios();
+// wren and moss, so it signs no one up.
+replyNoticeScenarios(() => ({ wren, moss }));
 startScenarios();
 gateScenarios();
 // The sign-ups since the floods (profiles, titles, lookups and the rest) can
@@ -787,9 +799,12 @@ describe.runIf(LOCAL && MODERATOR)("before the long thread", () => {
 });
 readCapScenarios();
 
-// Groups, and the canary that a phrase in one stays there. Their few bots
-// come after the asks to pair, with registration reopened, for the same
-// reason.
+// Groups, invites and the canary that a phrase in one stays there. Their
+// bots come after the asks to pair, with registration reopened, for the
+// same reason. Together they sign up more bots in a few minutes than the
+// default spike count, and a lift that finds nothing tightened doesn't
+// restart the count, so the spike is set out of their reach here; the
+// floods below put the defaults back.
 describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
   it("registration isn't tightened", () => {
     mustAdmin(
@@ -797,10 +812,29 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
       "--reason",
       "Eval: this run's own sign-ups before the groups.",
     );
+    setLimits(
+      { ...RUN_LIMITS, spike_sign_ups: 100_000 },
+      "Eval: the groups' sign-ups don't set off the spike.",
+    );
   });
 });
 groupChannelScenarios();
+channelInviteScenarios();
 canaryScenarios();
+// Their eleven bots with room of their own, since by now the run's sign-ups
+// may make a spike with theirs (ROOM_LIMITS).
+describe.runIf(LOCAL && MODERATOR)("before the bursts and groups' caps", () => {
+  it("leaves room for their sign-ups", () => {
+    setLimits(ROOM_LIMITS, "Eval: room for the bursts' and groups' bots.");
+  });
+});
+postBurstScenarios();
+groupShareScenarios();
+describe.runIf(LOCAL && MODERATOR)("after the bursts and groups' caps", () => {
+  it("puts the run's numbers back", () => {
+    setLimits(RUN_LIMITS, "Eval: the run's numbers back.");
+  });
+});
 
 describe.runIf(LOCAL)("floods hit the limits and write nothing", () => {
   it("caps new bots across the whole site", async () => {

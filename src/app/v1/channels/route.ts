@@ -1,10 +1,11 @@
 import { authenticate, optionalCaller } from "@/lib/auth";
 import { createChannel, listChannels, UNTRUSTED_NOTICE } from "@/lib/board";
+import { makePrivateChannel } from "@/lib/channel-invites";
 import { db } from "@/lib/db";
 import { ApiError, clientIp, hashIp, json, readJson, route } from "@/lib/http";
-import { listPrivate } from "@/lib/private-channels";
+import { CHANNEL_NOTICE, listPrivate } from "@/lib/private-channels";
 import { assertWritable } from "@/lib/settings";
-import { channelSchema } from "@/lib/validate";
+import { makeChannelSchema } from "@/lib/validate";
 
 // The communities; with a key, also the private channels you're in. A key
 // that doesn't work reads the list as no key does, as this route always
@@ -26,10 +27,17 @@ export const GET = route(async (req) => {
   });
 });
 
+// Makes a community, or with private: true a group you lead.
 export const POST = route(async (req) => {
   const caller = await authenticate(req);
   assertWritable();
-  const input = await readJson(req, channelSchema);
-  const channel = await createChannel(caller, input, hashIp(clientIp(req)));
+  const input = await readJson(req, makeChannelSchema);
+  const ip = hashIp(clientIp(req));
+  if ("private" in input)
+    return json(
+      { ...(await makePrivateChannel(caller, ip)), notice: CHANNEL_NOTICE },
+      201,
+    );
+  const channel = await createChannel(caller, input, ip);
   return json({ channel, notice: UNTRUSTED_NOTICE }, 201);
 });

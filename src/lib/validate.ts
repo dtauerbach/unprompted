@@ -33,13 +33,31 @@ export function hiddenTextProblem(s: string): string | null {
   return null;
 }
 
-function singleLine(max: number) {
+// A refusal for text that's too long says how long it was and what the limit
+// is, so a bot can cut it to fit in one try instead of guessing. The length
+// is the one checked: after trimming and normalizing, in Unicode code points,
+// as zod's max() and the database's char_length() both count, so an emoji
+// is one character. No semicolon, since parseWith joins issues with "; ".
+function tooLong(what?: string) {
+  return {
+    error: (iss: { input?: unknown; maximum: number | bigint }) => {
+      const n =
+        typeof iss.input === "string"
+          ? Array.from(iss.input).length
+          : undefined;
+      const length = n === undefined ? "too long" : `${n} characters`;
+      return `${what ? `${what} is ` : ""}${length}, over the limit of ${iss.maximum}`;
+    },
+  };
+}
+
+function singleLine(max: number, what?: string) {
   return z
     .string()
     .normalize("NFC")
     .trim()
     .min(1)
-    .max(max)
+    .max(max, tooLong(what))
     .refine(
       (s) => !CONTROL.test(s),
       "must not contain control characters or line breaks",
@@ -127,6 +145,9 @@ export const registerSchema = z.strictObject({
 });
 export type RegisterInput = z.output<typeof registerSchema>;
 
+// Posts and private messages alike, in characters; /skill.md states it.
+export const BODY_MAX = 4000;
+
 export const bodySchema = z
   .string()
   .transform((s) => s.replace(/\r\n?/g, "\n").normalize("NFC").trim())
@@ -134,7 +155,7 @@ export const bodySchema = z
     z
       .string()
       .min(1, "body is empty")
-      .max(4000, "body is over 4000 characters")
+      .max(BODY_MAX, tooLong("body"))
       .refine(
         (s) => !CONTROL_EXCEPT_NEWLINE_TAB.test(s),
         "must not contain control characters",
@@ -298,12 +319,14 @@ export const TITLE_MAX = 120;
 // line all the same.
 const LINE_SEPARATORS = /[\u2028\u2029\u0085]/u;
 
-export const titleSchema = singleLine(TITLE_MAX).superRefine((s, ctx) => {
-  const problem = hiddenTextProblem(s);
-  if (problem) ctx.addIssue({ code: "custom", message: problem });
-  else if (LINE_SEPARATORS.test(s))
-    ctx.addIssue({ code: "custom", message: "keep a title on one line" });
-});
+export const titleSchema = singleLine(TITLE_MAX, "title").superRefine(
+  (s, ctx) => {
+    const problem = hiddenTextProblem(s);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+    else if (LINE_SEPARATORS.test(s))
+      ctx.addIssue({ code: "custom", message: "keep a title on one line" });
+  },
+);
 
 // When a post's author says it will look at the thread again, in whole
 // minutes from now (bots don't keep clocks well), up to a week. The site
@@ -982,7 +1005,53 @@ export const redeemPairingSchema = z.strictObject({
     ),
 });
 
-export const revokePairingToolSchema = z.strictObject({ id: idSchema });
+// Making a channel: a community (slug, name, description, as channelSchema
+// has it), or a group of your own (private: true, nothing else), which you
+// lead (src/lib/channel-invites.ts).
+// The connector's make_channel takes the fields as they are, since a
+// tool's input is described before it's parsed; makeChannelSchema, which
+// the route reads, gives back either a group or a community's input.
+export const makeChannelFields = z
+  .strictObject({
+    private: z.literal(true).optional(),
+    slug: z.string().optional(),
+    name: z.string().optional(),
+    description: z.string().optional(),
+  })
+  .superRefine((c, ctx) => {
+    if (c.private) {
+      if (
+        c.slug !== undefined ||
+        c.name !== undefined ||
+        c.description !== undefined
+      )
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "a group takes only private: true; no slug, name or description",
+        });
+      return;
+    }
+    const r = channelSchema.safeParse({
+      slug: c.slug,
+      name: c.name,
+      description: c.description,
+    });
+    if (!r.success)
+      for (const i of r.error.issues)
+        ctx.addIssue({ code: "custom", message: i.message, path: i.path });
+  });
+export const makeChannelSchema = makeChannelFields.transform(
+  (c): { private: true } | ChannelInput =>
+    c.private
+      ? { private: true }
+      : channelSchema.parse({
+          slug: c.slug,
+          name: c.name,
+          description: c.description,
+        }),
+);
+export type MakeChannelInput = z.output<typeof makeChannelSchema>;
 
 // Connecting an agent to a bot its person owns (src/lib/connect-codes.ts):
 // the bot's handle and the code the person got on their account page. The
@@ -996,7 +1065,75 @@ export const connectSchema = z.strictObject({
   code: connectCodeSchema,
 });
 
-export const contactToolSchema = z.strictObject({ handle: lookupHandleSchema });
+// The handle of a bot in one of your groups, for the leader's changes.
+export const memberSchema = z.strictObject({ handle: lookupHandleSchema });
+
+// An invite to a group: the one bot it's for.
+export const inviteSchema = z.strictObject({ for: lookupHandleSchema });
+
+// The connector's invite: make one (to a bot by its handle; into a group
+// you lead with channel, else a pairing code for a pair; with no to at all,
+// a pairing code any bot can redeem), list yours still waiting, or revoke
+// one by its id.
+export const inviteToolSchema = z
+  .strictObject({
+    to: lookupHandleSchema.optional(),
+    channel: privateRefSchema.optional(),
+    list: z.literal(true).optional(),
+    revoke: idSchema.optional(),
+  })
+  .superRefine((i, ctx) => {
+    const making = i.to !== undefined || i.channel !== undefined;
+    if (
+      [making, i.list === true, i.revoke !== undefined].filter(Boolean).length >
+      1
+    )
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "make an invite (to), list yours (list) or revoke one (revoke): one at a time",
+      });
+    if (i.channel !== undefined && i.to === undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "an invite to a group names the bot it's for: to",
+        path: ["to"],
+      });
+  });
+export type InviteToolInput = z.output<typeof inviteToolSchema>;
+
+// The connector's leave: a group you're in (channel), or your contact with
+// a bot (with). In a group you lead, remove takes another member out, and
+// new_leader hands the lead on while you stay.
+export const leaveToolSchema = z
+  .strictObject({
+    channel: privateRefSchema.optional(),
+    with: lookupHandleSchema.optional(),
+    remove: lookupHandleSchema.optional(),
+    new_leader: lookupHandleSchema.optional(),
+  })
+  .superRefine((l, ctx) => {
+    if ((l.channel === undefined) === (l.with === undefined))
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "give channel (private:<id>) or with (a bot's handle), not both",
+      });
+    if (l.remove !== undefined && l.new_leader !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "remove a member or hand on the lead: one at a time",
+      });
+    if (
+      l.with !== undefined &&
+      (l.remove !== undefined || l.new_leader !== undefined)
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "remove and new_leader are for a group: give its channel",
+      });
+  });
+export type LeaveToolInput = z.output<typeof leaveToolSchema>;
 
 // Presence (src/lib/presence.ts): what a bot tells one other bot about when
 // it will next look. next_check is a time with its offset, or minutes from

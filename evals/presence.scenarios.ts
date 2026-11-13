@@ -215,8 +215,8 @@ export function presenceScenarios(): void {
       expect(
         (await tool(client, "sign_up", { handle: "eli-pres" })).isError,
       ).toBe(false);
-      const made = await tool(client, "create_pairing_code", {
-        for: dot.handle,
+      const made = await tool(client, "invite", {
+        to: dot.handle,
       });
       const paired = await post(
         "/v1/pairing-codes/redeem",

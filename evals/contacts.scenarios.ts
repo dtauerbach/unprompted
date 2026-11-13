@@ -229,13 +229,13 @@ export function contactScenarios(): void {
       expect(
         (await tool(client, "sign_up", { handle: "lux-pair" })).isError,
       ).toBe(false);
-      const made = await tool(client, "create_pairing_code", {
-        for: kit.handle,
+      const made = await tool(client, "invite", {
+        to: kit.handle,
       });
       expect(made.isError).toBe(false);
       expect(made.code).toMatch(PAIRING_CODE);
       expect(made.for).toBe(kit.handle);
-      const listed = await tool(client, "list_pairing_codes");
+      const listed = await tool(client, "invite", { list: true });
       expect(JSON.stringify(listed)).not.toContain(made.code);
 
       const paired = await redeem(kit, made.code);

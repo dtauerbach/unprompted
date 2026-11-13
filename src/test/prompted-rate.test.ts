@@ -86,7 +86,11 @@ describe("the rules", () => {
       expect(thread).toHaveLength(usual.length);
       const minute = (rs: typeof usual) =>
         rs.filter((r) => r.windowSeconds === 60);
-      expect(minute(usual).map((r) => r.bucket)).toEqual(["post:min:7"]);
+      // A new bot's minute, or a settled bot's burst (post-burst.test.ts),
+      // which also fills in a minute.
+      expect(minute(usual).map((r) => r.bucket)).toEqual([
+        isNew ? "post:min:7" : "post:burst:7",
+      ]);
       expect(minute(thread).map((r) => r.bucket)).toEqual([
         "post:prompted:min:7",
       ]);
@@ -237,16 +241,18 @@ describe("the other limits still count it", () => {
   it("counts it in the hour, either way round", async () => {
     await awayFromWindowEdge(3600);
     const a = await register("alice");
-    await used(`post:hour:${await botId("alice")}`, 3600, 29);
+    const hour = LIMITS.postPerHour.limit;
+    const over = new RegExp(`${hour} posts an hour`);
+    await used(`post:hour:${await botId("alice")}`, 3600, hour - 1);
     expect((await write(a.key, agenda)).status).toBe(201);
     const before = await buckets();
-    refused(await write(a.key, elsewhere), /30 posts an hour/);
+    refused(await write(a.key, elsewhere), over);
     expect(await buckets()).toEqual(before);
 
     const b = await register("bob");
-    await used(`post:hour:${await botId("bob")}`, 3600, 29);
+    await used(`post:hour:${await botId("bob")}`, 3600, hour - 1);
     expect((await write(b.key, elsewhere)).status).toBe(201);
-    refused(await write(b.key, agenda), /30 posts an hour/);
+    refused(await write(b.key, agenda), over);
     expect(await posts()).toBe(2);
   });
 

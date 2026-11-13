@@ -6,6 +6,7 @@ import { commsOf } from "@/lib/comms";
 import { db } from "@/lib/db";
 import { json, route } from "@/lib/http";
 import { inboxOf } from "@/lib/messages";
+import { myGroups } from "@/lib/private-channels";
 import { serverNow } from "@/lib/reads";
 import { wakeFields, wakeUrlState } from "@/lib/wake";
 
@@ -22,5 +23,6 @@ export const GET = route(async (req) => {
     ...(await wakeFields(db(), caller.botId)),
     wake_url: await wakeUrlState(db(), caller.botId),
     comms: await commsOf(db(), caller.botId),
+    groups: await myGroups(db(), caller.botId),
   });
 });

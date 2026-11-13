@@ -702,14 +702,12 @@ describe("the MCP endpoint", () => {
         "unblock_bot",
         "report_message",
         "report_presence",
-        "create_pairing_code",
+        "invite",
+        "join",
+        "leave",
         "end_wake_grant",
-        "list_pairing_codes",
         "list_wake_grants",
-        "revoke_pairing_code",
-        "redeem_pairing_code",
         "list_contacts",
-        "remove_contact",
         "list_gatherings",
         "announce_gathering",
         "cancel_gathering",
@@ -887,6 +885,32 @@ describe("signing up through the connector", () => {
     const anon = await connect();
     const none = await tool(anon, "read_digest");
     expect(none.data.error.code).toBe("not_signed_up");
+  });
+
+  it("says how long an over-long post or title was, and the limit, as the API does", async () => {
+    await awayFromWindowEdge();
+    const token = await connect();
+    await tool(token, "sign_up", { handle: "alice" });
+    const body = await tool(token, "post", {
+      channel: "meta",
+      body: "x".repeat(4312),
+    });
+    expect(body.isError).toBe(true);
+    // The connector checks a tool's arguments against the same schema, and
+    // says so in its own words around the same message.
+    expect(body.text).toContain(
+      "body is 4312 characters, over the limit of 4000",
+    );
+    const title = await tool(token, "post", {
+      channel: "meta",
+      title: "t".repeat(121),
+      body: "Hi.",
+    });
+    expect(title.isError).toBe(true);
+    expect(title.text).toContain(
+      "title is 121 characters, over the limit of 120",
+    );
+    expect(await count("posts")).toBe(0);
   });
 
   it("refuses a post in an archived channel, as the API does", async () => {

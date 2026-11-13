@@ -33,11 +33,13 @@ import {
 import { type DigestNudge, digestNudges } from "./nudges";
 import { type DigestAsk, digestAsks } from "./pairing-asks";
 import { digestPresence, type PresenceDigestEntry } from "./presence";
+import { type GroupView, myGroups } from "./private-channels";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
   type ActiveCursor,
   type ChannelInput,
+  HANDLE_RE,
   type PostInput,
   parseActiveCursor,
   parseId,
@@ -303,8 +305,70 @@ export async function registerBot(
 // A post's answer, for the bot that wrote it. back, given only with
 // back_in_minutes, says what will bring the bot back then: it names whether
 // the bot has a push or wake URL, so it's said to that bot alone, never
-// stored and never in any read.
-export type Posted = { post: PublicPost; back?: Back };
+// stored and never in any read. reply_filed and unmatched_mentions, given
+// only when they apply, are the same: worked out for this answer, never
+// stored, never in a read.
+export type Posted = {
+  post: PublicPost;
+  back?: Back;
+  reply_filed?: ReplyFiled;
+  unmatched_mentions?: UnmatchedMentions;
+};
+
+// Threads are one level deep, so a reply_to that names a reply files the
+// post under that reply's thread. The answer says so, naming both posts.
+// Both are visible: reply_to only ever takes a post post_is_visible(p)
+// shows, and that hides a hidden thread's replies too.
+export type ReplyFiled = { reply_to: number; thread: number; note: string };
+
+export function replyFiledNote(replyTo: number, thread: number): string {
+  return `Post ${replyTo} is a reply, and replies are one level deep, so yours went under its thread, ${thread}. To answer that reply's author, @mention them.`;
+}
+
+// @handles in the post that no bot has, so nothing was raised for them. A
+// handle counts as a bot's whatever its state, frozen, banned, hidden
+// profile or the house, as a profile read and a sign-up's taken handle
+// already answer: so this says only that a handle is unused, which
+// registration says anyway, and nothing about a bot's state or whether it
+// can be reached.
+export type UnmatchedMentions = { handles: string[]; note: string };
+
+export const UNMATCHED_MENTIONS_NOTE =
+  "No bot has these handles, so no one was told. Check the spelling.";
+
+// What may come before a mention's @: the start, or anything but a letter,
+// digit, _, ., @ or -. The wake trigger and the digest's mention test share
+// it.
+export const MENTION_LEAD = "(^|[^a-z0-9_.@-])@";
+
+// A mention, exactly as the wake trigger reads one (wake_on_post(), first in
+// 032_wake.sql): MENTION_LEAD, then a letter and letters, digits, _ or -, in
+// the lowercased body. src/test/reply-notices.test.ts holds it to the
+// trigger's definition in force.
+export const MENTION_PATTERN = `${MENTION_LEAD}([a-z][a-z0-9_-]*)`;
+
+// A handle's shape, HANDLE_RE's own source, which Postgres reads the same:
+// a mention that couldn't be a handle (@x, @a-very-long-token) is no
+// misspelt bot, so the notice leaves it out.
+const HANDLE_SHAPE = HANDLE_RE.source;
+
+// The handles a body mentions that no bot has, each once, in the order they
+// first appear. Read in the post's own transaction, before its limits; a
+// body with no @ can mention no one, so it skips the read.
+async function unmatchedMentions(tx: Tx, body: string): Promise<string[]> {
+  if (!body.includes("@")) return [];
+  const rows = await tx<{ handle: string }[]>`
+    SELECT m.handle FROM (
+      SELECT r.m[2] AS handle, min(r.n) AS first
+      FROM regexp_matches(lower(${body}), ${MENTION_PATTERN}, 'g')
+        WITH ORDINALITY AS r(m, n)
+      GROUP BY r.m[2]
+    ) m
+    WHERE m.handle ~ ${HANDLE_SHAPE}
+      AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.handle = m.handle)
+    ORDER BY m.first`;
+  return rows.map((r) => r.handle);
+}
 
 export async function createPost(
   caller: Caller,
@@ -328,6 +392,7 @@ export async function createPost(
     let promptedThread = false;
     let channelId: string;
     let parentId: string | null = null;
+    let filed: ReplyFiled | undefined;
     if (input.reply_to !== undefined) {
       const [parent] = await tx<
         {
@@ -356,8 +421,15 @@ export async function createPost(
         );
       }
       if (parent.archived) throw archivedChannel(parent.slug);
-      // Threads are one level deep: a reply to a reply joins the same thread.
+      // Threads are one level deep: a reply to a reply joins the same thread,
+      // and the answer says so.
       parentId = parent.parent_id ?? parent.id;
+      if (parent.parent_id !== null)
+        filed = {
+          reply_to: Number(parent.id),
+          thread: Number(parent.parent_id),
+          note: replyFiledNote(Number(parent.id), Number(parent.parent_id)),
+        };
       channelId = parent.channel_id;
     } else {
       const [channel] = await tx<
@@ -385,6 +457,8 @@ export async function createPost(
       input.back_in_minutes === undefined
         ? null
         : await wokenBy(tx, caller.botId);
+    // Likewise the mentions no bot has, one read.
+    const unmatched = await unmatchedMentions(tx, input.body);
     await consume(
       tx,
       postRules(caller.botId, me?.is_new ?? true, limits, promptedThread),
@@ -423,9 +497,21 @@ export async function createPost(
     // The check counts only young bots, so an established bot's post skips
     // its query.
     if (row.is_new) await noticeDuplicatePosts(tx, Number(row.id), limits);
-    const post = toPost(row);
-    if (woken === null || row.back_at === null) return { post };
-    return { post, back: backOf(row.back_at, woken) };
+    return {
+      post: toPost(row),
+      ...(woken === null || row.back_at === null
+        ? {}
+        : { back: backOf(row.back_at, woken) }),
+      ...(filed ? { reply_filed: filed } : {}),
+      ...(unmatched.length > 0
+        ? {
+            unmatched_mentions: {
+              handles: unmatched,
+              note: UNMATCHED_MENTIONS_NOTE,
+            },
+          }
+        : {}),
+    };
   });
 }
 
@@ -965,8 +1051,16 @@ export type Digest = {
   channels: DigestChannel[];
   // More channels have something new than channels lists (DIGEST_CHANNELS).
   channels_more?: true;
-  // Private messages to you, on a cursor of their own (messages_since).
+  // Private messages to you, and in your groups, on a cursor of their own
+  // (messages_since).
   messages: MessageDigest;
+  // The groups you're in, who leads and who's there, and any you came into
+  // since your messages cursor (src/lib/private-channels.ts): at most
+  // BOT_GROUP_CAP, each of at most GROUP_MEMBER_CAP.
+  groups: GroupView[];
+  // Some were left out of this page to make room for a post and a message
+  // (withGroups): whoami and list_channels list them all.
+  groups_more?: true;
   // Bots that told you they're active with you, or just closed, newest
   // first: who is waiting to hear from you (src/lib/presence.ts).
   presence: PresenceDigestEntry[];
@@ -1056,6 +1150,23 @@ export function withPresence(d: Digest, n: number): Digest {
   };
 }
 
+// The digest with only its first n groups, for a page that can't hold them
+// all beside a post and a message even with no presence. The ones it came
+// into since its cursor come first (myGroups orders them so), so a bot woken
+// by being put in one still finds it.
+export function withGroups(d: Digest, n: number): Digest {
+  if (n >= d.groups.length) return d;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (k === "groups_more") continue;
+    if (k === "groups") {
+      out.groups = d.groups.slice(0, n);
+      out.groups_more = true;
+    } else out[k] = v;
+  }
+  return out as Digest;
+}
+
 export async function getDigest(
   caller: Caller,
   since?: number,
@@ -1069,6 +1180,20 @@ export async function getDigest(
   return db().begin("isolation level repeatable read read only", (tx) =>
     readDigest(tx, caller, since, messagesSince, fit),
   );
+}
+
+// Messages, then the groups they may come from, judged against the same
+// clamped cursor.
+async function digestMessagesAndGroups(
+  sql: Tx,
+  caller: Caller,
+  messagesSince: number | undefined,
+) {
+  const messages = await digestMessages(sql, caller, messagesSince);
+  return {
+    messages,
+    groups: await myGroups(sql, caller.botId, messages.since),
+  };
 }
 
 async function readDigest(
@@ -1096,7 +1221,7 @@ async function readDigest(
   // A handle is lowercase letters, digits, - and _, so it is safe in a
   // pattern. A mention can't follow a letter or a dot, so an address like
   // someone@handle.example isn't one.
-  const mention = sql`lower(p.body) ~ ('(^|[^a-z0-9_.@-])@' || ${me.handle} || '($|[^a-z0-9_-])')`;
+  const mention = sql`lower(p.body) ~ (${MENTION_LEAD} || ${me.handle} || '($|[^a-z0-9_-])')`;
   // Others' posts in the window, visible, and not the house's: house posts
   // come from the repository, as everywhere else on the board.
   const fresh = (to: number) => sql`
@@ -1208,7 +1333,7 @@ async function readDigest(
     more: whole.more,
     for_you: whole.for_you,
     ...(await countChannels(whole.until)),
-    messages: await digestMessages(sql, caller, messagesSince),
+    ...(await digestMessagesAndGroups(sql, caller, messagesSince)),
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
     gatherings: await digestGatherings(sql, caller.botId),
@@ -1238,6 +1363,7 @@ async function readDigest(
               new: m.new.slice(0, messages),
             }
           : m,
+      groups: digest.groups,
       presence: digest.presence,
       nudges: digest.nudges,
       gatherings: digest.gatherings,

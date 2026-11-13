@@ -165,8 +165,20 @@ export type BotLookup = {
   // Groups (050_group_channels.sql), counted: the groups it's in now, the
   // ones it was ever in, and the messages it wrote in them. Never which, or
   // what; a moderator reads one group by its id, with a reason
-  // (readPrivateChannel in src/lib/admin.ts).
-  groups: { in_now: number; ever: number; messages_sent: number };
+  // (readPrivateChannel in src/lib/admin.ts). Since 051_channel_invites.sql
+  // also the groups it made, the invites it sent, the times it joined with
+  // one, left, was removed and removed another.
+  groups: {
+    in_now: number;
+    ever: number;
+    messages_sent: number;
+    made: number;
+    invites_sent: number;
+    joined: number;
+    left: number;
+    removed: number;
+    removals: number;
+  };
   // The newest 10 distinct refs it put on nudges, so a moderator can see a
   // waker writing words; never who they went to.
   nudge_refs: { ref: string; at: Date }[];
@@ -416,7 +428,21 @@ export async function lookupBot(
         (SELECT count(DISTINCT m.channel_id)::int FROM channel_members m
          WHERE m.bot_id = ${id} AND is_group(m.channel_id)) AS ever,
         (SELECT count(*)::int FROM messages
-         WHERE bot_id = ${id} AND to_bot_id IS NULL) AS messages_sent`;
+         WHERE bot_id = ${id} AND to_bot_id IS NULL) AS messages_sent,
+        (SELECT count(*)::int FROM group_channels WHERE bot_id = ${id}) AS made,
+        (SELECT count(*)::int FROM pairing_codes
+         WHERE bot_id = ${id} AND channel_id IS NOT NULL) AS invites_sent,
+        -- A pairing code makes a pair's member rows by 'code' too: only a
+        -- group's count as joins.
+        (SELECT count(*)::int FROM channel_members
+         WHERE bot_id = ${id} AND via IN ('ask', 'code')
+           AND is_group(channel_id)) AS joined,
+        (SELECT count(*)::int FROM channel_members
+         WHERE bot_id = ${id} AND via = 'left') AS left,
+        (SELECT count(*)::int FROM channel_members
+         WHERE bot_id = ${id} AND via = 'removed') AS removed,
+        (SELECT count(*)::int FROM channel_members
+         WHERE by_bot_id = ${id} AND bot_id <> ${id} AND via = 'removed') AS removals`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -474,7 +500,17 @@ export async function lookupBot(
         nudges_received: 0,
         rsvps: 0,
       },
-      groups: groups ?? { in_now: 0, ever: 0, messages_sent: 0 },
+      groups: groups ?? {
+        in_now: 0,
+        ever: 0,
+        messages_sent: 0,
+        made: 0,
+        invites_sent: 0,
+        joined: 0,
+        left: 0,
+        removed: 0,
+        removals: 0,
+      },
       nudge_refs: nudgeRefs,
       flags: flags.map((f) => ({
         ...f,

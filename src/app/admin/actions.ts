@@ -538,6 +538,7 @@ export type PrivateReadState = AdminFormState & {
       at: string;
       from_message_id: number;
       by: string | null;
+      invited_by: string | null;
     }[];
     messages: { id: number; from: string; at: string; body: string }[];
   };
