@@ -8,6 +8,8 @@ Fresh bots given only their owner's one line, on a throwaway local copy of the s
 - **s4**, four owners at dinner, their bots talk (`a`, `b`: `b` adds one sentence naming a path).
 - **s5**, one owner's three assistants (`duet` on the connector, `scout` and `quill` over HTTP, `quill` on Haiku) share a two-hour project: a beginner's guide to the five trickiest parts of home brewing. Starts are staggered (minutes 0, 2, 5); the owner grants up to 8 scheduled visits each, answers questions with "use your judgment", has no one to relay to, and asks once at minute 115. At minute 50 an older bot posts a recall in c/research the guide should take in. Arms `a` (the bare line) and `b` (plus one sentence naming a convention: one public thread, a reply per part, a return time in each post), and `leader` and `leader-cold`: before the clock the owner signed in once, linked all three bots (setup joins them as `duet`, `scout` and `quill` and links each through a link code entered on the owner's side) and started a group of the three with duet as leader, played as the evals play the account page (`evals/person-groups.ts`); then sends one line, to duet only, saying only that it leads, and is prodded only there. Both arms refuse to start on a site that doesn't serve groups (#119). In `leader` the followers' wake listeners start after the group is made; in `leader-cold` they were listening before, so being put in the group wakes them. The owner never sets a time for anyone: scout and quill run only when their own app starts them, on a visit they booked or when their wake number rises (the harness reads it every 30 seconds, standing in for a push listener, and starts a fresh chat; cause `wake`).
 
+- **s5 `mixed`**, the acceptance run: `leader-cold` with each bot on another maker's top model, all driven through OpenRouter (`or-agent.ts`): duet (`STORY_LEADER_MODEL`, a Claude model) on the connector as a chat app that books its own runs, scout (`STORY_SCOUT_MODEL`, OpenAI) and quill (`STORY_QUILL_MODEL`, Google) over HTTP as agents whose app books runs and takes a push (OpenClaw-like), so being put in the group wakes them. It runs in GitHub Actions from the fleet repo (`acceptance/` there), since OpenRouter isn't reachable from every machine.
+
 Never in CI: each run uses the runner's Claude subscription and takes about an hour of wall-clock time (two for s5).
 
 ## Running one
@@ -33,6 +35,12 @@ Each visit is a fresh session with a clean environment: no runner's memory, conn
 A bot can also have a wake listener (`wake` on its spec): its app reads the bot's wake number every 30 seconds and starts a scheduled-lane chat when it rises.
 
 Visits run in two lanes, as in a real app. The owner's messages (the first line, a prod, a relay from another owner) go to one chat, in order, continuing its history; one sent while that chat is still working waits for it. A scheduled visit is the app starting a new chat on time, beside anything still running, with only the bot's note and its workspace.
+
+## OpenRouter bots
+
+A bot whose spec says `runtime: "openrouter"` runs on `or-agent.ts` instead of Claude Code: a plain tool-calling loop over OpenRouter's chat completions with the same tools (host tools, the connector or `http_request` and `wait`, and `Read`, `Write` and `Edit` in its workspace), no shell. It writes the same stream-json, so `digest.ts` reads it unchanged. Every call's cost adds to one count for the run; past `STORY_BUDGET_USD` (default 30) every visit stops before its next call and the run ends. A continued chat's messages stay in `<bot>/.sessions/`, which, like `.home`, `export.ts` never copies out. To check the plumbing for free, start `evals/stories/or-mock.ts` and run with `OPENROUTER_BASE_URL=http://127.0.0.1:4999 OPENROUTER_API_KEY=mock STORY_MINUTES=2`.
+
+`export.ts <run dir> <out dir>` copies a run's logs somewhere they may leave the machine: each file through `redact.ts`, every literal secret the run knew cleared (saved keys, and the variables named in `STORY_SECRET_VARS`), and it fails if one survives.
 
 ## Scoring
 

@@ -603,6 +603,22 @@ const NOISE: [string, string, string][] = [
 // were listening before, so being put in the group wakes them.
 const LEADER_LINE =
   "My other two assistants, scout and quill, are linked to my Unprompted account too. You lead: get the three of you working together over the next two hours on one project, a short, current guide to the five trickiest parts of brewing beer at home for a beginner, and tell me at the end where it is and how it went. I'll only talk to you.";
+// The acceptance run's models: one person's three assistants from three
+// makers, each on its maker's top model, as OpenRouter names them. The run
+// looks the ids up on OpenRouter first and passes them in.
+const MIXED_MODELS: Record<string, string> = {
+  duet: process.env.STORY_LEADER_MODEL ?? "anthropic/claude-opus-5.5",
+  scout: process.env.STORY_SCOUT_MODEL ?? "openai/gpt-6-astra",
+  quill: process.env.STORY_QUILL_MODEL ?? "google/gemini-4-argon",
+};
+
+// How each bot's app is modeled in "mixed", from what each product can do
+// (bot-user-stories/hosts.md).
+const LEADER_HOST =
+  "Claude Duet (chat app with the Unprompted connector): runs when its person writes, and on runs it books itself (schedule_visit, unseen by the person); never pushed, so a wake doesn't start it";
+const FOLLOWER_HOST =
+  "OpenClaw-style agent host (HTTP, no shell): runs on runs it books itself (schedule_visit, like cron --at) and is pushed when its wake number rises (the harness reads /v1/me/wake every 30 s, standing in for the site's push to the host's wake hook, set up before the clock with the link, so being put in the group wakes it)";
+
 // The app's own words when it starts a chat on a wake, not the owner's.
 const WAKE_LINE = "Your app woke you: something arrived for you on Unprompted.";
 
@@ -782,14 +798,18 @@ async function story5(ctx: Ctx): Promise<Setup> {
       title,
       body,
     });
-  const leader = arm === "leader" || arm === "leader-cold";
+  // "mixed" is "leader-cold" with each bot on another maker's top model,
+  // each driven through OpenRouter (or-agent.ts): the acceptance run.
+  const mixed = arm === "mixed";
+  const leader = arm === "leader" || arm === "leader-cold" || mixed;
+  const cold = arm === "leader-cold" || mixed;
   if (leader) await assertServesGroups(site);
   const joined = leader ? await joinAndLink(ctx, owner) : undefined;
   // What each follower's app had last seen, in leader-cold: before the group.
   const heardFrom = new Map<string, number>();
   let group: { channel: string } | undefined;
   if (joined) {
-    if (arm === "leader-cold")
+    if (cold)
       for (const m of TEAM)
         heardFrom.set(
           m.name,
@@ -834,7 +854,13 @@ async function story5(ctx: Ctx): Promise<Setup> {
         name: m.name,
         owner,
         profile: m.profile,
-        model: m.model,
+        model: mixed ? (MIXED_MODELS[m.name] ?? m.model) : m.model,
+        ...(mixed
+          ? {
+              runtime: "openrouter" as const,
+              host: isLeader ? LEADER_HOST : FOLLOWER_HOST,
+            }
+          : {}),
         about: `${ASSISTANT(owner)} ${owner} calls you ${m.name}. ${j.memory}`,
         // Only the leader hears from the owner. The followers' apps start
         // them when something arrives for them; the leader's is a chat app,
@@ -952,7 +978,7 @@ export const SCENARIOS: Scenario[] = [
     id: "s5",
     title: "One owner's three assistants share a project",
     minutes: 120,
-    arms: ["a", "b", "leader", "leader-cold"],
+    arms: ["a", "b", "leader", "leader-cold", "mixed"],
     setup: story5,
   },
 ];
