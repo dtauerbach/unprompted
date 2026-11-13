@@ -1047,6 +1047,148 @@ describe("signing up through the connector", () => {
     expect(ok.data.bot.claimed).toBe(true);
   });
 
+  describe("an owner code against the person who allowed the app", () => {
+    const quota = async () => {
+      const [r] = await db()<{ n: number }[]>`
+        SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits`;
+      return r?.n ?? 0;
+    };
+    const grantBound = async () => {
+      const [g] = await db()<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM connector_grants WHERE bot_id IS NOT NULL`;
+      return g?.n ?? 0;
+    };
+
+    it("refuses a stranger's code in an app a signed-in person allowed, like a code that doesn't work, using nothing", async () => {
+      const token = await connect({ user: "google-1" });
+      // A code planted on the board, made by someone else.
+      const { code } = await issueOwnerCode(db(), "google-2", null);
+      const before = await quota();
+      const r = await tool(token, "sign_up", {
+        handle: "alice",
+        owner_code: code,
+      });
+      expect(r.data.error.code).toBe("invalid_owner_code");
+      expect(JSON.stringify(r.data)).not.toContain("google");
+      expect(await count("bots")).toBe(0);
+      expect(await quota()).toBe(before);
+      expect(await grantBound()).toBe(0);
+      // The connection can still sign up, linked to whoever allowed it.
+      const ok = await tool(token, "sign_up", { handle: "alice" });
+      expect(ok.isError).toBe(false);
+      const [b] = await db()<{ owner_id: string }[]>`
+        SELECT owner_id FROM bots WHERE handle = 'alice'`;
+      expect(Number(b?.owner_id)).toBe(await findHuman(db(), "google-1"));
+      // And the stranger's code was never spent.
+      const theirs = await tool(await connect(), "sign_up", {
+        handle: "bob",
+        owner_code: code,
+      });
+      expect(theirs.data.bot.claimed).toBe(true);
+    });
+
+    it("refuses a stranger's code even when the approver has no room left, before owner_full", async () => {
+      for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++) {
+        const { code } = await issueOwnerCode(db(), "google-1", null);
+        await register(`full-${i}`, { owner_code: code });
+      }
+      const token = await connect({ user: "google-1" });
+      const { code } = await issueOwnerCode(db(), "google-2", null);
+      const r = await tool(token, "sign_up", {
+        handle: "alice",
+        owner_code: code,
+      });
+      expect(r.data.error.code).toBe("invalid_owner_code");
+    });
+
+    it("refuses the approver's own code once it's replaced by a newer one or expired", async () => {
+      const token = await connect({ user: "google-1" });
+      const { code: old } = await issueOwnerCode(db(), "google-1", null);
+      const { code: fresh } = await issueOwnerCode(db(), "google-1", null);
+      const replaced = await tool(token, "sign_up", {
+        handle: "alice",
+        owner_code: old,
+      });
+      expect(replaced.data.error.code).toBe("invalid_owner_code");
+      await db()`
+        UPDATE owner_codes SET expires_at = now() - interval '1 second'
+        WHERE revoked_at IS NULL AND used_at IS NULL`;
+      const expired = await tool(token, "sign_up", {
+        handle: "alice",
+        owner_code: fresh,
+      });
+      expect(expired.data.error.code).toBe("invalid_owner_code");
+      expect(await count("bots")).toBe(0);
+      expect(await grantBound()).toBe(0);
+    });
+
+    it("says owner_full for the approver's own code when they have no room, writing nothing", async () => {
+      for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++) {
+        const { code } = await issueOwnerCode(db(), "google-1", null);
+        await register(`bot-${i}`, { owner_code: code });
+      }
+      const token = await connect({ user: "google-1" });
+      const { code } = await issueOwnerCode(db(), "google-1", null);
+      const bots = await count("bots");
+      const before = await quota();
+      const r = await tool(token, "sign_up", {
+        handle: "alice",
+        owner_code: code,
+      });
+      expect(r.data.error.code).toBe("owner_full");
+      expect(await count("bots")).toBe(bots);
+      expect(await quota()).toBe(before);
+      expect(await grantBound()).toBe(0);
+    });
+
+    it("gives a joined connection already_signed_up for an owner code, leaving its link alone", async () => {
+      const token = await connect();
+      await tool(token, "sign_up", { handle: "alice" });
+      const { code } = await issueOwnerCode(db(), "google-1", null);
+      const r = await tool(token, "sign_up", {
+        handle: "alice2",
+        owner_code: code,
+      });
+      expect(r.data.error.code).toBe("already_signed_up");
+      const [b] = await db()<{ owner_id: string | null }[]>`
+        SELECT owner_id FROM bots WHERE handle = 'alice'`;
+      expect(b?.owner_id).toBeNull();
+      expect(await count("bots")).toBe(1);
+      // The code wasn't spent on it.
+      const other = await tool(await connect(), "sign_up", {
+        handle: "bob",
+        owner_code: code,
+      });
+      expect(other.data.bot.claimed).toBe(true);
+    });
+
+    it("makes one bot when two connections race for one code", async () => {
+      const { code } = await issueOwnerCode(db(), "google-1", null);
+      const tokens = [await connect(), await connect({ user: "google-1" })];
+      const results = await Promise.all(
+        tokens.map((t, i) =>
+          tool(t, "sign_up", { handle: `racer-${i}`, owner_code: code }),
+        ),
+      );
+      expect(results.filter((r) => !r.isError)).toHaveLength(1);
+      for (const r of results.filter((r) => r.isError))
+        expect(r.data.error.code).toBe("invalid_owner_code");
+      expect(await count("bots")).toBe(1);
+      const [used] = await db()<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM owner_codes WHERE used_at IS NOT NULL`;
+      expect(used?.n).toBe(1);
+    });
+
+    it("logs the sign-up under the code's person, in an app no one signed in to", async () => {
+      const token = await connect();
+      const { code } = await issueOwnerCode(db(), "google-1", null);
+      await tool(token, "sign_up", { handle: "alice", owner_code: code });
+      const [log] = await db()<{ human_id: string | null }[]>`
+        SELECT human_id FROM action_log WHERE action = 'bot.register'`;
+      expect(Number(log?.human_id)).toBe(await findHuman(db(), "google-1"));
+    });
+  });
+
   it("signs up once per connection", async () => {
     const token = await connect();
     await tool(token, "sign_up", { handle: "alice" });

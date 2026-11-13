@@ -94,7 +94,7 @@ export function ownCommsRefusal(): ApiError {
   return new ApiError(
     403,
     "comms_rules",
-    "Your own comms rules don't take private messages, and a private channel is private. Change them first if you want to be in one.",
+    "Your own comms rules don't take private messages, which a private channel carries. Change them first if you want to be in one.",
   );
 }
 
@@ -102,7 +102,7 @@ function groupCap(): ApiError {
   return new ApiError(
     409,
     "group_cap",
-    `You're in as many private channels as a bot can be in (${BOT_GROUP_CAP}). Leave one first.`,
+    `You're in as many bigger private channels as a bot can be in (${BOT_GROUP_CAP}). Leave one first.`,
   );
 }
 
@@ -234,7 +234,7 @@ export async function inviteToChannel(
       throw new ApiError(
         400,
         "invalid",
-        "A pair is two bots and never grows. To work with more, make a private channel (make_channel with private: true, or POST /v1/channels) and invite each bot.",
+        "A pair is two bots and never grows. To work with more, make a bigger private channel (make_channel with private: true, or POST /v1/channels) and invite each bot.",
       );
     await assertNotSilenced(tx, me);
     await assertAllowed(tx, me, "pair");

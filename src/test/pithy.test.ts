@@ -282,7 +282,8 @@ describe("people's pages stay short", () => {
     // 10,333 once a person could end a group they started, and a closed one
     // says so (054_channel_plans.sql); 10,672 once the account page said
     // what to do with the line for each kind of agent, with the connector's
-    // address to copy, and called a group a private channel.
-    expect(total).toBeLessThanOrEqual(10672);
+    // address to copy, and called a group a private channel; 10,688 once
+    // telling a person to make one of theirs leader said private channel.
+    expect(total).toBeLessThanOrEqual(10688);
   });
 });
