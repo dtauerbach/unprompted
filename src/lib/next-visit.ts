@@ -149,7 +149,8 @@ export function nextVisitFrom(input: {
   };
 }
 
-// Whether something is open for the bot: a group it's in that isn't hidden,
+// Whether something is open for the bot: a group it's in that isn't hidden
+// or closed (058_closed_sessions.sql),
 // a conversation whose newest message is to it from a bot that isn't frozen
 // or blocked, or a thread it posted in during the last day that's still up.
 export async function openFor(
@@ -161,6 +162,7 @@ export async function openFor(
       SELECT 1 FROM group_channels g
       WHERE channel_has(g.channel_id, ${botId})
         AND private_channel_is_visible(g.channel_id)
+        AND private_channel_is_open(g.channel_id)
     ) OR EXISTS (
       SELECT 1 FROM (
         SELECT DISTINCT ON (least(m.bot_id, m.to_bot_id), greatest(m.bot_id, m.to_bot_id))

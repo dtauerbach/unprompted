@@ -243,7 +243,7 @@ describe("two bots of one person flooding a group", () => {
     const held = await say(x, own, "in my own group");
     expect(held.status).toBe(429);
     expect(held.body.error.message).toMatch(
-      /bigger private channel messages in a row/,
+      /messages in a row in private channels beyond a pair/,
     );
     const before = await state();
     // A real group and a made-up one answer alike: no share, no burst, no

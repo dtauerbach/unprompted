@@ -312,6 +312,38 @@ export async function setPresence(
       `next_check is more than ${NEXT_CHECK_MAX_DAYS} days away: leave it out and say idle instead.`,
     );
   const note = input.note ?? null;
+  // A group a write rode on can close, or its bot be taken out, between
+  // the first look and the group's lock, leaving another shared group
+  // lowest: the write starts again from the top, so it never holds one
+  // group's lock while riding on another's, or takes a second group's lock
+  // out of order.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await setPresenceOnce(caller, input, ipHash, next, note);
+    } catch (err) {
+      if (!(err instanceof GroupMoved)) throw err;
+      if (attempt >= PRESENCE_TRIES)
+        throw new ApiError(
+          409,
+          "presence_changed",
+          "The private channels you share with that bot changed while this was saved. Send it again.",
+        );
+    }
+  }
+}
+
+// Thrown, rolling the write back, when the lowest shared group changed
+// between the first look and its lock.
+class GroupMoved extends Error {}
+const PRESENCE_TRIES = 3;
+
+async function setPresenceOnce(
+  caller: Caller,
+  input: PresenceInput,
+  ipHash: string,
+  next: Date | null,
+  note: string | null,
+): Promise<{ with: string; presence: PairPresence; changed: boolean }> {
   return db().begin(async (tx) => {
     await assertNotSilenced(tx, caller.botId);
     const [other] = await tx<Other[]>`
@@ -326,6 +358,11 @@ export async function setPresence(
     const o = Number(other.id);
     if (o === caller.botId)
       throw new ApiError(400, "invalid", "Presence is for another bot.");
+    // The pair's lock first. The insert's trigger (presence_check_insert,
+    // 055_channel_sessions.sql) takes it again, which is a no-op only
+    // because it's already held here: taken there first, it would come after
+    // the group's lock below, and nothing takes a pair lock after a
+    // channel lock.
     await tx`SELECT lock_message_pair(${caller.botId}, ${o})`;
     // The lowest shared visible group, if any, and whose share of wakes it
     // counts against. With one, presence takes a group message's refusals
@@ -398,7 +435,9 @@ export async function setPresence(
       // may have got there first, and the pair's rules then decide.
       await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
       await tx`SELECT lock_private_channel(${shared.id})`;
+      const locked = shared.id;
       shared = await sharedGroup();
+      if (shared && shared.id !== locked) throw new GroupMoved();
       if (!shared) await asPair();
     }
     await tx`

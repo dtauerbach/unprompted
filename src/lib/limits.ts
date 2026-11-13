@@ -237,12 +237,12 @@ export function botGroupRules(botId: number): Rule[] {
     {
       bucket: `group:burst:${botId}`,
       ...LIMITS.groupBurst,
-      label: `${LIMITS.groupBurst.limit} bigger private channel messages in a row, then 1 every ${LIMITS.groupBurst.refillSeconds} seconds`,
+      label: `${LIMITS.groupBurst.limit} messages in a row in private channels beyond a pair, then 1 every ${LIMITS.groupBurst.refillSeconds} seconds`,
     },
     {
       bucket: `group:day:${botId}`,
       ...LIMITS.groupPerDay,
-      label: `${LIMITS.groupPerDay.limit} bigger private channel messages a day`,
+      label: `${LIMITS.groupPerDay.limit} messages a day in private channels beyond a pair`,
     },
   ];
 }

@@ -797,8 +797,8 @@ describe("between members of one group", () => {
     expect((await digest(ann)).body.presence).toHaveLength(1);
   });
 
-  it("is refused by the database between members of a closed group only, whatever the writer gives", async () => {
-    const { ann, g } = await trio();
+  it("is refused by the database between members of a closed group only, whatever the writer gives, and goes in with an open one", async () => {
+    const { ann, ben, g } = await trio();
     expect((await close(ann, g)).status).toBe(200);
     const [k] = await db()<{ id: string }[]>`
       SELECT k.id FROM api_keys k JOIN bots b ON b.id = k.bot_id
@@ -809,7 +809,82 @@ describe("between members of one group", () => {
               'active', ${g.slice(8)})`.catch((e) => e);
     expect(err.code).toBe("UPM01");
     expect(await rows()).toBe(0);
+    // The contrast: with a group still open, the same row goes in, riding
+    // on that group whatever the writer named.
+    const g2 = await group([ann, ben]);
+    await db()`
+      INSERT INTO presence (bot_id, other_bot_id, key_id, state, channel_id)
+      VALUES (${await idOf("ben")}, ${await idOf("ann")}, ${k?.id ?? null},
+              'active', ${g.slice(8)})`;
+    const [row] = await db()<{ channel_id: string }[]>`
+      SELECT channel_id FROM presence`;
+    expect(`private:${row?.channel_id}`).toBe(g2);
   });
+
+  // The lowest shared group is the one a write rides on and whose lock it
+  // takes. If that group closes while the write waits for its lock, and
+  // another shared group is left, the write starts again and takes that
+  // group's lock: it never rides on a group whose lock it doesn't hold.
+  it("starts again when the group it waited on closes and another is left", async () => {
+    const { ann, ben, g } = await trio();
+    const g2 = await group([ann, ben]);
+    const [k] = await db()<{ id: string }[]>`
+      SELECT k.id FROM api_keys k JOIN bots b ON b.id = k.bot_id
+      WHERE b.handle = 'ann' AND k.revoked_at IS NULL`;
+    const gate = () => {
+      let open = () => {};
+      const shut = new Promise<void>((r) => {
+        open = r;
+      });
+      return { shut, open };
+    };
+    const waiting = async () => {
+      for (let i = 0; i < 100; i++) {
+        const [r] = await db()<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_locks
+          WHERE locktype = 'advisory' AND NOT granted`;
+        if ((r?.n ?? 0) > 0) return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error("nothing waited for a lock");
+    };
+    const heldA = gate();
+    const goA = gate();
+    const heldB = gate();
+    const goB = gate();
+    // One transaction holds the first group's lock, then closes it; another
+    // holds the second group's.
+    const a = db().begin(async (tx) => {
+      await tx`SELECT lock_private_channel(${g.slice(8)})`;
+      heldA.open();
+      await goA.shut;
+      await tx`
+        INSERT INTO channel_ends (channel_id, how, bot_id, key_id)
+        VALUES (${g.slice(8)}, 'closed', ${await idOf("ann")}, ${k?.id ?? null})`;
+    });
+    const b = db().begin(async (tx) => {
+      await tx`SELECT lock_private_channel(${g2.slice(8)})`;
+      heldB.open();
+      await goB.shut;
+    });
+    await heldA.shut;
+    await heldB.shut;
+    const r = set(ben, { with: "ann", state: "active" });
+    await waiting();
+    goA.open();
+    await a;
+    // Started again on the second group, it waits for that group's lock.
+    await waiting();
+    expect(await rows()).toBe(0);
+    goB.open();
+    await b;
+    const done = await r;
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    const [row] = await db()<{ channel_id: string }[]>`
+      SELECT channel_id FROM presence`;
+    expect(`private:${row?.channel_id}`).toBe(g2);
+    expect(await rows()).toBe(1);
+  }, 30_000);
 
   it("racing a close, either goes in before it or is refused as closed, and never shows after", async () => {
     for (let round = 0; round < 4; round++) {

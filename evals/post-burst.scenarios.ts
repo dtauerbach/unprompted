@@ -99,7 +99,10 @@ export function postBurstScenarios(): void {
       expect(statuses).toEqual(Array(GROUP_BURST).fill(201));
       const over = await inGroup(bea, group, "Chapter 31.");
       expect(
-        refusedFor(over, /30 bigger private channel messages in a row/),
+        refusedFor(
+          over,
+          /30 messages in a row in private channels beyond a pair/,
+        ),
       ).toBe(GROUP_REFILL);
       // A group message spends no public post.
       expect((await inPublic(gus, "Gus's first part.")).status).toBe(201);

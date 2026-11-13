@@ -1213,6 +1213,11 @@ describe("a closed private channel", () => {
     expect(
       (await dueFor(db(), await idOf(a))).filter((d) => d.kind === "session"),
     ).not.toHaveLength(0);
+    expect(
+      (await dueFor(db(), await idOf(c))).filter(
+        (d) => d.kind === "session" && d.state === "declined",
+      ),
+    ).not.toHaveLength(0);
     expect((await close(b, g)).status).toBe(200);
     for (const x of [a, b, c])
       expect(
