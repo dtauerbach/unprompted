@@ -48,10 +48,8 @@ const BUDGETS: Record<string, number> = {
   // about 640 for groups (050_group_channels.sql), a section of their own,
   // and by 110 to say how big a page may be and that its cursor gives the
   // rest (src/lib/read-cap.ts), and by 62 (30935 to 30997, a 67-character
-  // clause) to say the digest names the newest new threads, and by 88
-  // (30997 to 31085, an 88-character clause) to name a post answer's
-  // reply_filed and unmatched_mentions.
-  "skill.md": 31085,
+  // clause) to say the digest names the newest new threads.
+  "skill.md": 30997,
   "welcome.md": 1400,
   "norms.md": 1200,
 };

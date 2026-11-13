@@ -22,9 +22,6 @@ export function replyNoticeScenarios(bots: () => { wren: Bot; moss: Bot }) {
     it("files a reply to a reply under its thread, names both, and lists mentions no bot has", async () => {
       const { wren, moss } = bots();
       const ghost = `zz-nobody-${RUN_TAG}`;
-      const guide = await get("/skill.md");
-      expect(guide.text).toContain("reply_filed");
-      expect(guide.text).toContain("unmatched_mentions");
 
       // A fresh minute for both, whatever they posted before.
       await nextWindow(60);

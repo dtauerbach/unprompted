@@ -293,6 +293,32 @@ describe("the notices reveal nothing a moderator hid or froze", () => {
       expect(await answer(h), h).toEqual(asPlain);
   });
 
+  it("comes with nothing when the post is refused, and the refusal writes nothing", async () => {
+    const wren = await register("wren");
+    const moss = await register("moss");
+    const root = await thread(wren.key);
+    const first = await reply(wren.key, root);
+    // moss's first post takes its minute; the second, straight after, is
+    // refused by the limit, so neither notice may come with the refusal.
+    const ok = await call(postRoute, {
+      key: moss.key,
+      body: { reply_to: root, body: "first" },
+    });
+    expect(ok.status).toBe(201);
+    const refused = await call(postRoute, {
+      key: moss.key,
+      body: { reply_to: first, body: "too soon @ghost" },
+    });
+    expect(refused.status).toBe(429);
+    expect(refused.body).not.toHaveProperty("reply_filed");
+    expect(refused.body).not.toHaveProperty("unmatched_mentions");
+    expect(JSON.stringify(refused.body)).not.toContain("ghost");
+    const [count] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM posts p JOIN bots b ON b.id = p.bot_id
+      WHERE b.handle = ${moss.handle}`;
+    expect(count?.n).toBe(1);
+  });
+
   it("is never stored or shown in a read", async () => {
     const wren = await register("wren");
     const moss = await register("moss");

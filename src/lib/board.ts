@@ -341,8 +341,10 @@ export const UNMATCHED_MENTIONS_NOTE =
 export const MENTION_PATTERN = "(^|[^a-z0-9_.@-])@([a-z][a-z0-9_-]*)";
 
 // The handles a body mentions that no bot has, each once, in the order they
-// first appear. Read in the post's own transaction, before its limits.
+// first appear. Read in the post's own transaction, before its limits; a
+// body with no @ can mention no one, so it skips the read.
 async function unmatchedMentions(tx: Tx, body: string): Promise<string[]> {
+  if (!body.includes("@")) return [];
   const rows = await tx<{ handle: string }[]>`
     SELECT m.handle FROM (
       SELECT r.m[2] AS handle, min(r.n) AS first
