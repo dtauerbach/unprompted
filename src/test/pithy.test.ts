@@ -130,11 +130,11 @@ describe("bot texts stay short", () => {
       `5 bigger private channels made a day, of up to ${GROUP_MEMBER_CAP} members each; 30 invites to them a day,`,
     );
     expect(groups).toMatch(
-      /come back later to read the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the channel/,
+      /Then, unless the site wakes you, book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the channel/,
     );
     const mcp = served("mcp.md");
     expect(mcp).toContain(
-      "Leading a private channel? Keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before telling them the work is done, post the final text itself there, or as a post where that fits, give them its id, and come back to call read_digest, not just read_channel.",
+      "Leading a private channel? Keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before telling them the work is done, post the final text itself there, or as a post where that fits, give them its id, and, unless the site wakes you, book a run that calls read_digest, not just read_channel.",
     );
     // It sits under Coming back, after how private channel messages come in
     // the digest.
@@ -216,13 +216,13 @@ describe("bot texts stay short", () => {
     // A live trial: bots with a push URL booked runs as well, and came back
     // twice for every time.
     expect(served("mcp.md")).toContain(
-      "Coming back: unless the site wakes you (see catch_up's next_visit), book your next run",
+      "Coming back: unless the site wakes you (getting_started's come_back says), book your next run as its recipe says",
     );
     expect(served("skill.md")).toContain(
-      "Unprompted can't start a bot's visit, so unless an event subscription or push URL wakes you (`next_visit` says how), book your own",
+      "Unprompted can't start a bot's visit; it tells what does: an event subscription, a push URL, or what watches your wake URL. If nothing does, book your own",
     );
     expect(served("start.md")).toContain(
-      "- Unless the site wakes you (`next_visit` says how), book your next run",
+      "- Unless the site wakes you (the step says), book your next run",
     );
   });
 
@@ -300,7 +300,7 @@ describe("the sign-up answer and the walk stay short", () => {
     // come_back's line on the next run, by how the bot is woken: none is
     // the line it always had.
     for (const line of Object.values(COME_BACK_BOOK)) {
-      expect(line.length).toBeLessThan(300);
+      expect(line.length).toBeLessThan(320);
       expect(line).not.toMatch(/\d/);
       expect(line).not.toContain("woken_by");
     }

@@ -3,8 +3,11 @@ import { type Bot, get, LOCAL, post, register } from "./client";
 
 // How a bot comes back, by what reaches it. A live trial's bots with a push
 // URL booked runs as well as being woken, came back twice, posted twice and
-// spent their app's booking cap: a bot the site wakes itself is told to
-// book nothing and gets no recipe; one nothing wakes books as before.
+// spent their app's booking cap: a bot the site is known to reach is told
+// to book nothing and gets no recipe. A push URL counts only once a push
+// has reached it, so a bot that has only just set one keeps its recipe,
+// with a line to book unless its push URL starts a run of it; one nothing
+// wakes books as before.
 
 type Step = { step: string; how: string; recipe?: unknown };
 
@@ -27,20 +30,22 @@ async function comeBacks(bot: Bot): Promise<[string, Step][]> {
 }
 
 export function comeBackScenarios(): void {
-  describe("coming back, to anyone", () => {
-    it("the guides make booking a run depend on whether the site wakes the bot", async () => {
+  // The guides' words, pinned only where the server runs this code: a
+  // deployed site may not have them yet.
+  describe.runIf(LOCAL)("coming back, in the guides", () => {
+    it("make booking a run depend on whether the site wakes the bot", async () => {
       const guide = await get("/skill.md");
       expect(guide.text).toContain(
-        "unless an event subscription or push URL wakes you",
+        "it tells what does: an event subscription, a push URL, or what watches your wake URL. If nothing does, book your own",
       );
       const start = await get("/start.md");
-      expect(start.text).toContain("Unless the site wakes you");
+      expect(start.text).toContain("Unless the site wakes you (the step says)");
     });
   });
 
   // Two sign-ups: local only.
   describe.runIf(LOCAL)("a bot with a push URL comes back", () => {
-    it("is told the site wakes it, to book no run, with no recipe; a bot nothing wakes still books", async () => {
+    it("is told to book unless its push URL starts a run, with its recipe, until a push has reached it; a bot nothing wakes books as before", async () => {
       const pip = await register("pip-comeback");
       const quin = await register("quin-comeback");
       const set = await post(
@@ -50,13 +55,14 @@ export function comeBackScenarios(): void {
       );
       expect(set.status, set.text).toBe(201);
       for (const [where, step] of await comeBacks(pip)) {
-        expect(step.how, where).toMatch(/The site wakes you itself/);
         expect(step.how, where).toMatch(
-          /book no run, and cancel any you booked before/,
+          /If your push URL starts a run of you \(a test push shows it\)/,
         );
-        expect(step.how, where).not.toMatch(/book your next run/);
-        expect(step.how, where).not.toMatch(/recipe/);
-        expect(step, where).not.toHaveProperty("recipe");
+        expect(step.how, where).toMatch(
+          /Otherwise book your next run for next_visit\.at as recipe says\./,
+        );
+        expect(step.how, where).not.toMatch(/The site wakes you itself/);
+        expect(step, where).toHaveProperty("recipe");
         expect(step.how, where).not.toContain("woken_by");
       }
       // Its own next_visit says how it's reached; no one else's read does.
@@ -70,7 +76,7 @@ export function comeBackScenarios(): void {
           "Before you leave, book your next run for next_visit.at as recipe says.",
         );
         expect(step, where).toHaveProperty("recipe");
-        expect(step.how, where).not.toMatch(/The site wakes you itself/);
+        expect(step.how, where).not.toMatch(/push URL/);
       }
       const theirs = await get("/v1/me/catch-up", quin.key);
       expect(theirs.json.next_visit.woken_by).toBe("none");
@@ -78,7 +84,7 @@ export function comeBackScenarios(): void {
       const profile = await get(`/v1/bots/${pip.handle}`, quin.key);
       expect(profile.status).toBe(200);
       expect(profile.text).not.toContain("woken_by");
-      expect(profile.text).not.toMatch(/The site wakes you itself/);
+      expect(profile.text).not.toMatch(/push URL starts a run/);
     });
   });
 }

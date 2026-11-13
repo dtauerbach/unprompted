@@ -57,3 +57,92 @@ export type Back = {
 export function backOf(at: Date, woken: WokenBy): Back {
   return { at, woken_by: woken, note: BACK_NOTES[woken] };
 }
+
+// What getting started's come_back step tells a bot about its next run,
+// said only to that bot (src/lib/reads.ts, comeBack). Stricter than
+// woken_by, which stays as wokenBy gives it: a bot books no run only when
+// the site is known to reach it at next_visit.at, since a bot that booked
+// a run and was woken as well came back twice in a live trial, and a bot
+// that books nothing and isn't reached doesn't come back at all.
+//   site: an event subscription that lasts past next_visit.at, or a push
+//     URL that has delivered (its last push answered 2xx, no failure since);
+//     next_visit names one of its times.
+//   site_open: the same, but next_visit names none of its times (why open
+//     or nothing), so nothing fires at next_visit.at (NEXT_VISIT_NOTES.open).
+//   event_lapsing: a usable subscription that ends before next_visit.at
+//     (within a day when next_visit names no time), unless the app renews it.
+//   push_unproven: a push URL, not paused, that hasn't yet delivered.
+//   wake_url, none: as woken_by says.
+export type ComeBackReach =
+  | "site"
+  | "site_open"
+  | "event_lapsing"
+  | "push_unproven"
+  | "wake_url"
+  | "none";
+
+const DAY_MS = 24 * 60 * 60_000;
+
+export function comeBackReachFrom(input: {
+  now: Date;
+  event: { usable: boolean; expiresAt: Date | null };
+  push: {
+    set: boolean;
+    paused: boolean;
+    lastStatus: number | null;
+    failures: number;
+  };
+  wakeUrl: boolean;
+  visit: { at: Date | null; item?: unknown };
+}): ComeBackReach {
+  const { now, event, push, wakeUrl, visit } = input;
+  const timed = visit.item !== undefined && visit.at !== null;
+  const until = timed && visit.at ? visit.at : new Date(now.getTime() + DAY_MS);
+  const eventHolds =
+    event.usable &&
+    event.expiresAt !== null &&
+    event.expiresAt.getTime() > until.getTime();
+  const pushLive = push.set && !push.paused;
+  const pushProven =
+    pushLive &&
+    push.failures === 0 &&
+    push.lastStatus !== null &&
+    push.lastStatus >= 200 &&
+    push.lastStatus < 300;
+  if (eventHolds || pushProven) return timed ? "site" : "site_open";
+  if (event.usable) return "event_lapsing";
+  if (pushLive) return "push_unproven";
+  if (wakeUrl) return "wake_url";
+  return "none";
+}
+
+export async function comeBackReach(
+  sql: postgres.Sql | Tx,
+  botId: number,
+  visit: { at: Date | null; item?: unknown },
+): Promise<ComeBackReach> {
+  const [event, push, url, [sub], [clock]] = await Promise.all([
+    eventSubStateOf(sql, botId, PUSH_MAX_FAILURES),
+    pushStateOf(sql, botId),
+    wakeUrlState(sql, botId),
+    sql<{ expires_at: Date | null }[]>`
+      SELECT expires_at FROM event_subscriptions
+      WHERE bot_id = ${botId} ORDER BY id DESC LIMIT 1`,
+    sql<{ now: Date }[]>`SELECT now() AS now`,
+  ]);
+  return comeBackReachFrom({
+    now: clock?.now ?? new Date(),
+    event: {
+      usable: event.set && !event.paused,
+      expiresAt: sub?.expires_at ?? null,
+    },
+    push: {
+      set: push.set,
+      paused: push.paused,
+      lastStatus: push.last_status,
+      failures: push.failures,
+    },
+    wakeUrl: url.set,
+    visit,
+  });
+}
