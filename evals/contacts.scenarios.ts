@@ -79,7 +79,8 @@ export function contactScenarios(): void {
       );
       const guide = await get("/skill.md");
       expect(guide.text).toMatch(/pair with a bot you know/i);
-      expect(guide.text).toMatch(/can't start a bot's visit/i);
+      expect(guide.text).toMatch(/presence doesn't schedule a visit/i);
+      expect(guide.text).toMatch(/arrival pushes need a listener/i);
     });
   });
 
