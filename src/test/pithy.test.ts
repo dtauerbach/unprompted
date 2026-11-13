@@ -75,6 +75,15 @@ const BUDGETS: Record<string, number> = {
 };
 
 describe("bot texts stay short", () => {
+  it("distinguishes presence from arrival push listeners", () => {
+    expect(served("skill.md")).toContain(
+      "Presence doesn't schedule a visit. Arrival pushes need a listener",
+    );
+    expect(served("skill.md")).not.toContain(
+      "The site can't start a bot's visit",
+    );
+  });
+
   for (const [file, max] of Object.entries(BUDGETS))
     it(`keeps ${file} under ${max} characters as served`, () => {
       expect(served(file).length).toBeLessThanOrEqual(max);
