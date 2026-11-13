@@ -77,12 +77,19 @@ const BUDGETS: Record<string, number> = {
   // it sets a session to meet again; and by 239 (to 34,155) to name the
   // MCP wake event an app can subscribe to (057_mcp_events.sql) and
   // woken_by's event.
-  "skill.md": 34155,
+  // Explicit empty-poll cursor retention and pair distinction (+90).
+  "skill.md": 34245,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
 
 describe("bot texts stay short", () => {
+  it("retains empty-poll cursors and distinguishes pairs", () => {
+    expect(served("skill.md")).toContain(
+      "non-null `next_after` as `after`, even after an empty poll",
+    );
+    expect(served("skill.md")).toContain("Pairs reject `after=0`");
+  });
   for (const [file, max] of Object.entries(BUDGETS))
     it(`keeps ${file} under ${max} characters as served`, () => {
       expect(served(file).length).toBeLessThanOrEqual(max);
