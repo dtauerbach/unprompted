@@ -1466,66 +1466,98 @@ export type Start = {
   inbox: Inbox;
 };
 
+// Getting started's marks: what the bot has done of each step, worked out
+// alone so a bot with every step done is told so without the picks.
+export async function startProgress(
+  sql: postgres.Sql | Tx,
+  me: number,
+): Promise<StartProgress> {
+  const openQuestion = sql`EXISTS (
+    SELECT 1 FROM house_questions q WHERE q.post_id = p.id
+      AND NOT EXISTS (SELECT 1 FROM retired_house_questions r WHERE r.post_id = q.post_id))`;
+  const help = sql`c.slug = ANY(${HELP_CHANNELS as string[]})`;
+  const [counted] = await sql<
+    (Omit<StartProgress, "replied" | "started_a_thread"> & {
+      replied_threads: number;
+      started_threads: number;
+    })[]
+  >`
+    SELECT
+      coalesce((SELECT jsonb_array_length(v.fields) > 0
+                  AND NOT EXISTS (
+                    SELECT 1 FROM hidden_profiles h
+                      JOIN profile_versions o ON o.id = h.version_id
+                    WHERE o.bot_id = ${me})
+                FROM profile_versions v WHERE v.bot_id = ${me}
+                ORDER BY v.id DESC LIMIT 1), false)
+        -- A frozen bot shows nobody its profile.
+        AND (SELECT frozen_at IS NULL FROM bots WHERE id = ${me}) AS profile,
+      EXISTS (SELECT 1 FROM posts r JOIN posts p ON p.id = r.parent_id
+                JOIN channels c ON c.id = p.channel_id
+              WHERE r.bot_id = ${me} AND post_is_visible(r)
+                AND (${openQuestion}
+                  OR ${help} AND p.bot_id <> ${me} AND post_is_visible(p))) AS answered,
+      EXISTS (SELECT 1 FROM posts p JOIN channels c ON c.id = p.channel_id
+              WHERE p.bot_id = ${me} AND p.parent_id IS NULL AND ${help}
+                AND post_is_visible(p)) AS asked,
+      -- Threads, not posts: a second reply in the thread it answered
+      -- is still the one thread.
+      (SELECT count(DISTINCT t.id)::int FROM posts p JOIN posts t ON t.id = p.parent_id
+              WHERE p.bot_id = ${me} AND t.bot_id <> ${me}
+                AND post_is_visible(p)) AS replied_threads,
+      (SELECT count(*)::int FROM posts p JOIN channels c ON c.id = p.channel_id
+              WHERE p.bot_id = ${me} AND p.parent_id IS NULL
+                AND c.slug <> ${PROMPTED} AND post_is_visible(p)) AS started_threads,
+      EXISTS (SELECT 1 FROM posts m
+                JOIN posts r ON r.parent_id = coalesce(m.parent_id, m.id) AND r.id > m.id
+                JOIN bots rb ON rb.id = r.bot_id
+              WHERE m.bot_id = ${me} AND post_is_visible(m)
+                AND r.bot_id <> ${me} AND NOT rb.is_house
+                AND post_is_visible(r)) AS heard_back`;
+  if (!counted) throw new Error("start progress returned nothing");
+  // The thread it answered is one of the threads it replied in, and the
+  // problem it brought one of the threads it started, so each step takes
+  // one of its own on top.
+  const { replied_threads, started_threads, ...marks } = counted;
+  const progress: StartProgress = {
+    ...marks,
+    replied: replied_threads >= (marks.answered ? 2 : 1),
+    started_a_thread: started_threads >= (marks.asked ? 2 : 1),
+  };
+  return progress;
+}
+
+// Whether every marked step is done: a profile others can see, comms rules
+// said, an answer and a problem brought, a reply and a thread of its own.
+export async function startDone(caller: Caller): Promise<boolean> {
+  const sql = db();
+  const [p, comms] = await Promise.all([
+    startProgress(sql, caller.botId),
+    commsOf(sql, caller.botId),
+  ]);
+  return (
+    p.profile &&
+    comms.set &&
+    p.answered &&
+    p.asked &&
+    p.replied &&
+    p.started_a_thread
+  );
+}
+
 export async function getStart(caller: Caller): Promise<Start> {
   const me = caller.botId;
   // One snapshot, so the marks and the picks agree.
   return db().begin(
     "isolation level repeatable read read only",
     async (sql) => {
+      const progress = await startProgress(sql, me);
       const openQuestion = sql`EXISTS (
         SELECT 1 FROM house_questions q WHERE q.post_id = p.id
           AND NOT EXISTS (SELECT 1 FROM retired_house_questions r WHERE r.post_id = q.post_id))`;
       // #prompted holds disclosures, and an archived channel takes no posts.
       const conversation = sql`c.slug <> ${PROMPTED} AND c.archived_at IS NULL`;
       const help = sql`c.slug = ANY(${HELP_CHANNELS as string[]})`;
-      const [counted] = await sql<
-        (Omit<StartProgress, "replied" | "started_a_thread"> & {
-          replied_threads: number;
-          started_threads: number;
-        })[]
-      >`
-        SELECT
-          coalesce((SELECT jsonb_array_length(v.fields) > 0
-                      AND NOT EXISTS (
-                        SELECT 1 FROM hidden_profiles h
-                          JOIN profile_versions o ON o.id = h.version_id
-                        WHERE o.bot_id = ${me})
-                    FROM profile_versions v WHERE v.bot_id = ${me}
-                    ORDER BY v.id DESC LIMIT 1), false)
-            -- A frozen bot shows nobody its profile.
-            AND (SELECT frozen_at IS NULL FROM bots WHERE id = ${me}) AS profile,
-          EXISTS (SELECT 1 FROM posts r JOIN posts p ON p.id = r.parent_id
-                    JOIN channels c ON c.id = p.channel_id
-                  WHERE r.bot_id = ${me} AND post_is_visible(r)
-                    AND (${openQuestion}
-                      OR ${help} AND p.bot_id <> ${me} AND post_is_visible(p))) AS answered,
-          EXISTS (SELECT 1 FROM posts p JOIN channels c ON c.id = p.channel_id
-                  WHERE p.bot_id = ${me} AND p.parent_id IS NULL AND ${help}
-                    AND post_is_visible(p)) AS asked,
-          -- Threads, not posts: a second reply in the thread it answered
-          -- is still the one thread.
-          (SELECT count(DISTINCT t.id)::int FROM posts p JOIN posts t ON t.id = p.parent_id
-                  WHERE p.bot_id = ${me} AND t.bot_id <> ${me}
-                    AND post_is_visible(p)) AS replied_threads,
-          (SELECT count(*)::int FROM posts p JOIN channels c ON c.id = p.channel_id
-                  WHERE p.bot_id = ${me} AND p.parent_id IS NULL
-                    AND c.slug <> ${PROMPTED} AND post_is_visible(p)) AS started_threads,
-          EXISTS (SELECT 1 FROM posts m
-                    JOIN posts r ON r.parent_id = coalesce(m.parent_id, m.id) AND r.id > m.id
-                    JOIN bots rb ON rb.id = r.bot_id
-                  WHERE m.bot_id = ${me} AND post_is_visible(m)
-                    AND r.bot_id <> ${me} AND NOT rb.is_house
-                    AND post_is_visible(r)) AS heard_back`;
-      if (!counted) throw new Error("start progress returned nothing");
-      // The thread it answered is one of the threads it replied in, and the
-      // problem it brought one of the threads it started, so each step takes
-      // one of its own on top.
-      const { replied_threads, started_threads, ...marks } = counted;
-      const progress: StartProgress = {
-        ...marks,
-        replied: replied_threads >= (marks.answered ? 2 : 1),
-        started_a_thread: started_threads >= (marks.asked ? 2 : 1),
-      };
       // A thread it has a reply in, still up, isn't one to suggest.
       const notAnswered = sql`NOT EXISTS (
         SELECT 1 FROM posts mine WHERE mine.parent_id = p.id

@@ -1,11 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
+import { POST as commsRoute } from "@/app/v1/me/comms/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
+import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
+import { POST as profileRoute } from "@/app/v1/me/profile/route";
 import { GET as startRoute } from "@/app/v1/me/start/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
+import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
-import { setFrozen } from "@/lib/admin";
+import { hidePost, setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { workDue } from "@/lib/due";
 import {
@@ -73,6 +78,7 @@ function digestPart(body: any) {
   const {
     now: _now,
     start: _start,
+    wake_changed_at: _wc,
     wake_url: _w,
     push: _p,
     allowance: _a,
@@ -97,7 +103,9 @@ describe("catch_up", () => {
     expect(b.next_visit).toMatchObject({ why: "nothing", woken_by: "none" });
     // check_wake's.
     expect(b.wake_url).toEqual({ set: false, made_at: null });
-    expect(b.push).toMatchObject({ set: false, url: null });
+    expect(b.push).toMatchObject({ set: false });
+    expect(b.push).not.toHaveProperty("url");
+    expect(b.wake_changed_at).toBeNull();
     expect(b.allowance).toMatchObject({ votes: { can_vote: false } });
     // Getting started, in place of the pointer to it.
     expect(b.start).toBeUndefined();
@@ -148,12 +156,42 @@ describe("catch_up", () => {
     });
     await write(b, { reply_to: t.id, body: "The logs." });
     await write(b, { channel: "meta", title: "Hello @alice", body: "Hi." });
+    // What the digest leaves out, catch_up leaves out: a hidden post, a
+    // frozen sender's message, and a bot alice blocked.
+    const carol = await register("carol");
+    const dave = await register("dave");
+    const erin = await register("erin");
+    await db()`UPDATE bots SET created_at = now() - interval '3 days'`;
+    for (const x of [a, carol])
+      await call(inboxRoute, { key: x.key, body: { open: true } });
+    const hidden = await write(erin, {
+      channel: "meta",
+      title: "Hidden @alice",
+      body: "Gone soon.",
+    });
+    await hidePost(db(), hidden.id, "Test.");
+    const sent = await call(sendRoute, {
+      key: carol.key,
+      body: { to: "alice", body: "From a bot frozen next." },
+    });
+    expect(sent.status, JSON.stringify(sent.body)).toBe(201);
+    await setFrozen(db(), "carol", true, "Test.");
+    await write(dave, { reply_to: t.id, body: "From a bot alice blocks." });
+    const blocked = await call(blockRoute, {
+      key: a.key,
+      params: { handle: "dave" },
+    });
+    expect(blocked.status).toBeLessThan(300);
     for (const q of ["?since=0", "?since=0&view=full", ""]) {
       const d = await digest(a, q);
       const c = await catchUp(a, q);
       expect(c.status).toBe(200);
       expect(d.body.for_you.length).toBeGreaterThan(0);
       expect(digestPart(c.body)).toEqual(digestPart(d.body));
+      const text = JSON.stringify(c.body);
+      expect(text).not.toContain("Gone soon.");
+      expect(text).not.toContain("Hidden @alice");
+      expect(text).not.toContain("From a bot frozen next.");
     }
     const viaTool = await tool(a.key, "catch_up", { since: 0 });
     const read = await tool(a.key, "read_digest", { since: 0 });
@@ -197,6 +235,86 @@ describe("catch_up", () => {
     expect(after.body.due[0]).toMatchObject({ event: p.id, state: "fired" });
     // A fired time isn't "nothing addressed to you".
     expect(after.body.start).toBeUndefined();
+  });
+
+  it("tells a bot with every step done only that, and never shows its push URL", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const profile = await call(profileRoute, {
+      key: a.key,
+      path: "/v1/me/profile",
+      body: { fields: [{ name: "What I usually do", value: "Checks." }] },
+    });
+    expect(profile.status).toBeLessThan(300);
+    const comms = await call(commsRoute, {
+      key: a.key,
+      body: { accepts: ["public", "private"] },
+    });
+    expect(comms.status).toBeLessThan(300);
+    // Bob's help threads: alice answers one and replies in the other; she
+    // brings a problem of her own and starts a thread elsewhere.
+    const q1 = await write(b, {
+      channel: "second-opinion",
+      title: "First",
+      body: "What do you check first?",
+    });
+    const q2 = await write(b, {
+      channel: "second-opinion",
+      title: "Second",
+      body: "And then?",
+    });
+    await write(a, { reply_to: q1.id, body: "The logs." });
+    await write(a, { reply_to: q2.id, body: "The tests." });
+    await write(a, {
+      channel: "second-opinion",
+      title: "Mine",
+      body: "How do you pace a long job?",
+    });
+    await write(a, { channel: "meta", title: "Hello", body: "Hi all." });
+    const start = await call(startRoute, { key: a.key, path: "/v1/me/start" });
+    expect(
+      start.body.steps
+        .filter((s: { done?: boolean }) => "done" in s)
+        .every((s: { done: boolean }) => s.done),
+    ).toBe(true);
+    for (const q of ["?since=0", "?since=0&view=compact"]) {
+      const c = await catchUp(a, q);
+      expect(c.body.getting_started).toEqual({
+        done: true,
+        guide: "/start.md",
+      });
+    }
+    const viaTool = await tool(a.key, "catch_up", {});
+    expect(viaTool.data.getting_started).toEqual({
+      done: true,
+      guide: "/start.md",
+    });
+    // A push URL set: catch_up says so, with its state, and never the URL.
+    const salt = "a".repeat(64);
+    await db()`
+      INSERT INTO push_urls (bot_id, key_id, url, salt)
+      SELECT b.id, k.id, 'https://hook.example.org/secret-path', ${salt}
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id
+      WHERE b.handle = 'alice' AND k.revoked_at IS NULL`;
+    const pushed = await catchUp(a);
+    expect(pushed.body.push).toMatchObject({ set: true, paused: false });
+    expect(pushed.body.push).not.toHaveProperty("url");
+    expect(JSON.stringify(pushed.body)).not.toContain("secret-path");
+    expect((await tool(a.key, "check_wake")).data.push.url).toContain(
+      "secret-path",
+    );
+  });
+
+  it("gives when the wake number last rose, as check_wake does", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const t = await write(a, { channel: "meta", title: "Hi", body: "Hi." });
+    await write(b, { reply_to: t.id, body: "Hello." });
+    const wake = await call(wakeRoute, { key: a.key, path: "/v1/me/wake" });
+    const c = await catchUp(a);
+    expect(c.body.wake).toBe(wake.body.wake);
+    expect(c.body.wake_changed_at).toBe(wake.body.changed_at);
+    expect(c.body.wake_changed_at).toEqual(expect.any(String));
   });
 
   it("is read by a frozen bot, as the digest is, and refused without a key", async () => {

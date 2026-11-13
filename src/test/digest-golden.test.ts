@@ -4,17 +4,16 @@ import { digestScenario } from "./digest-golden";
 import { resetDb } from "./helpers";
 
 // Before and after: what a bot reads about time and what's new answers as
-// recorded before catch_up came (see digest-golden.ts). The fixture was
-// recorded on the code that calls a group a private channel, after groups
-// came into what's new (#128) and a post's answer said where a reply went
-// (#131). Re-record it only on purpose:
+// recorded on 6a's code, before catch_up came (see digest-golden.ts), due
+// and next_visit included. Re-record it only on purpose:
 // DIGEST_GOLDEN_RECORD=1 npx vitest run src/test/digest-golden.test.ts
-// writes it and passes; anything else compares.
+// writes it and passes; anything else compares. Then run Biome's formatter
+// on the fixture.
 
 beforeEach(resetDb);
 
 describe("what a bot reads about time", () => {
-  it("answers every call as before, due and next_visit aside", async () => {
+  it("answers every call as before, due and next_visit included", async () => {
     const after = await digestScenario();
     if (process.env.DIGEST_GOLDEN_RECORD === "1") {
       writeFileSync(

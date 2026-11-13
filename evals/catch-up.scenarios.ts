@@ -34,6 +34,8 @@ export function catchUpScenarios(): void {
       expect(first.getting_started.steps[0].how).toContain("/v1/me/profile");
       expect(first.wake_url).toEqual({ set: false, made_at: null });
       expect(first.push.set).toBe(false);
+      expect(first.push).not.toHaveProperty("url");
+      expect(first.wake_changed_at).toBeNull();
       expect(first.next_visit).toBeDefined();
       expect(Object.keys(first).at(-1)).toBe("take_home");
 
@@ -76,6 +78,9 @@ export function catchUpScenarios(): void {
       expect(text.split(asTitle).length).toBe(text.split(steer).length);
       expect(back.notice).toEqual(expect.any(String));
       expect(back.wake_url.set).toBe(true);
+      // When the number last rose, as the wake number's own read says.
+      const wake = await get("/v1/me/wake", cal.key);
+      expect(back.wake_changed_at).toBe(wake.json.changed_at);
 
       // Adversarial: Dee reads nothing of Cal's, and its cursor moves on.
       const theirs = await catchUp(dee);

@@ -8,40 +8,33 @@ import { POST as postRoute } from "@/app/v1/posts/route";
 import { db } from "@/lib/db";
 import { call, register } from "./helpers";
 
-// One run of what a bot reads about time and what's new before catch_up
-// came (src/lib/catch-up.ts): a thread with replies and a mention, a post
-// made with back_in_minutes, a private request and its answer, presence, an
-// RSVP, and every read of it (the digest whole and compact, with and without
-// its cursors, and the wake number). Getting started isn't here: catch_up
-// takes over its walk on purpose. Each answer is kept with what varies from
-// run to run (times) blanked out, and with due and next_visit left out:
-// they're the fields Cycle 6 (docs/CYCLE6.md, src/lib/next-visit.ts) adds to
-// answers that already touch a time, beside the fields they always had. The
-// answers were recorded on the code before it
-// (src/test/fixtures/digest-golden.json), and digest-golden.test.ts holds
-// today's code to them.
+// One run of what a bot reads about time and what's new: a thread with
+// replies and a mention, a post made with back_in_minutes, a private request
+// and its answer, presence, an RSVP, and every read of it (the digest whole
+// and compact, with and without its cursors, and the wake number), due and
+// next_visit included. Getting started isn't here: catch_up takes over its
+// walk on purpose. Each answer is kept with what varies from run to run
+// (times) blanked out. The answers were recorded on 6a's code, before
+// catch_up came (src/test/fixtures/digest-golden.json), and
+// digest-golden.test.ts holds today's code to them, so catch_up (6b)
+// changes nothing read_digest and check_wake answer.
 
 type Bot = { handle: string; key: string };
 export type Step = { step: string; status: number; body: unknown };
 
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?Z$/;
 
-// Fields added beside the old ones since the recording.
-const ADDED = new Set(["due", "next_visit"]);
-
 function steady(v: unknown): unknown {
   if (typeof v === "string") return ISO.test(v) ? "<time>" : v;
   if (Array.isArray(v)) return v.map(steady);
   if (v && typeof v === "object")
     return Object.fromEntries(
-      Object.entries(v)
-        .filter(([k]) => !ADDED.has(k))
-        .map(([k, x]) => [
-          k,
-          k.endsWith("_seconds") && typeof x === "number"
-            ? "<seconds>"
-            : steady(x),
-        ]),
+      Object.entries(v).map(([k, x]) => [
+        k,
+        k.endsWith("_seconds") && typeof x === "number"
+          ? "<seconds>"
+          : steady(x),
+      ]),
     );
   return v;
 }
