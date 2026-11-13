@@ -384,11 +384,20 @@ $$;
 -- set under the pair rules reads exactly as before.
 ALTER TABLE presence ADD COLUMN channel_id bigint REFERENCES private_channels(id);
 
+-- The visible groups two bots are both in, lowest id first, found from
+-- a's own membership rows (channel_members_bot), never by scanning every
+-- group.
+CREATE FUNCTION shared_groups(a bigint, b bigint) RETURNS SETOF bigint LANGUAGE sql STABLE AS $$
+  SELECT g.channel_id
+  FROM (SELECT DISTINCT m.channel_id FROM channel_members m WHERE m.bot_id = a) c
+  JOIN group_channels g ON g.channel_id = c.channel_id
+  WHERE channel_has(g.channel_id, a) AND channel_has(g.channel_id, b)
+    AND private_channel_is_visible(g.channel_id)
+  ORDER BY g.channel_id
+$$;
+
 CREATE FUNCTION share_group(a bigint, b bigint) RETURNS boolean LANGUAGE sql STABLE AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM group_channels g
-    WHERE channel_has(g.channel_id, a) AND channel_has(g.channel_id, b)
-      AND private_channel_is_visible(g.channel_id))
+  SELECT EXISTS (SELECT 1 FROM shared_groups(a, b))
 $$;
 
 CREATE FUNCTION may_share_presence(a bigint, b bigint) RETURNS boolean LANGUAGE sql STABLE AS $$
@@ -396,8 +405,15 @@ CREATE FUNCTION may_share_presence(a bigint, b bigint) RETURNS boolean LANGUAGE 
 $$;
 
 -- A row shows while the group it rode on, if any, still lets the two talk.
+-- The row's own group first, which settles it in the usual case, and only
+-- then any way the two can still talk.
 CREATE FUNCTION presence_shows(channel bigint, a bigint, b bigint) RETURNS boolean LANGUAGE sql STABLE AS $$
-  SELECT channel IS NULL OR may_share_presence(a, b)
+  SELECT CASE
+    WHEN channel IS NULL THEN true
+    WHEN channel_has(channel, a) AND channel_has(channel, b)
+         AND private_channel_is_visible(channel) THEN true
+    ELSE may_share_presence(a, b)
+  END
 $$;
 
 CREATE OR REPLACE FUNCTION presence_check_insert() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -410,11 +426,11 @@ BEGIN
     RAISE EXCEPTION 'the house account has no presence' USING ERRCODE = 'UPM01';
   END IF;
   -- The lowest-id visible group the two share, whatever the writer gave.
-  NEW.channel_id := (
-    SELECT g.channel_id FROM group_channels g
-    WHERE channel_has(g.channel_id, NEW.bot_id) AND channel_has(g.channel_id, NEW.other_bot_id)
-      AND private_channel_is_visible(g.channel_id)
-    ORDER BY g.channel_id LIMIT 1);
+  NEW.channel_id := (SELECT min(x) FROM shared_groups(NEW.bot_id, NEW.other_bot_id) x);
+  -- Between members, the sender's own comms rules, as for a group message.
+  IF NEW.channel_id IS NOT NULL AND NOT comms_takes_private(NEW.bot_id) THEN
+    RAISE EXCEPTION 'bot % takes no private messages', NEW.bot_id USING ERRCODE = 'UPM01';
+  END IF;
   IF NEW.channel_id IS NULL
      AND (other.frozen_at IS NOT NULL
           OR has_blocked(NEW.bot_id, NEW.other_bot_id) OR has_blocked(NEW.other_bot_id, NEW.bot_id)

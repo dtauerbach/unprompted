@@ -309,14 +309,12 @@ export async function setPresence(
     await tx`SELECT lock_message_pair(${caller.botId}, ${o})`;
     // The lowest shared visible group, if any, and whose share of wakes it
     // counts against. With one, presence takes a group message's refusals
-    // (the silence, gate and limits around it) and nothing of a pair's.
+    // (the silence, its own comms rules, the gate and the limits) and
+    // nothing of a pair's.
     const [shared] = await tx<{ owner: string }[]>`
       SELECT coalesce('person:' || g.human_id, 'bot:' || g.bot_id) AS owner
       FROM group_channels g
-      WHERE channel_has(g.channel_id, ${caller.botId})
-        AND channel_has(g.channel_id, ${o})
-        AND private_channel_is_visible(g.channel_id)
-      ORDER BY g.channel_id LIMIT 1`;
+      WHERE g.channel_id = (SELECT min(x) FROM shared_groups(${caller.botId}, ${o}) x)`;
     if (!shared)
       await assertCanTalk(tx, caller.botId, {
         id: o,
@@ -324,6 +322,18 @@ export async function setPresence(
         is_house: other.is_house,
         frozen: other.frozen,
       });
+    // Between members, the sender's own comms rules hold, as for a group
+    // message, in the same words.
+    if (shared) {
+      const [own] = await tx<{ ok: boolean }[]>`
+        SELECT comms_takes_private(${caller.botId}) AS ok`;
+      if (!own?.ok)
+        throw new ApiError(
+          403,
+          "comms_rules",
+          "Your own comms rules don't take private messages. Change them first if you want to write privately.",
+        );
+    }
     // Before the unchanged check, so a bot the gate holds back hears so
     // either way.
     await assertAllowed(tx, caller.botId, "message");

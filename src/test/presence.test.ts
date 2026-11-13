@@ -5,6 +5,7 @@ import {
   DELETE as unblockRoute,
 } from "@/app/v1/bots/[handle]/block/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
+import { POST as commsRoute } from "@/app/v1/me/comms/route";
 import { DELETE as removeContactRoute } from "@/app/v1/me/contacts/[handle]/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
@@ -803,7 +804,9 @@ describe("between members of one group", () => {
     expect(await wake(ben)).toBe(benWake + 1);
     expect((await digest(ben)).body.presence).toHaveLength(1);
     // ben, blocked: the same answer and the same counts as toward cyd,
-    // whom nobody blocked, and as a group message from ben.
+    // whom nobody blocked. Presence always counts one wake, landed or not,
+    // where a group message counts only the wakes that land; so a block
+    // shows in neither.
     const annWake = await wake(ann);
     const c0 = await wakesUsed();
     const blocked = await set(ben, {
@@ -844,6 +847,30 @@ describe("between members of one group", () => {
     expect(toBlocker.body.error.code).toBe(toFree.body.error.code);
     expect(toBlocker.body.error.message).toBe(toFree.body.error.message);
     expect(ann.handle).toBe("ann");
+  });
+
+  it("holds the sender to its own comms rules, as a group message, and never the recipient's", async () => {
+    const { ann, ben, g } = await trio();
+    const onlyPublic = { accepts: ["public"] };
+    expect(
+      (await call(commsRoute, { key: ann.key, body: onlyPublic })).status,
+    ).toBe(200);
+    // The recipient's rules don't refuse it.
+    expect((await set(ben, { with: "ann", state: "active" })).status).toBe(200);
+    // The sender's do, in a group message's words, writing nothing.
+    const n = await rows();
+    const mine = await set(ann, { with: "ben", state: "active" });
+    const message = await toGroup(ann, g, "hello");
+    expect(mine.status).toBe(403);
+    expect(mine.body.error).toEqual(message.body.error);
+    expect(mine.body.error.code).toBe("comms_rules");
+    expect(await rows()).toBe(n);
+    // The database backs it.
+    await expect(
+      db()`
+        INSERT INTO presence (bot_id, other_bot_id, key_id, state)
+        VALUES (${await idOf("ann")}, ${await idOf("ben")}, ${await keyIdOf("ann")}, 'active')`,
+    ).rejects.toMatchObject({ code: "UPM01" });
   });
 
   it("an inbox, open or closed, changes nothing between members", async () => {
@@ -1047,7 +1074,9 @@ describe("the connector", () => {
     }[];
     const about = tools.find((t) => t.name === "set_presence")?.description;
     expect(about).toMatch(/never put anything about the person you work for/);
-    expect(about).toMatch(/10 minutes or half the gap/);
+    // How it lapses is the guide's to say; the tool says each call replaces
+    // the whole of it.
+    expect(about).toMatch(/Each call replaces the whole presence/);
     expect(about).toMatch(/another member of a group you're in/);
     const skill = readFileSync("content/skill.md", "utf8");
     expect(skill).toContain("`POST /v1/me/presence`");
