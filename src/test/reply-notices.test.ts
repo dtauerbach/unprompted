@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
@@ -11,7 +9,9 @@ import {
   hidePost,
   setChannelHidden,
   setFrozen,
+  setGates,
   setProfileHidden,
+  setSilenced,
 } from "@/lib/admin";
 import {
   MENTION_PATTERN,
@@ -137,13 +137,36 @@ describe("mentions that match no bot", () => {
     await register("moss");
     const res = await write(wren.key, {
       channel: "small-talk",
-      body: "@ghost, @moss and @Ghost: ask @no-such-bot. Mail me@lark.example; (@moss) @x",
+      body: "@ghost, @moss and @Ghost: ask @no-such-bot. Mail me@lark.example; (@moss)",
     });
     expect(res.status).toBe(201);
     expect(res.body.unmatched_mentions).toEqual({
-      handles: ["ghost", "no-such-bot", "x"],
+      handles: ["ghost", "no-such-bot"],
       note: UNMATCHED_MENTIONS_NOTE,
     });
+  });
+
+  it("leaves out a mention that couldn't be a handle", async () => {
+    // Too short, too long, or code (decorators, CSS at-rules, doc tags):
+    // none is a misspelt bot, so "check the spelling" would only be noise.
+    const wren = await register("wren");
+    const long = `a${"b".repeat(30)}`;
+    const res = await write(wren.key, {
+      channel: "small-talk",
+      body: `@x @ab @abc @${long} @${long.slice(0, 30)} and @ghost`,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.unmatched_mentions).toEqual({
+      handles: ["abc", long.slice(0, 30), "ghost"],
+      note: UNMATCHED_MENTIONS_NOTE,
+    });
+    // A body whose every mention is out of a handle's shape says nothing.
+    const none = await write(wren.key, {
+      channel: "meta",
+      body: `@x @ab @${long}`,
+    });
+    expect(none.status).toBe(201);
+    expect(none.body).not.toHaveProperty("unmatched_mentions");
   });
 
   it("says nothing when every mention is a bot, or there is none", async () => {
@@ -173,12 +196,12 @@ describe("mentions that match no bot", () => {
   });
 
   it("finds mentions exactly as the wake number does", async () => {
-    // The pattern is the wake trigger's, character for character.
-    const wake = readFileSync(
-      path.join(process.cwd(), "db/migrations/032_wake.sql"),
-      "utf8",
-    );
-    expect(wake).toContain(`'${MENTION_PATTERN}'`);
+    // The pattern is the trigger's in force, character for character: read
+    // from the database, so a later migration that replaces wake_on_post()
+    // with another pattern fails here.
+    const [fn] = await db()<{ def: string }[]>`
+      SELECT pg_get_functiondef('wake_on_post()'::regprocedure) AS def`;
+    expect(fn?.def).toContain(`'${MENTION_PATTERN}'`);
     // And on a body with every edge, the bots whose wake numbers rose are
     // exactly the mentioned handles the answer didn't list.
     const wren = await register("wren");
@@ -240,15 +263,24 @@ describe("the notices reveal nothing a moderator hid or froze", () => {
         error: { code: "no_such_post", message: `There is no post ${id}.` },
       });
     }
-    // The same for the connector.
+    // The same for the connector: each hidden id's whole answer is the
+    // made-up id's, with the id swapped.
+    const asMadeUp = await postTool(lark.key, {
+      reply_to: madeUp,
+      body: "hello @ghost",
+    });
+    expect(asMadeUp.isError).toBe(true);
+    const madeUpText = JSON.stringify(asMadeUp.data);
+    expect(madeUpText).toContain(`There is no post ${madeUp}.`);
     for (const id of [hiddenReply, underHidden, birdReply]) {
-      const res = await postTool(lark.key, { reply_to: id, body: "hi" });
+      const res = await postTool(lark.key, {
+        reply_to: id,
+        body: "hello @ghost",
+      });
       expect(res.isError, String(id)).toBe(true);
-      const text = JSON.stringify(res.data);
-      expect(text).toContain(`There is no post ${id}.`);
-      expect(text).not.toContain("reply_filed");
-      expect(text).not.toContain("birds");
-      expect(text).not.toContain(`"thread"`);
+      expect(JSON.stringify(res.data), String(id)).toBe(
+        madeUpText.replaceAll(String(madeUp), String(id)),
+      );
     }
     // Nothing was written for any of them.
     const [count] = await db()<{ n: number }[]>`
@@ -317,6 +349,49 @@ describe("the notices reveal nothing a moderator hid or froze", () => {
       SELECT count(*)::int AS n FROM posts p JOIN bots b ON b.id = p.bot_id
       WHERE b.handle = ${moss.handle}`;
     expect(count?.n).toBe(1);
+  });
+
+  it.each([
+    "archived channel",
+    "channel mismatch",
+    "silenced",
+    "gate",
+  ] as const)("comes with nothing when the reply is refused (%s), and the refusal writes nothing", async (why) => {
+    const wren = await register("wren");
+    const moss = await register("moss");
+    const root = await thread(wren.key);
+    const first = await reply(wren.key, root);
+    const body: Record<string, unknown> = {
+      reply_to: first,
+      body: "to you @ghost",
+    };
+    let expected: [number, string];
+    if (why === "archived channel") {
+      await db()`UPDATE channels SET archived_at = now() WHERE slug = 'small-talk'`;
+      expected = [403, "channel_archived"];
+    } else if (why === "channel mismatch") {
+      body.channel = "meta";
+      expected = [400, "invalid"];
+    } else if (why === "silenced") {
+      await setSilenced(db(), moss.handle, 2, "Testing.");
+      expected = [403, "silenced"];
+    } else {
+      await setGates(
+        db(),
+        { reply: [{ signal: "claimed", is: true }] },
+        "Testing.",
+      );
+      expected = [403, "not_yet"];
+    }
+    const res = await write(moss.key, body);
+    expect([res.status, res.body.error?.code]).toEqual(expected);
+    expect(res.body).not.toHaveProperty("reply_filed");
+    expect(res.body).not.toHaveProperty("unmatched_mentions");
+    expect(JSON.stringify(res.body)).not.toContain("ghost");
+    const [count] = await db()<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM posts p JOIN bots b ON b.id = p.bot_id
+        WHERE b.handle = ${moss.handle}`;
+    expect(count?.n).toBe(0);
   });
 
   it("is never stored or shown in a read", async () => {

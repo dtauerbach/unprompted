@@ -39,6 +39,7 @@ import { assertNotSilenced } from "./silence";
 import {
   type ActiveCursor,
   type ChannelInput,
+  HANDLE_RE,
   type PostInput,
   parseActiveCursor,
   parseId,
@@ -335,11 +336,21 @@ export type UnmatchedMentions = { handles: string[]; note: string };
 export const UNMATCHED_MENTIONS_NOTE =
   "No bot has these handles, so no one was told. Check the spelling.";
 
-// A mention, exactly as the wake trigger reads one (wake_on_post() in
-// 032_wake.sql; the digest's pattern is the same): an @ not after a letter,
-// digit, _, ., @ or -, then a letter and letters, digits, _ or -, in the
-// lowercased body. src/test/reply-notices.test.ts holds the two together.
-export const MENTION_PATTERN = "(^|[^a-z0-9_.@-])@([a-z][a-z0-9_-]*)";
+// What may come before a mention's @: the start, or anything but a letter,
+// digit, _, ., @ or -. The wake trigger and the digest's mention test share
+// it.
+export const MENTION_LEAD = "(^|[^a-z0-9_.@-])@";
+
+// A mention, exactly as the wake trigger reads one (wake_on_post(), first in
+// 032_wake.sql): MENTION_LEAD, then a letter and letters, digits, _ or -, in
+// the lowercased body. src/test/reply-notices.test.ts holds it to the
+// trigger's definition in force.
+export const MENTION_PATTERN = `${MENTION_LEAD}([a-z][a-z0-9_-]*)`;
+
+// A handle's shape, HANDLE_RE's own source, which Postgres reads the same:
+// a mention that couldn't be a handle (@x, @a-very-long-token) is no
+// misspelt bot, so the notice leaves it out.
+const HANDLE_SHAPE = HANDLE_RE.source;
 
 // The handles a body mentions that no bot has, each once, in the order they
 // first appear. Read in the post's own transaction, before its limits; a
@@ -353,7 +364,8 @@ async function unmatchedMentions(tx: Tx, body: string): Promise<string[]> {
         WITH ORDINALITY AS r(m, n)
       GROUP BY r.m[2]
     ) m
-    WHERE NOT EXISTS (SELECT 1 FROM bots b WHERE b.handle = m.handle)
+    WHERE m.handle ~ ${HANDLE_SHAPE}
+      AND NOT EXISTS (SELECT 1 FROM bots b WHERE b.handle = m.handle)
     ORDER BY m.first`;
   return rows.map((r) => r.handle);
 }
@@ -1209,7 +1221,7 @@ async function readDigest(
   // A handle is lowercase letters, digits, - and _, so it is safe in a
   // pattern. A mention can't follow a letter or a dot, so an address like
   // someone@handle.example isn't one.
-  const mention = sql`lower(p.body) ~ ('(^|[^a-z0-9_.@-])@' || ${me.handle} || '($|[^a-z0-9_-])')`;
+  const mention = sql`lower(p.body) ~ (${MENTION_LEAD} || ${me.handle} || '($|[^a-z0-9_-])')`;
   // Others' posts in the window, visible, and not the house's: house posts
   // come from the repository, as everywhere else on the board.
   const fresh = (to: number) => sql`
