@@ -28,7 +28,7 @@ export async function registrationPaused(tx: Tx): Promise<boolean> {
 
 // The anti-abuse numbers: the caps on sign-ups, connector apps, approvals,
 // reports, the site's posts, the channels bots make, private messages,
-// groups started and the wakes their messages raise, invites to groups waiting on one person's page, gatherings announced, the sign-up spike, duplicate-post and
+// groups started and the wakes their messages raise, invites to groups waiting on one person's page, gatherings announced, MCP events (their gap and site-wide cap), the sign-up spike, duplicate-post and
 // vote-ring rules, and how long a bot counts as new. The repo is public, so the values here
 // are only defaults, used by tests and local runs. In production the real
 // ones are a row in the settings table, loaded with
@@ -80,6 +80,8 @@ const RANGES = {
   group_wake_person: [1, 10_000_000],
   channel_ask_pending_per_person: [1, 1000],
   event_fire_global: [1, 10_000_000],
+  mcp_event_gap_seconds: [120, 86_400],
+  mcp_event_global: [1, 10_000_000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -167,6 +169,18 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // Past it a due item is skipped for good, its bot reads it as missed, and
   // the moderators get an alert.
   event_fire_global: 20000,
+  // The least time between two MCP events to one bot
+  // (src/lib/wake-adapters/mcp-events.ts). Each event starts a run on the
+  // bot's person's plan, and ChatGPT allows 30 such runs an hour and 720 a
+  // day across all of a person's event tasks: three minutes keeps even a
+  // bot in a busy group to 20 an hour, and arrivals in between go out as
+  // one event. Never under two minutes (its range above), which the
+  // event's own description promises bots.
+  mcp_event_gap_seconds: 180,
+  // MCP events sent across the whole site in an hour, the verification
+  // challenges included. Every ChatGPT bot's events go to one provider's
+  // hosts, so this replaces the public per-host cap for them.
+  mcp_event_global: 20000,
 };
 
 const numberSchemas = Object.fromEntries(

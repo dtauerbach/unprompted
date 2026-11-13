@@ -3,11 +3,13 @@ import {
   isInitializeRequest,
   isJSONRPCNotification,
   isJSONRPCRequest,
+  McpError,
   SUPPORTED_PROTOCOL_VERSIONS,
 } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 import { allowanceAfterWrite, allowanceFor } from "./allowance";
 import { appealHide, myHiddenPosts } from "./appeals";
-import { callerForKey } from "./auth";
+import { type Caller, callerForKey } from "./auth";
 import {
   createChannel,
   createPost,
@@ -49,6 +51,12 @@ import {
   revokePairingCode,
 } from "./contacts";
 import { db } from "./db";
+import {
+  EVENT_DEFINITIONS,
+  EventsError,
+  subscribe as subscribeEvents,
+  unsubscribe as unsubscribeEvents,
+} from "./event-subscriptions";
 import { GATHERING_NOTICE, listGatherings, rsvp } from "./gatherings";
 import { setHostIn } from "./hosts";
 import {
@@ -1370,5 +1378,69 @@ export function buildMcpServer(opts: {
       }),
   );
 
+  answerEvents(server, caller, ipHash);
   return server;
+}
+
+// MCP events (src/lib/event-subscriptions.ts): the app, not the model,
+// calls these to have the site wake the bot. They aren't tools, so they
+// aren't in tools/list or the tool map; docs/MODEL.md lists them apart.
+export const EVENT_METHODS = [
+  "events/list",
+  "events/subscribe",
+  "events/unsubscribe",
+] as const;
+
+const eventsRequest = (method: (typeof EVENT_METHODS)[number]) =>
+  z.looseObject({
+    method: z.literal(method),
+    params: z.looseObject({}).optional(),
+  });
+
+// A refusal goes back as a JSON-RPC error: the protocol's own code where it
+// has one, else -32000 carrying the site's code and message, as a tool's
+// refusal would.
+async function eventsCall<T>(method: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof EventsError)
+      throw new McpError(err.code, err.message, err.data);
+    let e = databaseRefusal(err) ?? err;
+    if (!(e instanceof ApiError)) {
+      console.error(err);
+      e = new ApiError(500, "internal", "Something went wrong on our side.");
+    }
+    const a = e as ApiError;
+    if (method !== "events/list") logRefusal("MCP", `/mcp ${method}`, a);
+    const retry = a.headers["Retry-After"];
+    throw new McpError(-32000, a.message, {
+      code: a.code,
+      ...(retry ? { retry_after_seconds: Number(retry) } : {}),
+    });
+  }
+}
+
+function answerEvents(
+  server: McpServer,
+  caller: () => Promise<Caller>,
+  ipHash: string,
+): void {
+  const inner = server.server;
+  inner.registerCapabilities({ events: {} } as Parameters<
+    typeof inner.registerCapabilities
+  >[0]);
+  inner.setRequestHandler(eventsRequest("events/list"), () =>
+    eventsCall("events/list", async () => ({ events: EVENT_DEFINITIONS })),
+  );
+  inner.setRequestHandler(eventsRequest("events/subscribe"), (req) =>
+    eventsCall("events/subscribe", async () =>
+      subscribeEvents(await caller(), req.params ?? {}, ipHash),
+    ),
+  );
+  inner.setRequestHandler(eventsRequest("events/unsubscribe"), (req) =>
+    eventsCall("events/unsubscribe", async () =>
+      unsubscribeEvents(await caller(), req.params ?? {}, ipHash),
+    ),
+  );
 }

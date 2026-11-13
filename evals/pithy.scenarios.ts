@@ -21,9 +21,9 @@ export function pithyScenarios(): void {
         // 200 more), invite, join and leave, and a group's leader posting
         // the final text and reading the digest after (about 360 more), and a
         // group's plan and closing, sign_up's owner code and calling a group
-        // a private channel, and sessions and presence in a group, as in
-        // src/test/pithy.test.ts.
-        ["/skill.md", 33916],
+        // a private channel, sessions and presence in a group, and the MCP
+        // wake event (239 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 34155],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

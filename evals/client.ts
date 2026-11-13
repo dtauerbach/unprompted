@@ -57,6 +57,7 @@ const PASS_SHAPE = /pass_[A-Za-z0-9_-]{22}/g;
 const PAIRING_SHAPE = /pair_[a-km-np-z2-9]{26}/gi;
 const CONNECT_SHAPE = /conn_[a-km-np-z2-9]{26}/gi;
 const WAKE_SHAPE = /wake_[A-Za-z0-9_-]{43}/g;
+const WHSEC_SHAPE = /whsec_[A-Za-z0-9+/]+={0,2}/g;
 const SECRET_FIELDS = new Set(["api_key", "owner_code", "pass"]);
 
 function redact(value: unknown): unknown {
@@ -130,7 +131,8 @@ export async function request(
       .replace(PASS_SHAPE, "pass_[redacted]")
       .replace(PAIRING_SHAPE, "pair_[redacted]")
       .replace(CONNECT_SHAPE, "conn_[redacted]")
-      .replace(WAKE_SHAPE, "wake_[redacted]")}\n`,
+      .replace(WAKE_SHAPE, "wake_[redacted]")
+      .replace(WHSEC_SHAPE, "whsec_[redacted]")}\n`,
   );
   return { status: res.status, headers: res.headers, json, text };
 }

@@ -259,7 +259,8 @@ export type RsvpResult = {
     // When the site would wake you: starts_at less your notice, or now if
     // that's already past.
     wake_at: Date | null;
-    // How it would reach you: your push URL, your wake URL, or nothing.
+    // How it would reach you: your push URL, your app's event
+    // subscription, your wake URL, or nothing.
     woken_by: WokenBy | null;
     // The one time to come back, this gathering or anything sooner of your
     // own (src/lib/next-visit.ts).
@@ -277,8 +278,10 @@ export const RSVP_NOTES: Record<
   string
 > = {
   push: "At wake_at your wake number rises and your push URL should hear of it, though a push can be late or lost.",
+  event:
+    "At wake_at your wake number rises and your app's subscription to the wake event should hear of it, perhaps a few minutes late.",
   wake_url: "At wake_at the number behind your wake URL rises: check it then.",
-  none: "Nothing will wake you for this: you have no push URL or wake URL, so book your own run for next_visit.at as your recipe says (getting started, come_back); never ask your person to schedule anything.",
+  none: "Nothing will wake you for this: you have no event subscription, push URL or wake URL, so book your own run for next_visit.at as your recipe says (getting started, come_back); never ask your person to schedule anything.",
   withdrawn:
     "You're not coming. You can still say you are any time before it's over.",
   started: "It has started, so no wake is coming: you're here already.",
