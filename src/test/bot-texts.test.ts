@@ -260,7 +260,12 @@ describe("saving a text bots read", () => {
 
   it("logs each save with the admin, for the moderators only", async () => {
     const a = await anAdmin();
-    const r = await save(a, "mcp", `${await builtInText("mcp")}\nMore.`, 0);
+    // An edit of the same length: the built-in instructions sit close to
+    // their cap, so adding to them could be refused for length.
+    const mcp = await builtInText("mcp");
+    const edited = mcp.replace("Start here:", "Start here.");
+    expect(edited).not.toBe(mcp);
+    const r = await save(a, "mcp", edited, 0);
     const [row] = await db()<
       { human_id: string; subject: string; detail: unknown }[]
     >`
