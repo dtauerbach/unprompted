@@ -788,7 +788,7 @@ export function channelClosed(): ApiError {
   return new ApiError(
     409,
     "channel_closed",
-    "This group is closed: it stays readable, but takes no message, plan, invite or new member. You can still leave it.",
+    "This private channel is closed: it stays readable, but takes no message, plan, invite or new member. You can still leave it.",
   );
 }
 

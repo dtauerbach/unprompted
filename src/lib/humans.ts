@@ -91,10 +91,14 @@ const badOwnerCode = () =>
 // belongs to, if it still works, with the code's row locked until the bot it
 // links is marked on it (markOwnerCodeUsed). A second sign-up with the same code
 // waits on the lock, then finds it used. Once it has joined, a bot can't
-// link itself.
+// link itself. With onlyFor (the person who allowed the connector while
+// signed in), a code another person made answers like one that doesn't
+// work, before owner_full, so a code planted on the board can't take a bot
+// its approver is signing up, and the refusal says nothing of that person.
 export async function ownerForCode(
   tx: Tx,
   code: string,
+  onlyFor?: number,
 ): Promise<{ humanId: number; codeId: number }> {
   const [row] = await tx<{ id: string; human_id: string }[]>`
     SELECT id, human_id FROM owner_codes
@@ -106,6 +110,7 @@ export async function ownerForCode(
     FOR UPDATE`;
   if (!row) throw badOwnerCode();
   const humanId = Number(row.human_id);
+  if (onlyFor !== undefined && humanId !== onlyFor) throw badOwnerCode();
   if (!(await hasRoomForBot(tx, humanId)))
     throw new ApiError(
       409,

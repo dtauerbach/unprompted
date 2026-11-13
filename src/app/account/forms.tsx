@@ -290,7 +290,7 @@ export function AskForm({
           />
         ) : (
           <Words
-            text={t["account.asks.group_row"]}
+            text={t["account.asks.channel_row"]}
             slots={{ from: `@${from}`, to: `@${to}`, count: String(members) }}
           />
         )}
@@ -298,7 +298,7 @@ export function AskForm({
       {state.joined ? (
         <span className="text-sm text-green-700 dark:text-green-300">
           <Words
-            text={t["account.asks.joined"]}
+            text={t["account.asks.joined_channel"]}
             slots={{ handle: `@${state.joined}` }}
           />
         </span>
@@ -373,23 +373,24 @@ export function StartGroupForm({
     <form action={action} className="space-y-3">
       <fieldset className="space-y-1">
         <legend className="text-sm font-medium">
-          {t["account.groups.start.bots"]}
+          {t["account.channels.start.bots"]}
         </legend>
         {bots.map((h) => (
           <label key={h} className="flex items-center gap-2 text-sm">
-            <input type="checkbox" name="bot" value={h} />
+            {/* Ticked to start with: a person's bots usually all go in. */}
+            <input type="checkbox" name="bot" value={h} defaultChecked />
             {`@${h}`}
           </label>
         ))}
       </fieldset>
       <label className="flex items-center gap-2 text-sm">
-        {t["account.groups.start.leader"]}
+        {t["account.channels.start.leader"]}
         <select
           name="leader"
           defaultValue=""
           className="rounded-md border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
         >
-          <option value="">{t["account.groups.start.no_leader"]}</option>
+          <option value="">{t["account.channels.start.no_leader"]}</option>
           {bots.map((h) => (
             <option key={h} value={h}>{`@${h}`}</option>
           ))}
@@ -401,12 +402,12 @@ export function StartGroupForm({
           disabled={pending}
           className="rounded-md bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90 disabled:opacity-60"
         >
-          {t["account.groups.start.button"]}
+          {t["account.channels.start.button"]}
         </button>
         {state.group && (
           <span className="text-sm text-green-700 dark:text-green-300">
             <Words
-              text={t["account.groups.started"]}
+              text={t["account.channels.started"]}
               slots={{ channel: state.group }}
             />
           </span>
@@ -451,7 +452,7 @@ function GroupMember({
           <input type="hidden" name="channel" value={channel} />
           <input type="hidden" name="handle" value={handle} />
           <button type="submit" disabled={leadPending} className={SMALL_BUTTON}>
-            {t["account.groups.make_leader"]}
+            {t["account.channels.make_leader"]}
           </button>
         </form>
       )}
@@ -461,7 +462,7 @@ function GroupMember({
           <input type="hidden" name="handle" value={handle} />
           <input type="hidden" name="op" value={TAKE_OUT} />
           <button type="submit" disabled={outPending} className={SMALL_BUTTON}>
-            {t["account.groups.take_out"]}
+            {t["account.channels.take_out"]}
           </button>
         </form>
       )}
@@ -509,17 +510,17 @@ export function GroupRow({
   return (
     <li className="card space-y-2">
       <p className="font-medium">
-        <Words text={t["account.groups.row"]} slots={{ channel, date }} />
+        <Words text={t["account.channels.row"]} slots={{ channel, date }} />
       </p>
       {closed && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {t["account.groups.closed"]}
+          {t["account.channels.closed"]}
         </p>
       )}
       {leader && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           <Words
-            text={t["account.groups.leader"]}
+            text={t["account.channels.leader"]}
             slots={{ handle: `@${leader}` }}
           />
         </p>
@@ -541,38 +542,48 @@ export function GroupRow({
         <form action={end}>
           <input type="hidden" name="channel" value={channel} />
           <button type="submit" disabled={endPending} className={SMALL_BUTTON}>
-            {t["account.groups.end"]}
+            {t["account.channels.end"]}
           </button>
           <Refusal state={ended} />
         </form>
       )}
       {started && !closed && addable.length > 0 && leadsOutside && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {t["account.groups.lead_first"]}
+          {t["account.channels.lead_first"]}
         </p>
       )}
+      {/* Each of the person's bots not in it yet, a click from going in:
+          one just linked shows here as soon as the page comes back. */}
       {started && !closed && addable.length > 0 && !leadsOutside && (
-        <form action={add} className="flex flex-wrap items-center gap-2">
-          <input type="hidden" name="channel" value={channel} />
-          <input type="hidden" name="op" value={ADD} />
-          <select
-            name="handle"
-            className="rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
-          >
-            {addable.map((h) => (
-              <option key={h} value={h}>{`@${h}`}</option>
-            ))}
-          </select>
-          <button type="submit" disabled={pending} className={SMALL_BUTTON}>
-            {t["account.groups.add"]}
-          </button>
+        <ul className="space-y-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
+          {addable.map((h) => (
+            <li key={h} className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="text-neutral-600 dark:text-neutral-400">{`@${h}`}</span>
+              <form action={add}>
+                <input type="hidden" name="channel" value={channel} />
+                <input type="hidden" name="handle" value={h} />
+                <input type="hidden" name="op" value={ADD} />
+                <button
+                  type="submit"
+                  disabled={pending}
+                  className={SMALL_BUTTON}
+                >
+                  {t["account.channels.add"]}
+                </button>
+              </form>
+            </li>
+          ))}
           {added.saved && (
-            <span className="text-sm text-green-700 dark:text-green-300">
-              {t["account.groups.saved"]}
-            </span>
+            <li className="text-sm text-green-700 dark:text-green-300">
+              {t["account.channels.saved"]}
+            </li>
           )}
-          <Refusal state={added} />
-        </form>
+          {added.error && (
+            <li>
+              <Refusal state={added} />
+            </li>
+          )}
+        </ul>
       )}
     </li>
   );

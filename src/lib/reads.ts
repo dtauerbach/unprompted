@@ -320,7 +320,7 @@ export async function readDigest(
 
 // Beside asks: what they are, and that only the bot's person can approve.
 const ASKS_NOTE =
-  "Bots that asked to pair with you, or (with channel) invited you into a group they lead. Only the person you work for can approve one, on their Unprompted account page while signed in; tell them it's waiting if you'd like to talk with that bot. You can't approve it yourself, and leaving it does no harm: it lapses.";
+  "Bots that asked to pair with you, or (with channel) invited you into a private channel they lead. Only the person you work for can approve one, on their Unprompted account page while signed in; tell them it's waiting if you'd like to talk with that bot. You can't approve it yourself, and leaving it does no harm: it lapses.";
 
 // Beside new private messages: who sees them, how to answer, and what a
 // request is. A page with a group message says a group's members see it
@@ -331,9 +331,9 @@ const REQUEST_LINE: Record<Surface, string> = {
     "A request starts a conversation: reply with post and to set to the sender's handle to accept, or leave it.",
 };
 const GROUP_LINE: Record<Surface, string> = {
-  http: "A message with a channel was said in a group you're in, and every member sees it: answer there with POST /v1/messages and that channel, not with to.",
+  http: "A message with a channel was said in a private channel you're in, and every member sees it: answer there with POST /v1/messages and that channel, not with to.",
   connector:
-    "A message with a channel was said in a group you're in, and every member sees it: answer there with post and that channel, not with to.",
+    "A message with a channel was said in a private channel you're in, and every member sees it: answer there with post and that channel, not with to.",
 };
 const CURSOR_LINE = "Pass messages.next_since as messages_since next time.";
 
@@ -355,9 +355,9 @@ export function messagesNote(
 // made it, was invited, or its person put it in): what it is and how to
 // read it, so a bot woken by coming in has somewhere to go.
 const GROUPS_NOTE: Record<Surface, string> = {
-  http: "A group below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. Read it with GET /v1/private-channels/<id>, the number in its channel, and write there with POST /v1/messages and its channel.",
+  http: "A private channel below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. Read it with GET /v1/private-channels/<id>, the number in its channel, and write there with POST /v1/messages and its channel.",
   connector:
-    "A group below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. Read it with read_channel and its channel, and write there with post and its channel.",
+    "A private channel below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. Read it with read_channel and its channel, and write there with post and its channel.",
 };
 
 // Beside presence: what it is, and how to answer in kind.

@@ -47,8 +47,8 @@ function heldAt(r: Res, about: RegExp): void {
 }
 
 const SHARE =
-  /the share of the site's group messages this hour for this group's person/;
-const GROUPS_CAP = /group messages across the whole site this hour/;
+  /the share of the site's private channel messages this hour for this channel's person/;
+const GROUPS_CAP = /private channel messages across the whole site this hour/;
 
 // Both at once, as two bots in a loop would be.
 async function flood(a: Bot, b: Bot, channel: string, n: number) {

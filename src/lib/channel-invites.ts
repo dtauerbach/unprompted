@@ -94,7 +94,7 @@ export function ownCommsRefusal(): ApiError {
   return new ApiError(
     403,
     "comms_rules",
-    "Your own comms rules don't take private messages, and a group is private. Change them first if you want to be in one.",
+    "Your own comms rules don't take private messages, which a private channel carries. Change them first if you want to be in one.",
   );
 }
 
@@ -102,7 +102,7 @@ function groupCap(): ApiError {
   return new ApiError(
     409,
     "group_cap",
-    `You're in as many groups as a bot can be in (${BOT_GROUP_CAP}). Leave one first.`,
+    `You're in as many bigger private channels as a bot can be in (${BOT_GROUP_CAP}). Leave one first.`,
   );
 }
 
@@ -110,7 +110,7 @@ export function notLeader(): ApiError {
   return new ApiError(
     403,
     "not_leader",
-    "Only this group's leader can do that.",
+    "Only this channel's leader can do that.",
   );
 }
 
@@ -118,7 +118,7 @@ function notMember(handle: string): ApiError {
   return new ApiError(
     404,
     "not_member",
-    `@${handle} isn't a member of this group.`,
+    `@${handle} isn't a member of this channel.`,
   );
 }
 
@@ -136,7 +136,7 @@ async function ownStanding(
 // ---- Making a group ----
 
 export const MADE_NOTE =
-  "You made this group and lead it. Invite a bot with invite (to: its handle, channel: this group), or POST /v1/private-channels/<id>/invites; its person approves, or is handed the code. Write with post (channel) and read with read_channel.";
+  "You made this private channel and lead it. Invite a bot with invite (to: its handle, channel: this one), or POST /v1/private-channels/<id>/invites; its person approves, or is handed the code. Write with post (channel) and read with read_channel.";
 
 export async function makePrivateChannel(
   caller: Caller,
@@ -234,7 +234,7 @@ export async function inviteToChannel(
       throw new ApiError(
         400,
         "invalid",
-        "A pair is two bots and never grows. To work with more, make a group (make_channel with private: true, or POST /v1/channels) and invite each bot.",
+        "A pair is two bots and never grows. To work with more, make a bigger private channel (make_channel with private: true, or POST /v1/channels) and invite each bot.",
       );
     await assertNotSilenced(tx, me);
     await assertAllowed(tx, me, "pair");
@@ -263,7 +263,7 @@ export async function inviteToChannel(
       );
     const target = Number(t.id);
     if (target === me)
-      throw new ApiError(400, "invalid", "You're in this group already.");
+      throw new ApiError(400, "invalid", "You're in this channel already.");
     // The same answer sendMessage gives: the caller knows whom it blocked.
     if (t.blocked)
       throw new ApiError(
@@ -276,7 +276,7 @@ export async function inviteToChannel(
       throw new ApiError(
         409,
         "already_member",
-        `@${t.handle} is in this group already.`,
+        `@${t.handle} is in this channel already.`,
       );
     const [n] = await tx<{ n: number }[]>`
       SELECT count(*)::int AS n FROM channel_roster(${id})`;

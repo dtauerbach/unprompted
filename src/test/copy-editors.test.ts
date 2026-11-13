@@ -58,6 +58,8 @@ vi.mock("next/navigation", () => ({
   notFound: () => {
     throw new Error("not found");
   },
+  // The account page's client parts, drawn on the server here.
+  useRouter: () => ({ refresh: () => {} }),
 }));
 vi.mock("next/server", async (original) => ({
   ...(await original<typeof import("next/server")>()),

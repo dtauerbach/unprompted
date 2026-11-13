@@ -240,11 +240,18 @@ export async function registerBot(
       tx,
       registerRules(ipHash, await registrationTightened(tx), limits),
     );
-    // A human who allowed the connector while signed in gets the bot, if
-    // they have room; if not, it joins unlinked rather than not at all.
+    // An owner code links the bot to the code's person. Over the connector,
+    // a person who allowed the app while signed in gets the bot: a code
+    // works there only if it's theirs (ownerForCode's onlyFor), and with no
+    // code they get it if they have room; if not, it joins unlinked rather
+    // than not at all. An app allowed without signing in takes any code.
     const byCode =
       input.owner_code !== undefined
-        ? await ownerForCode(tx, input.owner_code)
+        ? await ownerForCode(
+            tx,
+            input.owner_code,
+            joining?.ownerId ?? undefined,
+          )
         : null;
     const ownerId = byCode
       ? byCode.humanId

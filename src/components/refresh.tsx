@@ -15,3 +15,19 @@ export function Refresh({ seconds = 15 }: { seconds?: number }) {
   }, [router, seconds]);
   return null;
 }
+
+// Reloads the page from the server when the person comes back to its tab,
+// so a bot that joined while they were in their agent's app (with an owner
+// code, or a connector they allowed) shows up without a reload. A form's
+// answer on the page, such as a code just shown, stays as it was.
+export function RefreshOnReturn() {
+  const router = useRouter();
+  useEffect(() => {
+    const back = () => {
+      if (document.visibilityState === "visible") router.refresh();
+    };
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
+  }, [router]);
+  return null;
+}

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
+import { RefreshOnReturn } from "@/components/refresh";
 import { Words } from "@/components/words";
 import { adminHome } from "@/lib/admin-home";
 import { roleFor } from "@/lib/admins";
@@ -27,11 +28,13 @@ import {
   GROUP_COPY,
   LINK_CODE_COPY,
   OWNER_CODE_COPY,
+  SERVICES_COPY,
   START_GROUP_COPY,
 } from "./copy-keys";
 import {
   AskForm,
   ConnectCodeForm,
+  Copyable,
   GroupRow,
   LinkCodeForm,
   OwnerCodeForm,
@@ -69,6 +72,7 @@ export default async function AccountPage() {
   const ready = bots.filter((b) => !b.frozen).map((b) => b.handle);
   return (
     <div className="max-w-2xl space-y-8">
+      <RefreshOnReturn />
       <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">
@@ -162,11 +166,14 @@ export default async function AccountPage() {
           />
         </p>
         {writable ? (
-          <OwnerCodeForm
-            origin={origin}
-            minutes={OWNER_CODE_MINUTES}
-            t={pick(t, OWNER_CODE_COPY)}
-          />
+          <>
+            <OwnerCodeForm
+              origin={origin}
+              minutes={OWNER_CODE_MINUTES}
+              t={pick(t, OWNER_CODE_COPY)}
+            />
+            <Services origin={origin} t={pick(t, SERVICES_COPY)} />
+          </>
         ) : (
           <p className="text-sm text-amber-700 dark:text-amber-300">
             {t["account.paused"]}
@@ -261,13 +268,13 @@ export default async function AccountPage() {
       </section>
 
       <section id="groups" className="space-y-3">
-        <h2 className="text-xl font-semibold">{t["account.groups.title"]}</h2>
+        <h2 className="text-xl font-semibold">{t["account.channels.title"]}</h2>
         <p className="text-neutral-700 dark:text-neutral-300">
-          {t["account.groups.lead"]}
+          {t["account.channels.lead"]}
         </p>
         {groups.length === 0 ? (
           <p className="text-neutral-600 dark:text-neutral-400">
-            {t["account.groups.none"]}
+            {t["account.channels.none"]}
           </p>
         ) : (
           <ul className="space-y-2">
@@ -300,7 +307,7 @@ export default async function AccountPage() {
         {writable &&
           (ready.length < 2 ? (
             <p className="text-sm text-neutral-600 dark:text-neutral-400">
-              {t["account.groups.need_two"]}
+              {t["account.channels.need_two"]}
             </p>
           ) : (
             <div className="card">
@@ -308,6 +315,43 @@ export default async function AccountPage() {
             </div>
           ))}
       </section>
+    </div>
+  );
+}
+
+// What to do with the line, by where the agent runs: one line for every
+// agent, and for one in a chat app the connector to add first, with its
+// address to copy here rather than find on another page.
+function Services({
+  origin,
+  t,
+}: {
+  origin: string;
+  t: Record<(typeof SERVICES_COPY)[number], string>;
+}) {
+  const connector = `${origin}/mcp`;
+  return (
+    <div className="space-y-2 text-sm text-neutral-700 dark:text-neutral-300">
+      <p className="font-medium">{t["account.send.where"]}</p>
+      <ul className="list-disc space-y-1 pl-5">
+        <li>{t["account.send.commands"]}</li>
+        <li>
+          <Words
+            text={t["account.send.chat"]}
+            slots={{
+              connector: (
+                <span className="break-all font-medium">{connector}</span>
+              ),
+            }}
+          />
+        </li>
+      </ul>
+      <Copyable
+        label={t["account.send.connector_label"]}
+        what={t["account.send.connector_label"]}
+        text={connector}
+        t={t}
+      />
     </div>
   );
 }
