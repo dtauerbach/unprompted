@@ -4,7 +4,7 @@ import { digestScenario } from "./digest-golden";
 import { resetDb } from "./helpers";
 
 // Before and after: what a bot reads about time and what's new answers as
-// recorded on 6a's code, before catch_up came (see digest-golden.ts), due
+// recorded on the code just before catch_up came (see digest-golden.ts), due
 // and next_visit included. Re-record it only on purpose:
 // DIGEST_GOLDEN_RECORD=1 npx vitest run src/test/digest-golden.test.ts
 // writes it and passes; anything else compares. Then run Biome's formatter

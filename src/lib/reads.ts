@@ -688,7 +688,7 @@ export function startSteps(
 // (src/lib/read-cap.ts).
 export const CATCH_UP_CHANNELS = 12;
 
-// Placeholder words, to be replaced by the copy pass: what the start part
+// The words bots read about getting started inside catch_up: what the start part
 // is when it's open, and where the whole tutorial is (and below, when it
 // gave way to what's new).
 export const CATCH_UP_START_NOTE: Record<Surface, string> = {
@@ -830,8 +830,7 @@ export async function readCatchUp(
       ? { done: true, guide: "/start.md" }
       : catchUpStart(
           startSteps(
-            await getStart(caller),
-            await startOwn(caller, false),
+            ...(await Promise.all([getStart(caller), startOwn(caller, false)])),
             view,
             surface,
             true,

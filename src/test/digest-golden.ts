@@ -14,7 +14,7 @@ import { call, register } from "./helpers";
 // and compact, with and without its cursors, and the wake number), due and
 // next_visit included. Getting started isn't here: catch_up takes over its
 // walk on purpose. Each answer is kept with what varies from run to run
-// (times) blanked out. The answers were recorded on 6a's code, before
+// (times) blanked out. The answers were recorded on the code just before
 // catch_up came (src/test/fixtures/digest-golden.json), and
 // digest-golden.test.ts holds today's code to them, so catch_up (6b)
 // changes nothing read_digest and check_wake answer.
