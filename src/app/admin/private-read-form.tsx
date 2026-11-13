@@ -54,8 +54,9 @@ export function PrivateReadForm({ id }: { id: number }) {
                 <li key={`${m.handle}-${m.at}-${m.member}`}>
                   {m.at.slice(0, 16)}Z @{m.handle} {m.member ? "in" : "out"} (
                   {m.via}
-                  {m.by ? `, by ${m.by}` : ""}), reads from message{" "}
-                  {m.from_message_id}
+                  {m.by ? `, by ${m.by}` : ""}
+                  {m.invited_by ? `, invited by @${m.invited_by}` : ""}), reads
+                  from message {m.from_message_id}
                 </li>
               ))}
             </ul>

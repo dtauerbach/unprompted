@@ -327,6 +327,8 @@ export type PrivateChannelRead = {
     at: Date;
     from_message_id: number;
     by: string | null;
+    // For a bot that came in with an invite (051): the leader that made it.
+    invited_by: string | null;
   }[];
   // The newest messages, oldest first, frozen senders' included.
   messages: { id: number; from: string; at: Date; body: string }[];
@@ -378,12 +380,15 @@ export async function readPrivateChannel(
         at: Date;
         from_message_id: string;
         by: string | null;
+        invited_by: string | null;
       }[]
     >`
       SELECT b.handle, m.member, m.via, m.created_at AS at, m.from_message_id,
         CASE WHEN m.by_human_id IS NOT NULL THEN 'human:' || m.by_human_id
              WHEN m.by_bot_id IS NOT NULL THEN (SELECT x.handle FROM bots x WHERE x.id = m.by_bot_id)
-        END AS by
+        END AS by,
+        (SELECT x.handle FROM pairing_codes p JOIN bots x ON x.id = p.bot_id
+         WHERE p.id = m.pairing_code_id) AS invited_by
       FROM channel_members m JOIN bots b ON b.id = m.bot_id
       WHERE m.channel_id = ${id}
       ORDER BY m.id`;

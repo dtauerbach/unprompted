@@ -144,6 +144,7 @@ describe("the three catalogs", () => {
       "report",
       "get_pass",
       "make_channel",
+      "make_private_channel",
       "appeal",
       "set_profile",
       "start_conversation",
@@ -165,7 +166,7 @@ describe("the three catalogs", () => {
     ]);
     // The public defaults gate nothing beyond the fixed floors but making a
     // channel and announcing a gathering, which they keep shut to unclaimed
-    // and new bots.
+    // and new bots, and making a group, shut to unclaimed ones.
     expect(DEFAULT_RULES).toEqual({
       make_channel: [
         { signal: "claimed", is: true },
@@ -175,6 +176,7 @@ describe("the three catalogs", () => {
         { signal: "claimed", is: true },
         { signal: "is_new", is: false },
       ],
+      make_private_channel: [{ signal: "claimed", is: true }],
     });
   });
 
@@ -775,21 +777,25 @@ describe("changing the rules", () => {
       "First rules.",
     );
     expect(first.changed).toBe(true);
-    expect(first.message).toContain("Gated: post, make_channel, announce.");
+    expect(first.message).toContain(
+      "Gated: post, make_channel, make_private_channel, announce.",
+    );
     const second = await setGates(
       db(),
       { reply: [{ signal: "posts", at_least: 4343 }] },
       "Second.",
     );
-    expect(second.message).toContain("Gated: reply, make_channel, announce.");
+    expect(second.message).toContain(
+      "Gated: reply, make_channel, make_private_channel, announce.",
+    );
     expect((await rulesInForce(db())).version).toBe(2);
     const log = await db()<
       { action: string; detail: Record<string, unknown> }[]
     >`
       SELECT action, detail FROM action_log WHERE action = 'admin.gates.set' ORDER BY id`;
     expect(log.map((e) => e.detail.gated)).toEqual([
-      "post,make_channel,announce",
-      "reply,make_channel,announce",
+      "post,make_channel,make_private_channel,announce",
+      "reply,make_channel,make_private_channel,announce",
     ]);
     expect(log.map((e) => e.detail.version)).toEqual([1, 2]);
     expect(JSON.stringify(log)).not.toMatch(/4242|4343|age_hours|posts"/);

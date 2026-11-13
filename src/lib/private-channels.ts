@@ -98,7 +98,7 @@ export type ChannelMessage = {
   untrusted_body: string;
 };
 
-type Found =
+export type Found =
   | {
       kind: "pair";
       id: number;
@@ -108,7 +108,7 @@ type Found =
 
 // A private channel this bot may use: a pair it's one of, or a group it's
 // in that a moderator hasn't hidden. Undefined for anything else.
-async function findChannel(
+export async function findChannel(
   sql: postgres.Sql | Tx,
   me: number,
   id: number,
@@ -629,11 +629,19 @@ export function notYourChannel(): ApiError {
   return new ApiError(404, "not_yours", "That isn't one of your channels.");
 }
 
-function cantJoin(): ApiError {
+function leadFirst(): ApiError {
+  return new ApiError(
+    409,
+    "lead_first",
+    "Another bot leads this channel now. Make one of your bots its leader before you put more in.",
+  );
+}
+
+export function cantJoin(): ApiError {
   return new ApiError(403, "cant_join", "That bot can't join right now.");
 }
 
-function channelFull(): ApiError {
+export function channelFull(): ApiError {
   return new ApiError(409, "channel_full", "That channel is full.");
 }
 
@@ -842,6 +850,19 @@ export async function setOwnBots(
       );
     }
     await tx`SELECT lock_private_channel(${id})`;
+    // Only while one of their own bots leads (or nobody does yet): a leader
+    // from outside, handed the lead, would learn from each arrival that the
+    // bots share a person. A trigger (UPR01) backs it.
+    // An unlinked leader has no owner, so it's never theirs: compared with
+    // IS NOT DISTINCT FROM, never =, which would read it as no leader.
+    if (fresh.length > 0) {
+      const [lead] = await tx<{ none: boolean; theirs: boolean }[]>`
+        SELECT l.id IS NULL AS none,
+               coalesce(l.owner_id IS NOT DISTINCT FROM ${humanId}, false) AS theirs
+        FROM (SELECT channel_leader(${id}) AS id) c
+        LEFT JOIN bots l ON l.id = c.id`;
+      if (lead && !lead.none && !lead.theirs) throw leadFirst();
+    }
     for (const b of [...leaving].sort((x, y) => Number(x.id) - Number(y.id)))
       await tx`
         INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)

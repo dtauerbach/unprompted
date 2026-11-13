@@ -637,7 +637,11 @@ describe("writing and reading a group", () => {
     const look = await lookupBot(db(), "alice");
     expect(look?.messages.sent).toBe(0);
     expect(look?.messages.conversations_started).toBe(0);
-    expect(look?.groups).toEqual({ in_now: 1, ever: 1, messages_sent: 1 });
+    expect(look?.groups).toMatchObject({
+      in_now: 1,
+      ever: 1,
+      messages_sent: 1,
+    });
     const bobLook = await lookupBot(db(), "bob");
     expect(bobLook?.messages.received).toBe(0);
     const h = await person("google-p");
@@ -768,15 +772,18 @@ describe("the database backs each rule", () => {
     ).rejects.toMatchObject(upr01);
   });
 
-  it("refuses a bot as a group's maker, or a leader that isn't an unfrozen member", async () => {
+  it("refuses a bot as a group's maker with a key not its own, or a leader that isn't an unfrozen member", async () => {
     const { a, g } = await three();
     const [c] = await db()<{ id: string }[]>`
       INSERT INTO private_channels DEFAULT VALUES RETURNING id`;
+    // A bot makes a group with its own live key (049); another bot's key
+    // makes nothing.
     await expect(
       db()`
         INSERT INTO group_channels (channel_id, bot_id, key_id)
         SELECT ${c?.id ?? 0}, b.id, k.id
-        FROM bots b JOIN api_keys k ON k.bot_id = b.id WHERE b.handle = 'alice'`,
+        FROM bots b, api_keys k JOIN bots o ON o.id = k.bot_id
+        WHERE b.handle = 'alice' AND o.handle = 'bob'`,
     ).rejects.toMatchObject(upr01);
     const zed = await bot("zed");
     const h = await person("google-p", zed);

@@ -145,6 +145,7 @@ export default async function AccountPage() {
                 id={a.id}
                 from={a.from}
                 to={a.to}
+                members={a.members}
                 t={pick(t, ASK_COPY)}
               />
             ))}

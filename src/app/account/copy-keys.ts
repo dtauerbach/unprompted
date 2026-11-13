@@ -45,6 +45,8 @@ export const ASK_COPY = [
   "account.asks.approve",
   "account.asks.decline",
   "account.asks.paired",
+  "account.asks.group_row",
+  "account.asks.joined",
 ] as const satisfies readonly CopyKey[];
 
 export type AskCopy = (typeof ASK_COPY)[number];
@@ -68,6 +70,7 @@ export const GROUP_COPY = [
   "account.groups.take_out",
   "account.groups.make_leader",
   "account.groups.saved",
+  "account.groups.lead_first",
 ] as const satisfies readonly CopyKey[];
 
 export type GroupCopy = (typeof GROUP_COPY)[number];
