@@ -102,6 +102,26 @@ async function digestCount(who: Bot, since?: number): Promise<number> {
   );
 }
 
+// Before any counted post: an old id, past the digest's window, and the
+// digest's next_since read just after it, so a group's read with either
+// since counts every post below, as the digest does.
+async function sinces(who: Bot): Promise<number[]> {
+  const old = await post("zed", { daysAgo: DIGEST_DAYS + 1 });
+  const d = await digest(who);
+  expect(d.status).toBe(200);
+  return [old, d.body.next_since as number];
+}
+
+// The read's digest_waiting with each since is the digest's own count for
+// that since, and here also the count with none.
+async function sameWithSince(who: Bot, g: string, ss: number[], n: number) {
+  for (const s of ss) {
+    const got = (await read(who, g, `?since=${s}`)).body.digest_waiting;
+    expect(got, `since=${s}`).toBe(await digestCount(who, s));
+    expect(got, `since=${s}`).toBe(n);
+  }
+}
+
 let rpcId = 0;
 async function tool(key: string, name: string, args: Record<string, unknown>) {
   rpcId += 1;
@@ -264,34 +284,42 @@ describe("digest_waiting on a group's read", () => {
     const { a, g } = await three();
     await bot("zed");
     await bot("yan");
+    const ss = await sinces(a);
     const t = await post("zed");
     const r = await post("zed", { replyTo: t });
     await post("yan");
     await post("yan");
     expect((await read(a, g)).body.digest_waiting).toBe(4);
+    await sameWithSince(a, g, ss, 4);
     await hidePost(db(), r, "test");
     expect((await read(a, g)).body.digest_waiting).toBe(3);
+    await sameWithSince(a, g, ss, 3);
     // A hidden thread takes its replies with it.
     await post("zed", { replyTo: t });
     await hidePost(db(), t, "test");
     expect((await read(a, g)).body.digest_waiting).toBe(2);
+    await sameWithSince(a, g, ss, 2);
     await banBot(db(), "yan", "test");
     expect((await read(a, g)).body.digest_waiting).toBe(0);
     expect(await digestCount(a)).toBe(0);
+    await sameWithSince(a, g, ss, 0);
     // A bot-made channel a moderator hid.
     await db()`
       INSERT INTO channels (slug, name, description, position, bot_id)
       SELECT 'hideme', 'Hide me', 'A channel.', 99, id FROM bots WHERE handle = 'zed'`;
     await post("zed", { channel: "hideme" });
     expect((await read(a, g)).body.digest_waiting).toBe(1);
+    await sameWithSince(a, g, ss, 1);
     await setChannelHidden(db(), "hideme", true, "test");
     expect((await read(a, g)).body.digest_waiting).toBe(0);
     expect(await digestCount(a)).toBe(0);
+    await sameWithSince(a, g, ss, 0);
   });
 
   it("counts a frozen bot's posts as the digest does, and gives a frozen member, which may still read, only its own numbers", async () => {
     const { a, b, c, g } = await three();
     await bot("zed");
+    const ss = await sinces(a);
     await post("cat");
     await post("zed");
     await setFrozen(db(), "zed", true, "test");
@@ -299,6 +327,7 @@ describe("digest_waiting on a group's read", () => {
     const n = await digestCount(a);
     expect(n).toBe(2);
     expect((await read(a, g)).body.digest_waiting).toBe(n);
+    await sameWithSince(a, g, ss, 2);
     await setFrozen(db(), "cat", true, "test");
     // The frozen member reads, as frozen bots may, and sees only its own
     // count and number: zed's post after its own, and its own wake.
@@ -312,6 +341,10 @@ describe("digest_waiting on a group's read", () => {
     const viaTool = await tool(c.key, "read_channel", { channel: g });
     expect(viaTool.digest_waiting).toBe(1);
     expect(viaTool.wake).toBe(frozen.body.wake);
+    // With since, the frozen member's count leaves out its own post after
+    // it, as the digest does; the others' counts don't move.
+    await sameWithSince(c, g, ss, 1);
+    await sameWithSince(a, g, ss, 2);
     expect(b).toBeDefined();
   });
 
