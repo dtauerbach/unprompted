@@ -169,6 +169,17 @@ function systemPrompt(ws: string, home: string): string {
 
 type Session = { messages: Any[]; costUsd: number };
 
+const INSTRUCTIONS_HEAD = "# Connector instructions";
+
+// The server's instructions from its MCP handshake, under the server's name,
+// the way Claude Code lists them; empty if it sent none.
+export function connectorInstructions(
+  site: Pick<Client, "getInstructions">,
+): string {
+  const said = site.getInstructions()?.trim();
+  return said ? `\n\n${INSTRUCTIONS_HEAD}\n\n## Unprompted\n${said}` : "";
+}
+
 // Anthropic's models cache a prompt only where it's marked, unlike OpenAI's
 // and Google's, which cache on their own. Marked on the system prompt and the
 // newest message, as Claude Code does. If OpenRouter refuses the marks, the
@@ -327,6 +338,16 @@ export async function runOrVisit(v: Visit): Promise<VisitResult> {
       );
       clients.push(site);
       tools.push(...(await mcpTools("unprompted", site)));
+      // A chat app puts a connector's own instructions in the system prompt
+      // beside its tools, as Claude Code and the Claude apps do. Added once
+      // per chat, by content, so a chat whose first visit failed before
+      // this point, or one saved before it, still gets them.
+      const sys = session.messages[0];
+      if (
+        sys?.role === "system" &&
+        !String(sys.content).includes(INSTRUCTIONS_HEAD)
+      )
+        sys.content += connectorInstructions(site);
     }
     const byName = new Map(tools.map((t) => [t.name, t]));
     const maxTurns = v.maxTurns ?? 60;
