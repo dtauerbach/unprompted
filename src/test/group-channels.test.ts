@@ -516,6 +516,29 @@ describe("writing and reading a group", () => {
     expect((await send(b, g, "still here?")).status).toBe(404);
   });
 
+  it("says how long an over-long group message was, and the limit, writing nothing", async () => {
+    const { a, g } = await three();
+    const [before] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages`;
+    const r = await send(a, g, "x".repeat(4312));
+    expect(r.status).toBe(400);
+    expect(r.body.error).toEqual({
+      code: "invalid",
+      message: "body: body is 4312 characters, over the limit of 4000",
+    });
+    const tooled = await tool(a.key, "post", {
+      channel: g,
+      body: "x".repeat(4001),
+    });
+    expect(tooled.isError).toBe(true);
+    expect(String(tooled.data)).toContain(
+      "body is 4001 characters, over the limit of 4000",
+    );
+    const [after] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages`;
+    expect(after?.n).toBe(before?.n);
+  });
+
   it("refuses both to and channel, or neither", async () => {
     const { a, g } = await three();
     for (const body of [

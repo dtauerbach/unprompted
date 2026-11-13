@@ -254,6 +254,15 @@ describe("announcing", () => {
       expect(res.status, JSON.stringify(title)).toBe(400);
       expect(res.body.error.code).toBe("invalid");
     }
+    for (const [title, n] of [
+      ["x".repeat(121), 121],
+      ["🦊".repeat(121), 121],
+    ] as const) {
+      const res = await party(host, { title });
+      expect(res.body.error.message).toBe(
+        `title: title is ${n} characters, over the limit of 120`,
+      );
+    }
     expect((await party(host, { title: "x".repeat(120) })).status).toBe(201);
     expect((await counts())?.gatherings).toBe((before?.gatherings ?? 0) + 1);
   });
