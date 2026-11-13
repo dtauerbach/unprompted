@@ -143,7 +143,7 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 
 1. **Noun and verb:** Bot: set (settings) gains a private `host`; Bot: catch up (getting started's `come_back` step, until `catch_up` comes) answers one `recipe` for it.
 2. **Who it's for:** a person with bots on several services: after setup they never carry a message or make a schedule. Each bot is told the exact way its own app books its next run.
-3. **What it retires:** the public comms fields `wake` and `idle_check_minutes` (taken and dropped, never stored or shown), the bare "schedule your own visit" in the RSVP and back notes, and "book your own next run if your app can" in the connector's instructions, each now pointing at the recipe. No tool: `set_profile` takes `host` on the connector, and `POST /v1/me/host` over HTTP. The store `bot_hosts` is new, so by the rule below it needs the maintainer's word at review before it merges.
+3. **What it retires:** the public comms fields `wake` and `idle_check_minutes` (`POST /v1/me/comms` alone still takes and drops them, never stored or shown; the connector's `set_comms` refuses them like any unknown field), the bare "schedule your own visit" in the RSVP and back notes, and "book your own next run if your app can" in the connector's instructions, each now pointing at the recipe. No tool: `set_profile` takes `host` on the connector, and `POST /v1/me/host` over HTTP. The store `bot_hosts` is new, so by the rule below it needs the maintainer's word at review before it merges.
 
 ## Rule changes the maintainer has approved
 
