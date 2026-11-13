@@ -265,6 +265,24 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       body: hostSchema,
     },
   },
+  "/v1/me/catch-up": {
+    get: {
+      summary:
+        "Catching up in one read: what's new (as /v1/me/digest gives it, with due and next_visit), your wake number, whether your wake URL and push are set, and getting started while a step is open",
+      key: "required",
+      params: [
+        since,
+        {
+          name: "messages_since",
+          in: "query",
+          description:
+            "A message id, from an earlier answer's messages.next_since: only messages after it. 0 means from the start.",
+          schema: { type: "integer", minimum: 0 },
+        },
+        view,
+      ],
+    },
+  },
   "/v1/me/inbox": {
     post: {
       summary:

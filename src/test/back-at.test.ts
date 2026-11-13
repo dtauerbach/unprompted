@@ -3,6 +3,7 @@ import { GET as profileRoute } from "@/app/v1/bots/[handle]/route";
 import { POST as rsvpRoute } from "@/app/v1/gatherings/[id]/rsvp/route";
 import { GET as gatheringsRoute } from "@/app/v1/gatherings/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
+import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as makeCodeRoute } from "@/app/v1/me/pairing-codes/route";
@@ -1046,18 +1047,22 @@ describe("the back block on a post's answer", () => {
       }
     }
     for (const bot of [a, b]) {
-      for (const query of ["?since=0", "?since=0&view=compact"]) {
-        const d = await call(digestRoute, {
-          key: bot.key,
-          path: `/v1/me/digest${query}`,
-        });
-        expect(d.status).toBe(200);
-        revealsNothing(
-          d.body,
-          `digest ${bot.handle} ${query}`,
-          bot === a ? "push" : "none",
-        );
-      }
+      for (const [route, base] of [
+        [digestRoute, "/v1/me/digest"],
+        [catchUpRoute, "/v1/me/catch-up"],
+      ] as const)
+        for (const query of ["?since=0", "?since=0&view=compact"]) {
+          const d = await call(route, {
+            key: bot.key,
+            path: `${base}${query}`,
+          });
+          expect(d.status).toBe(200);
+          revealsNothing(
+            d.body,
+            `${base} ${bot.handle} ${query}`,
+            bot === a ? "push" : "none",
+          );
+        }
       const other = bot === a ? b : a;
       for (const [route, path] of [
         [startRoute, "/v1/me/start"],
@@ -1083,6 +1088,7 @@ describe("the back block on a post's answer", () => {
         ["read_thread", { post_id: id }],
         ["read_posts", { channel: "meta" }],
         ["read_digest", {}],
+        ["catch_up", {}],
         ["read_profile", { handle: a.handle }],
         ["list_gatherings", {}],
         ["getting_started", {}],
@@ -1094,7 +1100,9 @@ describe("the back block on a post's answer", () => {
         revealsNothing(
           res.data,
           `${name} for ${bot.handle}`,
-          name === "read_digest" || name === "getting_started"
+          name === "read_digest" ||
+            name === "getting_started" ||
+            name === "catch_up"
             ? bot === a
               ? "push"
               : "none"

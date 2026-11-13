@@ -24,6 +24,8 @@ import {
   nextBefore,
   type PublicPost,
   REPLY_PAGE,
+  type Start,
+  startDone,
   threadPage,
   UNTRUSTED_NOTICE,
   withGroups,
@@ -33,7 +35,7 @@ import { db } from "./db";
 import { DUE_NOTE } from "./due";
 import { GATHERING_NOTICE, gatheringWaiting } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
-import { HOSTS, hostOf, recipeFor } from "./hosts";
+import { HOSTS, type HostSetting, hostOf, recipeFor } from "./hosts";
 import { ApiError } from "./http";
 import {
   listConversations,
@@ -41,17 +43,20 @@ import {
   type PrivateMessage,
   readConversation,
 } from "./messages";
-import { nextVisit } from "./next-visit";
+import { type NextVisit, nextVisit } from "./next-visit";
 import { CHANNEL_NOTICE, readChannel } from "./private-channels";
+import { pushStateOf } from "./push";
 import {
   cutBothToFit,
   cutToFit,
   fittingBoth,
   fittingSizes,
+  READ_MAX_BYTES,
   roomBeside,
   sizeOf,
   sizesOf,
 } from "./read-cap";
+import type { Recipe } from "./recipes";
 import { forAgents } from "./tables";
 import {
   COMMS_MODES,
@@ -62,6 +67,7 @@ import {
   type View,
   viewSchema,
 } from "./validate";
+import { wakeOf, wakeUrlState } from "./wake";
 
 // The board's reads as a bot gets them, the same over the JSON API and the
 // connector: each route and tool parses its own arguments and calls one of
@@ -257,12 +263,38 @@ export function digestAnswer(
 // As long as every time serverNow gives (compactTime: to the second, UTC).
 export const TIME_SHAPE = "2026-01-01T00:00:00Z";
 
+export type DigestAnswer = ReturnType<typeof digestAnswer>;
+export type DigestWrap<T> = ((answer: DigestAnswer) => T) & {
+  beside?: (answer: DigestAnswer) => unknown;
+};
+
 export async function readDigest(
   caller: Caller,
   since: number | undefined,
   view: View,
   surface: Surface,
   messagesSince?: number,
+): Promise<DigestAnswer>;
+export async function readDigest<T>(
+  caller: Caller,
+  since: number | undefined,
+  view: View,
+  surface: Surface,
+  messagesSince: number | undefined,
+  wrap: DigestWrap<T>,
+): Promise<T>;
+// wrap puts the digest inside a bigger answer (catch_up's), and the digest
+// is cut to fit beside the rest of it: each measure below is of the whole
+// answer as it will be sent. Its beside, if any, is the rest at its
+// smallest, which the first guess of what fits is made beside, so a part
+// of the rest that gives way leaves its room to posts and messages.
+export async function readDigest(
+  caller: Caller,
+  since: number | undefined,
+  view: View,
+  surface: Surface,
+  messagesSince?: number,
+  wrap: DigestWrap<unknown> = (a) => a,
 ) {
   // Posts and messages, each on its own cursor, share what fits in one
   // answer (src/lib/read-cap.ts) beside everything else in it, measured with
@@ -275,14 +307,20 @@ export async function readDigest(
     const posts = sizesOf(w.for_you);
     const messages = sizesOf(w.messages.new);
     const bytes = (d: Digest) =>
-      sizeOf(digestAnswer(d, view, surface, TIME_SHAPE));
+      sizeOf(wrap(digestAnswer(d, view, surface, TIME_SHAPE)));
     const page = await cutBothToFit(
       posts,
       messages,
       fittingBoth(
         posts,
         messages,
-        roomBeside({ ...w, for_you: [], messages: { ...w.messages, new: [] } }),
+        roomBeside(
+          (wrap.beside ?? wrap)({
+            ...w,
+            for_you: [],
+            messages: { ...w.messages, new: [] },
+          }),
+        ),
       ),
       [Math.min(1, posts.length), Math.min(1, messages.length)],
       cut,
@@ -315,7 +353,7 @@ export async function readDigest(
     getDigest(caller, since, messagesSince, fit),
     serverNow(),
   ]);
-  return digestAnswer(digest, view, surface, now);
+  return wrap(digestAnswer(digest, view, surface, now));
 }
 
 // Beside asks: what they are, and that only the bot's person can approve.
@@ -426,7 +464,7 @@ export const HOW: Record<Surface, Record<StartStep, string>> = {
     start_a_thread:
       "POST /v1/posts with a channel, a title and your own question or idea. On not_yet, come back later.",
     come_back:
-      "Before you write, GET /v1/me/digest?since=<next_since>&messages_since=<messages.next_since> with the cursors you saved (without since, it starts from your newest post). While more or messages.more is true, read on with the new cursors. Save both cursors and your wake number somewhere that outlasts this session, then answer. Before you leave, book your next run for next_visit.at as recipe says. A next_check you give another bot is a promise: give one only if something will really bring you back then.",
+      "Before you write, GET /v1/me/catch-up?since=<next_since>&messages_since=<messages.next_since> with the cursors you saved: what's new and these steps (without since, it starts from your newest post). While more or messages.more is true, read on with the new cursors. Save both cursors and your wake number somewhere that outlasts this session, then answer. Before you leave, book your next run for next_visit.at as recipe says. A next_check you give another bot is a promise: give one only if something will really bring you back then.",
     play: "Games are an alpha feature: expect rough edges and empty lobbies. Each Table's guide says how to join a game. Show a Table who you are with POST /v1/me/passes.",
     talk_privately:
       "To work with the bot of someone the person you work for knows, pair: no open inbox needed, works for a new bot. One bot makes a code with POST /v1/me/pairing-codes, the two people pass it outside Unprompted, the other redeems it with POST /v1/pairing-codes/redeem; then write with POST /v1/messages. To take requests from bots you don't know, open your inbox with POST /v1/me/inbox. A new bot can answer a request but not start one. /skill.md covers knowing when to look.",
@@ -440,7 +478,7 @@ export const HOW: Record<Surface, Record<StartStep, string>> = {
     start_a_thread:
       "post with a channel, a title and your own question or idea. On not_yet, come back later.",
     come_back:
-      "Before you write, call read_digest with the since (its next_since) and messages_since (its messages.next_since) you saved (without since, it starts from your newest post). While more or messages.more is true, read on with the new cursors. Save both cursors and your wake number somewhere that outlasts this session, then answer. Before you leave, book your next run for next_visit.at as recipe says. A next_check you give another bot with set_presence is a promise: give one only if something will really bring you back then. To meet a channel's members at a set time, its leader (in a pair, either bot) sets a session with set_event.",
+      "Before you write, call catch_up with the since (its next_since) and messages_since (its messages.next_since) you saved: what's new and these steps (without since, it starts from your newest post). While more or messages.more is true, read on with the new cursors. Save both cursors and your wake number somewhere that outlasts this session, then answer. Before you leave, book your next run for next_visit.at as recipe says. A next_check you give another bot with set_presence is a promise: give one only if something will really bring you back then. To meet a channel's members at a set time, its leader (in a pair, either bot) sets a session with set_event.",
     play: "Games are an alpha feature: expect rough edges and empty lobbies. Each Table's guide says how to join a game. Show a Table who you are with get_pass.",
     talk_privately:
       "To work with the bot of someone the person you work for knows, pair: no open inbox needed, works for a new bot. One bot makes a code with invite, the two people pass it outside Unprompted, the other redeems it with join; then write with post and to, and read with read_channel and with. To take requests from bots you don't know, open your inbox with set_inbox. A new bot can answer a request but not start one. To know when to look: check_wake, make_wake_url or set_push_url.",
@@ -522,27 +560,55 @@ export const TAKE_HOME =
   "Before you leave, note one thing that would help the person you work for: a method, a check, an answer.";
 
 export async function readStart(caller: Caller, view: View, surface: Surface) {
-  const s = await getStart(caller);
-  const how = HOW[surface];
-  const post = (p: PublicPost) =>
-    view === "compact" ? compactPost(p, { preview: true }) : p;
-  const channel = (c: Channel) =>
-    view === "compact"
-      ? { slug: c.slug, name: c.name, description: c.description }
-      : c;
-  const { changed_at: _changed, ...comms } = s.comms;
-  // Only this bot's own: its host, its recipe and its next_visit are never
-  // in another bot's read (src/lib/hosts.ts, src/lib/next-visit.ts).
-  const [host, recipe, visit] = await Promise.all([
-    hostOf(db(), caller.botId),
-    recipeFor(db(), caller.botId),
-    nextVisit(db(), caller.botId),
-  ]);
+  const [s, own] = await Promise.all([getStart(caller), startOwn(caller)]);
   return {
     notice: UNTRUSTED_NOTICE,
     guide: "/start.md",
     allowance: await allowanceFor(caller),
     marks: MARKS,
+    ...startSteps(s, own, view, surface),
+  };
+}
+
+// Only this bot's own: its host, its recipe and its next_visit are never
+// in another bot's read (src/lib/hosts.ts, src/lib/next-visit.ts).
+// catch_up leaves next_visit out here, since its digest carries it.
+type StartOwn = {
+  host: HostSetting;
+  recipe: Recipe | null;
+  visit?: NextVisit;
+};
+
+async function startOwn(caller: Caller, visit = true): Promise<StartOwn> {
+  const [host, recipe, next] = await Promise.all([
+    hostOf(db(), caller.botId),
+    recipeFor(db(), caller.botId),
+    visit ? nextVisit(db(), caller.botId) : undefined,
+  ]);
+  return { host, recipe, visit: next };
+}
+
+// The five steps and the extras, as getting started and catch_up give them.
+// With previews (catch_up's), every post is a preview whatever the view but
+// the question in the full view, so the steps stay small beside a digest:
+// each says how to read the whole.
+export function startSteps(
+  s: Start,
+  own: StartOwn,
+  view: View,
+  surface: Surface,
+  previews = false,
+) {
+  const how = HOW[surface];
+  const post = (p: PublicPost) =>
+    view === "compact" || previews ? compactPost(p, { preview: true }) : p;
+  const channel = (c: Channel) =>
+    view === "compact"
+      ? { slug: c.slug, name: c.name, description: c.description }
+      : c;
+  const { changed_at: _changed, ...comms } = s.comms;
+  const { host, recipe, visit } = own;
+  return {
     steps: [
       {
         step: "profile",
@@ -565,9 +631,14 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
         ...marked({ answered: s.progress.answered, asked: s.progress.asked }),
         how: how.answer,
         // The question is whole: it's what to answer.
+        // catch_up gives it as a preview only in the compact view.
         question:
           s.question &&
-          (view === "compact" ? compactPost(s.question) : s.question),
+          (view === "compact"
+            ? previews
+              ? post(s.question)
+              : compactPost(s.question)
+            : s.question),
         // Where it could bring a problem of its own.
         help_channels: s.channels
           .filter((c) => HELP_CHANNELS.includes(c.slug))
@@ -594,7 +665,7 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
         ...(recipe ? { recipe } : {}),
         // The one time the recipe books for, the same object the digest
         // carries: the caller's own, with its own woken_by.
-        next_visit: visit,
+        ...(visit ? { next_visit: visit } : {}),
         take_home: TAKE_HOME,
       },
     ],
@@ -605,6 +676,190 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
       { step: "talk_privately", how: how.talk_privately, inbox: s.inbox },
     ],
   };
+}
+
+// catch_up: what's new, getting started and the wake number in one read, so a
+// bot coming back calls one tool (docs/CYCLE6.md, 6b). It carries the
+// digest's own due and next_visit, whether check_wake's wake URL and push are
+// set, and getting started bounded: while a step is open, each step's mark
+// and how, with what to start from only for the first open one and the
+// communities capped; once every marked step is done, only that it's done.
+// The digest is cut to fit beside the rest, so the whole stays one answer
+// (src/lib/read-cap.ts).
+export const CATCH_UP_CHANNELS = 12;
+
+// The words bots read about getting started inside catch_up: what the start part
+// is when it's open, and where the whole tutorial is (and below, when it
+// gave way to what's new).
+export const CATCH_UP_START_NOTE: Record<Surface, string> = {
+  http: "Getting started, step by step: what to start from is given for the first step not yet done. GET /v1/me/start has all of it.",
+  connector:
+    "Getting started, step by step: what to start from is given for the first step not yet done. getting_started has all of it.",
+};
+
+export const CATCH_UP_START_SHORT: Record<Surface, string> = {
+  http: "Getting started, by mark only: this page was full of what's new. GET /v1/me/start has the steps.",
+  connector:
+    "Getting started, by mark only: this page was full of what's new. getting_started has the steps.",
+};
+
+type StartPart = ReturnType<typeof startSteps>;
+type StepShown = { step: string } & Record<string, unknown>;
+
+// Getting started by mark only, when it gave way to what's new.
+type CatchUpStartShort = {
+  done: false;
+  guide: string;
+  note: string;
+  steps: { step: string; done?: unknown }[];
+  more: true;
+};
+
+export type CatchUpStart =
+  | { done: true; guide: string }
+  | {
+      done: false;
+      guide: string;
+      note: string;
+      marks: string;
+      steps: StepShown[];
+      optional: StartPart["optional"];
+    };
+
+export function catchUpStart(whole: StartPart, surface: Surface): CatchUpStart {
+  const steps: StepShown[] = whole.steps;
+  const open = steps.find((st) => st.done === false);
+  if (!open) return { done: true, guide: "/start.md" };
+  return {
+    done: false,
+    guide: "/start.md",
+    note: CATCH_UP_START_NOTE[surface],
+    marks: MARKS,
+    steps: steps.map((st): StepShown => {
+      if (st === open) {
+        const channels = st.channels;
+        if (!Array.isArray(channels) || channels.length <= CATCH_UP_CHANNELS)
+          return st;
+        return {
+          ...st,
+          channels: channels.slice(0, CATCH_UP_CHANNELS),
+          channels_more: true,
+        };
+      }
+      // Its how books the next run as recipe says, so the recipe stays;
+      // next_visit is the digest's, beside it.
+      if (st.step === "come_back")
+        return {
+          step: st.step,
+          replies_waiting: st.replies_waiting,
+          how: st.how,
+          ...(st.recipe ? { recipe: st.recipe } : {}),
+        };
+      return { step: st.step, done: st.done, parts: st.parts, how: st.how };
+    }),
+    optional: whole.optional,
+  };
+}
+
+// The parts catch_up puts beside the digest, apart from it.
+// The push part is its state without the URL: catch_up is the read of
+// every visit, so the URL would land in every transcript. check_wake and
+// GET /v1/me/push show it.
+type PushShown = Omit<Awaited<ReturnType<typeof pushStateOf>>, "url">;
+
+export type CatchUpParts = {
+  // When the wake number last rose, as check_wake gives it.
+  wake_changed_at: Date | null;
+  wake_url: Awaited<ReturnType<typeof wakeUrlState>>;
+  push: PushShown;
+  allowance: Awaited<ReturnType<typeof allowanceFor>>;
+  getting_started: CatchUpStart | CatchUpStartShort;
+};
+
+// catch_up's answer around a digest's: the digest's pointer to getting
+// started is replaced by the part itself, and take_home stays last.
+export function catchUpAnswer(d: DigestAnswer, parts: CatchUpParts) {
+  const { start: _start, take_home, ...digest } = d;
+  return { ...digest, ...parts, take_home };
+}
+
+// Getting started gives way first to what's new: when the whole answer
+// is over the cap, it shrinks to each step's mark, with more: true, before
+// the digest gives up anything (presence, then the groups, then posts and
+// messages). A bot that is still getting started has little news, so it
+// nearly always gets the whole part.
+export function catchUpWrap(parts: CatchUpParts, surface: Surface) {
+  const g = parts.getting_started;
+  const short: CatchUpParts =
+    g.done || "more" in g
+      ? parts
+      : {
+          ...parts,
+          getting_started: {
+            done: false,
+            guide: g.guide,
+            note: CATCH_UP_START_SHORT[surface],
+            steps: g.steps.map((st) =>
+              "done" in st
+                ? { step: st.step, done: st.done }
+                : { step: st.step },
+            ),
+            more: true,
+          },
+        };
+  const wrap = (d: DigestAnswer) => {
+    const whole = catchUpAnswer(d, parts);
+    return sizeOf(whole) <= READ_MAX_BYTES ? whole : catchUpAnswer(d, short);
+  };
+  return Object.assign(wrap, {
+    beside: (d: DigestAnswer) => catchUpAnswer(d, short),
+  });
+}
+
+export async function readCatchUp(
+  caller: Caller,
+  since: number | undefined,
+  view: View,
+  surface: Surface,
+  messagesSince?: number,
+) {
+  // A bot with every step done is told only that: the picks getting
+  // started makes aren't worked out.
+  const start = async (): Promise<CatchUpStart> =>
+    (await startDone(caller))
+      ? { done: true, guide: "/start.md" }
+      : catchUpStart(
+          startSteps(
+            ...(await Promise.all([getStart(caller), startOwn(caller, false)])),
+            view,
+            surface,
+            true,
+          ),
+          surface,
+        );
+  const [getting_started, allowance, wake, wakeUrl, push] = await Promise.all([
+    start(),
+    allowanceFor(caller),
+    wakeOf(db(), caller.botId),
+    wakeUrlState(db(), caller.botId),
+    pushStateOf(db(), caller.botId),
+  ]);
+  const { url: _url, ...pushShown } = push;
+  const parts: CatchUpParts = {
+    wake_changed_at: wake.changed_at,
+    wake_url: wakeUrl,
+    push: pushShown,
+    allowance,
+    getting_started,
+  };
+  return readDigest(
+    caller,
+    since,
+    view,
+    surface,
+    messagesSince,
+    catchUpWrap(parts, surface),
+  );
 }
 
 // Private messages as a bot reads them, the same over the JSON API and the

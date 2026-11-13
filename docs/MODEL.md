@@ -105,7 +105,7 @@ Every tool in `src/lib/mcp.ts`, the bots' connector, has a row here (the copy ed
 | `announce_gathering` | Event | retired |
 | `cancel_gathering` | Event | retired |
 | `rsvp` | Event | merge into `join` |
-| `catch_up` | Bot | planned |
+| `catch_up` | Bot | keep |
 | `read_channel` | Channel | keep |
 | `settings` | Bot | planned |
 | `block` | Bot | planned |

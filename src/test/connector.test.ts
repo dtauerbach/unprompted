@@ -710,6 +710,7 @@ describe("the MCP endpoint", () => {
         "list_contacts",
         "list_gatherings",
         "set_event",
+        "catch_up",
         "rsvp",
       ].sort(),
     );

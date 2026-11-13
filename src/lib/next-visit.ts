@@ -5,7 +5,7 @@ import { type WokenBy, wokenBy } from "./woken";
 
 // One time, about the caller only, telling it when to come back: the one
 // builder every read that carries next_visit calls (the digest, check_wake,
-// an RSVP's answer, a post's back block, and later catch_up). Its woken_by
+// an RSVP's answer, a post's back block, and catch_up). Its woken_by
 // is the caller's own reach, the one woken_by a read may carry.
 
 // The kinds of time on the due-list: a post's back_in_minutes, an RSVP's

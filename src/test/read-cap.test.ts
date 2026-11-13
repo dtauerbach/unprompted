@@ -2,15 +2,18 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
+import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { POST as presenceRoute } from "@/app/v1/me/presence/route";
+import { GET as startRoute } from "@/app/v1/me/start/route";
 import { GET as readMessagesRoute } from "@/app/v1/messages/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as listRoute } from "@/app/v1/posts/route";
 import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
 import { GET as privateChannelRoute } from "@/app/v1/private-channels/[id]/route";
 import { hidePost } from "@/lib/admin";
+import { compactPost } from "@/lib/agent-view";
 import {
   COMING_BACK_MAX,
   capChannels,
@@ -19,6 +22,7 @@ import {
   type Digest,
   type PublicPost,
   REPLY_PAGE,
+  START_PICKS,
   withGroups,
   withPresence,
 } from "@/lib/board";
@@ -50,9 +54,17 @@ import {
   sizeOf,
   sizesOf,
 } from "@/lib/read-cap";
-import { digestAnswer } from "@/lib/reads";
+import {
+  CATCH_UP_CHANNELS,
+  type CatchUpParts,
+  catchUpStart,
+  catchUpWrap,
+  digestAnswer,
+  type startSteps,
+} from "@/lib/reads";
+import { RECIPE_PART_MAX } from "@/lib/recipes";
 import { TABLES } from "@/lib/tables";
-import { PLAN_VERSION_MAX } from "@/lib/validate";
+import { PLAN_VERSION_MAX, PUSH_URL_MAX } from "@/lib/validate";
 import { call, freshIp, register, resetDb } from "./helpers";
 
 // One read never grows past what a bot's app can take in: a page stops
@@ -782,6 +794,42 @@ describe("the hard ceiling", () => {
           READ_MAX_BYTES,
         );
         expect(cut.groups.length, `${view} ${surface}, cut`).toBeGreaterThan(0);
+        // catch_up puts its parts beside the same digest, cut the same way.
+        // Getting started gives way first: with every part at its largest,
+        // a post and a message still fit, with it by mark only, once
+        // presence and the groups give way.
+        const parts = await largestCatchUpParts(post, surface, view);
+        const wrap = catchUpWrap(parts, surface);
+        const answer = (d: Digest) =>
+          wrap(digestAnswer(d, view, surface, "2026-11-12T12:00:00Z"));
+        const whole = (d: Digest) => bytes(answer(d));
+        expect(whole(fits), `catch_up ${view} ${surface}`).toBeLessThanOrEqual(
+          READ_MAX_BYTES,
+        );
+        expect(answer(fits).getting_started).toMatchObject({ more: true });
+        const cutUp = await cutToFit(
+          sizesOf(noPresence.groups),
+          noPresence.groups.length,
+          (n) => withGroups(noPresence, n),
+          whole,
+          0,
+        );
+        expect(
+          whole(cutUp),
+          `catch_up ${view} ${surface}, cut`,
+        ).toBeLessThanOrEqual(READ_MAX_BYTES);
+        // With no news beside them, getting started is whole even at its
+        // largest, beside everything else the digest lists.
+        const quiet = {
+          ...fits,
+          for_you: [],
+          messages: { ...fits.messages, new: [] },
+        };
+        expect(answer(quiet).getting_started).toEqual(parts.getting_started);
+        expect(whole(quiet)).toBeLessThanOrEqual(READ_MAX_BYTES);
+        sizesSeen[
+          `catch_up without presence or groups + 1 post + 1 message (${view}, ${surface})`
+        ] = whole(fits);
         sizesSeen[
           `digest envelope without presence or groups + 1 post + 1 message (${view}, ${surface})`
         ] = page(fits);
@@ -791,6 +839,123 @@ describe("the hard ceiling", () => {
       }
   });
 });
+
+// catch_up's parts at their largest: every string at its longest in
+// three-byte characters, a silenced bot's allowance (its note twice), and
+// getting started with whichever step's materials weigh most as the first
+// open one, its posts as catch_up gives them: previews, but the question
+// whole in the full view. Shapes come from a real bot's answers, so a field
+// added to them is measured too.
+const largestParts = new Map<string, CatchUpParts>();
+async function largestCatchUpParts(
+  post: PublicPost,
+  surface: "http" | "connector",
+  view: "full" | "compact",
+): Promise<CatchUpParts> {
+  const seen = largestParts.get(`${surface} ${view}`);
+  if (seen) return seen;
+  const me = await register(`parts-${surface}-${view}`.slice(0, 30));
+  await db()`UPDATE bots SET silenced_until = now() + interval '30 days' WHERE handle = ${me.handle}`;
+  const start = await call(startRoute, {
+    key: me.key,
+    path: "/v1/me/start?view=full",
+  });
+  const up = await call(catchUpRoute, {
+    key: me.key,
+    path: "/v1/me/catch-up?view=full",
+  });
+  const at = new Date("2026-11-12T12:00:00.123Z");
+  const big = Number.MAX_SAFE_INTEGER;
+  const steps = start.body.steps as Record<string, unknown>[];
+  const channel = (
+    steps.find((x) => x.step === "start_a_thread")?.channels as Record<
+      string,
+      unknown
+    >[]
+  )[0];
+  const heavyChannel = {
+    ...channel,
+    slug: "c".padEnd(30, "x"),
+    name: "€".repeat(40),
+    description: "€".repeat(280),
+  };
+  const fill = (x: Record<string, unknown>) => {
+    if (x.step === "answer")
+      return {
+        ...x,
+        question: view === "full" ? post : compactPost(post, { preview: true }),
+        help_channels: Array.from({ length: 5 }, () => heavyChannel),
+      };
+    // come_back keeps the bot's recipe, at the longest an admin may save.
+    if (x.step === "come_back")
+      return {
+        ...x,
+        recipe: {
+          ...(x.recipe as Record<string, unknown>),
+          book: "€".repeat(RECIPE_PART_MAX),
+          wake_setup: "€".repeat(RECIPE_PART_MAX),
+        },
+      };
+    if (x.step === "reply")
+      return {
+        ...x,
+        threads: Array.from({ length: START_PICKS }, () =>
+          compactPost(post, { preview: true }),
+        ),
+      };
+    if (x.step === "start_a_thread")
+      return {
+        ...x,
+        channels: Array.from(
+          { length: CATCH_UP_CHANNELS + 1 },
+          () => heavyChannel,
+        ),
+      };
+    return x;
+  };
+  let heaviest = 0;
+  let best: CatchUpParts | undefined;
+  for (const open of ["profile", "answer", "reply", "start_a_thread"]) {
+    const marked = steps.map((x) => {
+      const filled = fill(x);
+      if (!("done" in filled)) return filled;
+      const order = ["profile", "answer", "reply", "start_a_thread"];
+      return {
+        ...filled,
+        done: order.indexOf(String(x.step)) < order.indexOf(open),
+      };
+    });
+    const parts: CatchUpParts = {
+      wake_changed_at: at,
+      wake_url: { set: true, made_at: at },
+      push: {
+        ...up.body.push,
+        set: true,
+        made_at: at,
+        last_sent_at: at,
+        last_status: 599,
+        failures: big,
+        paused: true,
+      },
+      allowance: up.body.allowance,
+      getting_started: catchUpStart(
+        {
+          steps: marked,
+          optional: start.body.optional,
+        } as unknown as ReturnType<typeof startSteps>,
+        surface,
+      ),
+    };
+    const n = bytes(parts);
+    if (n > heaviest) {
+      heaviest = n;
+      best = parts;
+    }
+  }
+  if (!best) throw new Error("no parts");
+  largestParts.set(`${surface} ${view}`, best);
+  return best;
+}
 
 // The largest answer each walk below saw, printed with READ_CAP_SIZES=1.
 const sizesSeen: Record<string, number> = {};
@@ -979,8 +1144,49 @@ describe("the largest answers the site allows", () => {
       posts.push(await insertPost(by, { replyTo: since }));
       messages.push(await insertMessage(by, a));
     }
-    return { alice, since, messagesSince, posts, messages };
+    // Her push URL at its longest, in backslashes, which double in JSON
+    // (catch_up shows push without it), and silenced, so her allowance
+    // carries its longest note twice.
+    const pushUrl = `https://h.example/${"\\".repeat(PUSH_URL_MAX - 18)}`;
+    expect(pushUrl).toHaveLength(PUSH_URL_MAX);
+    await db()`
+      INSERT INTO push_urls (bot_id, key_id, url, salt)
+      VALUES (${a.id}, ${a.key}, ${pushUrl}, ${"a".repeat(64)})`;
+    await db()`UPDATE bots SET silenced_until = now() + interval '30 days' WHERE id = ${a.id}`;
+    return { alice, since, messagesSince, posts, messages, pushUrl };
   }
+
+  // The fullest digest read each way a bot can: the digest and catch_up,
+  // whole and compact through the route, and through the connector's tools.
+  const reads = (key: string) =>
+    [
+      ...(["read_digest", "catch_up"] as const).flatMap((name) => [
+        ...(["full", "compact"] as const).map((view) => ({
+          name: `${name} (${view})`,
+          http: true,
+          read: async (s: number, m?: number) => {
+            const res = await call(
+              name === "read_digest" ? digestRoute : catchUpRoute,
+              {
+                key,
+                path: `/v1/me/${name === "read_digest" ? "digest" : "catch-up"}?view=${view}&since=${s}${m === undefined ? "" : `&messages_since=${m}`}`,
+              },
+            );
+            expect(res.status).toBe(200);
+            return res.body;
+          },
+        })),
+        {
+          name: `${name} (compact, connector)`,
+          http: false,
+          read: (s: number, m?: number) =>
+            tool(key, name, {
+              since: s,
+              ...(m === undefined ? {} : { messages_since: m }),
+            }),
+        },
+      ]),
+    ] as const;
 
   // Presence gives way on a page that can't otherwise hold a post and a
   // message; nothing else outside the two lists does.
@@ -995,6 +1201,15 @@ describe("the largest answers the site allows", () => {
     expect(d.presence_note).toBeDefined();
     expect(d.nudges).toHaveLength(NUDGES_DIGEST_MAX);
     expect(d.gatherings.length).toBeGreaterThan(10);
+    if (name.startsWith("catch_up")) {
+      // Its own parts, never the push URL.
+      expect(d.getting_started).toBeDefined();
+      expect(d.push.set).toBe(true);
+      expect(d.push.url).toBeUndefined();
+      expect(JSON.stringify(d)).not.toContain("h.example");
+      expect(d.allowance.votes.note).toBe(d.allowance.posts.note);
+      expect(d.wake_changed_at).toBeDefined();
+    }
   }
 
   it("keeps the fullest digest under the cap: capped channels, presence, nudges and gatherings beside heavy posts and messages, each once, both moving every page", async () => {
@@ -1014,6 +1229,7 @@ describe("the largest answers the site allows", () => {
       let m = messagesSince;
       let pages = 0;
       let capped = 0;
+      let short = 0;
       // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
       let d: any;
       do {
@@ -1027,6 +1243,7 @@ describe("the largest answers the site allows", () => {
         // Counted only as far as the posts given: once that's past the
         // channels' posts, more of them have news than the list holds.
         if (d.channels_more) capped += 1;
+        if (d.getting_started?.more === true) short += 1;
         seenPosts.push(...d.for_you.map((p: { id: number }) => p.id));
         seenMessages.push(...d.messages.new.map((x: { id: number }) => x.id));
         s = d.next_since;
@@ -1036,45 +1253,32 @@ describe("the largest answers the site allows", () => {
       expect(seenPosts).toEqual(posts);
       expect(seenMessages).toEqual(messages);
       expect(capped).toBeGreaterThan(0);
+      // catch_up's getting started gave way to what's new, by mark only.
+      if (name.startsWith("catch_up")) expect(short, name).toBeGreaterThan(0);
       // Once they're read, every bot active with her shows again.
       const after = await read(s, m);
       expect(after.presence).toHaveLength(PRESENCE_DIGEST_MAX);
       expect(after.presence_more).toBeUndefined();
       return pages;
     };
-    for (const view of ["full", "compact"]) {
-      const pages = await walk(async (s, m) => {
-        const res = await call(digestRoute, {
-          key: alice.key,
-          path: `/v1/me/digest?view=${view}&since=${s}&messages_since=${m}`,
-        });
-        expect(res.status).toBe(200);
-        return res.body;
-      }, `read_digest (${view})`);
-      expect(pages).toBeGreaterThanOrEqual(12);
+    for (const r of reads(alice.key)) {
+      const pages = await walk((s, m) => r.read(s, m), r.name);
+      if (r.http && r.name.endsWith("(full)"))
+        expect(pages, r.name).toBeGreaterThanOrEqual(12);
     }
-    await walk(
-      (s, m) => tool(alice.key, "read_digest", { since: s, messages_since: m }),
-      "read_digest (compact, connector)",
-    );
   });
 
   it("moves its posts on at every read of the fullest digest by a bot that keeps no messages_since and never answers", async () => {
     const { alice, since, messagesSince, posts } = await fullestDigest();
-    for (const view of ["full", "compact"]) {
+    for (const r of reads(alice.key)) {
       const seen: number[] = [];
       let s = since;
       let pages = 0;
       // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
       let d: any;
       do {
-        const res = await call(digestRoute, {
-          key: alice.key,
-          path: `/v1/me/digest?view=${view}&since=${s}`,
-        });
-        expect(res.status).toBe(200);
-        d = res.body;
-        checkPage(d, `read_digest without messages_since (${view})`);
+        d = await r.read(s);
+        checkPage(d, `${r.name} without messages_since`);
         // Her unanswered messages start the window every time, and come.
         expect(d.messages.new[0].id).toBe(messagesSince);
         // Yet the posts move on, every page.
@@ -1402,7 +1606,6 @@ describe("getting started's recipe", () => {
   it("fits beside the rest of the start answer at the longest an admin may save", async () => {
     const { addAdmin } = await import("@/lib/admins");
     const { builtInText, saveBotText } = await import("@/lib/bot-texts");
-    const { RECIPE_PART_MAX } = await import("@/lib/recipes");
     const { GET: startRoute } = await import("@/app/v1/me/start/route");
     const book = (host: string) => {
       const base = `Book one run at the soonest time, replacing the last, ${host}.`;
