@@ -4,7 +4,7 @@ import { POST as sendRoute } from "@/app/v1/messages/route";
 import { antiAbuseWarnings, setAntiAbuse } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { groupMessageRules, groupWakeRules } from "@/lib/limits";
-import { startChannel } from "@/lib/private-channels";
+import { setOwnBots, startChannel } from "@/lib/private-channels";
 import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import {
   awayFromWindowEdge,
@@ -184,11 +184,12 @@ describe("two bots of one person flooding a group", () => {
     // A message in busy wakes the other three.
     const busy = await groupOf("google-busy", a, b, e, f);
     const quiet = await groupOf("google-quiet", c, d);
-    await setAntiAbuse(db(), { group_wake_person: 10 }, "test");
+    // Starting it woke its four, leaving nine.
+    await setAntiAbuse(db(), { group_wake_person: 13 }, "test");
     const statuses: number[] = [];
     for (let i = 0; i < 5; i++)
       statuses.push((await say(i % 2 ? b : a, busy, `flood ${i}`)).status);
-    // Three messages wake nine; a fourth would make twelve.
+    // Three messages wake nine (thirteen in all); a fourth would make sixteen.
     expect(statuses).toEqual([201, 201, 201, 429, 429]);
     refusedForShare(await say(b, busy, "more"));
     expect((await say(c, quiet, "still here")).status).toBe(201);
@@ -224,16 +225,34 @@ describe("two bots of one person flooding a group", () => {
     expect(capped.body.error.message).toMatch(/whole site this hour/);
   });
 
-  it("can't be spent by a bot outside the group", async () => {
-    const { busy } = await teams();
+  it("can't be spent by a bot outside the group, or tell it apart from a made-up one", async () => {
+    const { a, b, busy } = await teams();
     const x = await settled("xena");
-    await setAntiAbuse(db(), { group_message_person: 1 }, "test");
+    const y = await settled("yuri");
+    const own = await groupOf("google-x", x, y);
+    await setAntiAbuse(db(), { group_message_person: 2 }, "test");
+    // The busy person's share is used up, and so is xena's own group burst.
+    expect((await say(a, busy, "one")).status).toBe(201);
+    expect((await say(b, busy, "two")).status).toBe(201);
+    refusedForShare(await say(a, busy, "three"));
+    const [xb] = await db()<{ id: string }[]>`
+      SELECT id FROM bots WHERE handle = 'xena'`;
+    await db()`
+      INSERT INTO rate_bursts (bucket, full_at)
+      VALUES (${`group:burst:${xb?.id}`}, now() + interval '1 hour')`;
+    const held = await say(x, own, "in my own group");
+    expect(held.status).toBe(429);
+    expect(held.body.error.message).toMatch(/group messages in a row/);
     const before = await state();
-    for (let i = 0; i < 3; i++) {
-      const res = await say(x, busy, "let me in");
-      expect(res.status).toBe(404);
-      expect(res.body.error.code).toBe("no_such_channel");
-    }
+    // A real group and a made-up one answer alike: no share, no burst, no
+    // hint that the first exists or is full.
+    const real = await say(x, busy, "let me in");
+    const madeUp = await say(x, "private:999999999", "let me in");
+    expect(real.status).toBe(404);
+    expect(real.body.error.code).toBe("no_such_channel");
+    expect(madeUp.status).toBe(real.status);
+    expect(madeUp.body).toEqual(real.body);
+    expect(real.headers.get("retry-after")).toBeNull();
     expect(await state()).toBe(before);
   });
 
@@ -296,5 +315,65 @@ describe("two bots of one person flooding a group", () => {
       body: { to: "yuri", body: "pairs are apart" },
     });
     expect(pair.status).toBe(201);
+  });
+});
+
+describe("a person's own changes", () => {
+  it("count the wakes of starting a group and putting bots in against the person's share", async () => {
+    const a = await settled("alice");
+    const b = await settled("bob");
+    await settled("eve");
+    await settled("fay");
+    await setAntiAbuse(db(), { group_wake_person: 4 }, "test");
+    // Starting it wakes its two bots, then a message wakes one more.
+    const busy = await groupOf("google-busy", a, b);
+    expect((await say(a, busy, "hello")).status).toBe(201);
+    // Putting two more in would make five.
+    const [h] = await db()<{ id: string }[]>`
+      SELECT id FROM humans WHERE auth_user_id = 'google-busy'`;
+    await db()`UPDATE bots SET owner_id = ${h?.id ?? null} WHERE handle IN ('eve', 'fay')`;
+    const before = await state();
+    const err = await setOwnBots(
+      db(),
+      "google-busy",
+      busy,
+      ["eve", "fay"],
+      [],
+      null,
+    ).catch((x: unknown) => x);
+    expect(err).toMatchObject({ status: 429, code: "rate_limited" });
+    const message = (err as Error).message;
+    expect(message).toMatch(SHARE);
+    expect(message.replace(/Try again in \d+ seconds\./, "")).not.toMatch(/\d/);
+    expect(await state()).toBe(before);
+    // So is starting another group of three, which would make six.
+    await expect(
+      startChannel(
+        db(),
+        "google-busy",
+        ["alice", "eve", "fay"],
+        undefined,
+        null,
+      ),
+    ).rejects.toMatchObject({ status: 429, code: "rate_limited" });
+    expect(await state()).toBe(before);
+    // One more fits, and spends the last of it, messages included.
+    await setOwnBots(db(), "google-busy", busy, ["eve"], [], null);
+    refusedForShare(await say(b, busy, "one too many"));
+  });
+
+  it("leave another person's share alone", async () => {
+    const a = await settled("alice");
+    const b = await settled("bob");
+    const c = await settled("cat");
+    const d = await settled("dan");
+    await setAntiAbuse(db(), { group_wake_person: 3 }, "test");
+    // Starting it wakes two, a message one more: the share is spent.
+    const busy = await groupOf("google-busy", a, b);
+    expect((await say(a, busy, "hello")).status).toBe(201);
+    refusedForShare(await say(b, busy, "no wakes left"));
+    // Another person starts a group, and its bots still talk.
+    const quiet = await groupOf("google-quiet", c, d);
+    expect((await say(c, quiet, "hello")).status).toBe(201);
   });
 });

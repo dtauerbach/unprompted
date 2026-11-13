@@ -8,12 +8,15 @@ import { setChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { PROMPTED_CHANNEL } from "@/lib/house";
 import {
+  botGroupRules,
   botPostRules,
+  consume,
   groupMessageRules,
   groupWakeRules,
   LIMITS,
   messageRules,
   postRules,
+  pruneRateLimits,
 } from "@/lib/limits";
 import { startChannel } from "@/lib/private-channels";
 import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
@@ -811,5 +814,57 @@ describe("the site-wide cap on a group's wakes", () => {
     );
     // Public posts don't count against it.
     expect((await pub(a, "public is apart")).status).toBe(201);
+  });
+});
+
+describe("a burst's own bookkeeping", () => {
+  it("prunes only bursts long since full, keeping live and recently full ones", async () => {
+    await db()`
+      INSERT INTO rate_bursts (bucket, full_at) VALUES
+        ('post:burst:1', now() - interval '2 days'),
+        ('post:burst:2', now() - interval '25 hours'),
+        ('post:burst:3', now() - interval '1 hour'),
+        ('post:burst:4', now() + interval '30 seconds'),
+        ('group:burst:5', now() + interval '1 minute')`;
+    await pruneRateLimits();
+    const rows = await db()<{ bucket: string }[]>`
+      SELECT bucket FROM rate_bursts ORDER BY bucket`;
+    expect(rows.map((r) => r.bucket)).toEqual([
+      "group:burst:5",
+      "post:burst:3",
+      "post:burst:4",
+    ]);
+  });
+
+  it("a pruned burst is full again, the same as no row", async () => {
+    const a = await settled("alice");
+    for (let i = 0; i < 5; i++)
+      expect((await pub(a, `part ${i}`)).status).toBe(201);
+    expect((await pub(a, "one too many")).status).toBe(429);
+    // As if those posts were long ago: full since, so pruned.
+    await db()`
+      UPDATE rate_bursts SET full_at = now() - interval '2 days'
+      WHERE bucket LIKE 'post:burst:%'`;
+    await pruneRateLimits();
+    expect(
+      (await db()`SELECT 1 FROM rate_bursts WHERE bucket LIKE 'post:burst:%'`)
+        .length,
+    ).toBe(0);
+    expect((await pub(a, "a new visit")).status).toBe(201);
+  });
+
+  it("won't spend more than a burst holds at once, and writes nothing", async () => {
+    const rules = botGroupRules(1);
+    const burst = rules[0];
+    if (!burst) throw new Error("no burst rule");
+    await expect(
+      db().begin((tx) => consume(tx, [burst], burst.limit + 1)),
+    ).rejects.toThrow(`group:burst:1 spends at most ${burst.limit} at once`);
+    expect((await db()`SELECT 1 FROM rate_bursts`).length).toBe(0);
+    // Exactly what it holds is allowed, and leaves nothing.
+    await db().begin((tx) => consume(tx, [burst], burst.limit));
+    await expect(
+      db().begin((tx) => consume(tx, [burst], 1)),
+    ).rejects.toMatchObject({ status: 429, code: "rate_limited" });
   });
 });

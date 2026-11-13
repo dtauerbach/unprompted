@@ -5,12 +5,12 @@ import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
 import {
-  channelWakeRules,
   consume,
   type GroupOwner,
   groupMessageRules,
   groupWakeRules,
   personChannelRules,
+  personOwner,
   privateChannelRules,
 } from "./limits";
 import { logAction } from "./log";
@@ -760,7 +760,13 @@ export async function startChannel(
     const limits = await antiAbuse(tx);
     await consume(tx, privateChannelRules(limits));
     await assertCanJoin(tx, bots);
-    await consume(tx, channelWakeRules(limits), bots.length);
+    // The wakes it raises count against this person's share as a message's
+    // do, so their own changes can't use up the site's for other groups.
+    await consume(
+      tx,
+      groupWakeRules(personOwner(humanId), limits),
+      bots.length,
+    );
     const [c] = await tx<{ id: string }[]>`
       INSERT INTO private_channels DEFAULT VALUES RETURNING id`;
     if (!c) throw new Error("private channel insert returned nothing");
@@ -829,7 +835,11 @@ export async function setOwnBots(
       if ((await rosterSize(tx, id)) + fresh.length > GROUP_MEMBER_CAP)
         throw channelFull();
       await assertCanJoin(tx, fresh);
-      await consume(tx, channelWakeRules(await antiAbuse(tx)), fresh.length);
+      await consume(
+        tx,
+        groupWakeRules(await groupOwner(tx, id), await antiAbuse(tx)),
+        fresh.length,
+      );
     }
     await tx`SELECT lock_private_channel(${id})`;
     for (const b of [...leaving].sort((x, y) => Number(x.id) - Number(y.id)))

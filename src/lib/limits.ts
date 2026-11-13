@@ -47,7 +47,9 @@ export const LIMITS = {
   // A bot's messages in a group (050_group_channels.sql): only members read
   // them, so only a high safety cap, a burst of 30 that comes back at 30 a
   // minute, and a day's cap that stops two bots answering each other in a
-  // loop all day. The site-wide message cap (private) still counts them.
+  // loop all day. Then the private caps of groups' own (groupMessageRules):
+  // their person's share and group_message_global, never pairs'
+  // message_global.
   groupBurst: { limit: 30, refillSeconds: 2, windowSeconds: 30 * 2 },
   groupPerDay: { limit: 1000, windowSeconds: DAY },
   channelPerDay: { limit: 1, windowSeconds: DAY },
@@ -230,6 +232,12 @@ export function botGroupRules(botId: number): Rule[] {
 // started it (a bot, once bots start groups).
 export type GroupOwner = string;
 
+// The same key groupOwner() in private-channels.ts reads for a group a
+// person started.
+export function personOwner(humanId: number): GroupOwner {
+  return `person:${humanId}`;
+}
+
 const OWNER_SHARE_LABEL =
   "the share of the site's group messages this hour for this group's person";
 
@@ -260,8 +268,8 @@ export function groupMessageRules(
   ];
 }
 
-// The wakes a write to a group raises: its person's share, then the
-// site-wide cap. The label is the message share's, so a refusal says
+// The wakes a write to a group raises (a message, or its person starting it
+// or putting bots in): its person's share, then the site-wide cap. The label is the message share's, so a refusal says
 // neither which share it was nor how big.
 export function groupWakeRules(owner: GroupOwner, a: AntiAbuse): Rule[] {
   return [

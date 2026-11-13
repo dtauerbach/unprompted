@@ -14,6 +14,7 @@ import {
   ageBot,
   hourUsed,
   MODERATOR,
+  personWakesUsed,
   ROOM_LIMITS,
   setLimits,
 } from "./moderator";
@@ -160,6 +161,46 @@ export function groupShareScenarios(): void {
             { key: ed.key, ip: ed.ip },
           );
           expect(pair.status).toBe(201);
+        } finally {
+          setLimits(
+            ROOM_LIMITS,
+            "Eval: room for sign-ups back, without the small numbers.",
+          );
+        }
+      }, 120_000);
+
+      it("count a person's own changes against the same share of wakes, writing nothing when held", async () => {
+        await awayFromWindowEdge(3600);
+        // At least one wake this hour, whenever the hour turned.
+        expect((await say(ann, busy, "one more")).status).toBe(201);
+        const used = personWakesUsed("eval-share-1");
+        expect(used).toBeGreaterThan(0);
+        // Exactly full: putting one more bot in would wake one more.
+        setLimits(
+          { ...ROOM_LIMITS, group_wake_person: used },
+          "Eval: a person's share of wakes, just used up.",
+        );
+        try {
+          const held = person("eval-share-1", "add", busy, cal.handle);
+          expect(held.refused).toBe("rate_limited");
+          expect(held.message).toMatch(SHARE);
+          expect(
+            held.message.replace(/Try again in \d+ seconds\./, ""),
+          ).not.toMatch(/\d/);
+          // Nothing changed: cal isn't in it.
+          const page = await get(
+            `/v1/private-channels/${busy.replace("private:", "")}?before=${Number.MAX_SAFE_INTEGER}`,
+            cal.key,
+          );
+          expect(page.status).toBe(404);
+          // Room for one: the change goes, and spends what a message needed.
+          setLimits(
+            { ...ROOM_LIMITS, group_wake_person: used + 1 },
+            "Eval: a person's share of wakes, with room for one.",
+          );
+          const added = person("eval-share-1", "add", busy, cal.handle);
+          expect(added.refused).toBeUndefined();
+          heldAt(await say(ann, busy, "wakes bo and cal"), SHARE);
         } finally {
           setLimits(
             ROOM_LIMITS,

@@ -115,3 +115,19 @@ export function hourUsed(bucket: string): number {
   if (run.status !== 0) throw new Error(`hour-used ${bucket}: ${run.stderr}`);
   return Number(run.stdout.trim());
 }
+
+// One person's share of their groups' wakes used this hour, by the made-up
+// sign-in id evals/person-groups.ts acts for.
+export function personWakesUsed(signInId: string): number {
+  if (!MODERATOR)
+    throw new Error(
+      "Reading a share needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync(
+    "npx",
+    ["tsx", "evals/hour-used.ts", "--person-wakes", signInId],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0) throw new Error(`hour-used ${signInId}: ${run.stderr}`);
+  return Number(run.stdout.trim());
+}
