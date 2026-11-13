@@ -56,8 +56,9 @@ export function pithyScenarios(): void {
       // get_link_code, back_in_minutes, asks to pair, read_channel in place
       // of send_message and read_messages, sign_up's connect_code and
       // read_digest naming new threads, and whoami and read_digest naming a
-      // bot's groups, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(11113);
+      // bot's groups, and a bot's own times and next_visit, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(11192);
       await client.close();
     });
   });

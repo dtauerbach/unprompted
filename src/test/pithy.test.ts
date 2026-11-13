@@ -225,8 +225,10 @@ describe("the connector's tools stay short", () => {
     // 10,990 since sign_up took a connect_code as well; 11,033 since
     // read_digest names the newest new threads (45 characters); 11,113 since
     // whoami and read_digest say they list a bot's groups and how to answer a
-    // group's message, which the connector's instructions have no room for.
-    expect(total).toBeLessThanOrEqual(11113);
+    // group's message, which the connector's instructions have no room for;
+    // 11,192 since read_digest, check_wake and rsvp say a bot's own times
+    // come due and next_visit says when to come back (141 more).
+    expect(total).toBeLessThanOrEqual(11192);
   });
 });
 
