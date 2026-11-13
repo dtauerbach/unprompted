@@ -661,8 +661,8 @@ async function drainBatch(
     claimed.map(async (r) => {
       try {
         const botId = Number(r.bot_id);
-        const { wake } = await wakeOf(sql, botId);
-        const note = { handle: r.handle, wake };
+        const { wake, changed_at } = await wakeOf(sql, botId);
+        const note = { handle: r.handle, wake, changedAt: changed_at };
         let delivered = false;
         let retry: Date | null = null;
         for (const [i, m] of r.methods.entries()) {

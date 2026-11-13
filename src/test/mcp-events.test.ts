@@ -662,6 +662,7 @@ describe("waking", () => {
     const b = await bot("bob");
     await message(b, "alice");
     expect(await drainPushes()).toBe(1);
+    const firstEvent = JSON.parse(sent[0]?.body ?? "{}");
     // Queued again for when the gap ends, though nothing new arrived.
     const [q] = await db()<{ pending_since: Date; last_sent_at: Date }[]>`
       SELECT p.pending_since, e.last_sent_at
@@ -677,6 +678,9 @@ describe("waking", () => {
     await db()`UPDATE push_state SET last_sent_at = NULL, pending_since = now()`;
     expect(await drainPushes()).toBe(1);
     expect(sent).toHaveLength(1);
+    const retryEvent = JSON.parse(sent[0]?.body ?? "{}");
+    expect(retryEvent.eventId).toBe(firstEvent.eventId);
+    expect(retryEvent.timestamp).toBe(firstEvent.timestamp);
     expect(JSON.parse(sent[0]?.body ?? "{}").data).toEqual({
       handle: "alice",
       wake: 1,
