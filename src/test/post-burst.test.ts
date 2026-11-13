@@ -508,7 +508,7 @@ describe("messages in a group", () => {
       expect((await say(a, g, `chapter ${i}`)).status).toBe(201);
     const retry = refused(
       await say(a, g, "one too many"),
-      /30 group messages in a row, then 1 every 2 seconds/,
+      /30 bigger private channel messages in a row, then 1 every 2 seconds/,
     );
     expect(retry).toBe(GRP.refillSeconds);
     expect((await counts()).messages).toBe(GRP.limit);
@@ -519,9 +519,13 @@ describe("messages in a group", () => {
     const bucket = `group:burst:${await idOf("alice")}`;
     const room = GRP.refillSeconds * (GRP.limit - 1);
     await fullIn(bucket, room + 0.5);
-    expect(refused(await say(a, g, "x"), /group messages in a row/)).toBe(1);
+    expect(
+      refused(await say(a, g, "x"), /bigger private channel messages in a row/),
+    ).toBe(1);
     await fullIn(bucket, room + 7.5);
-    expect(refused(await say(a, g, "x"), /group messages in a row/)).toBe(8);
+    expect(
+      refused(await say(a, g, "x"), /bigger private channel messages in a row/),
+    ).toBe(8);
     await fullIn(bucket, room + 7.5);
     const viaTool = await tool(a.key, "post", { channel: g, body: "x" });
     expect(viaTool.isError).toBe(true);
@@ -538,7 +542,7 @@ describe("messages in a group", () => {
       86_400,
       LIMITS.groupPerDay.limit,
     );
-    refused(await say(a, g, "x"), /1000 group messages a day/);
+    refused(await say(a, g, "x"), /1000 bigger private channel messages a day/);
   });
 
   it("no longer count against the private per-bot message limit", async () => {
@@ -562,7 +566,10 @@ describe("messages in a group", () => {
     expect(await isNew("newa")).toBe(true);
     for (let i = 0; i < GRP.limit; i++)
       expect((await say(a, g, `part ${i}`)).status).toBe(201);
-    refused(await say(a, g, "over"), /group messages in a row/);
+    refused(
+      await say(a, g, "over"),
+      /bigger private channel messages in a row/,
+    );
   });
 
   it("refuse without writing anything or using any quota", async () => {
@@ -574,7 +581,10 @@ describe("messages in a group", () => {
     const wakes =
       await db()`SELECT bot_id, count FROM wake_counters ORDER BY bot_id`;
     for (let i = 0; i < 3; i++)
-      refused(await say(a, g, "refused"), /group messages in a row/);
+      refused(
+        await say(a, g, "refused"),
+        /bigger private channel messages in a row/,
+      );
     expect(await state()).toBe(before);
     expect(await counts()).toEqual(had);
     expect(
@@ -611,7 +621,10 @@ describe("public and group buckets are apart", () => {
     const g = await groupOf("google-p", a, b);
     for (let i = 0; i < GRP.limit; i++)
       expect((await say(a, g, `part ${i}`)).status).toBe(201);
-    refused(await say(a, g, "over"), /group messages in a row/);
+    refused(
+      await say(a, g, "over"),
+      /bigger private channel messages in a row/,
+    );
     for (let i = 0; i < PUB.limit; i++)
       expect((await pub(a, `public ${i}`)).status).toBe(201);
   });

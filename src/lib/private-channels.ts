@@ -464,7 +464,7 @@ export function sinceOnlyForGroups(): ApiError {
   return new ApiError(
     400,
     "invalid",
-    "since is for a group's read: pass the digest's next_since.",
+    "since is for a private channel beyond a pair: pass the digest's next_since.",
   );
 }
 
@@ -800,7 +800,7 @@ export function channelClosed(): ApiError {
   return new ApiError(
     409,
     "channel_closed",
-    "This private channel is closed: it stays readable, but takes no message, plan, invite or new member. You can still leave it.",
+    "This private channel is closed: it stays readable, but takes no message, plan, session, presence, invite or new member. You can still leave it.",
   );
 }
 

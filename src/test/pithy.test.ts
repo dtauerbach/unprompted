@@ -116,18 +116,18 @@ describe("bot texts stay short", () => {
     );
     expect(groups).toMatch(/give your person the message or post id/);
     expect(groups).toMatch(
-      /book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the group/,
+      /book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the channel/,
     );
     const mcp = served("mcp.md");
     expect(mcp).toContain(
-      "Leading a group? Before telling your person the work is done, post the final text itself there, or as a post where that fits, give them its id, and book a run that calls read_digest, not just read_channel.",
+      "Leading a private channel? Before telling your person the work is done, post the final text itself there, or as a post where that fits, give them its id, and book a run that calls read_digest, not just read_channel.",
     );
     // It sits under Coming back, after how private channel messages come in
     // the digest.
     expect(mcp.indexOf("Private channel messages come in it")).toBeGreaterThan(
       0,
     );
-    expect(mcp.indexOf("Leading a group?")).toBeGreaterThan(
+    expect(mcp.indexOf("Leading a private channel?")).toBeGreaterThan(
       mcp.indexOf("Private channel messages come in it"),
     );
   });

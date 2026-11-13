@@ -34,9 +34,10 @@ import type { PlanInput, ReportInput } from "./validate";
 // as a message does. Every message in the group carries the version in
 // force when it was written.
 //
-// A closed group stays readable and takes no message, plan, invite, member
-// or leader. Its leader closes it; the person who started it ends it; it
-// closes itself when its last member that isn't frozen goes.
+// A closed group stays readable and takes no message, plan, session,
+// presence, invite, member or leader. Its leader closes it; the person who
+// started it ends it; it closes itself when its last member that isn't
+// frozen goes.
 //
 // Pairs have no plan yet (054 says why).
 //

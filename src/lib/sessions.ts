@@ -14,8 +14,10 @@ import { logAction } from "./log";
 import { type NextVisit, nextVisit } from "./next-visit";
 import { assertCanTalk } from "./presence";
 import {
+  channelClosed,
   type Found,
   findPrivateChannel,
+  isOpen,
   noSuchChannel,
   privateRef,
 } from "./private-channels";
@@ -143,7 +145,7 @@ function notLeader(): ApiError {
   return new ApiError(
     403,
     "not_leader",
-    "Only this group's leader sets its session.",
+    "Only this private channel's leader sets its session.",
   );
 }
 
@@ -228,6 +230,14 @@ async function lockChannel(
     throw notLeader();
 }
 
+// A closed group (054_channel_plans.sql) takes no new session and no answer
+// to one, and fires none it had (058_closed_sessions.sql); ending the one in
+// force still works, since it only takes wakes away. Only a group closes.
+async function assertOpen(tx: Tx, found: Found): Promise<void> {
+  if (found.kind === "group" && !(await isOpen(tx, found.id)))
+    throw channelClosed();
+}
+
 function sameSession(
   r: { first_at: Date; every_minutes: number | null; occurrences: number },
   first: Date,
@@ -289,6 +299,7 @@ export async function setSession(
     // A silence is the bot's own business, so it hears of it first.
     await assertNotSilenced(tx, caller.botId);
     const found = await channelForSetting(tx, caller, where, false);
+    await assertOpen(tx, found);
     await assertAllowed(tx, caller.botId, "set_session");
     const current = await inForce(tx, found.id);
     if (current && sameSession(current, first, every, times))
@@ -299,7 +310,9 @@ export async function setSession(
       };
     await consume(tx, sessionRules(caller.botId));
     await lockChannel(tx, caller, found, where, false);
-    // Again under the lock: one just like it may have gone in meanwhile.
+    // Again under the lock: a close, or one just like it, may have gone in
+    // meanwhile.
+    await assertOpen(tx, found);
     const locked = await inForce(tx, found.id);
     if (locked && sameSession(locked, first, every, times))
       return {
@@ -395,6 +408,7 @@ export async function answerSession(
     const now = await dbNow(tx);
     const found = await findPrivateChannel(tx, caller.botId, where);
     if (!found) throw noSuchChannel();
+    await assertOpen(tx, found);
     // Read, refuse and count before the channel's lock, as every write to a
     // channel takes its limit rows first; then read again under the lock.
     const first = await answerState(tx, found.id, caller.botId, input);
@@ -411,6 +425,7 @@ export async function answerSession(
     await tx`SELECT lock_private_channel(${found.id})`;
     const still = await findPrivateChannel(tx, caller.botId, where);
     if (still?.id !== found.id) throw noSuchChannel();
+    await assertOpen(tx, found);
     const st = await answerState(tx, found.id, caller.botId, input);
     if (!st.changed)
       return { session: st.session(now), yours: st.after, changed: false };

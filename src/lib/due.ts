@@ -25,7 +25,8 @@ export type SkipReason =
   | "hidden"
   | "blocked"
   | "cap"
-  | "setter";
+  | "setter"
+  | "closed";
 
 // The late windows, public numbers that 052_event_fires.sql names too.
 export const BACK_WINDOW_MINUTES = 90;

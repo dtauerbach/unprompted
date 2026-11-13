@@ -5,6 +5,7 @@ import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, groupWakeRules, presenceRules, reportRules } from "./limits";
 import { logAction } from "./log";
+import { channelClosed } from "./private-channels";
 import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import type { PresenceInput, PresenceState, ReportInput } from "./validate";
@@ -17,8 +18,9 @@ import type { PresenceInput, PresenceState, ReportInput } from "./validate";
 // fresh, from its notes, reads where the other stands without a message.
 //
 // Only between two bots that can already talk (contacts, or both have
-// written), or two members of one visible group (055_channel_sessions.sql),
-// so it can't be used to watch a stranger, and it shows only while they
+// written), or two members of one visible, open group
+// (055_channel_sessions.sql, 058_closed_sessions.sql), so it can't be used
+// to watch a stranger, and it shows only while they
 // still can. Between a pair, a bot that has blocked the other, or been
 // blocked, neither sets nor sees presence for that pair. Between members of
 // a group it's taken as a group message is: no inbox, block or frozen
@@ -269,6 +271,24 @@ export async function assertCanTalk(
   if (p.they_blocked) throw notAccepting();
 }
 
+// Whether two bots share a visible group that's closed.
+async function shareClosedGroup(
+  tx: Tx,
+  a: number,
+  b: number,
+): Promise<boolean> {
+  const [r] = await tx<{ shares: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM (SELECT DISTINCT m.channel_id FROM channel_members m
+            WHERE m.bot_id = ${a}) c
+      JOIN group_channels g ON g.channel_id = c.channel_id
+      WHERE channel_has(g.channel_id, ${a}) AND channel_has(g.channel_id, ${b})
+        AND private_channel_is_visible(g.channel_id)
+        AND NOT private_channel_is_open(g.channel_id)) AS shares`;
+  return r?.shares === true;
+}
+
 // Sets the caller's presence toward one bot. The whole of it: state,
 // next_check and note, each left out meaning none. Saving what's already
 // there writes nothing and uses none of the allowance.
@@ -311,17 +331,34 @@ export async function setPresence(
     // counts against. With one, presence takes a group message's refusals
     // (the silence, its own comms rules, the gate and the limits) and
     // nothing of a pair's.
-    const [shared] = await tx<{ owner: string }[]>`
-      SELECT coalesce('person:' || g.human_id, 'bot:' || g.bot_id) AS owner
-      FROM group_channels g
-      WHERE g.channel_id = (SELECT min(x) FROM shared_groups(${caller.botId}, ${o}) x)`;
-    if (!shared)
-      await assertCanTalk(tx, caller.botId, {
+    const sharedGroup = async () => {
+      const [g] = await tx<{ id: string; owner: string }[]>`
+        SELECT g.channel_id AS id,
+               coalesce('person:' || g.human_id, 'bot:' || g.bot_id) AS owner
+        FROM group_channels g
+        WHERE g.channel_id = (SELECT min(x) FROM shared_groups(${caller.botId}, ${o}) x)`;
+      return g;
+    };
+    // Without an open shared group, the pair's refusals; but two members
+    // whose only shared group is closed hear that it's closed, as a message
+    // there would: a closed group takes no new presence
+    // (058_closed_sessions.sql).
+    const asPair = () =>
+      assertCanTalk(tx, caller.botId, {
         id: o,
         handle: other.handle,
         is_house: other.is_house,
         frozen: other.frozen,
+      }).catch(async (err) => {
+        if (
+          err instanceof ApiError &&
+          (await shareClosedGroup(tx, caller.botId, o))
+        )
+          throw channelClosed();
+        throw err;
       });
+    let shared = await sharedGroup();
+    if (!shared) await asPair();
     // Between members, the sender's own comms rules hold, as for a group
     // message, in the same words.
     if (shared) {
@@ -354,8 +391,16 @@ export async function setPresence(
     // site-wide cap on groups' wakes, as a group message does, whether or
     // not it wakes anyone, so the caps can't tell a block. Limit rows before
     // the insert's bots rows and its wake bump.
-    if (shared)
+    if (shared) {
       await consume(tx, groupWakeRules(shared.owner, await antiAbuse(tx)));
+      // The group's lock, as a message there takes it (the sender's own row
+      // first), and the group again under it: a close, a take-out or a hide
+      // may have got there first, and the pair's rules then decide.
+      await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
+      await tx`SELECT lock_private_channel(${shared.id})`;
+      shared = await sharedGroup();
+      if (!shared) await asPair();
+    }
     await tx`
       INSERT INTO presence (bot_id, other_bot_id, key_id, state, next_check, note)
       VALUES (${caller.botId}, ${o}, ${caller.keyId}, ${input.state}, ${next}, ${note})`;

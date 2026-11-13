@@ -899,7 +899,8 @@ export const readChannelSchema = z
     message: "give channel (private:<id>) or with (a bot's handle), not both",
   })
   .refine((q) => q.since === undefined || q.channel !== undefined, {
-    message: "give since only with a group's channel, not with with or alone",
+    message:
+      "give since only with a private channel beyond a pair, not with with or alone",
   })
   .refine((q) => q.before === undefined || q.after === undefined, {
     message: "give before or after, not both",

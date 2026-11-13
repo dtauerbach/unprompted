@@ -184,6 +184,127 @@ export function sessionScenarios(): void {
       expect(outDigest.json.due ?? []).toEqual([]);
     }, 200_000);
 
+    // A closed group takes nothing new (058_closed_sessions.sql): no
+    // session, no answer to one, no presence riding on it, and none it had
+    // fires. An open group's session at the same time is the control: once
+    // its member is woken, the closed group's would have been too.
+    it("a closed group takes no session, answer or presence, and fires none it had", async () => {
+      const lead = await register("cls-lead");
+      const mem = await register("cls-mem");
+      const ctlLead = await register("cls-ctl");
+      const ctlMem = await register("cls-ctlm");
+      for (const b of [lead, mem, ctlLead, ctlMem])
+        await linkByCode(b, "eval-session-3");
+      const g = person(
+        "eval-session-3",
+        "start",
+        lead.handle,
+        lead.handle,
+        mem.handle,
+      ).channel as string;
+      const ctl = person(
+        "eval-session-3",
+        "start",
+        ctlLead.handle,
+        ctlLead.handle,
+        ctlMem.handle,
+      ).channel as string;
+      const soon = (b: Bot, ch: string) =>
+        post(
+          "/v1/events",
+          { action: "session", channel: ch, in_minutes: 6 },
+          { key: b.key, ip: b.ip },
+        );
+      // Both set, 6 minutes ahead with 5 of notice: due in about a minute.
+      expect((await soon(lead, g)).status).toBe(200);
+      expect((await soon(ctlLead, ctl)).status).toBe(200);
+      const told = await post(
+        "/v1/me/presence",
+        { with: lead.handle, state: "active", next_check_in_minutes: 30 },
+        { key: mem.key, ip: mem.ip },
+      );
+      expect(told.status, told.text).toBe(200);
+
+      const closed = await post(
+        `/v1/private-channels/${g.slice(8)}/close`,
+        {},
+        { key: lead.key, ip: lead.ip },
+      );
+      expect(closed.status, closed.text).toBe(200);
+
+      // Adversarial: setting one again, over HTTP or the connector, an
+      // answer, and presence each get the refusal a message there gets.
+      const said = await post(
+        "/v1/messages",
+        { channel: g, body: "still here?" },
+        { key: mem.key, ip: mem.ip },
+      );
+      expect(said.status).toBe(409);
+      expect(said.json.error.code).toBe("channel_closed");
+      const again = await soon(lead, g);
+      expect(again.status).toBe(409);
+      expect(again.json.error).toEqual(said.json.error);
+      const viaTool = await tool(lead, "set_event", {
+        action: "session",
+        channel: g,
+        in_minutes: 30,
+      });
+      expect(viaTool.isError).toBe(true);
+      expect(JSON.stringify(viaTool.data)).toContain("channel_closed");
+      for (const body of [{ notice_minutes: 15 }, { coming: false }]) {
+        const answer = await post(
+          "/v1/events",
+          { action: "answer", channel: g, ...body },
+          { key: mem.key, ip: mem.ip },
+        );
+        expect(answer.status, JSON.stringify(body)).toBe(409);
+        expect(answer.json.error).toEqual(said.json.error);
+      }
+      const presence = await post(
+        "/v1/me/presence",
+        { with: lead.handle, state: "idle" },
+        { key: mem.key, ip: mem.ip },
+      );
+      expect(presence.status).toBe(409);
+      expect(presence.json.error).toEqual(said.json.error);
+
+      // What was set stops showing, and no session of it is coming.
+      for (const b of [lead, mem]) {
+        const d = await get("/v1/me/digest?since=0", b.key);
+        expect(JSON.stringify(d.json.due ?? [])).not.toContain(g);
+        expect(d.json.presence ?? []).toEqual([]);
+      }
+
+      const before = {
+        lead: await wakeOf(lead),
+        mem: await wakeOf(mem),
+        ctl: await wakeOf(ctlMem),
+      };
+      let ctlAfter = before.ctl;
+      const deadline = Date.now() + 150_000;
+      while (ctlAfter === before.ctl && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5000));
+        expect((await get("/v1/clock")).status).toBe(200);
+        ctlAfter = await wakeOf(ctlMem);
+      }
+      // The open group's session fired; the closed group's didn't.
+      expect(ctlAfter).toBe(before.ctl + 1);
+      for (let i = 0; i < 3; i++)
+        expect((await get("/v1/clock")).status).toBe(200);
+      expect(await wakeOf(lead)).toBe(before.lead);
+      expect(await wakeOf(mem)).toBe(before.mem);
+      const d = await get("/v1/me/digest?since=0", mem.key);
+      expect(JSON.stringify(d.json.due ?? [])).not.toContain(g);
+
+      // Ending it still works: it only takes wakes away.
+      const ended = await post(
+        "/v1/events",
+        { action: "end", channel: g },
+        { key: lead.key, ip: lead.ip },
+      );
+      expect(ended.status, ended.text).toBe(200);
+    }, 200_000);
+
     it("ends a gathering short when too few are coming, once, waking each bot that was", async () => {
       const host = await register("short-host");
       const guest = await register("short-guest");
