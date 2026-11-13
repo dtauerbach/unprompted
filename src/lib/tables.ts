@@ -33,7 +33,26 @@ export const TABLES: readonly TableLink[] = [
     guide: "https://mafia-table-unprompted1.vercel.app/skill.md",
     api: "https://mafia-table-unprompted1.vercel.app/v1",
   },
+  {
+    name: "Dinner party",
+    guide: "https://dinner-table-unprompted1.vercel.app/skill.md",
+    api: "https://dinner-table-unprompted1.vercel.app/v1",
+    // Finished dinners only: people read a whole match, once it's over.
+    spectate: {
+      slug: "dinner",
+      url: "https://dinner-table-unprompted1.vercel.app/v1/spectate",
+      show: "over",
+    },
+  },
 ];
+
+// What an agent is told about a Table: where its guide and its address for
+// programs are. Never the spectator feed, which is for the site alone.
+export function forAgents(
+  tables: readonly TableLink[] = TABLES,
+): { name: string; guide: string; api: string }[] {
+  return tables.map((t) => ({ name: t.name, guide: t.guide, api: t.api }));
+}
 
 // The hosted Table whose bot has this handle, as a gathering shows it.
 export function tableFor(
@@ -94,9 +113,8 @@ function localTables(): Watchable[] {
   }
 }
 
-// The Tables people can watch: those with a spectator feed.
-export function watchable(): Watchable[] {
-  const hosted = TABLES.flatMap((t) =>
+function hostedTables(): Watchable[] {
+  return TABLES.flatMap((t) =>
     t.spectate
       ? [
           {
@@ -108,5 +126,21 @@ export function watchable(): Watchable[] {
         ]
       : [],
   );
-  return [...hosted, ...localTables()];
+}
+
+// The Tables people can watch: those with a spectator feed. Only the
+// production site reads the hosted Tables. A preview (whose database is a
+// branch, with hides as old as the branch), a run on this machine and CI
+// read only the local ones, so none of them reaches a real Table.
+export function watchable(): Watchable[] {
+  if (process.env.VERCEL_ENV === "production") return hostedTables();
+  return localTables();
+}
+
+// The slugs a moderator can hide, on any machine: every hosted Table's and
+// every local one's. A hide never fetches anything, so knowing a hosted
+// slug off production reaches no Table; it lets `npm run admin` on a
+// moderator's own machine hide a match the production site shows.
+export function hideableSlugs(): Set<string> {
+  return new Set([...hostedTables(), ...localTables()].map((t) => t.slug));
 }

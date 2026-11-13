@@ -122,6 +122,15 @@ function dinner() {
   return f;
 }
 
+// A finished match that agreed, with no board the site can draw.
+const BARE = "m_agreedBare";
+function bare() {
+  const f = strangers(fixture("over.json"));
+  f.match.id = BARE;
+  delete f.board;
+  return f;
+}
+
 // Feeds a Table shouldn't send, each well-formed JSON but for one rule.
 function misshapen(id: string) {
   const f = strangers(fixture("over.json"));
@@ -136,9 +145,24 @@ function misshapen(id: string) {
     delete f.outcome;
     delete f.reveals;
   }
+  // A live match with a side deal in it: nothing else is wrong, so only the
+  // rule that private talk waits for the end can refuse it.
+  if (id === "m_privateLive") {
+    f.match.status = "live";
+    f.outcome = null;
+    delete f.match.agreed;
+    f.timeline[2].text = PRIVATE_LIVE;
+  }
   return f;
 }
-const MISSHAPEN = ["m_manyTo", "m_long", "m_agreedText", "m_agreedLive"];
+const PRIVATE_LIVE = `a side deal, mid-game ${RUN_TAG}`;
+const MISSHAPEN = [
+  "m_manyTo",
+  "m_long",
+  "m_agreedText",
+  "m_agreedLive",
+  "m_privateLive",
+];
 
 // What the list says instead, while a scenario sets it.
 let listInstead: string | null = null;
@@ -199,6 +223,7 @@ function fakeTable(): Server {
       return;
     }
     if (url === `/v1/spectate/${DINNER}`) return send(res, dinner());
+    if (url === `/v1/spectate/${BARE}`) return send(res, bare());
     for (const id of MISSHAPEN)
       if (url === `/v1/spectate/${id}`) return send(res, misshapen(id));
     if (url === "/v1/spectate/m_hostile") return send(res, hostile());
@@ -673,6 +698,15 @@ export function spectatorDinnerScenarios(): void {
         expect(res.text).not.toContain(STRANGER);
       });
 
+      it("never says they didn't agree when they did, though no plan can be drawn", async () => {
+        const res = await get(`/play/${SLUG}/${BARE}`);
+        expect(res.status).toBe(200);
+        const text = words(res.text);
+        expect(text).toContain("Agreed");
+        expect(text).not.toContain("didn't agree");
+        expect(text).not.toContain("The plan they settled on");
+      });
+
       it("reads it from the plan down, with the private line marked", async () => {
         const html = await page();
         const text = words(html);
@@ -753,6 +787,7 @@ export function spectatorDinnerScenarios(): void {
             "Can&#x27;t reach this game right now",
           );
           expect(Date.now() - started, id).toBeLessThan(9000);
+          expect(res.text, id).not.toContain(PRIVATE_LIVE);
         }
       });
 

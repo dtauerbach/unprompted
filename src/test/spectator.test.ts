@@ -28,7 +28,7 @@ import {
   listSchema,
   visibleText,
 } from "@/lib/spectator";
-import { TABLES, watchable } from "@/lib/tables";
+import { hideableSlugs, TABLE_SLUG, TABLES, watchable } from "@/lib/tables";
 import { register, resetDb } from "./helpers";
 
 vi.mock("next/server", async (original) => ({
@@ -117,6 +117,7 @@ const visible = (html: string) =>
 
 beforeEach(() => {
   vi.stubEnv("VERCEL", "");
+  vi.stubEnv("VERCEL_ENV", "");
   vi.stubEnv(
     "UNPROMPTED_LOCAL_TABLES",
     JSON.stringify([{ slug: "dinner", name: "Dinner party", url: LOCAL }]),
@@ -255,16 +256,68 @@ describe("the spectator feed format, as the site reads it", () => {
 });
 
 describe("which Tables people can watch", () => {
-  it("has no hosted feed yet, so only a local Table shows", () => {
-    expect(TABLES.some((x) => x.spectate)).toBe(false);
+  it("watches only the local Table on this machine, never a hosted one", () => {
+    expect(TABLES.some((x) => x.spectate)).toBe(true);
     expect(watchable()).toEqual([
       { slug: "dinner", name: "Dinner party", url: LOCAL, show: "all" },
     ]);
+    vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "");
+    expect(watchable()).toEqual([]);
   });
 
-  it("ignores the local list on Vercel", () => {
+  it("watches the hosted dinner Table, finished matches only, in production, and ignores the local list there", () => {
     vi.stubEnv("VERCEL", "1");
-    expect(watchable()).toEqual([]);
+    vi.stubEnv("VERCEL_ENV", "production");
+    expect(watchable()).toEqual([
+      {
+        slug: "dinner",
+        name: "Dinner party",
+        url: "https://dinner-table-unprompted1.vercel.app/v1/spectate",
+        show: "over",
+      },
+    ]);
+  });
+
+  it("watches no real Table on a preview or a development deploy", () => {
+    // A preview's database is a branch, its hides as old as the branch.
+    for (const env of ["preview", "development"]) {
+      vi.stubEnv("VERCEL", "1");
+      vi.stubEnv("VERCEL_ENV", env);
+      expect(watchable(), env).toEqual([]);
+    }
+  });
+
+  it("lets a moderator's own machine hide any hosted or local Table's slug", () => {
+    // Off production, with a local Table of another name: the hosted slug is
+    // still hideable, so `npm run admin` reaches what production shows.
+    vi.stubEnv(
+      "UNPROMPTED_LOCAL_TABLES",
+      JSON.stringify([{ slug: "supper", name: "Supper", url: LOCAL }]),
+    );
+    expect(watchable().map((x) => x.slug)).toEqual(["supper"]);
+    expect([...hideableSlugs()].sort()).toEqual(["dinner", "supper"]);
+    vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "");
+    expect([...hideableSlugs()]).toEqual(["dinner"]);
+  });
+
+  it("reads each hosted feed over https from its Table's own host, with no query", () => {
+    const hosted = TABLES.flatMap((x) => (x.spectate ? [x] : []));
+    expect(hosted.length).toBeGreaterThan(0);
+    const slugs = new Set<string>();
+    for (const x of hosted) {
+      const feed = new URL(x.spectate?.url ?? "");
+      const api = new URL(x.api);
+      expect(feed.protocol, x.name).toBe("https:");
+      expect(feed.host, x.name).toBe(api.host);
+      expect(feed.search + feed.hash, x.name).toBe("");
+      expect(feed.username + feed.password, x.name).toBe("");
+      expect(x.spectate?.url, x.name).toBe(feed.toString());
+      expect(TABLE_SLUG.test(x.spectate?.slug ?? ""), x.name).toBe(true);
+      expect(slugs.has(x.spectate?.slug ?? ""), x.name).toBe(false);
+      slugs.add(x.spectate?.slug ?? "");
+      // A name the tab and the description can carry as they are.
+      expect(x.name, x.name).toMatch(/^[A-Za-z0-9 ]{1,40}$/);
+    }
   });
 
   it("takes only plain http to this machine, with a plain slug and name", () => {
@@ -389,6 +442,7 @@ describe("a match's page", () => {
         table: "Dinner party",
         t,
         bots: known(),
+        held: new Map(),
       }),
     );
     expect(html).not.toMatch(/<script|<img|<b>|<a href='/);
@@ -402,7 +456,13 @@ describe("a match's page", () => {
   it("shows the seating, who's playing, and that the host sent it", () => {
     const feed = feedSchema.parse(fixture("live.json"));
     const html = renderToStaticMarkup(
-      createElement(MatchView, { feed, table: "Dinner party", t }),
+      createElement(MatchView, {
+        feed,
+        table: "Dinner party",
+        t,
+        held: new Map(),
+        bots: new Map(),
+      }),
     );
     const text = visible(html);
     expect(html).toContain('role="img"');
@@ -419,7 +479,13 @@ describe("a match's page", () => {
     const feed = feedSchema.parse(fixture("over.json"));
     const text = visible(
       renderToStaticMarkup(
-        createElement(MatchView, { feed, table: "Dinner party", t }),
+        createElement(MatchView, {
+          feed,
+          table: "Dinner party",
+          t,
+          held: new Map(),
+          bots: new Map(),
+        }),
       ),
     );
     expect(text).toContain("How it ended");
@@ -441,7 +507,13 @@ describe("a match's page", () => {
     const feed = feedSchema.parse(f);
     const text = visible(
       renderToStaticMarkup(
-        createElement(MatchView, { feed, table: "Dinner party", t }),
+        createElement(MatchView, {
+          feed,
+          table: "Dinner party",
+          t,
+          held: new Map(),
+          bots: new Map(),
+        }),
       ),
     );
     expect(text).toContain("Odd");
@@ -467,7 +539,13 @@ describe("a match's page", () => {
     // Ada keeps a seat and a row; only the words and the link go.
     const open = visible(
       renderToStaticMarkup(
-        createElement(MatchView, { feed, table: "Dinner party", t }),
+        createElement(MatchView, {
+          feed,
+          table: "Dinner party",
+          t,
+          held: new Map(),
+          bots: new Map(),
+        }),
       ),
     );
     const named = (s: string) => s.split("Ada").length - 1;
@@ -534,6 +612,7 @@ describe("a match's page", () => {
                 ["ada", "stopped" as const],
                 ["basil", "new" as const],
               ]),
+              bots: new Map(),
             }),
           ),
         ),
@@ -740,6 +819,8 @@ describe("a finished dinner, as the watch page shows it", () => {
         table: "Dinner party",
         t,
         now: NOW,
+        held: new Map(),
+        bots: new Map(),
         ...extra,
       }),
     );
@@ -802,6 +883,15 @@ describe("a finished dinner, as the watch page shows it", () => {
     expect(text).toContain("No agreement");
     delete m.agreed;
     expect(visible(row(m, new Map()))).toContain("Finished");
+    // Handles sent, but none the site can show, or none at all: the count,
+    // never "and N more" with nothing before it.
+    const unknown = fixture("list.json").matches[0];
+    const none = visible(row(unknown, new Map()));
+    expect(none).toContain("4 players");
+    expect(none).not.toContain("more");
+    expect(visible(row({ ...unknown, handles: [] }, new Map()))).toContain(
+      "4 players",
+    );
     // Every handle known: no "more".
     const all = fixture("list.json").matches[0];
     const known = new Map(all.handles.map((h: string) => [h, bot()]));
@@ -834,6 +924,14 @@ describe("a finished dinner, as the watch page shows it", () => {
     expect(notText).toContain("They didn't agree on a plan.");
     expect(notText).not.toContain("Final seating");
     expect(view(no)).not.toContain('role="img"');
+    // Agreed, with no board the site can draw: no plan section, and never
+    // "didn't agree" under an Agreed badge.
+    const undrawable = fixture("over.json");
+    delete undrawable.board;
+    const undrawn = visible(view(undrawable));
+    expect(undrawn).toContain("Agreed");
+    expect(undrawn).not.toContain("didn't agree");
+    expect(undrawn).not.toContain("The plan they settled on");
     const plain = fixture("over.json");
     delete plain.match.agreed;
     const plainText = visible(view(plain));
@@ -1035,23 +1133,46 @@ describe("hiding a match or a Table", () => {
   });
 
   it("works while the Table is down, and still lets go of a Table no longer listed", async () => {
+    // A local Table that isn't hosted, so taking it off the list unlists it.
+    vi.stubEnv(
+      "UNPROMPTED_LOCAL_TABLES",
+      JSON.stringify([{ slug: "supper", name: "Supper", url: LOCAL }]),
+    );
     const calls = serve({});
-    await setMatchHidden(db(), "dinner", ID, true, "x");
-    await setTableHidden(db(), "dinner", true, "x");
+    await setMatchHidden(db(), "supper", ID, true, "x");
+    await setTableHidden(db(), "supper", true, "x");
     expect(calls).toEqual([]);
     vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "[]");
     await expect(
-      setMatchHidden(db(), "dinner", "m_other", true, "x"),
-    ).rejects.toThrow("There is no Table dinner.");
-    expect((await setMatchHidden(db(), "dinner", ID, false, "x")).changed).toBe(
+      setMatchHidden(db(), "supper", "m_other", true, "x"),
+    ).rejects.toThrow("There is no Table supper.");
+    expect((await setMatchHidden(db(), "supper", ID, false, "x")).changed).toBe(
       true,
     );
-    expect((await setTableHidden(db(), "dinner", false, "x")).changed).toBe(
+    expect((await setTableHidden(db(), "supper", false, "x")).changed).toBe(
       true,
     );
-    await expect(setTableHidden(db(), "dinner", false, "x")).rejects.toThrow(
-      "There is no Table dinner.",
+    await expect(setTableHidden(db(), "supper", false, "x")).rejects.toThrow(
+      "There is no Table supper.",
     );
+  });
+
+  it("hides the production site's dinner Table from a moderator's own machine", async () => {
+    // Not production, and no local Table: what `npm run admin` sees.
+    vi.stubEnv("UNPROMPTED_LOCAL_TABLES", "");
+    expect(watchable()).toEqual([]);
+    const calls = serve({});
+    expect((await setMatchHidden(db(), "dinner", ID, true, "x")).changed).toBe(
+      true,
+    );
+    expect((await setTableHidden(db(), "dinner", true, "x")).changed).toBe(
+      true,
+    );
+    await expect(setTableHidden(db(), "chess", true, "x")).rejects.toThrow(
+      "There is no Table chess.",
+    );
+    expect(await rows()).toEqual({ matches: 1, tables: 1 });
+    expect(calls).toEqual([]);
   });
 
   it("makes a hidden match missing without asking the Table", async () => {

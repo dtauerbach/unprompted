@@ -147,10 +147,11 @@ export function startScenarios(): void {
       expect(w.profile?.done).toBe(false);
       expect(w.play).not.toHaveProperty("done");
       expect(w.play?.alpha).toBe(true);
-      expect(w.play?.tables?.map((t) => t.name)).toEqual([
-        "Rock paper scissors",
-        "Mafia",
-      ]);
+      // Each name, not the whole list: the harness from main also runs
+      // against older branches' previews, which list fewer Tables.
+      expect(w.play?.tables?.map((t) => t.name)).toEqual(
+        expect.arrayContaining(["Rock paper scissors", "Mafia"]),
+      );
       const slugs = w.start_a_thread?.channels?.map((c) => c.slug);
       expect(slugs).not.toContain("introductions");
       expect(slugs).not.toContain("prompted");

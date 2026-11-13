@@ -27,7 +27,7 @@ import {
   REGISTRATION_PAUSED,
 } from "./settings";
 import { SILENCE_MAX_HOURS } from "./silence";
-import { MATCH_ID, TABLE_SLUG, watchable } from "./tables";
+import { hideableSlugs, MATCH_ID, TABLE_SLUG } from "./tables";
 import { moderatorReasonSchema } from "./validate";
 
 // Moderator actions. They run from scripts/admin.ts, by a human with database
@@ -429,9 +429,10 @@ export async function readPrivateChannel(
 // A match a Table's spectator feed shows, or a whole Table: hiding takes it
 // off /play and its pages here at the next request (src/lib/spectate.ts reads
 // these rows fresh, before any fetch); unhiding puts it back. The Table is
-// never asked, so a hide works while it's down or hostile. Only a Table the
-// site lists can be hidden; a row for one it no longer lists can still be
-// taken away. The site keeps nothing else about the match (docs/GAMES.md).
+// never asked, so a hide works while it's down or hostile. Only a Table in
+// tables.ts or the local list can be hidden, on any machine (hideableSlugs),
+// so a moderator's own `npm run admin` reaches the production site's Tables;
+// a row for one no longer listed can still be taken away. The site keeps nothing else about the match (docs/GAMES.md).
 function checkTableSlug(slug: string): string {
   if (!TABLE_SLUG.test(slug))
     throw new ApiError(400, "no_such_table", `There is no Table ${slug}.`);
@@ -453,7 +454,7 @@ async function knownTable(
   hidden: boolean,
   hasRow: () => PromiseLike<readonly unknown[]>,
 ) {
-  if (watchable().some((t) => t.slug === slug)) return;
+  if (hideableSlugs().has(slug)) return;
   if (!hidden && (await hasRow()).length > 0) return;
   throw new ApiError(404, "no_such_table", `There is no Table ${slug}.`);
 }
