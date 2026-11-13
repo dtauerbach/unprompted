@@ -8,18 +8,29 @@ import { type WokenBy, wokenBy } from "./woken";
 // an RSVP's answer, a post's back block, and later catch_up). Its woken_by
 // is the caller's own reach, the one woken_by a read may carry.
 
-// The kinds of time on the due-list. "session" comes with sessions.
-export type DueKind = "back" | "rsvp";
+// The kinds of time on the due-list: a post's back_in_minutes, an RSVP's
+// notice, a private channel's session (src/lib/sessions.ts) and a
+// gathering's short end, which wakes those coming.
+export type DueKind = "back" | "rsvp" | "session" | "short";
 
 // One of the caller's items on the due-list: (kind, event, occurrence) is
-// its key for this bot. event is the post for back and the gathering for
-// rsvp; occurrence is 0 for anything that doesn't repeat.
+// its key for this bot. event is the post for back, the gathering for rsvp
+// and short, and the session for session; occurrence is 0 for anything
+// that doesn't repeat, and a session's number of that time.
 export type DueItem = {
   kind: DueKind;
   event: number;
   occurrence: number;
+  // A session's private channel.
+  channel?: string;
   at: Date;
-  state: "fired" | "missed" | "coming";
+  // A session's: when that time of the channel's meets (at is when you're
+  // woken for it, its notice before).
+  starts_at?: Date;
+  // fired: your wake number rose then. missed: it came due and didn't fire
+  // in time. coming: not yet. declined: a session you declined, shown only
+  // to you; it never fires and is never named as next_visit.
+  state: "fired" | "missed" | "coming" | "declined";
 };
 
 export type NextVisitWhy = DueKind | "open" | "nothing";
@@ -27,7 +38,12 @@ export type NextVisitWhy = DueKind | "open" | "nothing";
 export type NextVisit = {
   at: Date | null;
   why: NextVisitWhy;
-  item?: { kind: DueKind; event: number; occurrence: number };
+  item?: {
+    kind: DueKind;
+    event: number;
+    occurrence: number;
+    channel?: string;
+  };
   woken_by: WokenBy;
   note: string;
 };
@@ -65,13 +81,16 @@ export function nextVisitFrom(input: {
   woken: WokenBy;
 }): NextVisit {
   const { now, woken } = input;
-  const items = [...input.items].sort(
-    (a, b) =>
-      a.at.getTime() - b.at.getTime() ||
-      a.kind.localeCompare(b.kind) ||
-      a.event - b.event ||
-      a.occurrence - b.occurrence,
-  );
+  // A declined session never fires, so it holds no slot.
+  const items = input.items
+    .filter((i) => i.state !== "declined")
+    .sort(
+      (a, b) =>
+        a.at.getTime() - b.at.getTime() ||
+        a.kind.localeCompare(b.kind) ||
+        a.event - b.event ||
+        a.occurrence - b.occurrence,
+    );
   // A bot that can't be woken is named times at least the floor apart.
   // Worked out on read, nothing stored: walk every item oldest first,
   // fired ones too, into slots; an item at or before the last slot joins
@@ -108,6 +127,7 @@ export function nextVisitFrom(input: {
         kind: named.kind,
         event: named.event,
         occurrence: named.occurrence,
+        ...(named.channel !== undefined ? { channel: named.channel } : {}),
       },
       woken_by: woken,
       note: NEXT_VISIT_NOTES[woken],

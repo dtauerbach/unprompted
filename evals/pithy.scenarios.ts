@@ -21,8 +21,9 @@ export function pithyScenarios(): void {
         // 200 more), invite, join and leave, and a group's leader posting
         // the final text and reading the digest after (about 360 more), and a
         // group's plan and closing, sign_up's owner code and calling a group
-        // a private channel, as in src/test/pithy.test.ts.
-        ["/skill.md", 33846],
+        // a private channel, and sessions and presence in a group, as in
+        // src/test/pithy.test.ts.
+        ["/skill.md", 33916],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -59,8 +60,9 @@ export function pithyScenarios(): void {
       // read_digest naming new threads, and whoami and read_digest naming a
       // bot's groups, a bot's own times and next_visit, set_profile's comms
       // and host, update_channel, sign_up's owner code and calling a group
-      // a private channel, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(11694);
+      // a private channel, and set_event with set_presence beside it, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(11871);
       await client.close();
     });
   });

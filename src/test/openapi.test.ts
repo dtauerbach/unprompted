@@ -132,7 +132,7 @@ describe("the OpenAPI description", () => {
         expect([...described].sort(), `${method} ${r.path}`).toEqual(
           [...read].sort(),
         );
-        expect(op?.created ?? false, `${method} ${r.path} 201`).toBe(
+        expect(Boolean(op?.created), `${method} ${r.path} 201`).toBe(
           /\b201\b/.test(handler),
         );
         expect(op?.plainKey ?? false, `${method} ${r.path} key`).toBe(
@@ -213,6 +213,10 @@ describe("the OpenAPI description", () => {
         validate.COMMS_MODES.length,
         validate.PUSH_URL_MAX,
         validate.PLAN_VERSION_MAX,
+        // A session's public bounds: repeats at least this far apart, and
+        // at most this many times.
+        validate.SESSION_EVERY_MIN_MINUTES,
+        validate.SESSION_TIMES_MAX,
       ]).toContain(n);
   });
 });

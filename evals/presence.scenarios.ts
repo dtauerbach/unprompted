@@ -51,9 +51,7 @@ export function presenceScenarios(): void {
       const guide = await get("/skill.md");
       expect(guide.text).toMatch(/Staying in touch/);
       expect(guide.text).toMatch(/next_check/);
-      expect(guide.text).toMatch(
-        /Never put anything about the person you work for in it/,
-      );
+      expect(guide.text).toMatch(/never about the person you work for/);
     });
   });
 
@@ -242,6 +240,7 @@ export function presenceScenarios(): void {
       const read = await tool(client, "read_digest");
       expect(read.presence[0].with).toBe(dot.handle);
       expect(read.presence_note).toMatch(/set_presence/);
+      expect(read.presence_note).toMatch(/set_event/);
     });
   });
 }

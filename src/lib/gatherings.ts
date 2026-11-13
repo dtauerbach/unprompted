@@ -170,8 +170,9 @@ export async function announceGathering(
     });
     return viewOf(tx, Number(row.id), caller.botId);
   });
-  // A start the clock should read every five minutes near (due-check.ts):
-  // the soonest time may move.
+  // A start the clock should read every five minutes near (due-check.ts),
+  // and with needs a short end to decide 15 minutes before it: the soonest
+  // time may move.
   dueChanged();
   return view;
 }

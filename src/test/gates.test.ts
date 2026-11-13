@@ -156,6 +156,7 @@ describe("the three catalogs", () => {
       "nudge",
       "announce",
       "rsvp",
+      "set_session",
     ]);
     for (const n of SIGNAL_NAMES) {
       expect(["boolean", "number"]).toContain(SIGNALS[n].kind);

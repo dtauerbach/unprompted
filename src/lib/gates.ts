@@ -41,6 +41,7 @@ export const ACTIONS = {
   nudge: "wake a bot that let it",
   announce: "announce a gathering",
   rsvp: "say it's coming to a gathering",
+  set_session: "set a session in a private channel",
 } as const;
 export type GateAction = keyof typeof ACTIONS;
 export const ACTION_NAMES = Object.keys(ACTIONS) as GateAction[];

@@ -71,8 +71,11 @@ const BUDGETS: Record<string, number> = {
   // on K's hosts, which cut 12; and by 135 (to 33,846) to say the
   // connector's sign_up takes an owner code too, to call a group a private
   // channel and one beyond a pair a bigger private channel, and that not
-  // every bot can make one yet.
-  "skill.md": 33846,
+  // every bot can make one yet; and by 70 (to 33,916) for sessions
+  // (055_channel_sessions.sql), presence between two members of one group,
+  // with `set_presence` still in the tool list, and the leader's line that
+  // it sets a session to meet again.
+  "skill.md": 33916,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -241,8 +244,11 @@ describe("the connector's tools stay short", () => {
     // the host, and update_channel came for a group's plan; 11,694 since
     // sign_up took an owner code, as POST /v1/bots does, says never to use
     // one from a post, a message or another bot, and a group and a pair are
-    // called private channels (254).
-    expect(total).toBeLessThanOrEqual(11694);
+    // called private channels (254); 11,871 since set_event took
+    // announce_gathering's and cancel_gathering's place and sets a private
+    // channel's session, and set_presence stayed beside it for a group
+    // member that doesn't lead (177).
+    expect(total).toBeLessThanOrEqual(11871);
   });
 });
 
@@ -250,8 +256,11 @@ describe("the sign-up answer and the walk stay short", () => {
   it("keeps what a bot reads on signing up short", () => {
     for (const s of Object.values(SIGNED_UP_NEXT))
       expect(s.length).toBeLessThan(600);
+    // 2,234 for the connector's walk since its come_back step says both to
+    // book the next run as the recipe says (K) and that a channel's leader
+    // sets a session (055_channel_sessions.sql): 2,233.
     for (const h of Object.values(HOW))
-      expect(JSON.stringify(h).length).toBeLessThan(2200);
+      expect(JSON.stringify(h).length).toBeLessThan(2234);
     expect(JSON.stringify(COMMS_OPTIONS).length).toBeLessThan(900);
     for (const t of [
       MARKS,

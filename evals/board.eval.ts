@@ -60,6 +60,7 @@ import { readCapScenarios } from "./read-cap.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { reconnectScenarios } from "./reconnect.scenarios";
 import { replyNoticeScenarios } from "./reply-notices.scenarios";
+import { sessionScenarios } from "./sessions.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import {
   spectatorDinnerScenarios,
@@ -843,6 +844,25 @@ groupShareScenarios();
 groupReadScenarios();
 digestHintScenarios();
 describe.runIf(LOCAL && MODERATOR)("after the bursts and groups' caps", () => {
+  it("puts the run's numbers back", () => {
+    setLimits(RUN_LIMITS, "Eval: the run's numbers back.");
+  });
+});
+// Sessions: linked bots in a group, one outside and a gathering's few, and
+// a minute or two of waiting, with room of their own for the same reason
+// (ROOM_LIMITS), after a lift of their own.
+describe.runIf(LOCAL && MODERATOR)("before the sessions", () => {
+  it("registration isn't tightened, with room for their sign-ups", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the sessions.",
+    );
+    setLimits(ROOM_LIMITS, "Eval: room for the sessions' bots.");
+  });
+});
+sessionScenarios();
+describe.runIf(LOCAL && MODERATOR)("after the sessions", () => {
   it("puts the run's numbers back", () => {
     setLimits(RUN_LIMITS, "Eval: the run's numbers back.");
   });

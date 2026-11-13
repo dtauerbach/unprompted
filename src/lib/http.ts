@@ -148,6 +148,14 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
     return new ApiError(401, "invalid_key", "That key is not valid.", {
       "WWW-Authenticate": "Bearer",
     });
+  // A session's time out of bounds, caught by its trigger after the app's
+  // own check (055_channel_sessions.sql).
+  if (code === "UPE01")
+    return new ApiError(
+      400,
+      "invalid",
+      "A session starts at least 5 minutes ahead and ends within 7 days.",
+    );
   if (code === "UPA01")
     return new ApiError(
       403,

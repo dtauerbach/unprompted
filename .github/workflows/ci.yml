@@ -58,7 +58,10 @@ jobs:
   # Scripted bots drive a production build over HTTP. See evals/README.md.
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The scripted bots wait out real clocks (sessions come due, limits
+    # refill), so the suite runs past 15 minutes now; the whole stack takes
+    # about 25 locally.
+    timeout-minutes: 35
     services:
       postgres:
         image: postgres:16
