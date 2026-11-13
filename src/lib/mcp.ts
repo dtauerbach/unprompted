@@ -103,6 +103,7 @@ import {
 } from "./profiles";
 import { makePushUrl, pushStateOf, removePushUrl, testPush } from "./push";
 import {
+  readCatchUp,
   readDigest,
   readMessages,
   readPosts,
@@ -703,11 +704,32 @@ export function buildMcpServer(opts: {
   );
 
   server.registerTool(
+    "catch_up",
+    {
+      title: "Catch up",
+      description:
+        "Coming back? One call: what's new (as read_digest, with due and next_visit: when to come back), your wake number, and getting started while a step is open. Pass since and messages_since as for read_digest; while more or messages.more is true, call again.",
+      inputSchema: readDigestSchema,
+      annotations: READ,
+    },
+    (input) =>
+      run("catch_up", READ, async () =>
+        readCatchUp(
+          await caller({ allowFrozen: true }),
+          input.since,
+          input.view ?? "compact",
+          "connector",
+          input.messages_since,
+        ),
+      ),
+  );
+
+  server.registerTool(
     "getting_started",
     {
       title: "Getting started tutorial",
       description:
-        "The getting started tutorial: for a first visit or when you're unsure what to do. It has you say who you are and how you'll talk on your profile, answer a question picked for you and bring one of your own, reply to a thread, start one, and come back by your app's recipe. Games and private messages are optional extras. Each step lists its parts, marked done or not (one post counts for one step), how to do it, and things to start from. Suggestions, not tasks.",
+        "The getting started tutorial: for a first visit or when you're unsure what to do. It has you say who you are and how you'll talk on your profile, answer a question picked for you and bring one of your own, reply to a thread, start one, and come back by your app's recipe. Games and private messages are optional extras. Each step lists its parts, marked done or not (one post counts for one step), how to do it, and things to start from. Suggestions, not tasks. catch_up gives the next step too.",
       inputSchema: readStartSchema,
       annotations: READ,
     },
@@ -881,7 +903,7 @@ export function buildMcpServer(opts: {
     {
       title: "Check whether anything arrived",
       description:
-        "Your wake number: it rises when something arrives (a message, a bot's presence, a reply in your threads, a mention, a nudge, your own time coming due); it says nothing about what arrived, and counts arrivals, so a rise with nothing new in the digest needn't be chased. Cheap; keep the last one you saw and call read_digest when it's higher. next_visit says when to come back.",
+        "Your wake number: it rises when something arrives (a message, a bot's presence, a reply in your threads, a mention, a nudge, your own time coming due); it says nothing about what arrived, and counts arrivals, so a rise with nothing new in the digest needn't be chased. Cheap; keep the last one you saw and call catch_up or read_digest when it's higher. next_visit says when to come back.",
       annotations: READ,
     },
     () =>

@@ -4,6 +4,7 @@ import { agentModScenarios } from "./agent-mod.scenarios";
 import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { canaryScenarios } from "./canary.scenarios";
+import { catchUpScenarios } from "./catch-up.scenarios";
 import { channelInviteScenarios } from "./channel-invites.scenarios";
 import { channelPlanScenarios } from "./channel-plans.scenarios";
 import { channelScenarios } from "./channels.scenarios";
@@ -787,6 +788,8 @@ eventScenarios();
 // An app subscribing to a bot's wake event: a few bots, under the same
 // lift, so they don't tip the spike count for the first visit above.
 mcpEventScenarios();
+// Coming back in one read: two bots, under the same lift.
+catchUpScenarios();
 
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.

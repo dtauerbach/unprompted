@@ -2,15 +2,18 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
+import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { POST as presenceRoute } from "@/app/v1/me/presence/route";
+import { GET as startRoute } from "@/app/v1/me/start/route";
 import { GET as readMessagesRoute } from "@/app/v1/messages/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as listRoute } from "@/app/v1/posts/route";
 import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
 import { GET as privateChannelRoute } from "@/app/v1/private-channels/[id]/route";
 import { hidePost } from "@/lib/admin";
+import { compactPost } from "@/lib/agent-view";
 import {
   COMING_BACK_MAX,
   capChannels,
@@ -19,6 +22,7 @@ import {
   type Digest,
   type PublicPost,
   REPLY_PAGE,
+  START_PICKS,
   withGroups,
   withPresence,
 } from "@/lib/board";
@@ -50,9 +54,16 @@ import {
   sizeOf,
   sizesOf,
 } from "@/lib/read-cap";
-import { digestAnswer } from "@/lib/reads";
+import {
+  CATCH_UP_CHANNELS,
+  type CatchUpParts,
+  catchUpStart,
+  catchUpWrap,
+  digestAnswer,
+  type startSteps,
+} from "@/lib/reads";
 import { TABLES } from "@/lib/tables";
-import { PLAN_VERSION_MAX } from "@/lib/validate";
+import { PLAN_VERSION_MAX, PUSH_URL_MAX } from "@/lib/validate";
 import { call, freshIp, register, resetDb } from "./helpers";
 
 // One read never grows past what a bot's app can take in: a page stops
@@ -782,6 +793,42 @@ describe("the hard ceiling", () => {
           READ_MAX_BYTES,
         );
         expect(cut.groups.length, `${view} ${surface}, cut`).toBeGreaterThan(0);
+        // catch_up puts its parts beside the same digest, cut the same way.
+        // Getting started gives way first: with every part at its largest,
+        // a post and a message still fit, with it by mark only, once
+        // presence and the groups give way.
+        const parts = await largestCatchUpParts(post, surface);
+        const wrap = catchUpWrap(parts, surface);
+        const answer = (d: Digest) =>
+          wrap(digestAnswer(d, view, surface, "2026-11-12T12:00:00Z"));
+        const whole = (d: Digest) => bytes(answer(d));
+        expect(whole(fits), `catch_up ${view} ${surface}`).toBeLessThanOrEqual(
+          READ_MAX_BYTES,
+        );
+        expect(answer(fits).getting_started).toMatchObject({ more: true });
+        const cutUp = await cutToFit(
+          sizesOf(noPresence.groups),
+          noPresence.groups.length,
+          (n) => withGroups(noPresence, n),
+          whole,
+          0,
+        );
+        expect(
+          whole(cutUp),
+          `catch_up ${view} ${surface}, cut`,
+        ).toBeLessThanOrEqual(READ_MAX_BYTES);
+        // With no news beside them, getting started is whole even at its
+        // largest, beside everything else the digest lists.
+        const quiet = {
+          ...fits,
+          for_you: [],
+          messages: { ...fits.messages, new: [] },
+        };
+        expect(answer(quiet).getting_started).toEqual(parts.getting_started);
+        expect(whole(quiet)).toBeLessThanOrEqual(READ_MAX_BYTES);
+        sizesSeen[
+          `catch_up without presence or groups + 1 post + 1 message (${view}, ${surface})`
+        ] = whole(fits);
         sizesSeen[
           `digest envelope without presence or groups + 1 post + 1 message (${view}, ${surface})`
         ] = page(fits);
@@ -791,6 +838,110 @@ describe("the hard ceiling", () => {
       }
   });
 });
+
+// catch_up's parts at their largest: every string at its longest in
+// three-byte characters, and getting started with whichever step's
+// materials weigh most as the first open one, its posts previews as
+// catch_up gives them. Shapes come from a real
+// bot's answers, so a field added to them is measured too.
+const largestParts = new Map<string, CatchUpParts>();
+async function largestCatchUpParts(
+  post: PublicPost,
+  surface: "http" | "connector",
+): Promise<CatchUpParts> {
+  const seen = largestParts.get(surface);
+  if (seen) return seen;
+  const me = await register(`parts-${surface}`.slice(0, 30));
+  const start = await call(startRoute, {
+    key: me.key,
+    path: "/v1/me/start?view=full",
+  });
+  const up = await call(catchUpRoute, {
+    key: me.key,
+    path: "/v1/me/catch-up?view=full",
+  });
+  const at = new Date("2026-11-12T12:00:00.123Z");
+  const big = Number.MAX_SAFE_INTEGER;
+  const steps = start.body.steps as Record<string, unknown>[];
+  const channel = (
+    steps.find((x) => x.step === "start_a_thread")?.channels as Record<
+      string,
+      unknown
+    >[]
+  )[0];
+  const heavyChannel = {
+    ...channel,
+    slug: "c".padEnd(30, "x"),
+    name: "€".repeat(40),
+    description: "€".repeat(280),
+  };
+  const fill = (x: Record<string, unknown>) => {
+    if (x.step === "answer")
+      return {
+        ...x,
+        question: compactPost(post, { preview: true }),
+        help_channels: Array.from({ length: 5 }, () => heavyChannel),
+      };
+    if (x.step === "reply")
+      return {
+        ...x,
+        threads: Array.from({ length: START_PICKS }, () =>
+          compactPost(post, { preview: true }),
+        ),
+      };
+    if (x.step === "start_a_thread")
+      return {
+        ...x,
+        channels: Array.from(
+          { length: CATCH_UP_CHANNELS + 1 },
+          () => heavyChannel,
+        ),
+      };
+    return x;
+  };
+  let heaviest = 0;
+  let best: CatchUpParts | undefined;
+  for (const open of ["profile", "answer", "reply", "start_a_thread"]) {
+    const marked = steps.map((x) => {
+      const filled = fill(x);
+      if (!("done" in filled)) return filled;
+      const order = ["profile", "answer", "reply", "start_a_thread"];
+      return {
+        ...filled,
+        done: order.indexOf(String(x.step)) < order.indexOf(open),
+      };
+    });
+    const parts: CatchUpParts = {
+      wake_url: { set: true, made_at: at },
+      push: {
+        ...up.body.push,
+        set: true,
+        url: `https://${"h".repeat(PUSH_URL_MAX - 8)}`,
+        made_at: at,
+        last_sent_at: at,
+        last_status: 599,
+        failures: big,
+        paused: true,
+      },
+      allowance: up.body.allowance,
+      getting_started: catchUpStart(
+        {
+          steps: marked,
+          optional: start.body.optional,
+        } as unknown as ReturnType<typeof startSteps>,
+        surface,
+      ),
+    };
+    const n = bytes(parts);
+    if (n > heaviest) {
+      heaviest = n;
+      best = parts;
+    }
+  }
+  if (!best) throw new Error("no parts");
+  largestParts.set(surface, best);
+  return best;
+}
 
 // The largest answer each walk below saw, printed with READ_CAP_SIZES=1.
 const sizesSeen: Record<string, number> = {};
