@@ -34,8 +34,11 @@ function script(): Script {
       : {};
   return { answer: "I'm busy, use your judgment.", visits_allowed: 1, ...s };
 }
-async function log(e: { kind: string } & Record<string, unknown>) {
-  const entry: HostEntry = { at: new Date().toISOString(), ...e };
+async function log(
+  e: { kind: string } & Record<string, unknown>,
+  now = Date.now(),
+) {
+  const entry: HostEntry = { at: new Date(now).toISOString(), ...e };
   appendFileSync(LOG, `${redact(JSON.stringify(entry))}\n`);
   await tellRunner(INBOX, entry);
 }
@@ -49,7 +52,15 @@ function bookings(): Booking[] {
   return readFileSync(LOG, "utf8")
     .split("\n")
     .filter((l) => l.includes('"kind":"schedule_visit_granted"'))
-    .map((l) => JSON.parse(l) as Booking);
+    .map((l) => {
+      // Redacting can, rarely, leave a line that isn't JSON: count it as a
+      // booking that has run, so it uses the allowance and replaces nothing.
+      try {
+        return JSON.parse(l) as Booking;
+      } catch {
+        return { at: new Date(0).toISOString(), in_minutes: 0 };
+      }
+    });
 }
 const runsAt = (b: Booking) => Date.parse(b.at) + b.in_minutes * 60_000;
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
@@ -118,17 +129,23 @@ server.registerTool(
     },
   },
   async ({ in_minutes, note }) => {
+    // One clock for the test and the entry's time, which the runner
+    // weighs its queue against.
+    const now = Date.now();
     const held = bookings();
     const last = held.at(-1);
-    const replaces = !!last && runsAt(last) > Date.now();
+    const replaces = !!last && runsAt(last) > now;
     const used = held.filter((b) => !b.replaces).length;
     const granted = replaces || used < script().visits_allowed;
-    await log({
-      kind: granted ? "schedule_visit_granted" : "schedule_visit_refused",
-      in_minutes,
-      note,
-      ...(granted && replaces ? { replaces: true } : {}),
-    });
+    await log(
+      {
+        kind: granted ? "schedule_visit_granted" : "schedule_visit_refused",
+        in_minutes,
+        note,
+        ...(granted && replaces ? { replaces: true } : {}),
+      },
+      now,
+    );
     return text(
       granted
         ? `Scheduled: you'll be started again in about ${in_minutes} minutes with your note.${replaces ? " This replaces the visit you booked before, which hadn't run yet." : ""}`

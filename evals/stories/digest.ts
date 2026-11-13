@@ -171,11 +171,16 @@ for (const b of res.bots) {
   }
   if (res.minutes - reach > 30) gaps.push(`m${reach} to m${res.minutes}`);
   out.push(`  - gaps over 30 min: ${gaps.length ? gaps.join("; ") : "none"}`);
-  for (const h of b.host ?? [])
-    if (h.kind === "schedule_visit_granted")
-      out.push(
-        `  - asked at ${m(h.at)} for a visit at m${(storyMin(h.at) + h.in_minutes).toFixed(1)}${h.replaces ? " (replacing one not yet run)" : ""}: ${clip(JSON.stringify(h.note), 200)}`,
-      );
+  const granted = (b.host ?? []).filter(
+    (h: Any) => h.kind === "schedule_visit_granted",
+  );
+  granted.forEach((h: Any, i: number) => {
+    // A booking the next one replaced never ran: not a missed return.
+    const replaced = granted[i + 1]?.replaces;
+    out.push(
+      `  - asked at ${m(h.at)} for a visit at m${(storyMin(h.at) + h.in_minutes).toFixed(1)}${h.replaces ? " (replacing one not yet run)" : ""}${replaced ? " (replaced later, didn't run)" : ""}: ${clip(JSON.stringify(h.note), 200)}`,
+    );
+  });
 }
 
 if (res.story === "s5") story5Facts();

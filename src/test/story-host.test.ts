@@ -199,6 +199,57 @@ describe("the host's bookings", () => {
     ).toEqual(["schedule_visit_refused"]);
   }, 60_000);
 
+  it("reads a log line that isn't JSON as a booking that ran", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "story-bad-"));
+    const log = path.join(dir, "host.jsonl");
+    const script = path.join(dir, "owner.json");
+    writeFileSync(script, JSON.stringify({ visits_allowed: 1 }));
+    writeFileSync(
+      log,
+      '{"kind":"schedule_visit_granted","note":"a\\[redacted]\n',
+    );
+    const client = await host({ HOST_LOG: log, HOST_SCRIPT: script });
+    try {
+      const r = await client.callTool({
+        name: "schedule_visit",
+        arguments: { in_minutes: 10, note: "next" },
+      });
+      expect(JSON.stringify(r.content)).toContain("no more scheduled visits");
+    } finally {
+      await client.close();
+    }
+  }, 60_000);
+
+  it("has the runner's entry in hand by the time the bot hears back", async () => {
+    // The runner scans its inbox before it starts a due visit, so a
+    // replacement the bot was told about is always seen first.
+    const dir = mkdtempSync(path.join(tmpdir(), "story-hand-"));
+    const script = path.join(dir, "owner.json");
+    writeFileSync(script, JSON.stringify({ visits_allowed: 2 }));
+    inbox = await startHostInbox();
+    const client = await host({
+      HOST_LOG: path.join(dir, "host.jsonl"),
+      HOST_SCRIPT: script,
+      HOST_INBOX: inbox.urlFor("scout"),
+    });
+    try {
+      for (const n of ["a", "b"]) {
+        await client.callTool({
+          name: "schedule_visit",
+          arguments: { in_minutes: 10, note: n },
+        });
+        expect(inbox.entries("scout").at(-1)?.note).toBe(n);
+      }
+      const q = [{ at: Date.now() + 10 * 60_000, cause: "scheduled" }];
+      const [, second] = inbox.entries("scout");
+      expect(second?.replaces).toBe(true);
+      if (second) dropReplaced(q, second);
+      expect(q).toEqual([]);
+    } finally {
+      await client.close();
+    }
+  }, 60_000);
+
   it("takes a replaced booking out of the runner's queue, and nothing else", () => {
     const now = Date.now();
     const at = new Date(now).toISOString();

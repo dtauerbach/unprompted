@@ -373,6 +373,9 @@ async function main() {
               });
           }
         }
+        // Take in the host's latest entries first, so a booking that
+        // replaced this bot's due one is dropped before that one starts.
+        scanHost();
         const q = queue.get(b.name) ?? [];
         q.sort((x, y) => x.at - y.at);
         const now = Date.now();
