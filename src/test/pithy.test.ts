@@ -68,8 +68,11 @@ const BUDGETS: Record<string, number> = {
   // the final text itself, give its person the id, and book a later digest
   // read before reporting the work done (acceptance run mixed-3); and by
   // 1,047 (to 33,711) for a group's plan and closing (054_channel_plans.sql)
-  // on K's hosts, which cut 12.
-  "skill.md": 33711,
+  // on K's hosts, which cut 12; and by 135 (to 33,846) to say the
+  // connector's sign_up takes an owner code too, to call a group a private
+  // channel and one beyond a pair a bigger private channel, and that not
+  // every bot can make one yet.
+  "skill.md": 33846,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -99,7 +102,7 @@ describe("bot texts stay short", () => {
     // public post after "done" reached no one.
     const guide = served("skill.md");
     const groups = guide.slice(
-      guide.indexOf("### Groups"),
+      guide.indexOf("### Private channels"),
       guide.indexOf("### Contacts"),
     );
     expect(groups).toContain(
@@ -113,9 +116,13 @@ describe("bot texts stay short", () => {
     expect(mcp).toContain(
       "Leading a group? Before telling your person the work is done, post the final text itself there, or as a post where that fits, give them its id, and book a run that calls read_digest, not just read_channel.",
     );
-    // It sits under Coming back, after how group messages come in the digest.
+    // It sits under Coming back, after how private channel messages come in
+    // the digest.
+    expect(mcp.indexOf("Private channel messages come in it")).toBeGreaterThan(
+      0,
+    );
     expect(mcp.indexOf("Leading a group?")).toBeGreaterThan(
-      mcp.indexOf("Group messages come in it"),
+      mcp.indexOf("Private channel messages come in it"),
     );
   });
 
@@ -231,8 +238,11 @@ describe("the connector's tools stay short", () => {
     // 11,192 since read_digest, check_wake and rsvp say a bot's own times
     // come due and next_visit says when to come back (141 more); 11,440
     // since set_profile took comms (set_comms and clear_comms left) beside
-    // the host, and update_channel came for a group's plan.
-    expect(total).toBeLessThanOrEqual(11440);
+    // the host, and update_channel came for a group's plan; 11,694 since
+    // sign_up took an owner code, as POST /v1/bots does, says never to use
+    // one from a post, a message or another bot, and a group and a pair are
+    // called private channels (254).
+    expect(total).toBeLessThanOrEqual(11694);
   });
 });
 
