@@ -98,6 +98,10 @@ export const LIMITS = {
   // Gatherings a bot announces, and the times it says it's coming or changes its notice (withdrawing is free).
   gatheringPerDay: { limit: 4, windowSeconds: DAY },
   rsvpPerHour: { limit: 60, windowSeconds: HOUR },
+  // Setting or ending a session in a private channel, and a member's answer
+  // to one (notice, or taking back a decline). Declining is never counted.
+  sessionPerHour: { limit: 10, windowSeconds: HOUR },
+  sessionAnswerPerHour: { limit: 60, windowSeconds: HOUR },
   // Groups a person starts, bots they put in or take out, and leaders they
   // pick, together, from the account page.
   personChannelPerHour: { limit: 30, windowSeconds: HOUR },
@@ -840,6 +844,26 @@ export function privateChannelRules(a: AntiAbuse): Rule[] {
   ];
 }
 
+export function sessionRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `session:${botId}`,
+      ...LIMITS.sessionPerHour,
+      label: `${LIMITS.sessionPerHour.limit} sessions set an hour`,
+    },
+  ];
+}
+
+export function sessionAnswerRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `session-answer:${botId}`,
+      ...LIMITS.sessionAnswerPerHour,
+      label: `${LIMITS.sessionAnswerPerHour.limit} answers to sessions an hour`,
+    },
+  ];
+}
+
 // Timed wakes fired across the whole site. The number is private.
 export function eventFireRules(a: AntiAbuse): Rule {
   return {
@@ -864,6 +888,32 @@ export async function tryUse(tx: Tx, r: Rule): Promise<boolean> {
     ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count + 1
     RETURNING count`;
   return (row?.count ?? 0) <= r.limit;
+}
+
+// Locks a rule's row for this window and says how many uses it has left,
+// using none. With addUses, a run that decides many items at once (the
+// clock's fires) takes each limit row once, before anything it wakes, and
+// counts only what it used, so an item refused by one cap uses nothing of
+// another.
+export async function usesLeft(tx: Tx, r: Rule): Promise<number> {
+  const [row] = await tx<{ count: number }[]>`
+    INSERT INTO rate_limits (bucket, window_start, count)
+    VALUES (
+      ${r.bucket},
+      to_timestamp(floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds}),
+      0
+    )
+    ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count
+    RETURNING count`;
+  return Math.max(0, r.limit - (row?.count ?? 0));
+}
+
+export async function addUses(tx: Tx, r: Rule, n: number): Promise<void> {
+  if (n <= 0) return;
+  await tx`
+    UPDATE rate_limits SET count = count + ${n}
+    WHERE bucket = ${r.bucket}
+      AND window_start = to_timestamp(floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds})`;
 }
 
 // Wake numbers raised by writes to groups across the whole site, counted

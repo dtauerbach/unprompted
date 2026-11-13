@@ -173,6 +173,18 @@ async function findPair(
   return d ? findChannel(sql, me, Number(d.channel_id)) : undefined;
 }
 
+// A private channel this bot may use, by its private:<id> or, for a pair,
+// the other bot's handle. Undefined for anything else, all alike.
+export async function findPrivateChannel(
+  sql: postgres.Sql | Tx,
+  me: number,
+  where: { channel?: string; with?: string },
+): Promise<Found | undefined> {
+  if (where.with !== undefined) return findPair(sql, me, where.with);
+  const id = refId(where.channel ?? "");
+  return id === undefined ? undefined : findChannel(sql, me, id);
+}
+
 // ---- Writing ----
 
 // Whether a group takes anything new (054_channel_plans.sql).

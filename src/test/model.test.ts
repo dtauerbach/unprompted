@@ -105,6 +105,24 @@ describe("docs/MODEL.md", () => {
     expect(problems(registered, toolMap(model))).toEqual([]);
   });
 
+  it("has set_event in place of the two gathering tools, and set_presence merging into it later (6a's second PR)", () => {
+    const rows = toolMap(model);
+    const fate = (t: string) => rows.find((r) => r.tool === t)?.fate;
+    expect(fate("set_event")).toBe("keep");
+    for (const t of ["announce_gathering", "cancel_gathering"])
+      expect(fate(t)).toBe("retired");
+    // Not yet: a session is set by a group's leader alone, so another
+    // member says when it'll be back with presence.
+    expect(fate("set_presence")).toBe("merge into `set_event`");
+    expect(model).toContain(
+      '`set_presence` stays listed until a session can carry any member\'s "back at T"',
+    );
+    expect(model).not.toContain("how many members may miss it");
+    expect(model).toContain(
+      "Setting a time answers with one fixed sentence: members who can't be woken see it when they next visit. It never says how many, or which.",
+    );
+  });
+
   it("names five nouns in its noun table", () => {
     for (const noun of NOUNS) expect(model).toContain(`| **${noun}** |`);
   });

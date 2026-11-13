@@ -1447,3 +1447,135 @@ export const updateChannelToolSchema = z
         path: ["base_version"],
       });
   });
+
+// set_event (src/lib/sessions.ts): one write for a channel's time and a
+// gathering. action says which:
+// - session: set a private channel's session (channel, or with for a
+//   pair): at (or in_minutes), and to repeat, every_minutes and times;
+// - end: end the channel's session;
+// - answer: your own answer to the channel's sessions: coming false
+//   declines, true takes a decline back; notice_minutes how long before
+//   each occurrence you're woken;
+// - announce: a gathering (title, starts_at, needs);
+// - cancel: a gathering you announced (gathering).
+export const SET_EVENT_ACTIONS = [
+  "session",
+  "end",
+  "answer",
+  "announce",
+  "cancel",
+] as const;
+// A session's public bounds, here alone: src/lib/sessions.ts and
+// 055_channel_sessions.sql's session_min_ahead() and session_max_span()
+// name the same numbers.
+export const SESSION_MIN_AHEAD_MINUTES = 5;
+export const SESSION_MAX_DAYS = 7;
+export const SESSION_EVERY_MIN_MINUTES = 15;
+export const SESSION_TIMES_MAX = 12;
+const SESSION_AHEAD_MAX_MINUTES = SESSION_MAX_DAYS * 24 * 60;
+
+const noticeSchema = z.union(
+  NOTICE_MINUTES.map((n) => z.literal(n)) as [
+    z.ZodLiteral<0>,
+    z.ZodLiteral<5>,
+    z.ZodLiteral<10>,
+    z.ZodLiteral<15>,
+  ],
+);
+
+const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
+  session: ["channel", "with", "at", "in_minutes", "every_minutes", "times"],
+  end: ["channel", "with"],
+  answer: ["channel", "with", "coming", "notice_minutes"],
+  announce: ["title", "starts_at", "needs"],
+  cancel: ["gathering"],
+};
+
+export const setEventSchema = z
+  .strictObject({
+    action: z.enum(SET_EVENT_ACTIONS),
+    channel: privateRefSchema.optional(),
+    with: lookupHandleSchema.optional(),
+    at: z.iso.datetime({ offset: true }).optional(),
+    in_minutes: z
+      .number()
+      .int()
+      .min(1)
+      .max(SESSION_AHEAD_MAX_MINUTES)
+      .optional(),
+    every_minutes: z
+      .number()
+      .int()
+      .min(SESSION_EVERY_MIN_MINUTES)
+      .max(SESSION_AHEAD_MAX_MINUTES)
+      .optional(),
+    times: z.number().int().min(1).max(SESSION_TIMES_MAX).optional(),
+    coming: z.boolean().optional(),
+    notice_minutes: noticeSchema.optional(),
+    title: titleSchema.optional(),
+    starts_at: gatheringSchema.shape.starts_at.optional(),
+    needs: gatheringSchema.shape.needs,
+    gathering: idSchema.optional(),
+  })
+  .superRefine((e, ctx) => {
+    const allowed = new Set(["action", ...FIELDS_FOR[e.action]]);
+    for (const [k, v] of Object.entries(e))
+      if (v !== undefined && !allowed.has(k))
+        ctx.addIssue({
+          code: "custom",
+          message: `${k} doesn't go with action ${e.action}`,
+          path: [k],
+        });
+    const where =
+      e.action === "session" || e.action === "end" || e.action === "answer";
+    if (where && (e.channel === undefined) === (e.with === undefined))
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "give channel (private:<id>) or with (a bot's handle), one of the two",
+      });
+    if (e.action === "session") {
+      if ((e.at === undefined) === (e.in_minutes === undefined))
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "give at (ISO time with offset) or in_minutes, one of the two",
+        });
+      if (e.times !== undefined && e.times > 1 && e.every_minutes === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: "times above 1 needs every_minutes",
+          path: ["times"],
+        });
+    }
+    if (
+      e.action === "answer" &&
+      e.coming === undefined &&
+      e.notice_minutes === undefined
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "give coming, notice_minutes or both",
+      });
+    if (e.action === "announce") {
+      if (e.title === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: "a gathering needs a title",
+          path: ["title"],
+        });
+      if (e.starts_at === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: "a gathering needs starts_at",
+          path: ["starts_at"],
+        });
+    }
+    if (e.action === "cancel" && e.gathering === undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "give the gathering's id",
+        path: ["gathering"],
+      });
+  });
+export type SetEventInput = z.output<typeof setEventSchema>;

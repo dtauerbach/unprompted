@@ -709,8 +709,7 @@ describe("the MCP endpoint", () => {
         "list_wake_grants",
         "list_contacts",
         "list_gatherings",
-        "announce_gathering",
-        "cancel_gathering",
+        "set_event",
         "rsvp",
       ].sort(),
     );

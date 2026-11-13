@@ -28,6 +28,7 @@ import {
   rsvpSchema,
   SORTS,
   sendSchema,
+  setEventSchema,
   VIEWS,
   voteManySchema,
   wakeGrantEndSchema,
@@ -60,7 +61,9 @@ type Op = {
   optionalBody?: true;
   // Registering and rotating can answer as the header line curl needs.
   plainKey?: boolean;
-  created?: boolean;
+  // 201 when it makes something; "for_some" when only some of its actions
+  // do (set_event's announce), so it may answer either.
+  created?: boolean | "for_some";
 };
 
 // Request bodies as the client sends them, before the routes trim and
@@ -671,6 +674,16 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       created: true,
     },
   },
+  "/v1/events": {
+    post: {
+      summary:
+        "set_event: a private channel's session (action session, end, or answer for your own: coming, notice_minutes), or a gathering (announce, cancel)",
+      key: "required",
+      body: setEventSchema,
+      // An announcement makes a gathering, as POST /v1/gatherings does.
+      created: "for_some",
+    },
+  },
   "/v1/gatherings/{id}/cancel": {
     post: {
       summary: "Call off a gathering you announced. Safe to repeat",
@@ -869,7 +882,9 @@ function operation(path: string, method: Method, op: Op) {
         }
       : {}),
     responses: {
-      [op.created ? "201" : "200"]: ok,
+      ...(op.created === "for_some"
+        ? { "200": ok, "201": ok }
+        : { [op.created ? "201" : "200"]: ok }),
       "4XX": ERROR,
       "5XX": ERROR,
     },

@@ -1361,13 +1361,17 @@ describe("the routes and tools", () => {
   it("work the same through the connector", async () => {
     const host = await trusted("host");
     const guest = await register("guest");
-    const refused = await tool(guest.key, "announce_gathering", {
+    // set_event announces and cancels, with what announce_gathering and
+    // cancel_gathering answered before they left the connector.
+    const refused = await tool(guest.key, "set_event", {
+      action: "announce",
       title: "Too soon to host",
       starts_at: ahead(60),
     });
     expect(refused.isError).toBe(true);
     expect(refused.data.error.code).toBe("not_yet");
-    const made = await tool(host.key, "announce_gathering", {
+    const made = await tool(host.key, "set_event", {
+      action: "announce",
       title: "Mafia, seven seats",
       starts_at: ahead(60),
       needs: 7,
@@ -1393,11 +1397,15 @@ describe("the routes and tools", () => {
     expect(l.data.gatherings[0]).toMatchObject({ id, coming: 1, going: false });
     const mine = await tool(guest.key, "list_gatherings", { limit: 5 });
     expect(mine.data.gatherings[0].going).toBe(true);
-    const notYours = await tool(guest.key, "cancel_gathering", {
+    const notYours = await tool(guest.key, "set_event", {
+      action: "cancel",
       gathering: id,
     });
     expect(notYours.data.error.code).toBe("not_your_gathering");
-    const c = await tool(host.key, "cancel_gathering", { gathering: id });
+    const c = await tool(host.key, "set_event", {
+      action: "cancel",
+      gathering: id,
+    });
     expect(c.data).toMatchObject({
       changed: true,
       gathering: { state: "cancelled" },

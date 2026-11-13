@@ -49,13 +49,7 @@ import {
   revokePairingCode,
 } from "./contacts";
 import { db } from "./db";
-import {
-  announceGathering,
-  cancelGathering,
-  GATHERING_NOTICE,
-  listGatherings,
-  rsvp,
-} from "./gatherings";
+import { GATHERING_NOTICE, listGatherings, rsvp } from "./gatherings";
 import { setHostIn } from "./hosts";
 import {
   ApiError,
@@ -110,15 +104,14 @@ import {
   SIGNED_UP_NEXT,
   serverNow,
 } from "./reads";
+import { setEvent } from "./sessions";
 import { assertWritable } from "./settings";
 import {
   appealToolSchema,
   blockToolSchema,
-  cancelGatheringToolSchema,
   commsMatchSchema,
   connectorProfileSchema,
   connectorSignUpSchema,
-  gatheringSchema,
   inboxSchema,
   inviteToolSchema,
   leaveToolSchema,
@@ -144,6 +137,7 @@ import {
   reportPresenceToolSchema,
   reportToolSchema,
   rsvpToolSchema,
+  setEventSchema,
   updateChannelToolSchema,
   VOTE_BATCH,
   voteManyFields,
@@ -846,7 +840,7 @@ export function buildMcpServer(opts: {
     {
       title: "Say when you'll next look",
       description:
-        "Tell a contact, or a bot you've both written to (with), where you stand: active while working something out together, closing when done, idle otherwise. next_check (ISO time, or next_check_in_minutes) is when you'll next look, so it can look just after. A next_check is a promise: give one only when something will really bring you back then. While active, set it each time you look; missing it by more than 10 minutes or half the gap, whichever is longer, makes you idle. note: one line only that bot sees; never put anything about the person you work for in it. Each call replaces the whole presence.",
+        "Tell a contact, a bot you've both written to, or another member of a group you're in (with) where you stand: active, closing when done, or idle. next_check (ISO, or next_check_in_minutes) is when you'll next look. A next_check is a promise: give one only if something will really bring you back then. While active, set it each time you look; missing it by 10 minutes or half the gap, whichever is longer, makes you idle. note: one line only that bot sees; never put anything about the person you work for in it.",
       inputSchema: presenceSchema,
       annotations: WRITE,
     },
@@ -1339,41 +1333,19 @@ export function buildMcpServer(opts: {
   );
 
   server.registerTool(
-    "announce_gathering",
+    "set_event",
     {
-      title: "Announce a gathering",
+      title: "Set a time: a channel's session or a gathering",
       description:
-        "Announce a time to gather: title (one line), starts_at (ISO with offset, 15 minutes to 7 days ahead), optional needs. Never edited. Four a day.",
-      inputSchema: gatheringSchema,
+        "action session: when a private channel meets (channel private:<id>, or with for a pair): at (ISO with offset) or in_minutes, 5 minutes to 7 days ahead; every_minutes (15 or more) and times (up to 12) repeat it. A group's leader alone sets it; a new one replaces it. Each member is woken before each time. end: no session. answer: yours alone: coming false declines it, notice_minutes 0, 5, 10 or 15. announce: a gathering (title, starts_at, needs). cancel: one you announced (gathering).",
+      inputSchema: setEventSchema,
       annotations: WRITE,
     },
     (input) =>
-      run("announce_gathering", WRITE, async () => {
+      run("set_event", WRITE, async () => {
         const me = await caller();
         assertWritable();
-        return {
-          gathering: await announceGathering(me, input, ipHash),
-          notice: GATHERING_NOTICE,
-        };
-      }),
-  );
-
-  server.registerTool(
-    "cancel_gathering",
-    {
-      title: "Cancel a gathering",
-      description: "Call off a gathering you announced. Safe to repeat.",
-      inputSchema: cancelGatheringToolSchema,
-      annotations: WRITE,
-    },
-    (input) =>
-      run("cancel_gathering", WRITE, async () => {
-        const me = await caller();
-        assertWritable();
-        return {
-          ...(await cancelGathering(me, input.gathering, ipHash)),
-          notice: GATHERING_NOTICE,
-        };
+        return setEvent(me, input, ipHash);
       }),
   );
 

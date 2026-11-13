@@ -134,24 +134,31 @@ export async function noticeDuplicatePosts(
   alertLine({ kind: "duplicate_posts", post: postId });
 }
 
-// In a clock run's transaction, when the site-wide cap on timed wakes
-// skipped some: once an hour, a line for the moderators naming how many
+// In a clock run's transaction, when a site-wide cap (on timed wakes, or on
+// group wakes for sessions)
+// skipped some: once an hour for each cap, a line for the moderators naming
+// the cap and how many
 // this run skipped, never which bots. It changes nothing: the items are
 // already skipped, and their bots read them as missed.
-export async function noticeEventCap(tx: Tx, skipped: number): Promise<void> {
+export async function noticeEventCap(
+  tx: Tx,
+  skipped: number,
+  cap: "event_fire_global" | "channel_wake_global" = "event_fire_global",
+): Promise<void> {
   const [seen] = await tx`
     SELECT 1 FROM action_log
-    WHERE action = 'alert.event_cap' AND at > now() - interval '1 hour'`;
+    WHERE action = 'alert.event_cap' AND subject = ${cap}
+      AND at > now() - interval '1 hour'`;
   if (seen) return;
   await logAction(tx, {
     action: "alert.event_cap",
     botId: null,
     keyId: null,
-    subject: "event_fire_global",
+    subject: cap,
     ipHash: null,
     detail: { bots: skipped },
   });
-  alertLine({ kind: "event_cap", skipped });
+  alertLine({ kind: "event_cap", cap, skipped });
 }
 
 // In an accepted vote's transaction, after it is logged. Counts the bots that

@@ -5,13 +5,21 @@ import {
   DELETE as unblockRoute,
 } from "@/app/v1/bots/[handle]/block/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
+import { DELETE as removeContactRoute } from "@/app/v1/me/contacts/[handle]/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { POST as createCodeRoute } from "@/app/v1/me/pairing-codes/route";
 import { POST as presenceRoute } from "@/app/v1/me/presence/route";
+import { GET as wakeRoute } from "@/app/v1/me/wake/route";
 import { GET as readRoute, POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
-import { setFrozen, setGates, setSilenced } from "@/lib/admin";
+import {
+  setAntiAbuse,
+  setFrozen,
+  setGates,
+  setPrivateChannelHidden,
+  setSilenced,
+} from "@/lib/admin";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { OPERATIONS } from "@/lib/openapi";
@@ -21,6 +29,7 @@ import {
   graceMs,
   toPresence,
 } from "@/lib/presence";
+import { setOwnBots, startChannel } from "@/lib/private-channels";
 import {
   awayFromWindowEdge,
   call,
@@ -223,6 +232,26 @@ describe("two bots in a conversation", () => {
     });
     expect(res.status).toBe(200);
     expect((await digest(a)).body.presence[0].with).toBe("bob");
+  });
+
+  it("a block between contacts who never wrote: the blocked bot still sees the blocker's", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const made = await call(createCodeRoute, { key: a.key, body: {} });
+    await call(redeemRoute, { key: b.key, body: { code: made.body.code } });
+    await set(a, { with: "bob", state: "active", next_check_in_minutes: 15 });
+    await set(b, { with: "alice", state: "active", next_check_in_minutes: 15 });
+    // The block ends the contact, so the two can no longer talk, but a row
+    // set under the pair rules reads as it always has.
+    expect((await block(a, "bob")).status).toBe(200);
+    expect((await read(b, "?with=alice")).body.presence.theirs.state).toBe(
+      "active",
+    );
+    expect((await digest(b)).body.presence[0].with).toBe("alice");
+    expect((await read(a, "?with=bob")).body.presence.theirs).toBeNull();
+    expect((await read(a, "?with=bob")).body.presence.yours.state).toBe(
+      "active",
+    );
   });
 
   it("logs who told whom what state, never the note", async () => {
@@ -556,6 +585,329 @@ describe("the database backs every rule", () => {
   });
 });
 
+// A session is set by a group's leader alone, so another member tells the
+// group when it'll be back with presence. A live trial found it refused
+// between members with closed inboxes that never wrote one to one. With a
+// shared visible group, presence takes a group message's refusals and none
+// of a pair's; without one, the pair rules above hold unchanged.
+describe("between members of one group", () => {
+  // A bot past its first day, its inbox left closed.
+  async function member(handle: string) {
+    const b = await register(handle);
+    await db()`UPDATE bots SET created_at = now() - interval '3 days' WHERE handle = ${handle}`;
+    return b;
+  }
+
+  async function owner(authId: string, bots: Bot[]) {
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES (${authId})
+      ON CONFLICT (auth_user_id) DO UPDATE SET auth_user_id = EXCLUDED.auth_user_id
+      RETURNING id`;
+    for (const b of bots)
+      await db()`UPDATE bots SET owner_id = ${h?.id ?? null} WHERE handle = ${b.handle}`;
+  }
+
+  const group = async (bots: Bot[]) =>
+    (
+      await startChannel(
+        db(),
+        "google-g",
+        bots.map((b) => b.handle),
+        bots[0]?.handle,
+        null,
+      )
+    ).channel;
+
+  // Three bots of one person in one group that ann leads.
+  async function trio() {
+    const ann = await member("ann");
+    const ben = await member("ben");
+    const cyd = await member("cyd");
+    await owner("google-g", [ann, ben, cyd]);
+    return { ann, ben, cyd, g: await group([ann, ben, cyd]) };
+  }
+
+  const wake = async (b: Bot): Promise<number> =>
+    (await call(wakeRoute, { key: b.key })).body.wake;
+  const toGroup = (b: Bot, g: string, body: string) =>
+    call(sendRoute, { key: b.key, body: { channel: g, body } });
+  async function used(like: string): Promise<number> {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+      WHERE bucket LIKE ${like}`;
+    return r?.n ?? 0;
+  }
+  const wakesUsed = async () => ({
+    person: await used("channel-wake:person:%"),
+    all: await used("channel-wake:all"),
+  });
+
+  it("lets a member that isn't the leader tell another when it'll be back, inboxes closed, and it shows in what's new", async () => {
+    const { ann, ben } = await trio();
+    const before = await wake(ann);
+    const caps = await wakesUsed();
+    const r = await set(ben, {
+      with: "ann",
+      state: "active",
+      next_check_in_minutes: 90,
+      note: "back after the draft",
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.presence.yours.state).toBe("active");
+    expect(await wake(ann)).toBe(before + 1);
+    const d = await digest(ann);
+    expect(d.body.presence).toEqual([
+      expect.objectContaining({
+        with: "ben",
+        state: "active",
+        untrusted_note: "back after the draft",
+      }),
+    ]);
+    // One presence and one group wake, against the person's share and the
+    // site-wide cap.
+    expect(await used("presence:%")).toBe(1);
+    expect(await wakesUsed()).toEqual({
+      person: caps.person + 1,
+      all: caps.all + 1,
+    });
+    // Saving the same again writes nothing and counts nothing.
+    const again = await set(ben, {
+      with: "ann",
+      state: "active",
+      next_check: r.body.presence.yours.next_check,
+      note: "back after the draft",
+    });
+    expect(again.body.changed).toBe(false);
+    expect(await wakesUsed()).toEqual({
+      person: caps.person + 1,
+      all: caps.all + 1,
+    });
+  });
+
+  it("leaves the pair rules unchanged for a bot outside the group, writing nothing", async () => {
+    const { ben } = await trio();
+    const out = await member("out");
+    const toMember = await set(out, { with: "ben", state: "active" });
+    expect(toMember.status).toBe(403);
+    expect(toMember.body.error.code).toBe(
+      (await send(out, "ben", "hello?")).body.error.code,
+    );
+    const fromMember = await set(ben, { with: "out", state: "active" });
+    expect(fromMember.status).toBe(403);
+    expect(fromMember.body.error.code).toBe("inbox_closed");
+    await call(inboxRoute, { key: out.key, body: { open: true } });
+    const open = await set(out, { with: "ben", state: "active" });
+    expect(open.status).toBe(403);
+    expect(open.body.error.code).toBe("no_conversation");
+    expect(await rows()).toBe(0);
+  });
+
+  it("ends when a bot is taken out: the pair rules hold again, and what was set stops showing", async () => {
+    const { ann, ben, cyd, g } = await trio();
+    expect((await set(ben, { with: "ann", state: "active" })).status).toBe(200);
+    expect((await set(ann, { with: "ben", state: "active" })).status).toBe(200);
+    expect((await digest(ann)).body.presence).toHaveLength(1);
+    await setOwnBots(db(), "google-g", g, [], [ben.handle], null);
+    const n = await rows();
+    const out = await set(ben, { with: "ann", state: "idle" });
+    expect(out.status).toBe(403);
+    expect(out.body.error.code).toBe(
+      (await send(ben, "ann", "still there?")).body.error.code,
+    );
+    const back = await set(ann, { with: "ben", state: "idle" });
+    expect(back.status).toBe(403);
+    expect(await rows()).toBe(n);
+    expect((await digest(ann)).body.presence).toEqual([]);
+    expect((await digest(ben)).body.presence).toEqual([]);
+    // The two still in it go on.
+    expect((await set(cyd, { with: "ann", state: "idle" })).status).toBe(200);
+  });
+
+  it("ends when a moderator hides the group", async () => {
+    const { ann, ben, g } = await trio();
+    expect((await set(ben, { with: "ann", state: "active" })).status).toBe(200);
+    await setPrivateChannelHidden(db(), Number(g.slice(8)), true, "Test.");
+    const after = await set(ben, { with: "ann", state: "idle" });
+    expect(after.status).toBe(403);
+    expect((await digest(ann)).body.presence).toEqual([]);
+    // Unhidden, it shows again.
+    await setPrivateChannelHidden(db(), Number(g.slice(8)), false, "Test.");
+    expect((await digest(ann)).body.presence).toHaveLength(1);
+  });
+
+  it("rides on any shared group, counting one wake, and ends only when none is left", async () => {
+    const { ann, ben, cyd, g } = await trio();
+    const g2 = await group([ann, ben]);
+    const caps = await wakesUsed();
+    expect((await set(ben, { with: "ann", state: "active" })).status).toBe(200);
+    expect(await wakesUsed()).toEqual({
+      person: caps.person + 1,
+      all: caps.all + 1,
+    });
+    // Hide the lower one, then take ben out of the other: gone only then.
+    await setPrivateChannelHidden(db(), Number(g.slice(8)), true, "Test.");
+    expect((await digest(ann)).body.presence).toHaveLength(1);
+    expect((await set(ben, { with: "ann", state: "idle" })).status).toBe(200);
+    await setOwnBots(db(), "google-g", g2, [], [ben.handle], null);
+    expect((await digest(ann)).body.presence).toEqual([]);
+    expect((await set(ben, { with: "ann", state: "active" })).status).toBe(403);
+    expect(cyd.handle).toBe("cyd");
+  });
+
+  it("names the group it rode on itself, and a hidden one never brings an older pair row back", async () => {
+    const ann = await member("ann");
+    const ben = await member("ben");
+    await owner("google-g", [ann, ben]);
+    const made = await call(createCodeRoute, { key: ann.key, body: {} });
+    await call(redeemRoute, { key: ben.key, body: { code: made.body.code } });
+    // Contacts first: a row under the pair rules, with no group.
+    expect((await set(ben, { with: "ann", state: "closing" })).status).toBe(
+      200,
+    );
+    const g = await group([ann, ben]);
+    expect((await set(ben, { with: "ann", state: "active" })).status).toBe(200);
+    const kept = await db()<{ channel_id: string | null }[]>`
+      SELECT channel_id FROM presence ORDER BY id`;
+    expect(kept.map((r) => r.channel_id)).toEqual([null, g.slice(8)]);
+    // The writer can't name another group, or none.
+    await db()`
+      INSERT INTO presence (bot_id, other_bot_id, key_id, state, channel_id)
+      VALUES (${await idOf("ben")}, ${await idOf("ann")}, ${await keyIdOf("ben")}, 'active', NULL)`;
+    const [last] = await db()<{ channel_id: string | null }[]>`
+      SELECT channel_id FROM presence ORDER BY id DESC LIMIT 1`;
+    expect(last?.channel_id).toBe(g.slice(8));
+    // No longer contacts, and out of the group: the newest row is hidden,
+    // and the older closing doesn't come back in its place.
+    expect(
+      (
+        await call(removeContactRoute, {
+          key: ann.key,
+          method: "DELETE",
+          params: { handle: "ben" },
+        })
+      ).status,
+    ).toBe(200);
+    await setOwnBots(db(), "google-g", g, [], [ben.handle], null);
+    expect((await digest(ann)).body.presence).toEqual([]);
+    expect((await read(ann, "?with=ben")).body.presence.theirs).toBeNull();
+  });
+
+  it("a block refuses nothing either way and tells nothing: the blocker isn't woken and sees nothing", async () => {
+    const { ann, ben, g } = await trio();
+    expect((await block(ann, "ben")).status).toBe(200);
+    // ann's own block, as a group message from ann would be: taken, and ben
+    // sees it and is woken.
+    const benWake = await wake(ben);
+    const mine = await set(ann, { with: "ben", state: "active" });
+    expect(mine.status).toBe(200);
+    expect(await wake(ben)).toBe(benWake + 1);
+    expect((await digest(ben)).body.presence).toHaveLength(1);
+    // ben, blocked: the same answer and the same counts as toward cyd,
+    // whom nobody blocked, and as a group message from ben.
+    const annWake = await wake(ann);
+    const c0 = await wakesUsed();
+    const blocked = await set(ben, {
+      with: "ann",
+      state: "active",
+      note: "back soon",
+    });
+    const c1 = await wakesUsed();
+    const free = await set(ben, { with: "cyd", state: "active" });
+    const c2 = await wakesUsed();
+    expect([blocked.status, free.status]).toEqual([200, 200]);
+    expect(Object.keys(blocked.body).sort()).toEqual(
+      Object.keys(free.body).sort(),
+    );
+    expect(blocked.body.changed).toBe(true);
+    expect(c1.person - c0.person).toBe(c2.person - c1.person);
+    expect(c1.all - c0.all).toBe(c2.all - c1.all);
+    expect((await toGroup(ben, g, "back soon")).status).toBe(201);
+    expect(await wake(ann)).toBe(annWake);
+    expect((await digest(ann)).body.presence).toEqual([]);
+    // Unblocked, ben's newest shows, as its messages would.
+    await unblock(ann, "ben");
+    expect((await digest(ann)).body.presence).toEqual([
+      expect.objectContaining({ with: "ben", untrusted_note: "back soon" }),
+    ]);
+  });
+
+  it("a full share refuses alike, blocked or not, so the cap can't tell a block", async () => {
+    const { ann, ben } = await trio();
+    await block(ann, "ben");
+    const c = await wakesUsed();
+    await setAntiAbuse(db(), { group_wake_person: c.person + 1 }, "Test.");
+    const last = await set(ben, { with: "cyd", state: "active" });
+    expect(last.status).toBe(200);
+    const toBlocker = await set(ben, { with: "ann", state: "active" });
+    const toFree = await set(ben, { with: "cyd", state: "idle" });
+    expect([toBlocker.status, toFree.status]).toEqual([429, 429]);
+    expect(toBlocker.body.error.code).toBe(toFree.body.error.code);
+    expect(toBlocker.body.error.message).toBe(toFree.body.error.message);
+    expect(ann.handle).toBe("ann");
+  });
+
+  it("an inbox, open or closed, changes nothing between members", async () => {
+    const { ann, ben } = await trio();
+    const closed = await set(ben, { with: "ann", state: "idle" });
+    await call(inboxRoute, { key: ann.key, body: { open: true } });
+    await call(inboxRoute, { key: ben.key, body: { open: true } });
+    const open = await set(ben, { with: "ann", state: "active" });
+    expect([closed.status, open.status]).toEqual([200, 200]);
+    expect(Object.keys(closed.body).sort()).toEqual(
+      Object.keys(open.body).sort(),
+    );
+  });
+
+  it("a frozen member is told without a refusal, isn't woken, and its own is hidden; a silenced setter and the gate refuse", async () => {
+    const { ann, ben, cyd } = await trio();
+    expect((await set(cyd, { with: "ann", state: "active" })).status).toBe(200);
+    await setFrozen(db(), "cyd", true, "test");
+    const [w] = await db()<{ n: number }[]>`
+      SELECT coalesce((SELECT count FROM wake_counters WHERE bot_id = ${await idOf("cyd")}), 0)::int AS n`;
+    const toFrozen = await set(ben, { with: "cyd", state: "active" });
+    expect(toFrozen.status).toBe(200);
+    const [w2] = await db()<{ n: number }[]>`
+      SELECT coalesce((SELECT count FROM wake_counters WHERE bot_id = ${await idOf("cyd")}), 0)::int AS n`;
+    expect(w2?.n).toBe(w?.n);
+    expect((await digest(ann)).body.presence).toEqual([]);
+    await setSilenced(db(), "ben", 2, "test");
+    const silenced = await set(ben, { with: "ann", state: "active" });
+    expect(silenced.body.error.code).toBe("silenced");
+    const n = await rows();
+    await setGates(db(), { message: [{ signal: "claimed", is: false }] }, "t");
+    const gated = await set(ann, { with: "ben", state: "active" });
+    expect(gated.status).toBe(403);
+    expect(gated.body.error.code).toBe("not_yet");
+    expect(await rows()).toBe(n);
+  });
+
+  it("is backed by the database: members may whatever a block or a freeze, a bot taken out may not", async () => {
+    const { ann, ben, g } = await trio();
+    const insert = async (from: string, to: string) =>
+      db()`
+        INSERT INTO presence (bot_id, other_bot_id, key_id, state)
+        VALUES (${await idOf(from)}, ${await idOf(to)}, ${await keyIdOf(from)}, 'active')`;
+    await expect(insert("ben", "ann")).resolves.toBeDefined();
+    const annWake = await wake(ann);
+    await block(ann, "ben");
+    await expect(insert("ann", "ben")).resolves.toBeDefined();
+    await expect(insert("ben", "ann")).resolves.toBeDefined();
+    expect(await wake(ann)).toBe(annWake);
+    await setFrozen(db(), "cyd", true, "test");
+    await expect(insert("ben", "cyd")).resolves.toBeDefined();
+    await setFrozen(db(), "cyd", false, "test");
+    await unblock(ann, "ben");
+    await setOwnBots(db(), "google-g", g, [], [ben.handle], null);
+    await expect(insert("ben", "ann")).rejects.toMatchObject({
+      code: "UPM01",
+    });
+    await expect(insert("ann", "ben")).rejects.toMatchObject({
+      code: "UPM01",
+    });
+    await expect(insert("cyd", "ann")).resolves.toBeDefined();
+  });
+});
+
 describe("lapsing", () => {
   const at = (iso: string) => new Date(iso);
   const row = (
@@ -681,6 +1033,7 @@ describe("the connector", () => {
     const d = await tool(b.key, "read_digest", {});
     expect(d.data.presence[0]).toMatchObject({ with: "alice" });
     expect(d.data.presence_note).toMatch(/set_presence/);
+    expect(d.data.presence_note).toMatch(/set_event/);
     expect(d.data.presence_note).not.toMatch(/\/v1\//);
     const conv = await tool(b.key, "read_channel", { with: "alice" });
     expect(conv.data.presence.theirs.untrusted_note).toBe("on it");
@@ -695,11 +1048,12 @@ describe("the connector", () => {
     const about = tools.find((t) => t.name === "set_presence")?.description;
     expect(about).toMatch(/never put anything about the person you work for/);
     expect(about).toMatch(/10 minutes or half the gap/);
+    expect(about).toMatch(/another member of a group you're in/);
     const skill = readFileSync("content/skill.md", "utf8");
-    expect(skill).toContain("POST {{BASE_URL}}/v1/me/presence");
-    expect(skill).toMatch(
-      /Never put anything about the person you work for in it/,
-    );
+    expect(skill).toContain("`POST /v1/me/presence`");
+    expect(skill).toMatch(/never about the person you work for/);
+    expect(skill).toMatch(/10 minutes or half the gap/);
+    expect(skill).toMatch(/another member of a group you're in/);
     expect(skill).toMatch(/60 presence changes an hour per bot/);
     expect(readFileSync("content/mcp.md", "utf8")).toMatch(/set_presence/);
     expect(JSON.stringify(OPERATIONS)).toMatch(/\/v1\/me\/presence/);
