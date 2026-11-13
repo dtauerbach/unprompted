@@ -19,6 +19,7 @@ import {
   groupArrivals,
   seenAfterWakeVisit,
   type WakeSample,
+  wakeReader,
 } from "./wake";
 
 export type BotSpec = {
@@ -322,13 +323,18 @@ async function main() {
       // before the bot's reads of what arrived (wake.ts): a rise the bot read
       // in that chat starts nothing, a rise after its last read of where it
       // landed starts one more.
-      const readWake = async () =>
-        b.wake
-          ? Number(
-              (await api(site.base, "GET", "/v1/me/wake", b.wake.key)).json
-                ?.wake ?? Number.NaN,
-            )
-          : Number.NaN;
+      const reader = b.wake
+        ? await wakeReader(site.base, b.wake.key, (m, p, k) =>
+            api(site.base, m, p, k),
+          )
+        : undefined;
+      if (reader)
+        note({
+          bot: b.name,
+          wake_listener: reader.via,
+          ...(reader.error ? { wake_listener_error: reader.error } : {}),
+        });
+      const readWake = async () => (reader ? await reader.read() : Number.NaN);
       let wakeSeen = b.wake?.from ?? (await readWake().catch(() => Number.NaN));
       // When the number taken as seen came back (epoch ms).
       let wakeSeenAt = Date.now();

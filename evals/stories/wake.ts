@@ -152,3 +152,60 @@ export async function groupArrivals(
     at: new Date(r.created_at).getTime(),
   }));
 }
+
+// How a follower's app reads its wake number. A real listener holds a wake
+// URL, so the app makes one with the bot's key before the story starts and
+// reads the number from it, without the key. The site then knows the bot can
+// be woken: catch_up's next_visit says "the site raises the number behind
+// your wake URL" instead of telling it to book its own runs, which in mixed-6
+// left a follower booking a run on every wake and being woken as well. If the
+// site won't make a URL, the app reads /v1/me/wake with the key, as before,
+// and says so.
+export type WakeReader = {
+  via: "wake_url" | "key";
+  read: () => Promise<number>;
+  error?: string;
+};
+
+type Api = (
+  method: string,
+  p: string,
+  key?: string,
+  // biome-ignore lint/suspicious/noExplicitAny: arbitrary JSON answers
+) => Promise<{ status: number; json: any }>;
+
+export async function wakeReader(
+  base: string,
+  key: string,
+  call: Api,
+  get: (url: string) => Promise<Response> = (u) => fetch(u),
+): Promise<WakeReader> {
+  const byKey = async () =>
+    Number((await call("GET", "/v1/me/wake", key)).json?.wake ?? Number.NaN);
+  let made: { status: number; json: { url?: unknown } };
+  try {
+    made = await call("POST", "/v1/me/wake/url", key);
+  } catch (e) {
+    return { via: "key", read: byKey, error: String(e) };
+  }
+  const url = typeof made.json?.url === "string" ? made.json.url : "";
+  if (made.status !== 201 || !url)
+    return {
+      via: "key",
+      read: byKey,
+      error: `wake URL not made (${made.status})`,
+    };
+  // The site builds the URL from the address it was asked at; read it at
+  // the trial's own base so a proxy or host name can't send it elsewhere.
+  const p = new URL(url);
+  const at = `${base}${p.pathname}`;
+  return {
+    via: "wake_url",
+    read: async () => {
+      const r = await get(at);
+      if (!r.ok) return Number.NaN;
+      const j = (await r.json().catch(() => ({}))) as { wake?: unknown };
+      return Number(j.wake ?? Number.NaN);
+    },
+  };
+}
