@@ -7,13 +7,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
+import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
 import { db } from "@/lib/db";
 import { startChannel } from "@/lib/private-channels";
 import { type HostInbox, startHostInbox } from "../../evals/stories/inbox";
 import {
+  type ArrivalRead,
   arrivalRead,
+  type GroupArrival,
   groupArrivals,
-  type Place,
+  messageIdsIn,
   seenAfterWakeVisit,
   type WakeSample,
 } from "../../evals/stories/wake";
@@ -32,17 +35,28 @@ const wakesAgain = (now: number, seen: number) =>
   Number.isFinite(now) && Number.isFinite(seen) && now > seen;
 
 const G = "channel:7";
-const digest = (at: number): Place => ({ scope: "digest", at });
-const groupRead = (at: number): Place => ({ scope: G, at });
-const groupMsg = (at: number): Place => ({ scope: G, at });
+const digest = (at: number): ArrivalRead => ({ scope: "digest", at });
+// A read of the group, sent at `at`, whose answer held these message ids.
+const groupRead = (at: number, ...ids: number[]): ArrivalRead => ({
+  scope: G,
+  at,
+  ids,
+});
+// Another member's message in the group, written at `at`.
+const groupMsg = (id: number, at: number): GroupArrival => ({
+  scope: G,
+  id,
+  at,
+});
 
 describe("what a wake visit leaves as seen", () => {
   // The visit starts at t=0 on number 10, taken just before (prev).
   const prev = 10;
 
   it("a group message during the visit that the bot then read wakes nothing", () => {
-    // A group message lands at t=20 (10 -> 11); the bot reads the digest at
-    // t=4 and the group at t=40; the visit ends at t=60, still on 11.
+    // Message 21 lands at t=20 (10 -> 11); the bot reads the digest at t=4
+    // and the group at t=12 (nothing new) and t=40 (21); the visit ends at
+    // t=60, still on 11.
     const samples: WakeSample[] = [
       { at: 5, wake: 10 },
       { at: 15, wake: 10 },
@@ -54,8 +68,8 @@ describe("what a wake visit leaves as seen", () => {
     const seen = seenAfterWakeVisit({
       prev,
       samples,
-      reads: [digest(4), groupRead(12), groupRead(40)],
-      groups: [groupMsg(20)],
+      reads: [digest(4), groupRead(12), groupRead(40, 21)],
+      groups: [groupMsg(21, 20)],
     });
     expect(seen).toBe(11);
     expect(wakesAgain(11, seen)).toBe(false);
@@ -64,7 +78,7 @@ describe("what a wake visit leaves as seen", () => {
   });
 
   it("a group message after the bot's last read but before the visit ends still wakes", () => {
-    // The bot reads the group at t=40; a message lands at t=50; ends at 60.
+    // The bot reads the group at t=40; message 21 lands at t=50; ends at 60.
     const samples: WakeSample[] = [
       { at: 35, wake: 10 },
       { at: 45, wake: 10 },
@@ -73,16 +87,60 @@ describe("what a wake visit leaves as seen", () => {
     const seen = seenAfterWakeVisit({
       prev,
       samples,
-      reads: [digest(4), groupRead(40)],
-      groups: [groupMsg(50)],
+      reads: [digest(4), groupRead(40, 20)],
+      groups: [groupMsg(21, 50)],
     });
     expect(seen).toBe(10);
     expect(wakesAgain(11, seen)).toBe(true);
   });
 
+  it("a group read sent after a message that didn't return it shows nothing of it", () => {
+    // Message 21 lands at t=20 (10 -> 11); the bot posts its own 22 at t=30
+    // without having read it; its read at t=40 has no cursor, so it starts
+    // after 22 and returns nothing.
+    const samples: WakeSample[] = [
+      { at: 15, wake: 10 },
+      { at: 25, wake: 11 },
+      { at: 55, wake: 11 },
+    ];
+    const seen = seenAfterWakeVisit({
+      prev,
+      samples,
+      reads: [groupRead(10), groupRead(40)],
+      groups: [groupMsg(21, 20)],
+    });
+    expect(seen).toBe(10);
+    expect(wakesAgain(11, seen)).toBe(true);
+    // A page that returned it (paging back, say) shows it.
+    expect(
+      seenAfterWakeVisit({
+        prev,
+        samples,
+        reads: [groupRead(10), groupRead(40), groupRead(45, 19, 21)],
+        groups: [groupMsg(21, 20)],
+      }),
+    ).toBe(11);
+  });
+
+  it("of two messages, one returned and one not, only the first is seen", () => {
+    // 21 at t=20 (-> 11), read at t=30; 23 at t=40 (-> 12), never returned.
+    const seen = seenAfterWakeVisit({
+      prev,
+      samples: [
+        { at: 25, wake: 11 },
+        { at: 35, wake: 11 },
+        { at: 45, wake: 12 },
+      ],
+      reads: [groupRead(30, 21), groupRead(50, 24)],
+      groups: [groupMsg(21, 20), groupMsg(23, 40)],
+    });
+    expect(seen).toBe(11);
+    expect(wakesAgain(12, seen)).toBe(true);
+  });
+
   it("a group message after the last group read still wakes, even if the digest was read later", () => {
-    // Starts on 11; reads the group at t=10; a second group message lands at
-    // t=20 (-> 12); reads the digest at t=30, which never shows a group's
+    // Starts on 11; reads the group at t=10; message 21 lands at t=20
+    // (-> 12); reads the digest at t=30, which never shows a group's
     // messages, and ends.
     const seen = seenAfterWakeVisit({
       prev: 11,
@@ -90,8 +148,8 @@ describe("what a wake visit leaves as seen", () => {
         { at: 5, wake: 11 },
         { at: 25, wake: 12 },
       ],
-      reads: [groupRead(10), digest(30)],
-      groups: [groupMsg(20)],
+      reads: [groupRead(10, 19), digest(30)],
+      groups: [groupMsg(21, 20)],
     });
     expect(seen).toBe(11);
     expect(wakesAgain(12, seen)).toBe(true);
@@ -127,37 +185,35 @@ describe("what a wake visit leaves as seen", () => {
     ).toBe(11);
   });
 
-  it("a reply and a group message together need both read after them", () => {
-    // Reply at t=20 and group message at t=22 (10 -> 12).
+  it("a reply and a group message together need both shown", () => {
+    // Reply at t=20 and group message 21 at t=22 (10 -> 12).
     const samples: WakeSample[] = [
       { at: 15, wake: 10 },
       { at: 25, wake: 12 },
       { at: 45, wake: 12 },
     ];
-    const groups = [groupMsg(22)];
-    // The group read at t=30 but the digest only at t=4: neither is seen.
+    const groups = [groupMsg(21, 22)];
+    // The group returned it at t=30 but the digest was read only at t=4.
     expect(
       seenAfterWakeVisit({
         prev,
         samples,
-        reads: [digest(4), groupRead(30)],
+        reads: [digest(4), groupRead(30, 21)],
         groups,
       }),
     ).toBe(prev);
-    // Both read after them: both seen.
+    // Both shown after them: both seen.
     expect(
       seenAfterWakeVisit({
         prev,
         samples,
-        reads: [groupRead(30), digest(40)],
+        reads: [groupRead(30, 21), digest(40)],
         groups,
       }),
     ).toBe(12);
   });
 
-  it("a sample that came back after the read was sent doesn't count, even if close", () => {
-    // The read went out at t=40; the sample at t=41 may hold a message that
-    // landed while the read was on its way, after the site answered it.
+  it("a sample that came back after an unshown message was written doesn't count, even if close", () => {
     const seen = seenAfterWakeVisit({
       prev,
       samples: [
@@ -165,13 +221,26 @@ describe("what a wake visit leaves as seen", () => {
         { at: 41, wake: 11 },
       ],
       reads: [groupRead(40)],
-      groups: [groupMsg(40.5)],
+      groups: [groupMsg(21, 40.5)],
     });
     expect(seen).toBe(10);
+    // ...nor one that came back after a digest read was sent.
+    expect(
+      seenAfterWakeVisit({
+        prev,
+        samples: [
+          { at: 39, wake: 10 },
+          { at: 41, wake: 11 },
+        ],
+        reads: [digest(40)],
+        groups: [],
+      }),
+    ).toBe(10);
   });
 
   it("a NaN read keeps the number it had", () => {
-    const reads = [digest(40), groupRead(40)];
+    const reads = [digest(40), groupRead(40, 21)];
+    const groups = [groupMsg(21, 10)];
     expect(
       seenAfterWakeVisit({
         prev,
@@ -180,7 +249,7 @@ describe("what a wake visit leaves as seen", () => {
           { at: 30, wake: Number.NaN },
         ],
         reads,
-        groups: [groupMsg(10)],
+        groups,
       }),
     ).toBe(prev);
     // A finite sample before the read still counts; a NaN after it is passed
@@ -193,7 +262,7 @@ describe("what a wake visit leaves as seen", () => {
           { at: 45, wake: Number.NaN },
         ],
         reads,
-        groups: [groupMsg(10)],
+        groups,
       }),
     ).toBe(11);
     // A listener that never got a number keeps none until it gets one, and
@@ -210,8 +279,8 @@ describe("what a wake visit leaves as seen", () => {
       seenAfterWakeVisit({
         prev: Number.NaN,
         samples: [{ at: 20, wake: 12 }],
-        reads: [groupRead(40)],
-        groups: [groupMsg(10)],
+        reads: [groupRead(40, 21)],
+        groups,
       }),
     ).toBeNaN();
     expect(
@@ -219,7 +288,7 @@ describe("what a wake visit leaves as seen", () => {
         prev: Number.NaN,
         samples: [{ at: 20, wake: 12 }],
         reads,
-        groups: [groupMsg(10)],
+        groups,
       }),
     ).toBe(12);
   });
@@ -227,15 +296,20 @@ describe("what a wake visit leaves as seen", () => {
   it("a visit with no read of where things arrived keeps the number it started from", () => {
     const samples: WakeSample[] = [{ at: 20, wake: 11 }];
     expect(
-      seenAfterWakeVisit({ prev, samples, reads: [], groups: [groupMsg(10)] }),
+      seenAfterWakeVisit({
+        prev,
+        samples,
+        reads: [],
+        groups: [groupMsg(21, 10)],
+      }),
     ).toBe(prev);
-    // Another group's read doesn't stand for this one.
+    // Another group's read doesn't stand for this one, even holding that id.
     expect(
       seenAfterWakeVisit({
         prev,
         samples,
-        reads: [{ scope: "channel:8", at: 40 }],
-        groups: [groupMsg(10)],
+        reads: [{ scope: "channel:8", at: 40, ids: [21] }],
+        groups: [groupMsg(21, 10)],
       }),
     ).toBe(prev);
   });
@@ -266,22 +340,38 @@ describe("which host calls are reads of a bot's arrivals", () => {
   });
   const at = Date.parse(sent);
 
-  it("counts the digest and a private channel's newest messages, by when they went out", () => {
-    for (const [url, scope] of [
-      [`${base}/v1/me/digest`, "digest"],
-      [`${base}/v1/me/digest?since=12&view=compact`, "digest"],
-      [`${base}/v1/private-channels/7`, G],
-      [`${base}/v1/private-channels/7?after=12&view=compact`, G],
+  it("counts the digest by when it went out, and a private channel by what it returned", () => {
+    for (const url of [
+      `${base}/v1/me/digest`,
+      `${base}/v1/me/digest?since=12&view=compact`,
     ])
-      expect(arrivalRead(entry({ url }))).toEqual({ scope, at });
+      expect(arrivalRead(entry({ url }))).toEqual({ scope: "digest", at });
+    for (const url of [
+      `${base}/v1/private-channels/7`,
+      `${base}/v1/private-channels/7?after=12&view=compact`,
+      `${base}/v1/private-channels/7?before=13`,
+    ])
+      expect(arrivalRead(entry({ url, message_ids: [12, 13] }))).toEqual({
+        scope: G,
+        at,
+        ids: [12, 13],
+      });
+    // An entry with no ids (an older host, or a cut answer) returned none.
+    expect(
+      arrivalRead(entry({ url: `${base}/v1/private-channels/7` })),
+    ).toEqual({ scope: G, at, ids: [] });
+    expect(
+      arrivalRead(
+        entry({ url: `${base}/v1/private-channels/7`, message_ids: ["9", 4] }),
+      ),
+    ).toEqual({ scope: G, at, ids: [4] });
   });
 
-  it("leaves out writes, refusals, pages back, other reads and entries with no send time", () => {
+  it("leaves out writes, refusals, other reads and entries with no send time", () => {
     for (const over of [
       { method: "POST", url: `${base}/v1/messages` },
       { status: 429 },
       { status: 401 },
-      { url: `${base}/v1/private-channels/7?before=13` },
       { url: `${base}/v1/private-channels?with=quill` },
       { url: `${base}/v1/messages?with=scout` },
       { url: `${base}/v1/me/wake` },
@@ -295,6 +385,18 @@ describe("which host calls are reads of a bot's arrivals", () => {
     ])
       expect(arrivalRead(entry(over))).toBeUndefined();
   });
+
+  it("reads message ids only from a whole answer", () => {
+    expect(
+      messageIdsIn(JSON.stringify({ messages: [{ id: 3 }, { id: 5 }] })),
+    ).toEqual([3, 5]);
+    const whole = JSON.stringify({
+      messages: [{ id: 3 }, { id: 5, untrusted_body: "x".repeat(100) }],
+    });
+    expect(messageIdsIn(whole.slice(0, 60))).toEqual([]);
+    expect(messageIdsIn("not json")).toEqual([]);
+    expect(messageIdsIn(JSON.stringify({ error: { code: "x" } }))).toEqual([]);
+  });
 });
 
 describe("the host's HTTP tool", () => {
@@ -307,9 +409,12 @@ describe("the host's HTTP tool", () => {
     server = undefined;
   });
 
-  it("logs when each request went out, before it was answered", async () => {
-    server = createServer((_req, res) => {
-      setTimeout(() => res.end("{}"), 50);
+  it("logs when each request went out, and which messages a channel's answer held", async () => {
+    server = createServer((req, res) => {
+      const body = req.url?.startsWith("/v1/private-channels/")
+        ? JSON.stringify({ messages: [{ id: 4 }, { id: 9 }] })
+        : "{}";
+      setTimeout(() => res.end(body), 50);
     });
     await new Promise<void>((r) => server?.listen(0, "127.0.0.1", r));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -332,15 +437,21 @@ describe("the host's HTTP tool", () => {
         name: "http_request",
         arguments: { method: "GET", url: `${origin}/v1/me/digest` },
       });
+      await client.callTool({
+        name: "http_request",
+        arguments: { method: "GET", url: `${origin}/v1/private-channels/7` },
+      });
     } finally {
       await client.close();
     }
-    const [e] = inbox.entries("scout");
-    if (!e) throw new Error("the host logged nothing");
+    const [e, c] = inbox.entries("scout");
+    if (!e || !c) throw new Error("the host logged too little");
     expect(e.kind).toBe("http");
     const read = arrivalRead(e);
     expect(read?.scope).toBe("digest");
     expect(read?.at).toBeLessThanOrEqual(Date.parse(e.at));
+    expect(e.message_ids).toBeUndefined();
+    expect(arrivalRead(c)).toMatchObject({ scope: G, ids: [4, 9] });
   }, 30_000);
 });
 
@@ -393,5 +504,61 @@ describe("a group's arrivals, from the trial's database", () => {
     for (const g of got) expect(g.at).toBeGreaterThan(since);
     // Another key's bot sees its own.
     expect(await groupArrivals(db(), duet.key, since)).toHaveLength(2);
+  });
+
+  it("a read with no cursor after the bot's own post doesn't count an earlier message as read", async () => {
+    const bots: Bot[] = [];
+    for (const handle of ["scout", "duet"]) {
+      const b = await register(handle);
+      await db()`UPDATE bots SET created_at = now() - interval '3 days' WHERE handle = ${handle}`;
+      bots.push(b);
+    }
+    const [scout, duet] = bots as [Bot, Bot];
+    await db()`INSERT INTO humans (auth_user_id) VALUES ('google-wake2')`;
+    await db()`UPDATE bots SET owner_id = (SELECT id FROM humans WHERE auth_user_id = 'google-wake2')`;
+    const { channel } = await startChannel(
+      db(),
+      "google-wake2",
+      ["scout", "duet"],
+      "duet",
+      null,
+    );
+    const id = channel.replace("private:", "");
+    const readAs = async (who: Bot) => {
+      const sentAt = Date.now();
+      const r = await call(readRoute, {
+        key: who.key,
+        path: `/v1/private-channels/${id}`,
+        params: { id },
+      });
+      expect(r.status).toBe(200);
+      return {
+        scope: `channel:${id}`,
+        at: sentAt,
+        ids: messageIdsIn(JSON.stringify(r.body)),
+      };
+    };
+    const prev = await wake(scout);
+    const since = Date.now();
+    await new Promise((r) => setTimeout(r, 20));
+    const first = await readAs(scout);
+    expect((await send(duet, channel, "M")).status).toBe(201);
+    await new Promise((r) => setTimeout(r, 20));
+    const sample = { at: Date.now(), wake: await wake(scout) };
+    expect(sample.wake).toBe(prev + 1);
+    expect((await send(scout, channel, "mine")).status).toBe(201);
+    const second = await readAs(scout);
+    const groups = await groupArrivals(db(), scout.key, since);
+    expect(groups).toHaveLength(1);
+    // The read went out after M but started after scout's own post.
+    expect(second.ids).not.toContain(groups[0]?.id);
+    const seen = seenAfterWakeVisit({
+      prev,
+      samples: [sample],
+      reads: [first, second],
+      groups,
+    });
+    expect(seen).toBe(prev);
+    expect(wakesAgain(sample.wake, seen)).toBe(true);
   });
 });

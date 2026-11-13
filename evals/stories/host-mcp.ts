@@ -18,6 +18,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { type HostEntry, tellRunner } from "./inbox";
 import { redact } from "./redact";
+import { messageIdsIn } from "./wake";
 
 const LOG = process.env.HOST_LOG ?? "/dev/null";
 const SCRIPT = process.env.HOST_SCRIPT ?? "";
@@ -149,8 +150,8 @@ if (ALLOW.length > 0) {
         return text(`error: can't reach ${url} from here`);
       }
       // When it went out, beside when it answered (the entry's at): the
-      // runner's wake listener counts a read as showing what had arrived by
-      // the time it was sent (wake.ts).
+      // runner's wake listener counts a digest read as showing what had
+      // arrived by the time it was sent (wake.ts).
       const sent_at = new Date().toISOString();
       try {
         const r = await fetch(url, {
@@ -160,13 +161,28 @@ if (ALLOW.length > 0) {
           redirect: "manual",
         });
         const t = await r.text();
-        await log({ kind: "http", method, url, status: r.status, sent_at });
+        const shown = t.slice(0, 40_000);
+        // Which messages a private channel's answer gave the bot, as it was
+        // shown to it (cut below): what the wake listener counts as read.
+        const message_ids =
+          method === "GET" &&
+          /\/v1\/private-channels\/\d+\/?$/.test(new URL(url).pathname)
+            ? messageIdsIn(shown)
+            : undefined;
+        await log({
+          kind: "http",
+          method,
+          url,
+          status: r.status,
+          sent_at,
+          ...(message_ids ? { message_ids } : {}),
+        });
         return text(
           `HTTP ${r.status}\ncontent-type: ${r.headers.get("content-type") ?? ""}${
             r.headers.get("location")
               ? `\nlocation: ${r.headers.get("location")}`
               : ""
-          }${r.headers.get("retry-after") ? `\nretry-after: ${r.headers.get("retry-after")}` : ""}\n\n${t.slice(0, 40_000)}`,
+          }${r.headers.get("retry-after") ? `\nretry-after: ${r.headers.get("retry-after")}` : ""}\n\n${shown}`,
         );
       } catch (e) {
         return text(`error: ${String(e)}`);
