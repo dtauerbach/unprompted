@@ -15,6 +15,7 @@ import { GET as wakeRoute } from "@/app/v1/me/wake/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
+import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
 import {
   setAntiAbuse,
@@ -1136,6 +1137,183 @@ describe("a pair's session", () => {
     );
     expect(after).toEqual(before);
   });
+});
+
+// A closed group takes nothing new (054_channel_plans.sql), sessions
+// included (058_closed_sessions.sql): no session is set, no answer is
+// taken, and none it had fires. Ending the one in force still works, since
+// it only takes wakes away.
+describe("a closed private channel", () => {
+  const close = (b: Bot, g: string) =>
+    call(closeRoute, { key: b.key, params: { id: g.slice(8) } });
+  const count = async (
+    table: "channel_sessions" | "channel_session_answers",
+  ) => {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM ${db()(table)}`;
+    return r?.n ?? 0;
+  };
+
+  it("takes no new session: refused as closed, as a message there is, writing and counting nothing", async () => {
+    const { b, g } = await three();
+    expect((await close(b, g)).status).toBe(200);
+    const r = await event(b, { action: "session", channel: g, in_minutes: 30 });
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe("channel_closed");
+    const said = await call(sendRoute, {
+      key: b.key,
+      body: { channel: g, body: "Still here?" },
+    });
+    expect(r.body.error).toEqual(said.body.error);
+    expect(await count("channel_sessions")).toBe(0);
+    expect(await used(`session:${await idOf(b)}`)).toBe(0);
+    expect(await logged("channel.session")).toHaveLength(0);
+  });
+
+  it("takes no answer to a session: a notice or a decline is refused as closed, writing nothing", async () => {
+    const { a, b, g } = await three();
+    expect(
+      (await event(b, { action: "session", channel: g, in_minutes: 30 }))
+        .status,
+    ).toBe(200);
+    expect((await close(b, g)).status).toBe(200);
+    for (const body of [
+      { notice_minutes: 15 },
+      { coming: false },
+      { coming: true, notice_minutes: 10 },
+    ]) {
+      const r = await event(a, { action: "answer", channel: g, ...body });
+      expect(r.status, JSON.stringify(body)).toBe(409);
+      expect(r.body.error.code).toBe("channel_closed");
+    }
+    expect(await count("channel_session_answers")).toBe(0);
+  });
+
+  it("still ends the session in force, which only takes wakes away", async () => {
+    const { b, g } = await three();
+    await event(b, { action: "session", channel: g, in_minutes: 30 });
+    expect((await close(b, g)).status).toBe(200);
+    const end = await event(b, { action: "end", channel: g });
+    expect(end.status, JSON.stringify(end.body)).toBe(200);
+    expect(end.body).toMatchObject({ session: null, changed: true });
+  });
+
+  it("fires none it had: every item is skipped as closed, due lists none coming, and nothing wakes", async () => {
+    const { a, b, c, g } = await three();
+    const r = await event(b, {
+      action: "session",
+      channel: g,
+      in_minutes: 10,
+      every_minutes: 30,
+      times: 3,
+    });
+    const first = Date.parse(r.body.session.at);
+    // A declined member's items go too.
+    await event(c, { action: "answer", channel: g, coming: false });
+    expect(
+      (await dueFor(db(), await idOf(a))).filter((d) => d.kind === "session"),
+    ).not.toHaveLength(0);
+    expect(
+      (await dueFor(db(), await idOf(c))).filter(
+        (d) => d.kind === "session" && d.state === "declined",
+      ),
+    ).not.toHaveLength(0);
+    expect((await close(b, g)).status).toBe(200);
+    for (const x of [a, b, c])
+      expect(
+        (await dueFor(db(), await idOf(x))).filter((d) => d.kind === "session"),
+      ).toEqual([]);
+    const before = [await wake(a), await wake(b), await wake(c)];
+    for (let n = 0; n < 3; n++) {
+      const run = await workDue(at(first + n * 30 * MIN));
+      expect(run.fired, `occurrence ${n}`).toBe(0);
+    }
+    expect([await wake(a), await wake(b), await wake(c)]).toEqual(before);
+    const rows = await fires();
+    expect(rows.length).toBeGreaterThan(0);
+    expect(new Set(rows.map((f) => f.reason))).toEqual(new Set(["closed"]));
+    // Skipped, not missed: a bot's own due never shows them.
+    expect(
+      (await dueFor(db(), await idOf(a))).filter((d) => d.kind === "session"),
+    ).toEqual([]);
+  });
+
+  it("is backed by the database: a session or an answer written straight in is refused, an ending goes in", async () => {
+    const { a, b, g } = await three();
+    await event(b, { action: "session", channel: g, in_minutes: 30 });
+    expect((await close(b, g)).status).toBe(200);
+    const id = g.slice(8);
+    const keyOf = async (x: Bot) => {
+      const [k] = await db()<{ id: string }[]>`
+        SELECT k.id FROM api_keys k JOIN bots o ON o.id = k.bot_id
+        WHERE o.handle = ${x.handle} AND k.revoked_at IS NULL`;
+      return k?.id ?? null;
+    };
+    const setRow = await db()`
+      INSERT INTO channel_sessions
+        (channel_id, bot_id, key_id, first_at, every_minutes, occurrences)
+      VALUES (${id}, ${await idOf(b)}, ${await keyOf(b)},
+              now() + interval '1 hour', NULL, 1)`.catch((e) => e);
+    expect(setRow.code).toBe("UPR01");
+    const answer = await db()`
+      INSERT INTO channel_session_answers
+        (channel_id, bot_id, key_id, declined_chain, notice_minutes)
+      VALUES (${id}, ${await idOf(a)}, ${await keyOf(a)}, NULL, 15)`.catch(
+      (e) => e,
+    );
+    expect(answer.code).toBe("UPR01");
+    await db()`
+      INSERT INTO channel_sessions (channel_id, bot_id, key_id)
+      VALUES (${id}, ${await idOf(b)}, ${await keyOf(b)})`;
+    expect(await count("channel_sessions")).toBe(2);
+    expect(await count("channel_session_answers")).toBe(0);
+  });
+
+  it("refuses set_event on the connector the same way", async () => {
+    const { b, g } = await three();
+    expect((await close(b, g)).status).toBe(200);
+    const s = await tool(b.key, "set_event", {
+      action: "session",
+      channel: g,
+      in_minutes: 15,
+    });
+    expect(s.isError).toBe(true);
+    expect(JSON.stringify(s.data)).toContain("channel_closed");
+  });
+
+  it("a session or an answer racing a close is refused as closed or skipped, never fired", async () => {
+    for (let round = 0; round < 4; round++) {
+      await resetDb();
+      const { b, g } = await three();
+      const [set, closed] = await Promise.all([
+        event(b, { action: "session", channel: g, in_minutes: 10 }),
+        close(b, g),
+      ]);
+      expect(closed.status).toBe(200);
+      expect([200, 409], JSON.stringify(set.body)).toContain(set.status);
+      if (set.status === 409)
+        expect(set.body.error.code).toBe("channel_closed");
+      if (set.status !== 200) continue;
+      const run = await workDue(at(Date.parse(set.body.session.at)));
+      expect(run.fired).toBe(0);
+      expect(new Set((await fires()).map((f) => f.reason))).toEqual(
+        new Set(["closed"]),
+      );
+    }
+    for (let round = 0; round < 4; round++) {
+      await resetDb();
+      const { a, b, g } = await three();
+      await event(b, { action: "session", channel: g, in_minutes: 30 });
+      const [answer, closed] = await Promise.all([
+        event(a, { action: "answer", channel: g, notice_minutes: 15 }),
+        close(b, g),
+      ]);
+      expect(closed.status).toBe(200);
+      expect([200, 409], JSON.stringify(answer.body)).toContain(answer.status);
+      if (answer.status === 409)
+        expect(answer.body.error.code).toBe("channel_closed");
+    }
+  }, 90_000);
 });
 
 describe("at the same time", () => {

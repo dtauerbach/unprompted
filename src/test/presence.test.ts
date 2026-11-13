@@ -14,6 +14,7 @@ import { POST as presenceRoute } from "@/app/v1/me/presence/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
 import { GET as readRoute, POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
+import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import {
   setAntiAbuse,
   setFrozen,
@@ -736,6 +737,170 @@ describe("between members of one group", () => {
     expect((await digest(ann)).body.presence).toHaveLength(1);
   });
 
+  // A closed group takes nothing new (058_closed_sessions.sql): presence
+  // between members that rode on it is refused as a message there is, and
+  // what was set stops showing.
+  const close = (b: Bot, g: string) =>
+    call(closeRoute, { key: b.key, params: { id: g.slice(8) } });
+
+  it("ends when the group closes: refused as closed, writing and waking nothing, and what was set stops showing", async () => {
+    const { ann, ben, g } = await trio();
+    expect((await set(ben, { with: "ann", state: "active" })).status).toBe(200);
+    expect((await digest(ann)).body.presence).toHaveLength(1);
+    const closed = await close(ann, g);
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200);
+    const n = await rows();
+    const before = await wake(ann);
+    const caps = await wakesUsed();
+    const after = await set(ben, { with: "ann", state: "idle" });
+    expect(after.status).toBe(409);
+    expect(after.body.error.code).toBe("channel_closed");
+    // The same refusal a message there gets.
+    expect(after.body.error).toEqual(
+      (await toGroup(ben, g, "still there?")).body.error,
+    );
+    // Either way round, and a new state too.
+    const back = await set(ann, { with: "ben", state: "closing" });
+    expect(back.body.error.code).toBe("channel_closed");
+    expect(await rows()).toBe(n);
+    expect(await wake(ann)).toBe(before);
+    expect(await wakesUsed()).toEqual(caps);
+    expect(await used("presence:%")).toBe(1);
+    expect((await digest(ann)).body.presence).toEqual([]);
+    expect((await digest(ben)).body.presence).toEqual([]);
+  });
+
+  it("goes on under the pair rules after a close, for two bots that can talk anyway", async () => {
+    const ann = await member("ann");
+    const ben = await member("ben");
+    await owner("google-g", [ann, ben]);
+    const made = await call(createCodeRoute, { key: ann.key, body: {} });
+    await call(redeemRoute, { key: ben.key, body: { code: made.body.code } });
+    const g = await group([ann, ben]);
+    expect((await close(ann, g)).status).toBe(200);
+    const r = await set(ben, { with: "ann", state: "active" });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const [row] = await db()<{ channel_id: string | null }[]>`
+      SELECT channel_id FROM presence ORDER BY id DESC LIMIT 1`;
+    expect(row?.channel_id).toBeNull();
+    expect((await digest(ann)).body.presence).toHaveLength(1);
+  });
+
+  it("still rides on another shared group that's open", async () => {
+    const { ann, ben, g } = await trio();
+    const g2 = await group([ann, ben]);
+    expect((await close(ann, g)).status).toBe(200);
+    expect((await set(ben, { with: "ann", state: "active" })).status).toBe(200);
+    const [row] = await db()<{ channel_id: string | null }[]>`
+      SELECT channel_id FROM presence ORDER BY id DESC LIMIT 1`;
+    expect(`private:${row?.channel_id}`).toBe(g2);
+    expect((await digest(ann)).body.presence).toHaveLength(1);
+  });
+
+  it("is refused by the database between members of a closed group only, whatever the writer gives, and goes in with an open one", async () => {
+    const { ann, ben, g } = await trio();
+    expect((await close(ann, g)).status).toBe(200);
+    const [k] = await db()<{ id: string }[]>`
+      SELECT k.id FROM api_keys k JOIN bots b ON b.id = k.bot_id
+      WHERE b.handle = 'ben' AND k.revoked_at IS NULL`;
+    const err = await db()`
+      INSERT INTO presence (bot_id, other_bot_id, key_id, state, channel_id)
+      VALUES (${await idOf("ben")}, ${await idOf("ann")}, ${k?.id ?? null},
+              'active', ${g.slice(8)})`.catch((e) => e);
+    expect(err.code).toBe("UPM01");
+    expect(await rows()).toBe(0);
+    // The contrast: with a group still open, the same row goes in, riding
+    // on that group whatever the writer named.
+    const g2 = await group([ann, ben]);
+    await db()`
+      INSERT INTO presence (bot_id, other_bot_id, key_id, state, channel_id)
+      VALUES (${await idOf("ben")}, ${await idOf("ann")}, ${k?.id ?? null},
+              'active', ${g.slice(8)})`;
+    const [row] = await db()<{ channel_id: string }[]>`
+      SELECT channel_id FROM presence`;
+    expect(`private:${row?.channel_id}`).toBe(g2);
+  });
+
+  // The lowest shared group is the one a write rides on and whose lock it
+  // takes. If that group closes while the write waits for its lock, and
+  // another shared group is left, the write starts again and takes that
+  // group's lock: it never rides on a group whose lock it doesn't hold.
+  it("starts again when the group it waited on closes and another is left", async () => {
+    const { ann, ben, g } = await trio();
+    const g2 = await group([ann, ben]);
+    const [k] = await db()<{ id: string }[]>`
+      SELECT k.id FROM api_keys k JOIN bots b ON b.id = k.bot_id
+      WHERE b.handle = 'ann' AND k.revoked_at IS NULL`;
+    const gate = () => {
+      let open = () => {};
+      const shut = new Promise<void>((r) => {
+        open = r;
+      });
+      return { shut, open };
+    };
+    const waiting = async () => {
+      for (let i = 0; i < 100; i++) {
+        const [r] = await db()<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM pg_locks
+          WHERE locktype = 'advisory' AND NOT granted`;
+        if ((r?.n ?? 0) > 0) return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error("nothing waited for a lock");
+    };
+    const heldA = gate();
+    const goA = gate();
+    const heldB = gate();
+    const goB = gate();
+    // One transaction holds the first group's lock, then closes it; another
+    // holds the second group's.
+    const a = db().begin(async (tx) => {
+      await tx`SELECT lock_private_channel(${g.slice(8)})`;
+      heldA.open();
+      await goA.shut;
+      await tx`
+        INSERT INTO channel_ends (channel_id, how, bot_id, key_id)
+        VALUES (${g.slice(8)}, 'closed', ${await idOf("ann")}, ${k?.id ?? null})`;
+    });
+    const b = db().begin(async (tx) => {
+      await tx`SELECT lock_private_channel(${g2.slice(8)})`;
+      heldB.open();
+      await goB.shut;
+    });
+    await heldA.shut;
+    await heldB.shut;
+    const r = set(ben, { with: "ann", state: "active" });
+    await waiting();
+    goA.open();
+    await a;
+    // Started again on the second group, it waits for that group's lock.
+    await waiting();
+    expect(await rows()).toBe(0);
+    goB.open();
+    await b;
+    const done = await r;
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    const [row] = await db()<{ channel_id: string }[]>`
+      SELECT channel_id FROM presence`;
+    expect(`private:${row?.channel_id}`).toBe(g2);
+    expect(await rows()).toBe(1);
+  }, 30_000);
+
+  it("racing a close, either goes in before it or is refused as closed, and never shows after", async () => {
+    for (let round = 0; round < 4; round++) {
+      await resetDb();
+      const { ann, ben, g } = await trio();
+      const [r, c] = await Promise.all([
+        set(ben, { with: "ann", state: "active" }),
+        close(ann, g),
+      ]);
+      expect(c.status).toBe(200);
+      expect([200, 409], JSON.stringify(r.body)).toContain(r.status);
+      if (r.status === 409) expect(r.body.error.code).toBe("channel_closed");
+      expect((await digest(ann)).body.presence).toEqual([]);
+    }
+  }, 60_000);
+
   it("rides on any shared group, counting one wake, and ends only when none is left", async () => {
     const { ann, ben, cyd, g } = await trio();
     const g2 = await group([ann, ben]);
@@ -1082,12 +1247,12 @@ describe("the connector", () => {
     // How it lapses is the guide's to say; the tool says each call replaces
     // the whole of it.
     expect(about).toMatch(/Each call replaces the whole presence/);
-    expect(about).toMatch(/another member of a group you're in/);
+    expect(about).toMatch(/another member of a private channel/);
     const skill = readFileSync("content/skill.md", "utf8");
     expect(skill).toContain("`POST /v1/me/presence`");
     expect(skill).toMatch(/never about the person you work for/);
     expect(skill).toMatch(/10 minutes or half the gap/);
-    expect(skill).toMatch(/another member of a group you're in/);
+    expect(skill).toMatch(/a member of a private channel you're in/);
     expect(skill).toMatch(/60 presence changes an hour per bot/);
     expect(readFileSync("content/mcp.md", "utf8")).toMatch(/set_presence/);
     expect(JSON.stringify(OPERATIONS)).toMatch(/\/v1\/me\/presence/);

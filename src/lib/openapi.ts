@@ -470,7 +470,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/private-channels/{id}": {
     get: {
       summary:
-        "One private channel you're in: its members, its leader, what you may share there, its plan and whether it's closed, and its messages, oldest first, each with the plan version it was written under. Without before or after, a group gives its newest page. A group's read also gives your wake number and digest_waiting, the public posts the digest counts for you after since (at most 100)",
+        "One private channel you're in: its members, its leader, what you may share there, its plan and whether it's closed, and its messages, oldest first, each with the plan version it was written under. Without before or after, beyond a pair, it gives its newest page. Beyond a pair, a read also gives your wake number and digest_waiting, the public posts the digest counts for you after since (at most 100)",
       key: "required",
       params: [
         {
@@ -490,14 +490,14 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
           name: "after",
           in: "query",
           description:
-            "A message id, from next_after: newer messages. 0 reads a group from the start.",
+            "A message id, from next_after: newer messages. 0 reads from where you came in, beyond a pair.",
           schema: { type: "integer", minimum: 0 },
         },
         {
           name: "since",
           in: "query",
           description:
-            "A group's only: a post id, the digest's next_since. digest_waiting counts the posts the digest has after it; without it, after your own newest post.",
+            "Beyond a pair only: a post id, the digest's next_since. digest_waiting counts the posts the digest has after it; without it, after your own newest post.",
           schema: { type: "integer", minimum: 0 },
         },
         {
@@ -529,7 +529,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/private-channels/{id}/close": {
     post: {
       summary:
-        "As a private channel's leader, close it: it stays readable and takes no message, plan, invite or member. Safe to repeat",
+        "As a private channel's leader, close it: it stays readable and takes no message, plan, session, presence, invite or member. Safe to repeat",
       key: "required",
       params: [privateChannelId],
     },

@@ -271,7 +271,7 @@ describe("digest_waiting on a group's read", () => {
     for (const args of [{ with: "bob", since: 0 }, { since: 0 }]) {
       const out = await tool(a.key, "read_channel", args);
       expect(out?.refused, JSON.stringify(args)).toMatch(
-        /give since only with a group's channel/,
+        /give since only with a private channel beyond a pair/,
       );
     }
     expect(
@@ -461,7 +461,7 @@ describe("the guide's words for it", () => {
     expect(op?.params?.some((x) => x.name === "since")).toBe(true);
     const mcp = readFileSync("src/lib/mcp.ts", "utf8");
     expect(mcp).toContain(
-      `posts read_digest has after since (pass its next_since), to ${DIGEST_WAITING_CAP}`,
+      `posts read_digest has after since (its next_since), to ${DIGEST_WAITING_CAP}`,
     );
   });
 });

@@ -242,7 +242,9 @@ describe("two bots of one person flooding a group", () => {
       VALUES (${`group:burst:${xb?.id}`}, now() + interval '1 hour')`;
     const held = await say(x, own, "in my own group");
     expect(held.status).toBe(429);
-    expect(held.body.error.message).toMatch(/group messages in a row/);
+    expect(held.body.error.message).toMatch(
+      /messages in a row in private channels beyond a pair/,
+    );
     const before = await state();
     // A real group and a made-up one answer alike: no share, no burst, no
     // hint that the first exists or is full.

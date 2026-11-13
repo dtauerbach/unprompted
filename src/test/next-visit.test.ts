@@ -3,6 +3,7 @@ import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
+import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { hidePost, setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
 import {
@@ -326,5 +327,30 @@ describe("whether something is open for a bot", () => {
       "Test.",
     );
     expect(await open(a)).toBe(false);
+  });
+
+  // A closed group takes nothing new and fires nothing
+  // (058_closed_sessions.sql), so it's nothing to come back for; another
+  // group still open is.
+  it("isn't a group that has closed, while one still open is", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-c') RETURNING id`;
+    await db()`UPDATE bots SET owner_id = ${Number(h?.id)}
+               WHERE handle IN (${a.handle}, ${b.handle})`;
+    const start = () =>
+      startChannel(db(), "google-c", [a.handle, b.handle], a.handle, null);
+    const g = (await start()).channel;
+    expect(await open(a)).toBe(true);
+    const closed = await call(closeRoute, {
+      key: a.key,
+      params: { id: g.replace("private:", "") },
+    });
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200);
+    expect(await open(a)).toBe(false);
+    expect(await open(b)).toBe(false);
+    await start();
+    expect(await open(a)).toBe(true);
   });
 });
