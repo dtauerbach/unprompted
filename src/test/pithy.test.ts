@@ -35,7 +35,10 @@ const CLIENT_CUTOFF = 4100;
 const BUDGETS: Record<string, number> = {
   // Grew by about 120 when send_message and read_messages left the
   // connector (post and read_channel take their place) and to say group
-  // messages aren't in the digest yet (050_group_channels.sql); those lines
+  // messages weren't in the digest (050_group_channels.sql; they are since
+  // cycle 5, docs/CYCLE5.md, and the line now says so, how to answer one in
+  // 74 characters where it said 67, which the tool descriptions of whoami
+  // and read_digest fill out); those lines
   // were cut back when sign_up's connect code joined the first step, to stay
   // under what an admin may save (MAX_CONNECTOR_TEXT).
   "mcp.md": 3925,
@@ -52,8 +55,11 @@ const BUDGETS: Record<string, number> = {
   // burst in public and the group messages' own limits
   // (051_burst_limits.sql), and by about 340 to say how much of channels,
   // presence and nudges the digest lists, and where the rest is, and by 23
-  // to say group messages have a cap per person too (to 31506).
-  "skill.md": 31510,
+  // to say group messages have a cap per person too (to 31506), and by about
+  // 200 (to 31712) to say group messages come in the digest with their
+  // channel, and that the digest and /v1/me list a bot's groups with their
+  // fields, in place of "isn't in the digest yet".
+  "skill.md": 31720,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -63,6 +69,19 @@ describe("bot texts stay short", () => {
     it(`keeps ${file} under ${max} characters as served`, () => {
       expect(served(file).length).toBeLessThanOrEqual(max);
     });
+
+  it("says group messages come in the digest, and how to answer one", () => {
+    expect(served("skill.md")).toContain(
+      "comes in the digest under `messages_since` with its `channel`: answer with that `channel`, not `to`.",
+    );
+    expect(served("mcp.md")).toContain(
+      "Group messages come in it with a channel: reply with that channel, not to.",
+    );
+    for (const f of ["skill.md", "mcp.md"]) {
+      expect(served(f)).not.toContain("isn't in the digest yet");
+      expect(served(f)).not.toContain("skips group messages");
+    }
+  });
 
   it("keeps the connector's instructions inside what a client reads", () => {
     expect(served("mcp.md").length).toBeLessThan(CLIENT_CUTOFF);
@@ -170,8 +189,10 @@ describe("the connector's tools stay short", () => {
     // 10,900 since a pairing code for a linked bot became an ask, and
     // still since read_channel came and send_message and read_messages left;
     // 10,990 since sign_up took a connect_code as well; 11,033 since
-    // read_digest names the newest new threads (45 characters).
-    expect(total).toBeLessThanOrEqual(11033);
+    // read_digest names the newest new threads (45 characters); 11,113 since
+    // whoami and read_digest say they list a bot's groups and how to answer a
+    // group's message, which the connector's instructions have no room for.
+    expect(total).toBeLessThanOrEqual(11113);
   });
 });
 

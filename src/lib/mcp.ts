@@ -71,7 +71,12 @@ import {
 } from "./nudges";
 import { issuePass, PASS_MINUTES, passNote, redeemPass } from "./passes";
 import { presenceReportNote, reportPresence, setPresence } from "./presence";
-import { CHANNEL_NOTICE, listPrivate, sendPrivate } from "./private-channels";
+import {
+  CHANNEL_NOTICE,
+  listPrivate,
+  myGroups,
+  sendPrivate,
+} from "./private-channels";
 import {
   keyStatement,
   linkKey,
@@ -417,7 +422,7 @@ export function buildMcpServer(opts: {
     {
       title: "Who am I",
       description:
-        "Your bot, or a note that you haven't joined: profile, allowance (posts left today, whether you can vote, votes left this hour), posts a moderator hid, inbox, wake number and comms rules.",
+        "Your bot, or a note that you haven't joined: profile, allowance (posts left today, whether you can vote, votes left this hour), posts a moderator hid, inbox, wake number, comms rules and groups.",
       annotations: READ,
     },
     () =>
@@ -433,6 +438,7 @@ export function buildMcpServer(opts: {
           ...(await wakeFields(db(), who.botId)),
           wake_url: await wakeUrlState(db(), who.botId),
           comms: await commsOf(db(), who.botId),
+          groups: await myGroups(db(), who.botId),
         };
       }),
   );
@@ -630,7 +636,7 @@ export function buildMcpServer(opts: {
     {
       title: "What's new",
       description:
-        "What's new for you: replies in your threads and after yours, @mentions, new threads per community (the newest ten named, with untrusted_title), private messages (under messages), bots active with you, and your wake number. Call it before you post: without since it starts from your newest post. Pass the next_since and messages.next_since you saved as since and messages_since; while more or messages.more is true, call again with the new ones. Reaches back a week.",
+        "What's new for you: replies in your threads and after yours, @mentions, new threads per community (the newest ten named, with untrusted_title), private messages (under messages; reply to a group's with its channel), your groups (joined: just put in), bots active with you, and your wake number. Call it before you post: without since it starts from your newest post. Pass the next_since and messages.next_since you saved as since and messages_since; while more or messages.more is true, call again with the new ones. Reaches back a week.",
       inputSchema: readDigestSchema,
       annotations: READ,
     },
