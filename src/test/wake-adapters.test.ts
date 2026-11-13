@@ -8,6 +8,7 @@ import { ApiError } from "@/lib/http";
 import { consume, LIMITS, pushHostRules } from "@/lib/limits";
 import {
   type Delivery,
+  drainForAWhile,
   drainPushes,
   PUSH_MAX_FAILURES,
   PUSH_TIMEOUT_MS,
@@ -44,6 +45,7 @@ beforeEach(async () => {
   });
 });
 afterEach(() => {
+  delete process.env.UNPROMPTED_READ_ONLY;
   off?.();
   off = undefined;
   useDeliver(null);
@@ -354,5 +356,80 @@ describe("addresses the push checks refuse", () => {
     expect((await db()`SELECT count(*)::int AS n FROM push_urls`)[0]?.n).toBe(
       0,
     );
+  });
+});
+
+describe("the drain", () => {
+  it("sends nothing under the kill switch, whoever starts it", async () => {
+    await waiting();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect(await drainPushes()).toBe(0);
+    await drainForAWhile(undefined, 1000);
+    expect(sent).toEqual([]);
+    delete process.env.UNPROMPTED_READ_ONLY;
+    expect(await drainPushes()).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("keeps going past a bot whose methods can't be read, or whose send can't be recorded", async () => {
+    const bots = [];
+    for (const [i, h] of ["unread", "unrecorded", "fine"].entries()) {
+      const b = await bot(h);
+      const set = await call(setRoute, {
+        key: b.key,
+        path: "/v1/me/push",
+        body: { url: `https://hooks${i}.example.org/in` },
+      });
+      expect(set.status, JSON.stringify(set.body)).toBe(201);
+      await db()`SELECT bump_wake(${b.id})`;
+      bots.push(b);
+    }
+    const [unread, unrecorded, fine] = bots as [
+      (typeof bots)[0],
+      (typeof bots)[0],
+      (typeof bots)[0],
+    ];
+    // The second bot's push URL fails, so its second method is tried, and
+    // recording that throws.
+    answers.set("https://hooks1.example.org/in", { status: 500 });
+    const { regs } = secondAdapter({
+      async find(_sql, botId) {
+        if (botId === unread.id) throw new Error("can't read");
+        return regs.get(botId) ?? null;
+      },
+      async record(_sql, botId) {
+        if (botId === unrecorded.id) throw new Error("can't record");
+      },
+    });
+    regs.set(unrecorded.id, { address: SECOND, secret: "s", failures: 0 });
+    // Logged, not thrown.
+    const errors: unknown[] = [];
+    const log = console.error;
+    console.error = (e: unknown) => errors.push(e);
+    try {
+      await drainPushes();
+    } finally {
+      console.error = log;
+    }
+    expect(errors).toHaveLength(2);
+    expect(sent.map((s) => s.url).sort()).toEqual(
+      [
+        "https://hooks1.example.org/in",
+        "https://hooks2.example.org/in",
+        SECOND,
+      ].sort(),
+    );
+    const rows = await db()<
+      { bot_id: string; pending: boolean; later: boolean; failures: number }[]
+    >`
+      SELECT bot_id, pending_since IS NOT NULL AS pending,
+             coalesce(pending_since > now(), false) AS later, failures
+      FROM push_state ORDER BY bot_id`;
+    const of = (id: number) => rows.find((r) => Number(r.bot_id) === id);
+    // The one that couldn't be read waits a gap, still pending.
+    expect(of(unread.id)).toMatchObject({ pending: true, later: true });
+    // The others were sent; the failed first method was recorded.
+    expect(of(unrecorded.id)).toMatchObject({ pending: false, failures: 1 });
+    expect(of(fine.id)).toMatchObject({ pending: false, failures: 0 });
   });
 });

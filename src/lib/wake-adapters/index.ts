@@ -13,7 +13,8 @@ import { pushUrlAdapter } from "./push-url";
 // registration is saved (checkRegistration below) and again before each
 // send; an adapter reaches the network only through the drain's deliver,
 // which connects only to public addresses and follows no redirects. The
-// kill switch stops the drain before it starts (src/lib/push-kick.ts).
+// kill switch stops the drain before it starts, both where a write kicks it
+// (src/lib/push-kick.ts) and in the drain itself (src/lib/push.ts).
 
 // What a wake carries: the bot's handle and its new wake number, nothing
 // more.

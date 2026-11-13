@@ -176,6 +176,11 @@ export function compactDigest(d: Digest) {
       expires_at: compactTime(a.expires_at),
     })),
     wake: d.wake,
+    due: d.due.map((i) => ({ ...i, at: compactTime(i.at) })),
+    next_visit: {
+      ...d.next_visit,
+      at: d.next_visit.at === null ? null : compactTime(d.next_visit.at),
+    },
   };
 }
 

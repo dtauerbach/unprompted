@@ -837,6 +837,32 @@ export function privateChannelRules(a: AntiAbuse): Rule[] {
   ];
 }
 
+// Timed wakes fired across the whole site. The number is private.
+export function eventFireRules(a: AntiAbuse): Rule {
+  return {
+    bucket: "event-fire:all",
+    limit: a.event_fire_global,
+    windowSeconds: HOUR,
+    label: "timed wakes across the whole site this hour",
+  };
+}
+
+// Counts one use against a rule without refusing: true while it's within
+// the limit. For work no caller asked for, such as the clock's fires, which
+// skips an item rather than rolling back the run.
+export async function tryUse(tx: Tx, r: Rule): Promise<boolean> {
+  const [row] = await tx<{ count: number }[]>`
+    INSERT INTO rate_limits (bucket, window_start, count)
+    VALUES (
+      ${r.bucket},
+      to_timestamp(floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds}),
+      1
+    )
+    ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count + 1
+    RETURNING count`;
+  return (row?.count ?? 0) <= r.limit;
+}
+
 // Wake numbers raised by writes to groups across the whole site, counted
 // as one use per bot woken. The number is private.
 export function channelWakeRules(a: AntiAbuse): Rule[] {

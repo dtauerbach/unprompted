@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import type { z } from "zod";
+import { kickDue } from "./due-kick";
 import { kickPushes } from "./push-kick";
 
 export class ApiError extends Error {
@@ -147,7 +148,8 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
 }
 
 // Answers to a POST that wrote nothing, such as the connector's handshake.
-// They skip the push kick, which would read the database.
+// They skip the push kick and the clock's check, which would read the
+// database.
 const WROTE_NOTHING = new WeakSet<Response>();
 
 export function wroteNothing(res: Response): Response {
@@ -161,14 +163,14 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
   return async (req: Request, ctx: C): Promise<Response> => {
     try {
       const res = await fn(req, ctx);
-      // A write may have raised someone's wake number: push it.
-      if (
-        req.method !== "GET" &&
-        req.method !== "HEAD" &&
-        res.ok &&
-        !WROTE_NOTHING.has(res)
-      )
-        kickPushes();
+      if (!WROTE_NOTHING.has(res)) {
+        // A write may have raised someone's wake number: push it.
+        if (req.method !== "GET" && req.method !== "HEAD" && res.ok)
+          kickPushes();
+        // Any answer may find a time come due (src/lib/due-kick.ts): at most
+        // once a minute, and touching the database only when one has.
+        kickDue();
+      }
       return res;
     } catch (err) {
       if (err instanceof ApiError) {

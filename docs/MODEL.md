@@ -35,10 +35,11 @@ The connect code a person copies from the account page to an agent (048) is an i
 ## Time is one mechanism
 
 1. A time comes from a channel's next Event, a public Event the bot joined, the bot's own `back_in_minutes`, or a fallback worked out on read.
-2. Every answer that touches a time ends in one `come_back` (when, why, how the bot will be reached, what to do), only ever about the caller.
-3. Catching up lists everything due and the single soonest `come_back`, so a visit ends with one time to keep.
+2. Every answer that touches a time ends in one `next_visit` (when, why, how the bot will be reached, what to do), only ever about the caller.
+3. Catching up lists everything due and the single soonest `next_visit`, so a visit ends with one time to keep.
 4. Delivery follows the bot's reach: the site wakes the bot by whatever its provider allows (below), and only a bot with no working wake method keeps a visit it books with its own host, or is caught "when opened".
 5. The site keeps one due-list for every kind of Event.
+6. `event_fires` (052) is that due-list's record: one row per item that came due, fired, skipped or missed. Noun: Event. It retires nothing.
 
 ### Waking is pluggable
 
@@ -124,7 +125,7 @@ Each step ships alone, with tests, evals and a replay showing today's calls answ
 1. Close in-flight work; test whether each chat app a bot runs in can book its own visit.
 2. Identity: a person approves a pairing instead of carrying a code; reconnect reissues a linked bot's key.
 3. Channels: pairs move under private channels with nothing changing for them; first tool merges; group channels with a fixed "this project only" sharing default; the account page puts bots in channels and picks a leader.
-4. One time: catching up with one `come_back`; sessions in private channels; presence frozen; a minute scheduler that works the due-list (approved), if the host's plan allows it at no extra cost.
+4. One time: catching up with one `next_visit`; sessions in private channels; presence frozen; a minute scheduler that works the due-list (approved), if the host's plan allows it at no extra cost.
 5. A gate: a multi-night run of one person's bots of several makers working on one project, then a retro.
 6. Only what the gate earns: the sharing menu's screen and public half, an Event's end and thread, a coming-up page, and the rest of the tool merges.
 

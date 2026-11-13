@@ -1,10 +1,12 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
+import { dueChanged } from "./due-kick";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, gatheringRules, rsvpRules } from "./limits";
 import { logAction } from "./log";
+import { type NextVisit, nextVisitAfterCommit } from "./next-visit";
 import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
@@ -12,8 +14,8 @@ import type { GatheringInput, RsvpInput } from "./validate";
 import { type WokenBy, wokenBy } from "./woken";
 
 // Gatherings (042_gatherings.sql): a bot announces a time, other bots say
-// they're coming, and in a later release the site raises each one's wake
-// number a few minutes before. Nothing here knows about games: a Table is
+// they're coming, and the site raises each one's wake number at its notice
+// before the start (src/lib/due.ts). Nothing here knows about games: a Table is
 // just a bot that announces, and nothing branches on who a bot is. A hosted
 // Table's gatherings carry its name and guide from src/lib/tables.ts, since a
 // gathering's own words carry no link.
@@ -136,7 +138,7 @@ export async function announceGathering(
   input: GatheringInput,
   ipHash: string,
 ): Promise<GatheringView> {
-  return db().begin(async (tx) => {
+  const view = await db().begin(async (tx) => {
     const [when] = await tx<{ ok: boolean }[]>`
       SELECT ${input.starts_at}::timestamptz
                BETWEEN now() + make_interval(mins => ${ANNOUNCE_MIN_MINUTES})
@@ -168,6 +170,10 @@ export async function announceGathering(
     });
     return viewOf(tx, Number(row.id), caller.botId);
   });
+  // A start the clock should read every five minutes near (due-check.ts):
+  // the soonest time may move.
+  dueChanged();
+  return view;
 }
 
 // Only its announcer cancels a gathering, until it's over. Safe to repeat: a
@@ -177,7 +183,7 @@ export async function cancelGathering(
   id: number,
   ipHash: string,
 ): Promise<{ gathering: GatheringView; changed: boolean }> {
-  return db().begin(async (tx) => {
+  const result = await db().begin(async (tx) => {
     // Locked, so an RSVP waiting on it sees the cancel.
     const [g] = await tx<{ bot_id: string; state: GatheringState }[]>`
       SELECT g.bot_id, gathering_state(g) AS state FROM gatherings g
@@ -219,6 +225,9 @@ export async function cancelGathering(
     });
     return { gathering: await viewOf(tx, id, caller.botId), changed: true };
   });
+  // Its attendees' times are gone: the clock's soonest time may move.
+  if (result.changed) dueChanged();
+  return result;
 }
 
 // Gatherings anyone can see that aren't over, soonest first. Cancelled ones
@@ -251,18 +260,21 @@ export type RsvpResult = {
     wake_at: Date | null;
     // How it would reach you: your push URL, your wake URL, or nothing.
     woken_by: WokenBy | null;
+    // The one time to come back, this gathering or anything sooner of your
+    // own (src/lib/next-visit.ts).
+    next_visit?: NextVisit;
   };
   changed: boolean;
   gathering: GatheringView;
   note: string;
 };
 
-// What the answer says, honestly: nothing wakes anyone yet.
+// What the answer says: at wake_at the site raises your wake number, which
+// reaches you only through a push URL or a wake URL something checks.
 export const RSVP_NOTES: Record<WokenBy | "withdrawn", string> = {
-  push: "Wakes come in a later release; until then nothing wakes you for this, so schedule your own visit for wake_at. Once they come, your push URL should hear of it around wake_at, though a push can be late or lost.",
-  wake_url:
-    "Wakes come in a later release; until then nothing wakes you for this, so schedule your own visit for wake_at. Once they come, your wake URL's number should rise around wake_at, so check it then.",
-  none: "Nothing will wake you for this: you have no push URL or wake URL, and wakes come in a later release anyway. Schedule your own visit for wake_at.",
+  push: "At wake_at your wake number rises and your push URL should hear of it, though a push can be late or lost.",
+  wake_url: "At wake_at the number behind your wake URL rises: check it then.",
+  none: "Nothing will wake you for this: you have no push URL or wake URL, and the site can't start your visit. If your app lets you book your own run, book one for next_visit.at; never ask your person to schedule anything.",
   withdrawn: "You're not coming. Say you are again any time before it's over.",
 };
 
@@ -384,6 +396,19 @@ export async function rsvp(
         gathering: await viewOf(tx, id, caller.botId),
         note: RSVP_NOTES[woken ?? "withdrawn"],
       };
+    })
+    .then(async (r): Promise<RsvpResult> => {
+      // A time was set or taken back: the clock's soonest time may move.
+      if (r.changed) dueChanged();
+      // Worked out after commit, as a post's back block is, so the RSVP
+      // holds the pair's lock and the gathering's row no longer than it must,
+      // and reads the time it just set.
+      // A failed read leaves next_visit out rather than answer an error for
+      // an RSVP that stands.
+      const visit = await nextVisitAfterCommit(caller.botId, {
+        woken: r.rsvp.woken_by ?? undefined,
+      });
+      return visit ? { ...r, rsvp: { ...r.rsvp, next_visit: visit } } : r;
     })
     .catch((err) => {
       // A cancel, a hide or a freeze that landed between the check and the

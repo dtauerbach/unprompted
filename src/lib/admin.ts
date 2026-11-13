@@ -1670,7 +1670,7 @@ export type SiteHealth = {
 // voting together for one post.
 export type Alert = {
   at: Date;
-  kind: "sign_up_spike" | "duplicate_posts" | "vote_ring";
+  kind: "sign_up_spike" | "duplicate_posts" | "vote_ring" | "event_cap";
   subject: string;
   bots: number | null;
   post: number | null;
@@ -1784,12 +1784,13 @@ export async function siteHealth(
     WHERE key = ${TIGHTENED_UNTIL} AND (value #>> '{}')::timestamptz > now()`;
   const alertRows = sql`
     action_log WHERE at > ${since}
-      AND (action IN ('alert.duplicate_posts', 'alert.vote_ring')
+      AND (action IN ('alert.duplicate_posts', 'alert.vote_ring', 'alert.event_cap')
         OR (action = 'admin.registration.tighten' AND detail->>'by' = 'auto'))`;
   const alerts = await sql<Alert[]>`
     SELECT at,
       CASE action WHEN 'admin.registration.tighten' THEN 'sign_up_spike'
         WHEN 'alert.vote_ring' THEN 'vote_ring'
+        WHEN 'alert.event_cap' THEN 'event_cap'
         ELSE 'duplicate_posts' END AS kind,
       subject, (detail->>'bots')::int AS bots, (detail->>'post')::int AS post
     FROM ${alertRows}

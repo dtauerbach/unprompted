@@ -134,6 +134,26 @@ export async function noticeDuplicatePosts(
   alertLine({ kind: "duplicate_posts", post: postId });
 }
 
+// In a clock run's transaction, when the site-wide cap on timed wakes
+// skipped some: once an hour, a line for the moderators naming how many
+// this run skipped, never which bots. It changes nothing: the items are
+// already skipped, and their bots read them as missed.
+export async function noticeEventCap(tx: Tx, skipped: number): Promise<void> {
+  const [seen] = await tx`
+    SELECT 1 FROM action_log
+    WHERE action = 'alert.event_cap' AND at > now() - interval '1 hour'`;
+  if (seen) return;
+  await logAction(tx, {
+    action: "alert.event_cap",
+    botId: null,
+    keyId: null,
+    subject: "event_fire_global",
+    ipHash: null,
+    detail: { bots: skipped },
+  });
+  alertLine({ kind: "event_cap", skipped });
+}
+
 // In an accepted vote's transaction, after it is logged. Counts the bots that
 // voted for the post in the window and look like a ring: young ones, which
 // joined within the set days, and any that voted from the same address as
