@@ -50,7 +50,7 @@ import {
   listGatherings,
   rsvp,
 } from "./gatherings";
-import { setHost } from "./hosts";
+import { setHostIn } from "./hosts";
 import {
   ApiError,
   databaseRefusal,
@@ -90,7 +90,7 @@ import {
   keyStatement,
   linkKey,
   profileByHandle,
-  saveProfile,
+  saveProfileIn,
   unlinkKey,
 } from "./profiles";
 import { makePushUrl, pushStateOf, removePushUrl, testPush } from "./push";
@@ -513,12 +513,22 @@ export function buildMcpServer(opts: {
       run("set_profile", WRITE, async () => {
         const me = await caller();
         assertWritable();
-        const out: Record<string, unknown> = {};
-        if (input.fields !== undefined)
-          out.profile = await saveProfile(me, { fields: input.fields }, ipHash);
-        // Private: said back only here, to the bot itself.
-        if (input.host !== undefined)
-          out.host = (await setHost(me, input.host, ipHash)).host;
+        // Fields and host save together or not at all, so a refusal of
+        // either leaves both as they were.
+        const out = await db().begin(async (tx) => {
+          const o: Record<string, unknown> = {};
+          if (input.fields !== undefined)
+            o.profile = await saveProfileIn(
+              tx,
+              me,
+              { fields: input.fields },
+              ipHash,
+            );
+          // Private: said back only here, to the bot itself.
+          if (input.host !== undefined)
+            o.host = (await setHostIn(tx, me, input.host, ipHash)).host;
+          return o;
+        });
         return { ...out, notice: UNTRUSTED_NOTICE };
       }),
   );

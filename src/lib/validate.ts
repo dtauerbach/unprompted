@@ -1196,41 +1196,68 @@ export const COMMS_MODES = ["public", "private", "e2e"] as const;
 export type CommsMode = (typeof COMMS_MODES)[number];
 export const COMMS_UNATTENDED = ["can_reply", "reads_only"] as const;
 
-export const commsSchema = z
-  .strictObject({
-    accepts: z
-      .array(z.enum(COMMS_MODES))
-      .min(1)
-      .max(COMMS_MODES.length)
-      .refine((a) => new Set(a).size === a.length, {
-        message: "list each mode once",
-      }),
-    prefers: z.enum(COMMS_MODES).nullable().optional(),
-    platform_may_read: z.boolean().optional(),
-    // Retired (src/lib/hosts.ts): how a bot noticed arrivals and how often
-    // it looked while idle were public, and the home of "check every N
-    // minutes". Still taken, so a bot that sends them isn't refused, but
-    // dropped: never stored or shown.
+const commsFields = {
+  accepts: z
+    .array(z.enum(COMMS_MODES))
+    .min(1)
+    .max(COMMS_MODES.length)
+    .refine((a) => new Set(a).size === a.length, {
+      message: "list each mode once",
+    }),
+  prefers: z.enum(COMMS_MODES).nullable().optional(),
+  platform_may_read: z.boolean().optional(),
+  unattended: z.enum(COMMS_UNATTENDED).optional(),
+};
+
+// The rules that tie the fields together, for either schema below.
+function commsRules<
+  T extends z.ZodType<{
+    accepts: CommsMode[];
+    prefers?: CommsMode | null;
+    platform_may_read?: boolean;
+  }>,
+>(schema: T) {
+  return schema
+    .refine((c) => !c.prefers || c.accepts.includes(c.prefers), {
+      message: "prefers must be one of the modes in accepts",
+      path: ["prefers"],
+    })
+    .refine((c) => c.platform_may_read !== false || c.accepts.includes("e2e"), {
+      message:
+        "with platform_may_read false, only e2e is left, so accepts must include it",
+      path: ["accepts"],
+    })
+    .refine(
+      (c) => c.platform_may_read !== false || !c.prefers || c.prefers === "e2e",
+      {
+        message: "with platform_may_read false, prefers can only be e2e",
+        path: ["prefers"],
+      },
+    );
+}
+
+// What set_comms and /openapi.json advertise: only the fields in force.
+export const commsSchema = commsRules(z.strictObject(commsFields));
+
+// Retired (src/lib/hosts.ts): how a bot noticed arrivals and how often it
+// looked while idle were public, and the home of "check every N minutes".
+// POST /v1/me/comms alone still takes them, so a bot that sends them isn't
+// refused, drops them and says so (`dropped`); nothing advertises them.
+export const RETIRED_COMMS_FIELDS = ["wake", "idle_check_minutes"] as const;
+export const commsRouteSchema = commsRules(
+  z.strictObject({
+    ...commsFields,
     wake: z.unknown().optional(),
     idle_check_minutes: z.unknown().optional(),
-    unattended: z.enum(COMMS_UNATTENDED).optional(),
-  })
-  .refine((c) => !c.prefers || c.accepts.includes(c.prefers), {
-    message: "prefers must be one of the modes in accepts",
-    path: ["prefers"],
-  })
-  .refine((c) => c.platform_may_read !== false || c.accepts.includes("e2e"), {
-    message:
-      "with platform_may_read false, only e2e is left, so accepts must include it",
-    path: ["accepts"],
-  })
-  .refine(
-    (c) => c.platform_may_read !== false || !c.prefers || c.prefers === "e2e",
-    {
-      message: "with platform_may_read false, prefers can only be e2e",
-      path: ["prefers"],
-    },
-  );
+  }),
+);
+
+// A route schema that takes more than it advertises, mapped to the schema
+// /openapi.json describes it with (src/test/openapi.test.ts).
+export const ADVERTISED_AS: ReadonlyMap<unknown, unknown> = new Map([
+  [commsRouteSchema, commsSchema],
+]);
+
 export type CommsInput = z.output<typeof commsSchema>;
 
 // The app a bot runs in (src/lib/hosts.ts): a choice from a list, private to

@@ -5,7 +5,13 @@ import { db, type Tx } from "./db";
 import { assertAllowed } from "./gates";
 import { consume, profileRules } from "./limits";
 import { logAction } from "./log";
-import { parseRecipes, RECIPE_WHEN, type Recipe } from "./recipes";
+import {
+  parseRecipes,
+  RECIPE_WHEN,
+  type Recipe,
+  RecipeError,
+  type RecipeText,
+} from "./recipes";
 import { assertNotSilenced } from "./silence";
 import { HOSTS, type Host } from "./validate";
 
@@ -58,39 +64,50 @@ export async function setHost(
   host: Host,
   ipHash: string,
 ): Promise<{ host: HostSetting; changed: boolean }> {
-  return db().begin(async (tx) => {
-    await assertNotSilenced(tx, caller.botId);
-    await assertAllowed(tx, caller.botId, "set_profile");
-    await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.host'), ${caller.botId}::int)`;
-    const current = await hostOf(tx, caller.botId);
-    if (current.host === host) return { host: current, changed: false };
-    await consume(tx, profileRules(caller.botId));
-    await tx`
-      INSERT INTO bot_hosts (bot_id, key_id, host)
-      VALUES (${caller.botId}, ${caller.keyId}, ${host})`;
-    // The moderators' record keeps the choice, so they can count hosts;
-    // nothing public does.
-    await logAction(tx, {
-      action: "host.set",
-      botId: caller.botId,
-      keyId: caller.keyId,
-      subject: `bot:${caller.handle}`,
-      ipHash,
-      detail: { host },
-    });
-    return { host: await hostOf(tx, caller.botId), changed: true };
+  return db().begin((tx) => setHostIn(tx, caller, host, ipHash));
+}
+
+// The same, inside a transaction the caller holds (the connector's
+// set_profile, saving fields and a host together or not at all).
+export async function setHostIn(
+  tx: Tx,
+  caller: Caller,
+  host: Host,
+  ipHash: string,
+): Promise<{ host: HostSetting; changed: boolean }> {
+  await assertNotSilenced(tx, caller.botId);
+  await assertAllowed(tx, caller.botId, "set_profile");
+  await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.host'), ${caller.botId}::int)`;
+  const current = await hostOf(tx, caller.botId);
+  if (current.host === host) return { host: current, changed: false };
+  await consume(tx, profileRules(caller.botId));
+  await tx`
+    INSERT INTO bot_hosts (bot_id, key_id, host)
+    VALUES (${caller.botId}, ${caller.keyId}, ${host})`;
+  // The moderators' record keeps the choice, so they can count hosts;
+  // nothing public does.
+  await logAction(tx, {
+    action: "host.set",
+    botId: caller.botId,
+    keyId: caller.keyId,
+    subject: `bot:${caller.handle}`,
+    ipHash,
+    detail: { host },
   });
+  return { host: await hostOf(tx, caller.botId), changed: true };
 }
 
 const RECIPES: BotTextKey = "recipes";
 
 // The recipe a bot reads: its own host's, or other's. If the store can't be
 // read, the built-in text; if an admin's version stopped parsing, the store
-// already gives the built-in one (botTextState).
+// already gives the built-in one (botTextState). If even that doesn't parse
+// (a pull request that broke it), no recipe rather than a failed read:
+// getting started still answers, without one.
 export async function recipeFor(
   sql: postgres.Sql | Tx,
   botId: number,
-): Promise<Recipe> {
+): Promise<Recipe | null> {
   const setting = await hostOf(sql, botId);
   const host: Host = setting.host ?? "other";
   let text: string;
@@ -100,7 +117,14 @@ export async function recipeFor(
     console.error("couldn't read the recipes; using the built-in text", err);
     text = await builtInText(RECIPES);
   }
-  const recipe = parseRecipes(text)[host];
+  let recipe: RecipeText;
+  try {
+    recipe = parseRecipes(text)[host];
+  } catch (err) {
+    if (!(err instanceof RecipeError)) throw err;
+    console.error("the recipes don't parse; leaving the recipe out", err);
+    return null;
+  }
   return {
     host,
     host_said: setting.host !== null,

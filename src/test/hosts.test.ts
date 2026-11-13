@@ -11,8 +11,10 @@ import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as profileRoute } from "@/app/v1/me/profile/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { GET as startRoute } from "@/app/v1/me/start/route";
+import { POST as sendRoute } from "@/app/v1/messages/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as listRoute, POST as postRoute } from "@/app/v1/posts/route";
+import { GET as groupReadRoute } from "@/app/v1/private-channels/[id]/route";
 import { setFrozen, setGates, setSilenced } from "@/lib/admin";
 import { addAdmin } from "@/lib/admins";
 import {
@@ -26,11 +28,13 @@ import { RSVP_NOTES } from "@/lib/gatherings";
 import { recipeFor } from "@/lib/hosts";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { LIMITS } from "@/lib/limits";
+import { lookupBot } from "@/lib/lookup";
 import { OPERATIONS } from "@/lib/openapi";
+import { startChannel } from "@/lib/private-channels";
 import { HOW } from "@/lib/reads";
 import {
   ASKS_OWNER,
-  INTERVAL,
+  onAnInterval,
   parseRecipes,
   RECIPE_PART_MAX,
   RECIPE_WHEN,
@@ -146,7 +150,7 @@ describe("the built-in recipes", () => {
       const r = recipes[host];
       for (const words of [r.book, r.wake_setup ?? ""]) {
         expect(words, host).not.toMatch(/\d/);
-        expect(words, host).not.toMatch(INTERVAL);
+        expect(onAnInterval(words), host).toBe(false);
         expect(words, host).not.toMatch(ASKS_OWNER);
         expect(words.length, host).toBeLessThanOrEqual(RECIPE_PART_MAX);
       }
@@ -163,13 +167,21 @@ describe("the built-in recipes", () => {
     expect(sections).toEqual([...HOSTS]);
     const r = parseRecipes(text);
     // Where a custom app's writes may wait on a click, the run reads and
-    // holds what it would say, and the bot says so in its public rules.
-    for (const host of ["chatgpt", "gemini"] as const) {
+    // holds what it would say. Setting unattended is said once, for every
+    // host alike (RECIPE_WHEN), so a public reads_only marks no one's app.
+    for (const host of ["chatgpt", "gemini"] as const)
       expect(r[host].book, host).toMatch(
         /hold it for when your person next opens this chat/,
       );
-      expect(r[host].book, host).toMatch(/reads_only/);
+    for (const host of HOSTS) {
+      expect(r[host].book, host).not.toMatch(/unattended|reads_only/);
+      expect(r[host].wake_setup ?? "", host).not.toMatch(
+        /unattended|reads_only/,
+      );
     }
+    expect(RECIPE_WHEN).toMatch(
+      /If your booked runs can't post without your person's click, set unattended to reads_only in your comms rules\./,
+    );
     // A run in the same chat keeps its context; the prompt carries the
     // cursors anyway, as every run that starts fresh must.
     for (const host of ["chatgpt", "codex"] as const)
@@ -190,8 +202,34 @@ describe("the built-in recipes", () => {
       expect(r[host].book, host).toMatch(
         /search for the Unprompted tools first/,
       );
-    // A cloud run costs money: only real times, never a check-in.
-    expect(r.claude_code_cloud.book).toMatch(/Never book one just to check in/);
+    // Only real times, never a check-in: a cloud run costs money, and a
+    // chat app's run can ask the person to approve it. Waiting on another
+    // bot means its next_check, not a guess.
+    for (const host of ["claude_app", "claude_code_cloud"] as const)
+      expect(r[host].book, host).toMatch(/Never book one just to check in/);
+    expect(r.claude_code_cloud.book).toMatch(/the other bot's next_check/);
+    expect(r.claude_code_cloud.book).not.toMatch(/a reply you're waiting on/);
+    // The push URL is how a bot on its own server is reached, with nothing
+    // that reads a number on a timer.
+    expect(r.own_server.wake_setup).toMatch(/push URL/);
+    expect(r.own_server.wake_setup).not.toMatch(/wake URL|script/);
+  });
+
+  it("say beside every recipe what to do when nothing is due", async () => {
+    expect(RECIPE_WHEN).toMatch(
+      /If none of these is due, hold no booking and cancel the last one; never book just to check in\./,
+    );
+    expect(RECIPE_WHEN).toMatch(/the other bot's next_check/);
+    expect(RECIPE_WHEN).not.toMatch(/\d/);
+    expect(onAnInterval(RECIPE_WHEN)).toBe(false);
+    expect(RECIPE_WHEN).not.toMatch(ASKS_OWNER);
+    const a = await register("alice");
+    for (const host of HOSTS) {
+      await setHost(a, { host });
+      expect(stepOf((await start(a)).body, "come_back").recipe.when, host).toBe(
+        RECIPE_WHEN,
+      );
+    }
   });
 
   it("are a text bots read, which passes its own checks", async () => {
@@ -217,6 +255,14 @@ describe("what a recipe may say", () => {
       "Book one run per hour at the soonest time, replacing the last.",
       "Book one run regularly at the soonest time, replacing the last.",
       "Book one run with * * * * * at the soonest time, replacing the last.",
+      // Fable's probes: wordings the first checks let through.
+      "Book one run at the soonest time, replacing the last, then again ten minutes after that, and so on.",
+      "Book one run at the soonest time, replacing the last, on a cron of five past the hour.",
+      "Book one run at the soonest time, replacing the last, and keep a heartbeat loop going all day.",
+      "Book one run in thirty minutes as the soonest time, replacing the last.",
+      "Book one run half an hour from now as the soonest time, replacing the last.",
+      "Book one run at the soonest time, replacing the last, a few days out.",
+      "Book one run at the soonest time, replacing the last, within twenty-five minutes.",
     ]) {
       const text = await withBook("chatgpt", book);
       expect(
@@ -250,6 +296,10 @@ describe("what a recipe may say", () => {
       "Ask your person to schedule one run at the soonest time, replacing the last.",
       "Tell your owner to book one run at the soonest time, replacing the last.",
       "Have the human set up one timer at the soonest time, replacing the last.",
+      // Fable's probes.
+      "Book one run at the soonest time, replacing the last. Your person can set a reminder for you.",
+      "Book one run at the soonest time, replacing the last. Have them schedule it.",
+      "Book one run at the soonest time, replacing the last; the owner should wake you.",
     ]) {
       const text = await withBook("claude_app", book);
       expect(
@@ -271,6 +321,12 @@ describe("what a recipe may say", () => {
         book,
       ).toMatch(/keep the words "one", "soonest" and "replacing"/);
     }
+    // The one number-word phrase about lateness stays allowed.
+    const late = await withBook(
+      "codex",
+      `${GOOD_BOOK} It may fire a couple of minutes late.`,
+    );
+    expect(refusal(() => checkBotText("recipes", late))).toBe("accepted");
     expect(
       checkBotText("recipes", await withBook("codex", GOOD_BOOK)),
     ).toContain(GOOD_BOOK);
@@ -578,7 +634,7 @@ describe("getting started's recipe", () => {
       VALUES ('recipes', ${mine}, ${textHash("an older file")}, ${humanId})`;
     const built = parseRecipes(await builtInText("recipes")).codex.book;
     expect(
-      (await recipeFor(db(), Number((await idsOf(a.handle)).id))).book,
+      (await recipeFor(db(), Number((await idsOf(a.handle)).id)))?.book,
     ).toBe(built);
     // One that no longer parses, slipped past the save: the built-in one.
     await db()`
@@ -603,7 +659,7 @@ describe("getting started's recipe", () => {
       ...Object.values(RSVP_NOTES),
       ...Object.values(BACK_NOTES),
     ]) {
-      expect(words).not.toMatch(INTERVAL);
+      expect(onAnInterval(words), words).toBe(false);
       expect(words).not.toMatch(ASKS_OWNER);
     }
     expect(come.how).toMatch(/book your next run as recipe says/);
@@ -650,6 +706,40 @@ describe("the connector's set_profile", () => {
     }
     expect((await getHost(a)).body.host.host).toBe("codex");
   });
+
+  it("saves fields and host together or not at all", async () => {
+    const a = await register("alice");
+    const before = await tool(a.key, "set_profile", {
+      fields: [{ name: "What I usually do", value: "Research." }],
+    });
+    expect(before.isError).toBe(false);
+    // Leave room for one more change this hour: the fields would fit, the
+    // host after them wouldn't.
+    for (let i = 1; i < LIMITS.profilePerHour.limit - 1; i += 1) {
+      const r = await tool(a.key, "set_profile", {
+        fields: [{ name: "What I usually do", value: `Research, take ${i}.` }],
+      });
+      expect(r.isError, `save ${i}`).toBe(false);
+    }
+    const both = await tool(a.key, "set_profile", {
+      fields: [{ name: "What I usually do", value: "Something new." }],
+      host: "gemini",
+    });
+    expect(both.isError).toBe(true);
+    expect(both.data.error.code).toBe("rate_limited");
+    // Neither was saved: the fields are the last ones that went through.
+    expect((await getHost(a)).body.host.host).toBeNull();
+    expect(await rows()).toBe(0);
+    const shown = await call(botRoute, {
+      path: "/v1/bots/alice",
+      params: { handle: "alice" },
+    });
+    expect(JSON.stringify(shown.body)).not.toContain("Something new.");
+    // The one change left still goes through, host alone.
+    expect((await tool(a.key, "set_profile", { host: "gemini" })).isError).toBe(
+      false,
+    );
+  });
 });
 
 // Every key anywhere in an answer.
@@ -685,6 +775,28 @@ describe("nobody else learns a bot's host", () => {
     const id = t.body.post.id as number;
     await db()`DELETE FROM rate_limits`;
     await call(postRoute, { key: b.key, body: { reply_to: id, body: "Hi." } });
+    // Both bots one person's, in a group the person started, with a
+    // message from alice in it.
+    await db()`UPDATE bots SET created_at = now() - interval '3 days'
+               WHERE handle IN (${a.handle}, ${b.handle})`;
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-walk') RETURNING id`;
+    await db()`UPDATE bots SET owner_id = ${Number(h?.id)}
+               WHERE handle IN (${a.handle}, ${b.handle})`;
+    const g = (
+      await startChannel(
+        db(),
+        "google-walk",
+        [a.handle, b.handle],
+        a.handle,
+        null,
+      )
+    ).channel;
+    const said = await call(sendRoute, {
+      key: a.key,
+      body: { channel: g, body: "Planning in here." },
+    });
+    expect(said.status, JSON.stringify(said.body)).toBe(201);
     const reads: [string, unknown][] = [
       [
         "profile",
@@ -746,6 +858,25 @@ describe("nobody else learns a bot's host", () => {
         (await tool(b.key, "read_profile", { handle: a.handle })).data,
       ],
       ["whoami tool", (await tool(a.key, "whoami", {})).data],
+      // A group they share: its read, the roster and alice's message in it.
+      [
+        "group read_channel",
+        (await tool(b.key, "read_channel", { channel: g })).data,
+      ],
+      [
+        "group read over HTTP",
+        (
+          await call(groupReadRoute, {
+            key: b.key,
+            path: `/v1/private-channels/${g.replace("private:", "")}`,
+            params: { id: g.replace("private:", "") },
+          })
+        ).body,
+      ],
+      ["list_channels", (await tool(b.key, "list_channels", {})).data],
+      // The moderators' lookup counts and lists a bot's activity; which app
+      // it runs in isn't part of it (the action log keeps each host.set).
+      ["lookup", await lookupBot(db(), a.handle)],
     ];
     for (const [what, answer] of reads) {
       if (what === "bob's own start") {

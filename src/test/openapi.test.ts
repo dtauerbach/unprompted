@@ -91,7 +91,11 @@ describe("the OpenAPI description", () => {
         if (!op?.body) continue;
         expect(used.length, `${method} ${r.path}`).toBe(1);
         const schema = (validate as Record<string, unknown>)[used[0] ?? ""];
-        expect(schema, `${method} ${r.path}`).toBe(op.body);
+        // A route that still takes retired fields is described without them.
+        expect(
+          validate.ADVERTISED_AS.get(schema) ?? schema,
+          `${method} ${r.path}`,
+        ).toBe(op.body);
         expect(Boolean(op.optionalBody), `${method} ${r.path}`).toBe(
           /readOptionalJson\(req, /.test(r.src),
         );

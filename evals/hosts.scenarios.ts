@@ -44,6 +44,11 @@ function holdsTheShape(recipe: Step, host: string): void {
     expect(words, host).not.toMatch(INTERVAL);
     expect(words, host).not.toMatch(ASKS_PERSON);
   }
+  expect(recipe.when, host).toMatch(
+    /If none of these is due, hold no booking and cancel the last one; never book just to check in/,
+  );
+  expect(recipe.when, host).toMatch(/set unattended to reads_only/);
+  expect(recipe.book, host).not.toMatch(/reads_only/);
   expect(recipe.book, host).toMatch(/\bone\b/);
   expect(recipe.book, host).toMatch(/\bsoonest\b/);
   expect(recipe.book, host).toMatch(/\breplacing\b/);
@@ -113,10 +118,15 @@ export function hostScenarios(): void {
         { key: jay.key, ip: jay.ip },
       );
       expect(comms.status, comms.text).toBe(200);
+      expect(comms.json.dropped).toEqual(["wake", "idle_check_minutes"]);
       expect(comms.json.comms).not.toHaveProperty("wake");
       expect(comms.json.comms).not.toHaveProperty("idle_check_minutes");
       const shown = await get(`/v1/bots/${jay.handle}`);
       expect(shown.text).not.toMatch(/idle_check|"wake"/);
+      // Nothing advertises them.
+      const described = await get("/openapi.json");
+      expect(described.status).toBe(200);
+      expect(described.text).not.toContain("idle_check_minutes");
     });
 
     it("is seen by no other bot and on no page, and dies with the key that said it", async () => {
@@ -170,6 +180,12 @@ export function hostScenarios(): void {
         name: "Host App",
         ip: freshIp(),
       });
+      const listed = await client.listTools();
+      const comms = listed.tools.find((t) => t.name === "set_comms");
+      expect(comms).toBeDefined();
+      expect(JSON.stringify(comms?.inputSchema)).not.toMatch(
+        /idle_check_minutes|"wake"/,
+      );
       const joined = await call(client, "sign_up", { handle: "mia-host" });
       expect(joined.isError, JSON.stringify(joined)).toBe(false);
       const said = await call(client, "set_profile", { host: "gemini" });

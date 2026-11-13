@@ -20,22 +20,47 @@ export type Recipe = {
   when: string;
 };
 
+// The rule every recipe follows, said in code so no edit drops it: which
+// time to book, what to do when nothing is due, and how a bot whose booked
+// runs can't post says so. Host-neutral, so no line marks a bot's app.
 export const RECIPE_WHEN =
-  "Book it for the soonest time you have to be back: a back.at you posted, a gathering's wake_at, a next_check you promised. Hold one booking and replace it each visit; never book on a clock that comes round again.";
+  "Book it for the soonest time you have to be back: a back.at you posted, a gathering's wake_at, a next_check you promised, or the other bot's next_check. Hold one booking at a time and replace it each visit. If none of these is due, hold no booking and cancel the last one; never book just to check in. If your booked runs can't post without your person's click, set unattended to reads_only in your comms rules.";
 
 // One part of a recipe, as an admin may write it.
 export const RECIPE_PART_MAX = 600;
 
-// Words that put a run on a clock that comes round again. A recipe books one
-// run at a time, so none of these belong in one; digits are refused apart
-// (no numbers at all), which also keeps out a cron pattern's minutes.
-export const INTERVAL =
-  /\b(?:every|everyday|hourly|daily|nightly|weekly|fortnightly|monthly|yearly|annually|recurs?|recurring|recurrence|repeat\w*|interval\w*|periodic\w*|poll\w*|regularly)\b|\b(?:each|per|a|an) (?:minute|hour|day|night|week|month|year)\b|\bonce (?:a|an|per) \w+|\*\s*\*/i;
+// Words that put a run on a clock that comes round again, or at a distance
+// from now rather than at a time something is due. A recipe books one run at
+// a time, so none of these belong in one; digits are refused apart (no
+// numbers at all), which also keeps out a cron pattern's minutes, and number
+// words with a unit are refused here. These catch slips; an admin who means
+// to get round them still can, so an admin stays inside the bots' trust
+// boundary (AGENTS.md).
+export const INTERVAL = new RegExp(
+  [
+    String.raw`\b(?:every|everyday|hourly|daily|nightly|weekly|fortnightly|monthly|yearly|annually|recurs?|recurring|recurrence|repeat\w*|interval\w*|periodic\w*|poll\w*|regularly|cron\w*|crontab|loop\w*|heartbeat\w*|again)\b`,
+    String.raw`\b(?:each|per|a|an) (?:minute|hour|day|night|week|month|year)\b`,
+    String.raw`\bonce (?:a|an|per) \w+`,
+    String.raw`\bpast the hour\b|\bfrom now\b`,
+    String.raw`\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|ninety|hundred|half|quarter|couple|few|several|many)(?:[\s-]+(?:of|an?))*[\s-]+(?:seconds?|minutes?|mins?|hours?|hrs?|days?|nights?|weeks?|months?)\b`,
+    String.raw`\*\s*\*`,
+  ].join("|"),
+  "i",
+);
+
+// The one number-word phrase a built-in recipe uses about lateness, not
+// about when to come back.
+const LATE = /\ba couple of minutes late\b/gi;
 
 // A person never schedules anything (docs/MODEL.md): no recipe sends a bot
-// back to its person to book, remind or wake it.
+// back to its person to book, remind or wake it, or says the person could.
 export const ASKS_OWNER =
-  /(?<!never |n.t |not )(?:ask|tell|get|have) (?:your|its|the) (?:owner|person|human|user)[^.]*(?:schedul|remind|wake|cron|book|set up|timer)|ask whatever runs you/i;
+  /(?<!never |n.t |not )(?:ask|tell|get|have) (?:your|its|the) (?:owner|person|human|user)[^.]*(?:schedul|remind|wake|cron|book|set up|timer)|ask whatever runs you|\b(?:your|its|the) (?:owner|person|human|user) (?:can|could|should|must|will|would|may|might|needs? to|has to)\b|\bhave them\b/i;
+
+// Whether words put a run on an interval, the built-in lateness aside.
+export function onAnInterval(words: string): boolean {
+  return INTERVAL.test(words.replace(LATE, ""));
+}
 
 export class RecipeError extends Error {}
 
@@ -102,7 +127,7 @@ function checkPart(host: Host, name: string, words: string): string {
     fail(
       `Leave numbers out of ${host}'s ${name} line: a recipe books one run at the soonest time to be back, and provider limits change.`,
     );
-  if (INTERVAL.test(words))
+  if (onAnInterval(words))
     fail(
       `${host}'s ${name} line puts a run on a clock that comes round again. A recipe books one run at a time, at the soonest time to be back.`,
     );

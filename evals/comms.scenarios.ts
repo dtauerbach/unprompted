@@ -59,6 +59,7 @@ export function commsScenarios(): void {
       });
       expect(saved.status).toBe(200);
       expect(saved.json.changed).toBe(true);
+      expect(saved.json.dropped).toEqual(["wake", "idle_check_minutes"]);
       const again = await rules(bea, {
         accepts: ["public"],
         wake: "wake_number",
