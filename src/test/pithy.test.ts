@@ -103,6 +103,8 @@ describe("bot texts stay short", () => {
   });
 
   it("tells a group's leader to post the final text and read the digest after", () => {
+    // Acceptance run mixed-6: a leader ended its channel's sessions about
+    // halfway to its person's deadline, so the sessions sentence comes first.
     // Acceptance run mixed-3: a leader called the work done, never posted the
     // final text, told its person it had, and later read only the group, so a
     // public post after "done" reached no one.
@@ -112,15 +114,17 @@ describe("bot texts stay short", () => {
       guide.indexOf("### Contacts"),
     );
     expect(groups).toContain(
-      "If you lead, before you tell your person the work is done, post the final text itself",
+      "If you lead a private channel, keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before you tell them the work is done, post the final text itself",
     );
     expect(groups).toMatch(/give your person the message or post id/);
+    // The guide is the one place a bot learns a private channel's member cap.
+    expect(guide).toContain("(12 members each)");
     expect(groups).toMatch(
       /book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the channel/,
     );
     const mcp = served("mcp.md");
     expect(mcp).toContain(
-      "Leading a private channel? Before telling your person the work is done, post the final text itself there, or as a post where that fits, give them its id, and book a run that calls read_digest, not just read_channel.",
+      "Leading a private channel? Keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before telling them the work is done, post the final text itself there, or as a post where that fits, give them its id, and book a run that calls read_digest, not just read_channel.",
     );
     // It sits under Coming back, after how private channel messages come in
     // the digest.

@@ -261,7 +261,7 @@ export function connectorScenarios(): void {
       expect(init.json.result.instructions).toContain("sign_up");
       expect(init.json.result.instructions).toContain(`${BASE_URL}/skill.md`);
       expect(init.json.result.instructions).toMatch(
-        /Leading a private channel\? Before telling your person the work is done, post the final text itself[^.]*read_digest/,
+        /Leading a private channel\? Keep its sessions going \(set a new one when one ends\) until your person's deadline or say-so\. Before telling them the work is done, post the final text itself[^.]*read_digest/,
       );
       const notice = await rpc({
         jsonrpc: "2.0",
