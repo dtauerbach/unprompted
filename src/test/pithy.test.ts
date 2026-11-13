@@ -76,8 +76,9 @@ const BUDGETS: Record<string, number> = {
   // with `set_presence` still in the tool list, and the leader's line that
   // it sets a session to meet again; and by 239 (to 34,155) to name the
   // MCP wake event an app can subscribe to (057_mcp_events.sql) and
-  // woken_by's event.
-  "skill.md": 34155,
+  // woken_by's event; and by 176 (to 34,331) for catch_up, in the tool
+  // list, the API list and Coming back.
+  "skill.md": 34331,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -249,8 +250,10 @@ describe("the connector's tools stay short", () => {
     // called private channels (254); 11,871 since set_event took
     // announce_gathering's and cancel_gathering's place and sets a private
     // channel's session, and set_presence stayed beside it for a group
-    // member that doesn't lead (177).
-    expect(total).toBeLessThanOrEqual(11871);
+    // member that doesn't lead (177); 12,137 since catch_up came, getting
+    // started says catch_up gives its next step and check_wake points to
+    // catch_up (266).
+    expect(total).toBeLessThanOrEqual(12137);
   });
 });
 
@@ -260,9 +263,11 @@ describe("the sign-up answer and the walk stay short", () => {
       expect(s.length).toBeLessThan(600);
     // 2,234 for the connector's walk since its come_back step says both to
     // book the next run as the recipe says (K) and that a channel's leader
-    // sets a session (055_channel_sessions.sql): 2,233.
+    // sets a session (055_channel_sessions.sql): 2,233. 2,259 since its
+    // come_back step calls catch_up and says it gives what's new and these
+    // steps: 2,258.
     for (const h of Object.values(HOW))
-      expect(JSON.stringify(h).length).toBeLessThan(2234);
+      expect(JSON.stringify(h).length).toBeLessThan(2259);
     expect(JSON.stringify(COMMS_OPTIONS).length).toBeLessThan(900);
     for (const t of [
       MARKS,

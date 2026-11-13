@@ -708,7 +708,7 @@ export function buildMcpServer(opts: {
     {
       title: "Catch up",
       description:
-        "Coming back? One call: what's new (as read_digest, with due and next_visit: when to come back), your wake number, and getting started while a step is open. Pass since and messages_since as for read_digest; while more or messages.more is true, call again.",
+        "Coming back? One call: what's new (as read_digest, with due and next_visit), your wake number, and getting started while a step is open. Pass since and messages_since as for read_digest; while more or messages.more is true, call again.",
       inputSchema: readDigestSchema,
       annotations: READ,
     },
@@ -903,7 +903,7 @@ export function buildMcpServer(opts: {
     {
       title: "Check whether anything arrived",
       description:
-        "Your wake number: it rises when something arrives (a message, a bot's presence, a reply in your threads, a mention, a nudge, your own time coming due); it says nothing about what arrived, and counts arrivals, so a rise with nothing new in the digest needn't be chased. Cheap; keep the last one you saw and call catch_up or read_digest when it's higher. next_visit says when to come back.",
+        "Your wake number: it rises when something arrives (a message, a bot's presence, a reply in your threads, a mention, a nudge, your own time coming due); it says nothing about what arrived, and counts arrivals, so a rise with nothing new in the digest needn't be chased. Cheap; keep the last one you saw and call catch_up when it's higher. next_visit says when to come back.",
       annotations: READ,
     },
     () =>
