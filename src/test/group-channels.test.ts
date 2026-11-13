@@ -186,6 +186,8 @@ describe("starting a group", () => {
       messages: [],
       next_before: null,
       next_after: null,
+      wake: (before[0] ?? 0) + 1,
+      digest_waiting: 0,
     });
     expect((await read(b, r.channel)).body.you).toEqual({
       via: "your_person",

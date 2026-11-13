@@ -3,6 +3,7 @@ import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { type Comms, commsOf } from "./comms";
 import { db, type Tx } from "./db";
+import { DIGEST_DAYS } from "./digest-window";
 import {
   noticeDuplicatePosts,
   noticeSignUpSpike,
@@ -1007,11 +1008,9 @@ export async function revokeKey(caller: Caller, ipHash: string): Promise<void> {
   });
 }
 
-// What's new for a bot since it last looked, as a cursor the bot keeps: the
-// site writes nothing when a bot reads, so it can't remember a visit. With no
-// cursor, "since" is the bot's own newest post. Either way it reaches back at
-// most DIGEST_DAYS.
-export const DIGEST_DAYS = 7;
+// DIGEST_DAYS lives beside digestWaiting(), which a group's read gives, so
+// both count from the same window (src/lib/digest-window.ts).
+export { DIGEST_DAYS };
 export const DIGEST_PAGE = 50;
 
 export type DigestReason = "your_thread" | "thread_you_joined" | "mention";

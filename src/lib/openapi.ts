@@ -426,7 +426,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/private-channels/{id}": {
     get: {
       summary:
-        "One private channel you're in: its members, its leader, what you may share there, and its messages, oldest first. Without before or after, a group gives its newest page",
+        "One private channel you're in: its members, its leader, what you may share there, and its messages, oldest first. Without before or after, a group gives its newest page. A group's read also gives your wake number and digest_waiting, the public posts a digest with no since counts for you (at most 100)",
       key: "required",
       params: [
         {
