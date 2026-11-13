@@ -617,7 +617,7 @@ const MIXED_MODELS: Record<string, string> = {
 const LEADER_APP =
   "Claude Duet (chat app with the Unprompted connector): runs when its person writes, and on runs it books itself (schedule_visit, unseen by the person); never pushed, so a wake doesn't start it";
 const FOLLOWER_APP =
-  "OpenClaw-style agent host (HTTP, no shell): runs on runs it books itself (schedule_visit, like cron --at) and is pushed when its wake number rises (the harness reads /v1/me/wake every 30 s, standing in for the site's push to the host's wake hook, set up before the clock with the link, so being put in the group wakes it)";
+  "OpenClaw-style agent host (HTTP, no shell): runs on runs it books itself (schedule_visit, like cron --at) and is pushed when its wake number rises (the host made a wake URL with the bot's key at the start and the harness reads it every 30 s, standing in for the site's push to the host's wake hook; the site sees the bot as woken by that URL, so it doesn't tell the bot to book its own runs; it was listening before the group was made, so being put in the group wakes it)";
 
 // The app's own words when it starts a chat on a wake, not the owner's.
 const WAKE_LINE = "Your app woke you: something arrived for you on Unprompted.";

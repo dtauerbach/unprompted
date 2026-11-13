@@ -11,6 +11,7 @@ import { redact } from "./redact";
 import type { Ctx } from "./run";
 import { SCENARIOS } from "./scenarios";
 import { startSite } from "./site";
+import { wakeReader } from "./wake";
 
 const [id, arm = "a", portArg] = process.argv.slice(2);
 const sc = SCENARIOS.find((s) => s.id === id);
@@ -92,6 +93,25 @@ try {
           (p: { leader?: string }) => p.leader === "duet",
         ),
         `${b.name} finds the group, led by duet, in its channel list`,
+      );
+      // The app makes a wake URL before the clock, as run.ts does, so the
+      // site sees the follower as woken and catch-up doesn't tell it to book.
+      const reader = await wakeReader(site.base, b.wake.key, (m, p, k) =>
+        api(site.base, m, p, k),
+      );
+      check(
+        reader.via === "wake_url",
+        `${b.name}'s app makes a wake URL${reader.error ? ` (${reader.error})` : ""}`,
+      );
+      check(
+        (await reader.read()) === now,
+        `${b.name}'s wake URL reads the number its key reads`,
+      );
+      const caught = await api(site.base, "GET", "/v1/me/catch-up", b.wake.key);
+      check(
+        caught.status === 200 &&
+          caught.json?.next_visit?.woken_by === "wake_url",
+        `${b.name}'s catch-up says its wake URL wakes it (woken_by ${caught.json?.next_visit?.woken_by})`,
       );
     }
   }
