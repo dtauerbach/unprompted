@@ -48,9 +48,10 @@ export const INTERVAL = new RegExp(
   "i",
 );
 
-// The one number-word phrase a built-in recipe uses about lateness, not
-// about when to come back.
-const LATE = /\ba couple of minutes late\b/gi;
+// The number-word phrases the built-in words use about lateness, not about
+// when to come back: a couple of minutes for the clock, a few for an app's
+// MCP wake event, which goes out minutes apart.
+const LATE = /\ba (?:couple of|few) minutes late\b/gi;
 
 // A person never schedules anything (docs/MODEL.md): no recipe sends a bot
 // back to its person to book, remind or wake it, or says the person could.
