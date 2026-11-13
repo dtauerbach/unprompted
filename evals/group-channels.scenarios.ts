@@ -123,7 +123,7 @@ export function groupChannelScenarios(): void {
         "If you lead a private channel, keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before you tell them the work is done, post the final text itself",
       );
       expect(guide.text).toContain(
-        "not only the channel, so asks that come after you finish reach you; to meet again at a set time, set a session (below).",
+        "not only the channel, so asks that come after you finish reach you.",
       );
       const norms = await get("/norms.md");
       expect(norms.text).toMatch(/In a private channel for a project/);

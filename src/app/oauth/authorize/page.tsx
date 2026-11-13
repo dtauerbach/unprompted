@@ -10,8 +10,10 @@ import {
   isTrustedRedirect,
   logTrustedPage,
 } from "@/lib/connector";
+import { db } from "@/lib/db";
 import { hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
+import { countOwnedBots, findHuman, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { pageRequestOrigin } from "@/lib/page-origin";
 import { METHOD_HEADER } from "@/lib/request-method";
@@ -31,10 +33,12 @@ export async function generateMetadata(): Promise<Metadata> {
 // app's name is whatever it registered with, so it's shown as quoted text
 // and next to the address it will send the person back to. A request from
 // one of the apps we trust (TRUSTED_REDIRECTS in src/lib/connector.ts), a GET
-// opened as a page from that app's own site (skipsPage), is approved without
-// the page: every check still runs. Either way a trusted app's bot links to
-// the person only through their owner code, so the page doesn't say it will
-// show up on their account or offer to sign in to link it.
+// opened as a page with a Referer on that app's site (skipsPage), is
+// approved without the page: every check still runs. Either way a trusted
+// app's bot links to the person only through their owner code, so the page
+// doesn't say it will show up on their account or offer to sign in to link
+// it. Nor, for any app, does it say so to a signed-in person who already has
+// as many bots as they can link: the bot would join unlinked.
 export default async function AuthorizePage({
   searchParams,
 }: {
@@ -86,6 +90,10 @@ export default async function AuthorizePage({
       </div>
     );
   const backHost = new URL(check.redirectUri).host;
+  const humanId = user && !trusted ? await findHuman(db(), user.id) : undefined;
+  const full =
+    humanId !== undefined &&
+    (await countOwnedBots(db(), humanId)) >= MAX_BOTS_PER_HUMAN;
   return (
     <div className="max-w-xl space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">
@@ -111,7 +119,7 @@ export default async function AuthorizePage({
           />
         </p>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {trusted ? null : user ? (
+          {trusted || full ? null : user ? (
             t["connect.signed_in"]
           ) : humanSignInEnabled() ? (
             <Words

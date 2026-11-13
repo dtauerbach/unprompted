@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as botsRoute } from "@/app/v1/bots/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as registerClientRoute } from "@/app/v1/oauth/register/route";
 import { POST as tokenRoute } from "@/app/v1/oauth/token/route";
@@ -171,6 +172,13 @@ async function count(table: string): Promise<number> {
     `SELECT count(*)::int AS n FROM ${table}`,
   );
   return r?.n ?? 0;
+}
+
+// The rate-limit rows naming an address (or a grant's bucket), with counts.
+async function rowsFor(ipHash: string): Promise<Record<string, number>> {
+  const rows = await db()<{ bucket: string; count: number }[]>`
+    SELECT bucket, count FROM rate_limits WHERE bucket LIKE ${`%${ipHash}%`}`;
+  return Object.fromEntries(rows.map((r) => [r.bucket, r.count]));
 }
 
 async function exchange(form: Record<string, string>) {
@@ -515,31 +523,111 @@ describe("approving a trusted app without the page", () => {
     await awayFromWindowEdge(3600);
     const id = await clientFor([CLAUDE]);
     const ipHash = hashIp(freshIp());
-    const headers = opened(CLAUDE);
-    for (let i = 0; i < 10; i++)
-      expect(
-        (
-          await autoApprove(
-            params(id, CLAUDE, pkce().challenge),
-            {
-              method: "GET",
-              headers,
-              repeated: false,
-              authUserId: null,
-              ipHash,
-            },
-            ISS,
-          )
-        ).kind,
-      ).toBe("approved");
+    // The address's approvals are used up, its sign-ups not.
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES (${`approve:ip:${ipHash}`}, to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), ${LIMITS.approvePerIp.limit})`;
     const over = await autoApprove(
       params(id, CLAUDE, pkce().challenge),
-      { method: "GET", headers, repeated: false, authUserId: null, ipHash },
+      {
+        method: "GET",
+        headers: opened(CLAUDE),
+        repeated: false,
+        authUserId: null,
+        ipHash,
+      },
       ISS,
     );
     expect(over.kind).toBe("page");
     expect(over.kind === "page" && over.refusal?.status).toBe(429);
-    expect(await count("connector_grants")).toBe(10);
+    expect(over.kind === "page" && over.refusal?.message).toMatch(
+      /agents allowed from one address/,
+    );
+    expect(await count("connector_grants")).toBe(0);
+  });
+
+  it("counts against the address's registration limit, stopping there with a sign-up's refusal", async () => {
+    // A trusted grant's sign-up counts against its own bucket, so the
+    // approval is what counts against the approver's address: one address
+    // gets no more trusted connections an hour than sign-ups.
+    expect(LIMITS.registerPerIp.limit).toBeLessThan(LIMITS.approvePerIp.limit);
+    await awayFromWindowEdge(3600);
+    const ip = freshIp();
+    const ipHash = hashIp(ip);
+    const ask = async (redirect: string) => {
+      const id = await clientFor([redirect]);
+      return autoApprove(
+        params(id, redirect, pkce().challenge),
+        {
+          method: "GET",
+          headers: opened(redirect),
+          repeated: false,
+          authUserId: null,
+          ipHash,
+        },
+        ISS,
+      );
+    };
+    for (let i = 0; i < LIMITS.registerPerIp.limit; i++)
+      expect((await ask(i % 2 ? CLAUDE : CHATGPT)).kind).toBe("approved");
+    const over = await ask(CHATGPT);
+    expect(over.kind).toBe("page");
+    // The same refusal a sign-up from that address over the limit gets.
+    const bots = await count("bots");
+    const signUp = await call(botsRoute, {
+      body: { handle: "late-bot" },
+      ip,
+    });
+    expect(signUp.status).toBe(429);
+    expect(over.kind === "page" && over.refusal?.status).toBe(429);
+    expect(over.kind === "page" && over.refusal?.code).toBe("rate_limited");
+    expect(over.kind === "page" && over.refusal?.message).toBe(
+      signUp.body.error.message,
+    );
+    expect(await count("connector_grants")).toBe(LIMITS.registerPerIp.limit);
+    expect(await count("bots")).toBe(bots);
+    // A refused approval wrote nothing and used none of either count.
+    expect(await rowsFor(ipHash)).toEqual({
+      [`approve:ip:${ipHash}`]: LIMITS.registerPerIp.limit,
+      [`register:ip:${ipHash}`]: LIMITS.registerPerIp.limit,
+    });
+  });
+
+  it("counts Allow on a trusted callback against the registration limit too, and shows its refusal on the page", async () => {
+    await awayFromWindowEdge(3600);
+    const ipHash = hashIp(freshIp());
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES (${`register:ip:${ipHash}`}, to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), ${LIMITS.registerPerIp.limit})`;
+    const trusted = await clientFor([CLAUDE]);
+    await expect(
+      approve(params(trusted, CLAUDE, pkce().challenge), null, ipHash, ISS),
+    ).rejects.toMatchObject({
+      status: 429,
+      code: "rate_limited",
+      message: expect.stringMatching(/new bots from one address/),
+    });
+    expect(await count("connector_grants")).toBe(0);
+    // Another app's Allow counts its sign-up later, as today, not here.
+    const other = await clientFor([OTHER]);
+    await approve(params(other, OTHER, pkce().challenge), null, ipHash, ISS);
+    expect(await count("connector_grants")).toBe(1);
+    expect((await rowsFor(ipHash))[`register:ip:${ipHash}`]).toBe(
+      LIMITS.registerPerIp.limit,
+    );
+  });
+
+  it("shows the registration refusal on the page when the skip is refused for it", async () => {
+    await awayFromWindowEdge(3600);
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES (${`register:ip:${hashIp("10.9.9.9")}`}, to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), ${LIMITS.registerPerIp.limit})`;
+    const id = await clientFor([CHATGPT]);
+    const r = await page(params(id, CHATGPT, pkce().challenge));
+    expect(r.redirect).toBeUndefined();
+    expect(r.html).toContain("Allow");
+    expect(r.html).toMatch(/new bots from one address this hour/);
+    expect(await count("connector_grants")).toBe(0);
   });
 });
 
@@ -689,6 +777,25 @@ describe("the approval page", () => {
     const r = await page(params(id, OTHER, pkce().challenge));
     expect(r.html).toContain("Allow");
     expect(r.html).not.toMatch(/the most you can link/);
+  });
+
+  it("doesn't promise a full account the bot, nor tell it to sign in, but does one with room", async () => {
+    // The page escapes the apostrophes, so these leave them out.
+    const signedIn = "signed in, so the bot will show up on your account";
+    const signedOut = "not signed in, so the bot";
+    session.user = { id: "google-1" };
+    const id = await clientFor([OTHER]);
+    for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++) {
+      const roomy = await page(params(id, OTHER, pkce().challenge));
+      expect(roomy.html).toContain(signedIn);
+      const { code } = await issueOwnerCode(db(), "google-1", null);
+      await register(`bot-${i}`, { owner_code: code });
+    }
+    const full = await page(params(id, OTHER, pkce().challenge));
+    expect(full.html).toContain("Allow");
+    expect(full.html).not.toContain(signedIn);
+    expect(full.html).not.toContain(signedOut);
+    expect(full.html).not.toContain('id="connect-sign-in"');
   });
 });
 
@@ -959,9 +1066,11 @@ describe("a trusted app's token", () => {
     const { token, grant } = await connectAs("google-victim", ip, CHATGPT);
     const r = await tool(token, "sign_up", { handle: "mallory" });
     expect(r.isError).toBe(false);
-    expect((await bucketsFor(approver)).map((b) => b.bucket)).toEqual([
-      `approve:ip:${approver}`,
-    ]);
+    // The approval counted once against each; the sign-up, against neither.
+    expect(await rowsFor(approver)).toEqual({
+      [`approve:ip:${approver}`]: 1,
+      [`register:ip:${approver}`]: 1,
+    });
     const own = grantBucket(grant);
     expect(own).toMatch(/^[0-9a-f]{32}$/);
     expect((await bucketsFor(own)).map((b) => b.bucket)).toContain(
@@ -984,9 +1093,10 @@ describe("a trusted app's token", () => {
       connect_code: `conn_${"a".repeat(26)}`,
     });
     expect(r.data.error.code).toBe("invalid_connect_code");
-    expect((await bucketsFor(approver)).map((b) => b.bucket)).toEqual([
-      `approve:ip:${approver}`,
-    ]);
+    expect(await rowsFor(approver)).toEqual({
+      [`approve:ip:${approver}`]: 1,
+      [`register:ip:${approver}`]: 1,
+    });
     const own = grantBucket(grant);
     expect((await bucketsFor(own)).map((b) => b.bucket)).toEqual([
       `connect-try:${own}`,
@@ -1014,10 +1124,42 @@ describe("a trusted app's token", () => {
         redirect_uri: OTHER,
       })
     ).body.access_token;
+    // Nothing counted against its registration limit until it signed up.
+    expect(await rowsFor(approver)).toEqual({ [`approve:ip:${approver}`]: 1 });
     await tool(token, "sign_up", { handle: "alice" });
-    expect((await bucketsFor(approver)).map((b) => b.bucket).sort()).toEqual(
-      [`approve:ip:${approver}`, `register:ip:${approver}`].sort(),
+    expect(await rowsFor(approver)).toEqual({
+      [`approve:ip:${approver}`]: 1,
+      [`register:ip:${approver}`]: 1,
+    });
+  });
+
+  it("leaves a stranger's many sign-up tries on someone's grant off that person's rows", async () => {
+    await awayFromWindowEdge(3600);
+    const ip = freshIp();
+    const approver = hashIp(ip);
+    const { token, grant } = await connectAs("google-victim", ip, CHATGPT);
+    for (let i = 0; i < 3; i++) {
+      const r = await tool(token, "sign_up", {
+        handle: `mallory-${i}`,
+        connect_code: `conn_${"b".repeat(26)}`,
+      });
+      expect(r.data.error.code).toBe("invalid_connect_code");
+    }
+    expect((await tool(token, "sign_up", { handle: "mallory" })).isError).toBe(
+      false,
     );
+    expect((await tool(token, "sign_up", { handle: "again" })).isError).toBe(
+      true,
+    );
+    expect(await rowsFor(approver)).toEqual({
+      [`approve:ip:${approver}`]: 1,
+      [`register:ip:${approver}`]: 1,
+    });
+    const own = grantBucket(grant);
+    expect(await rowsFor(own)).toEqual({
+      [`connect-try:${own}`]: 3,
+      [`register:ip:${own}`]: 1,
+    });
   });
 });
 

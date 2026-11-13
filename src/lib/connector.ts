@@ -8,7 +8,12 @@ import { db } from "./db";
 import { ApiError, hashIp } from "./http";
 import { ensureHuman } from "./humans";
 import { hashKey, newKey } from "./keys";
-import { approveRules, clientRules, consume } from "./limits";
+import {
+  approveRules,
+  clientRules,
+  consume,
+  registerAddressRule,
+} from "./limits";
 import { logAction } from "./log";
 import { antiAbuse, assertWritable, isReadOnly } from "./settings";
 import type {
@@ -237,10 +242,12 @@ export function isPageNavigation(h: Headers): boolean {
   return true;
 }
 
-// Whether the page that sent the person here is the trusted app's own: the
+// Whether the person's last page was on the trusted app's site: the
 // Referer's origin is exactly the callback's origin (chatgpt.com for
-// ChatGPT's callback, claude.ai for Claude's). A missing or other Referer
-// gets the page, so an app that sends none only means people see the page.
+// ChatGPT's callback, claude.ai for Claude's). It doesn't show the app sent
+// them: a Referer survives redirects, so a link there to another site that
+// redirects here passes too. A missing or other Referer gets the page, so an
+// app that sends none only means people see the page.
 export function refererMatches(h: Headers, redirectUri: string): boolean {
   const ref = h.get("referer");
   if (!ref || !URL.canParse(ref) || !URL.canParse(redirectUri)) return false;
@@ -278,7 +285,7 @@ export type ApprovalRequest = {
 
 // Whether a request for a trusted app's callback skips the page: a GET with
 // no parameter repeated and a state to send back, opened by a browser as a
-// page, from the app's own site, while the site takes writes.
+// page, with a Referer on the app's site, while the site takes writes.
 export function skipsPage(
   check: AuthorizeCheck,
   request: Pick<ApprovalRequest, "method" | "headers" | "repeated">,
@@ -339,7 +346,10 @@ export function grantBucket(grantId: number): string {
 // the session, never the form. auto: approved without the page (autoApprove).
 // Any grant for a trusted app's callback, page or not, is marked
 // auto_approved: its bot links to that person only through their own owner
-// code, and its token's sign-up and tries count against grantBucket.
+// code, and its token's sign-up and tries count against grantBucket. So that
+// a fresh bucket per grant doesn't lift the registration limit on whoever
+// approves, the approval itself counts once against their address's
+// registration limit, refused as a sign-up over it is.
 export async function approve(
   params: Record<string, string | undefined>,
   authUserId: string | null,
@@ -357,7 +367,9 @@ export async function approve(
   if (auto && (!trusted || !input.state))
     throw new ApiError(400, "invalid", "This app needs the approval page.");
   return db().begin(async (tx) => {
-    await consume(tx, approveRules(ipHash, await antiAbuse(tx)));
+    const limits = await antiAbuse(tx);
+    await consume(tx, approveRules(ipHash, limits));
+    if (trusted) await consume(tx, [registerAddressRule(ipHash, limits)]);
     const humanId =
       authUserId === null ? null : await ensureHuman(tx, authUserId);
     const code = randomBytes(32).toString("base64url");
@@ -535,7 +547,8 @@ async function unboundGrant(
 // Signs the agent up with the token it already holds. The registration limit
 // counts the address of the human who allowed it, not the client's server:
 // a platform's servers connect for many people from a few addresses. A
-// trusted app's grant counts against its own bucket instead (grantBucket).
+// trusted app's grant counts against its own bucket instead (grantBucket);
+// its approval already counted once against the approver's address.
 export async function signUpWithToken(
   token: string,
   input: RegisterInput,

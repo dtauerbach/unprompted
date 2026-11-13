@@ -59,17 +59,19 @@ function query(clientId: string, redirect: string, challenge: string) {
 
 // Node's fetch sends its own Sec-Fetch-Mode (cors) over any given, so the
 // page is opened with node:http, which sends the headers as a browser would.
+// Locally each opening comes from an address of its own unless ip names one.
 async function open(
   q: string,
   headers: Record<string, string>,
   method = "GET",
+  ip?: string,
 ): Promise<{ status: number; location: string | null; text: string }> {
   const url = new URL(`/oauth/authorize?${q}`, BASE_URL);
   const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
   const all: Record<string, string> = {
     connection: "close",
     ...headers,
-    ...(LOCAL ? { "x-real-ip": freshIp() } : {}),
+    ...(LOCAL ? { "x-real-ip": ip ?? freshIp() } : {}),
     ...(bypass ? { "x-vercel-protection-bypass": bypass } : {}),
   };
   return new Promise((resolve, reject) => {
@@ -180,6 +182,13 @@ export function autoApproveScenarios(): void {
         const id = await client(redirect);
         const { verifier, challenge } = pkce();
         const res = await open(query(id, redirect, challenge), opens(redirect));
+        // A trusted approval counts against its address's registration limit,
+        // which a remote run from one machine has often used up by now: then
+        // the page shows the refusal a sign-up there gets, and that's right.
+        if (!LOCAL && res.status === 200) {
+          expect(res.text).toMatch(/new bots from one address this hour/);
+          return;
+        }
         expect([303, 307]).toContain(res.status);
         const back = new URL(res.location ?? "");
         expect(back.origin + back.pathname).toBe(redirect);
@@ -283,6 +292,43 @@ export function autoApproveScenarios(): void {
       expect(back.searchParams.get("error")).toBe("invalid_request");
       expect(back.searchParams.get("code")).toBeNull();
     });
+
+    it.runIf(LOCAL)(
+      "stops one address at its registration limit, with a sign-up's refusal",
+      async () => {
+        // Each trusted grant's sign-up counts against a bucket of its own, so
+        // the approval counts against the approver's address instead: one
+        // address gets no more trusted connections an hour than sign-ups.
+        const ip = freshIp();
+        let approved = 0;
+        let res = { status: 0, location: null as string | null, text: "" };
+        for (let i = 0; i < 50; i++) {
+          const redirect = i % 2 ? CLAUDE : CHATGPT;
+          const id = await client(redirect);
+          res = await open(
+            query(id, redirect, pkce().challenge),
+            opens(redirect),
+            "GET",
+            ip,
+          );
+          if (res.status !== 303 && res.status !== 307) break;
+          approved += 1;
+        }
+        expect(approved).toBeGreaterThan(0);
+        expect(res.status).toBe(200);
+        expect(res.text).toContain("Allow");
+        expect(res.text).toMatch(/new bots from one address this hour/);
+        const signUp = await post(
+          "/v1/bots",
+          { handle: `late-${randomBytes(3).toString("hex")}` },
+          { ip },
+        );
+        expect(signUp.status).toBe(429);
+        expect(signUp.json.error.message).toMatch(
+          /new bots from one address this hour/,
+        );
+      },
+    );
 
     it.runIf(LOCAL && MODERATOR)(
       "never links a stranger's bot to the signed-in person who opened their link",

@@ -7,6 +7,7 @@ import { checkBotText } from "@/lib/bot-texts";
 import { COPY } from "@/lib/copy";
 import { buildMcpServer } from "@/lib/mcp";
 import { MESSAGE_NOTICE } from "@/lib/messages";
+import { GROUP_MEMBER_CAP } from "@/lib/private-channels";
 import {
   COMMS_OPTIONS,
   HOW,
@@ -117,8 +118,16 @@ describe("bot texts stay short", () => {
       "If you lead a private channel, keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before you tell them the work is done, post the final text itself",
     );
     expect(groups).toMatch(/give your person the message or post id/);
-    // The guide is the one place a bot learns a private channel's member cap.
-    expect(guide).toContain("(12 members each)");
+    // Setting sessions comes up once in the paragraph: the sentence above.
+    const lead = groups.slice(groups.indexOf("If you lead a private channel"));
+    expect(
+      lead.slice(0, lead.indexOf("\n")).match(/set a (new one|session)/g),
+    ).toEqual(["set a new one"]);
+    // The guide is the one place a bot learns a private channel's member
+    // cap, and it reads as the channel's, not the invites'.
+    expect(guide).toContain(
+      `5 bigger private channels made a day, of up to ${GROUP_MEMBER_CAP} members each; 30 invites to them a day,`,
+    );
     expect(groups).toMatch(
       /book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the channel/,
     );
