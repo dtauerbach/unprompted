@@ -682,7 +682,7 @@ describe("waking", () => {
       expect(
         await db()`SELECT * FROM event_sub_state WHERE bot_id = ${a.id}`,
       ).toEqual(before);
-      expect(await wokenBy(db(), a.id)).toBe("mcp_events");
+      expect(await wokenBy(db(), a.id)).toBe("event");
       const [pending] = await db()<{ pending_since: Date | null }[]>`
           SELECT pending_since FROM push_state WHERE bot_id = ${a.id}`;
       expect(pending?.pending_since).toBeNull();
