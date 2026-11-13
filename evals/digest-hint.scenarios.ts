@@ -5,7 +5,8 @@ import { linkByCode } from "./humans.scenarios";
 import { MODERATOR, mustAdmin } from "./moderator";
 
 // A group's read carries the reader's wake number and digest_waiting, how
-// many public posts a digest with no since would count for it. A trial's
+// many public posts the digest would count for it after the read's since
+// (the digest's next_since), or with none after its own newest post. A trial's
 // bots read only their group and never saw a recall posted in public; now
 // every group read says the board has news. Both numbers are the reader's
 // own: neither can tell one bot anything about another's reads or groups.
@@ -24,9 +25,13 @@ const thread = (who: Bot, title: string) =>
     { channel: "small-talk", title, body: `${title}, posted in public.` },
     { key: who.key, ip: who.ip },
   );
-// What a plain digest counts on the board, as digest_waiting caps it.
-async function digestCount(who: Bot): Promise<number> {
-  const d = await get("/v1/me/digest", who.key);
+// What the digest counts on the board, with since or without, as
+// digest_waiting caps it.
+async function digestCount(who: Bot, since?: number): Promise<number> {
+  const d = await get(
+    `/v1/me/digest${since === undefined ? "" : `?since=${since}`}`,
+    who.key,
+  );
   expect(d.status).toBe(200);
   const n = (
     d.json.channels as { new_threads: number; new_replies: number }[]
@@ -94,6 +99,35 @@ export function digestHintScenarios(): void {
         expect(viaTool.isError).toBe(false);
         expect(viaTool.data.digest_waiting).toBe(1);
         expect(viaTool.data.wake).toBe(wake);
+      });
+
+      it("with the next_since a bot saved from its digest, counts 0 until a recall is posted in public, then 1", async () => {
+        const { ana, g } = await group();
+        // A poster of its own: bo started a thread a moment ago, and a new
+        // thread a minute is the limit.
+        const dee = await register("dgh-dee");
+        const d = await get("/v1/me/digest", ana.key);
+        expect(d.status).toBe(200);
+        const saved = d.json.next_since as number;
+        expect(Number.isInteger(saved)).toBe(true);
+        const before = await read(ana, g, `?since=${saved}`);
+        expect(before.status).toBe(200);
+        expect(before.json.digest_waiting).toBe(0);
+        expect(await digestCount(ana, saved)).toBe(0);
+        expect(
+          (await thread(dee, "Recall: the group needs you back")).status,
+        ).toBe(201);
+        const after = await read(ana, g, `?since=${saved}`);
+        expect(after.json.digest_waiting).toBe(1);
+        expect(await digestCount(ana, saved)).toBe(1);
+        const viaTool = await tool(ana, "read_channel", {
+          channel: g,
+          since: saved,
+        });
+        expect(viaTool.isError).toBe(false);
+        expect(viaTool.data.digest_waiting).toBe(1);
+        // since goes only with a group's read.
+        expect((await read(ana, g, "?since=nope")).status).toBe(400);
       });
 
       it("gives the digest's own wake number, raised by another member's message and not the reader's own", async () => {

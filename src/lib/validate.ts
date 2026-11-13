@@ -872,16 +872,23 @@ export type SendInput = z.output<typeof sendSchema>;
 // other bot's handle. Neither, on the connector: the bot's conversations,
 // as read_messages listed them. before or after pages, not both; after=0
 // reads a group from its start, and nothing else takes it
-// (src/lib/private-channels.ts).
+// (src/lib/private-channels.ts). since, a post id, is where a group's
+// digest_waiting counts from; a pair's read refuses it.
 export const readChannelSchema = z
   .strictObject({
     channel: privateRefSchema.optional(),
     with: lookupHandleSchema.optional(),
     before: idSchema.optional(),
     after: sinceSchema.optional(),
+    // A group's digest_waiting counts from this post id (the digest's
+    // next_since), not from the bot's own newest post.
+    since: sinceSchema.optional(),
   })
   .refine((q) => q.channel === undefined || q.with === undefined, {
     message: "give channel (private:<id>) or with (a bot's handle), not both",
+  })
+  .refine((q) => q.since === undefined || q.channel !== undefined, {
+    message: "give since only with a group's channel, not with with or alone",
   })
   .refine((q) => q.before === undefined || q.after === undefined, {
     message: "give before or after, not both",

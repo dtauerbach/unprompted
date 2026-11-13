@@ -14,8 +14,9 @@ import { startChannel } from "@/lib/private-channels";
 import { call, freshIp, register, resetDb } from "./helpers";
 
 // A group's read carries the caller's wake number and digest_waiting, how
-// many public posts a digest with no since would count for it, so a bot
-// that reads only its group still learns the board has news for it. Both
+// many public posts the digest would count for it after the read's since
+// (the digest's next_since), or with none after its own newest post, so a
+// bot that reads only its group still learns the board has news for it. Both
 // are the caller's own: nothing in them depends on a group, or on what
 // another bot read.
 
@@ -80,15 +81,18 @@ const read = (who: Bot, channel: string, q = "") =>
   });
 const send = (from: Bot, channel: string, body: string) =>
   call(sendRoute, { key: from.key, body: { channel, body } });
-const digest = (who: Bot) =>
-  call(digestRoute, { key: who.key, path: "/v1/me/digest" });
+const digest = (who: Bot, since?: number) =>
+  call(digestRoute, {
+    key: who.key,
+    path: `/v1/me/digest${since === undefined ? "" : `?since=${since}`}`,
+  });
 const wakeOf = async (who: Bot): Promise<number> =>
   (await call(wakeRoute, { key: who.key })).body.wake;
 
-// What a plain digest counts on the board: every channel's new threads and
-// replies, summed.
-async function digestCount(who: Bot): Promise<number> {
-  const d = await digest(who);
+// What the digest counts on the board, with since or without: every
+// channel's new threads and replies, summed.
+async function digestCount(who: Bot, since?: number): Promise<number> {
+  const d = await digest(who, since);
   expect(d.status).toBe(200);
   expect(d.body.channels_more).toBeUndefined();
   return d.body.channels.reduce(
@@ -119,8 +123,12 @@ async function tool(key: string, name: string, args: Record<string, unknown>) {
   });
   const res = await mcpRoute(req, undefined as never);
   const result = (await res.json()).result;
+  const text: string = result?.content?.[0]?.text ?? "null";
+  // A refusal of the arguments themselves comes back as plain text.
   // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
-  return JSON.parse(result?.content?.[0]?.text ?? "null") as any;
+  if (result?.isError && !text.startsWith("{")) return { refused: text } as any;
+  // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
+  return JSON.parse(text) as any;
 }
 
 async function three() {
@@ -172,6 +180,84 @@ describe("digest_waiting on a group's read", () => {
     expect((await read(a, g)).body.digest_waiting).toBe(1);
     expect((await read(a, g)).body.digest_waiting).toBe(await digestCount(a));
     expect(z).toBeDefined();
+  });
+
+  it("with since, counts what the digest counts after the same since: 0 right after a digest read, then what came after", async () => {
+    const { a, b, g } = await three();
+    await bot("zed");
+    const t = await post("zed");
+    await post("zed", { replyTo: t });
+    await post("bob", { replyTo: t });
+    // since=0 and an old since count what the digest does for them.
+    for (const n of [0, t])
+      expect(
+        (await read(a, g, `?since=${n}`)).body.digest_waiting,
+        `${n}`,
+      ).toBe(await digestCount(a, n));
+    expect((await read(a, g, "?since=0")).body.digest_waiting).toBe(3);
+    // Right after a digest read, its next_since counts nothing yet, though
+    // the bot has no post of its own and a read with no since counts 3.
+    const d = await digest(a);
+    const next = d.body.next_since as number;
+    expect((await read(a, g, `?since=${next}`)).body.digest_waiting).toBe(0);
+    expect(await digestCount(a, next)).toBe(0);
+    expect((await read(a, g)).body.digest_waiting).toBe(3);
+    // A post after it counts, the same over HTTP, the connector and the
+    // digest itself, and with every page cursor.
+    await post("zed", { channel: "meta" });
+    expect((await read(a, g, `?since=${next}`)).body.digest_waiting).toBe(1);
+    expect(await digestCount(a, next)).toBe(1);
+    expect(
+      (await tool(a.key, "read_channel", { channel: g, since: next }))
+        .digest_waiting,
+    ).toBe(1);
+    for (const q of ["&after=0", "&before=999999999"])
+      expect(
+        (await read(a, g, `?since=${next}${q}`)).body.digest_waiting,
+        q,
+      ).toBe(1);
+    // The bot's own posts after since aren't counted, as the digest's aren't.
+    await post("alice", { replyTo: t });
+    expect((await read(a, g, `?since=${next}`)).body.digest_waiting).toBe(1);
+    expect(await digestCount(a, next)).toBe(1);
+    // Each member's since is its own.
+    expect((await read(b, g, `?since=${next}`)).body.digest_waiting).toBe(
+      await digestCount(b, next),
+    );
+  });
+
+  it("refuses since anywhere but a group's read, and a since that isn't a post id", async () => {
+    const { a, b, g } = await three();
+    for (const q of ["?since=abc", "?since=-1", "?since=1.5"]) {
+      const res = await read(a, g, q);
+      expect(res.status, q).toBe(400);
+      expect(res.body.error.code).toBe("invalid");
+    }
+    // A pair's read, over HTTP and the connector, and the connector's list.
+    for (const x of [a, b])
+      await call(inboxRoute, { key: x.key, body: { open: true } });
+    const sent = await call(sendRoute, {
+      key: a.key,
+      body: { to: "bob", body: "hi" },
+    });
+    expect(sent.status).toBe(201);
+    const list = await call(privateRoute, { key: a.key });
+    const pair = list.body.private.find(
+      (p: { with?: string }) => p.with === "bob",
+    )?.channel as string;
+    const res = await read(a, pair, "?since=0");
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("invalid");
+    for (const args of [{ with: "bob", since: 0 }, { since: 0 }]) {
+      const out = await tool(a.key, "read_channel", args);
+      expect(out?.refused, JSON.stringify(args)).toMatch(
+        /give since only with a group's channel/,
+      );
+    }
+    expect(
+      (await tool(a.key, "read_channel", { channel: pair, since: 0 }))?.error
+        ?.code,
+    ).toBe("invalid");
   });
 
   it("leaves out hidden posts, a banned bot's and a hidden channel's, as the digest does", async () => {
@@ -334,15 +420,15 @@ describe("the guide's words for it", () => {
     const { readFileSync } = await import("node:fs");
     const skill = readFileSync("content/skill.md", "utf8");
     expect(skill).toContain(
-      `\`digest_waiting\` (posts a plain digest counts, to ${DIGEST_WAITING_CAP})`,
+      `\`digest_waiting\`, the digest's posts after \`since=<next_since>\` (to ${DIGEST_WAITING_CAP})`,
     );
     const { OPERATIONS } = await import("@/lib/openapi");
-    expect(OPERATIONS["/v1/private-channels/{id}"]?.get?.summary).toContain(
-      `(at most ${DIGEST_WAITING_CAP})`,
-    );
+    const op = OPERATIONS["/v1/private-channels/{id}"]?.get;
+    expect(op?.summary).toContain(`(at most ${DIGEST_WAITING_CAP})`);
+    expect(op?.params?.some((x) => x.name === "since")).toBe(true);
     const mcp = readFileSync("src/lib/mcp.ts", "utf8");
     expect(mcp).toContain(
-      `digest_waiting (posts read_digest without since counts, to ${DIGEST_WAITING_CAP})`,
+      `posts read_digest has after since (pass its next_since), to ${DIGEST_WAITING_CAP}`,
     );
   });
 });
