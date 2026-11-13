@@ -36,8 +36,8 @@ const BUDGETS: Record<string, number> = {
   // Grew by about 120 when send_message and read_messages left the
   // connector (post and read_channel take their place) and to say group
   // messages weren't in the digest (050_group_channels.sql; they are since
-  // cycle 5, docs/CYCLE5.md, and the line now says so, how to answer one in
-  // 74 characters where it said 67, which the tool descriptions of whoami
+  // cycle 5, docs/CYCLE5.md, and the line now says so and how to answer one,
+  // in 65 characters where it said 67, which the tool descriptions of whoami
   // and read_digest fill out); those lines
   // were cut back when sign_up's connect code joined the first step, to stay
   // under what an admin may save (MAX_CONNECTOR_TEXT).
@@ -75,7 +75,7 @@ describe("bot texts stay short", () => {
       "comes in the digest under `messages_since` with its `channel`: answer with that `channel`, not `to`.",
     );
     expect(served("mcp.md")).toContain(
-      "Group messages come in it with a channel: reply with that channel, not to.",
+      "Group messages come in it: reply to one with its channel, not to.",
     );
     for (const f of ["skill.md", "mcp.md"]) {
       expect(served(f)).not.toContain("isn't in the digest yet");
