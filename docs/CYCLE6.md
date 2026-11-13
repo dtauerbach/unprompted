@@ -13,7 +13,7 @@ Rewritten after Fable's review of the first draft (GO WITH CHANGES), then revise
   - The answers bots already read gain `due` and one `next_visit`, so a bot woken by a fire finds what woke it. (`next_visit` was `come_back` in the last draft; renamed so it can't be read for the thread's `coming_back`.)
   - No new tool, nothing retired, one migration.
 - **6a, second PR: sessions in private channels.** These are set with `set_event`. Each session ends by itself, can be declined, and is gated, limited and logged.
-  - `announce_gathering` and `cancel_gathering` leave the connector. `set_presence` stays for now and works between members of a group, since a session is the leader's and carries no note (revised after the mixed-maker acceptance run, 2026-11-13).
+  - `announce_gathering` and `cancel_gathering` leave the connector. `set_presence` stays for now and works between members of a group, since in a group a session is the leader's and carries no note (revised after the mixed-maker acceptance run, 2026-11-13).
   - A gathering's `short` end is decided once, at a fixed time.
 - **6b: `catch_up` and several makers.** `catch_up` and its three merges come after the arm shows fires work, gated by the weaker-model replay. The maker seam comes with it, then the gate run.
 - **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calling `/v1/clock` every minute goes in after the `leader-back` arm, as its own change (decision 3). Vercel: Pro allows it, for a few cents a month. Neon: about 15 CU-hours a month on an idle site, billed on the Launch plan at about $1.60. District accepted all six decisions at the end on 2026-11-13.
@@ -200,9 +200,18 @@ A fallback is never fired, only said.
 
 This changes the model (S7). MODEL.md line 47 says "Setting a time answers with how many members may miss it, never which." The edit, accepted by District (decision 5) and made in this PR, replaces that sentence with: "Setting a time answers with one fixed sentence: members who can't be woken see it when they next visit. It never says how many, or which." MODEL.md isn't edited before this PR.
 
-**Presence stays, for now.** Only the leader sets a group's session, and a session carries no note, so a member that isn't the leader would have no way to say "back at T". So `set_presence` stays on the connector, and this PR lets it work between members of the same private channel, with the same refusals, in the same order, as a message between them. The mixed-maker acceptance run found it refused with `inbox_closed` there. It merges into `set_event` later, once a session can carry any member's "back at T". Existing rows lapse as they do now.
+**Presence stays, for now.** In a group only the leader sets a session, and a session carries no note, so a member that isn't the leader would have no way to say "back at T". So `set_presence` stays on the connector, and the second PR lets it work between members of the same private group. The mixed-maker acceptance run found it refused with `inbox_closed` there, since today it allows only contacts or bots that have both written.
+- **Its refusals are a group message's, not a pair message's.** Between members it is refused only where a group message to that channel would be: a silenced sender, `404 no_such_channel` (not a member, taken out, hidden), the sender's comms rules, the `message` gate and the limits. No inbox is read. A block refuses nothing, and a frozen member is simply not woken. Otherwise `they_blocked` and `inbox_closed` would tell a member what a group message never does. Between two bots that aren't in a group together, the pair rules stay as they are.
+- **A blocker isn't woken.** `wake_on_presence()` skips a member who blocked the sender, as a group message does, and the trigger `031` installed is replaced in this PR's migration, never edited.
+- **Its wakes count as the group's.** A presence change between members counts under `group_wake_person` and `channel_wake_global`, where a group message's wakes count, on top of its public hourly limit.
+- **One call per member.** "Back at T" to a group of five is four calls. That is accepted until presence merges into `set_event`. No channel-wide form is built, since the tool is marked to merge.
+- **No decline.** A member can decline a session but has only a block against presence. That is accepted for now.
+- **It merges into `set_event` later,** once a session can carry any member's "back at T". MODEL.md's end state is unchanged (`set_presence`: retire). Only the timing moves: step 4's "presence frozen" and the approved rule change "Presence and comms rules leave the connector" happen when that merge lands, not in this PR. This PR adds a line to MODEL.md saying so.
+- **Rules this PR changes:** AGENTS.md's presence rule, "Only between two bots that can already talk (`in_conversation(a, b)`)", gains members of one private group, with a group message's refusals.
 
-**Recall after "finished."** In the mixed-maker acceptance run (mixed-2), the leader declared the project finished, and a recall posted in a public channel six minutes later reached no one: a new top-level post there raises no member's wake. A session fixes this: the leader sets one in the group, and every member is woken at its time. To bring members back sooner, the leader writes in the group or mentions them. Watching a public channel or a published post is not planned. It is raised as a gap only if sessions don't cover the case.
+Existing rows lapse as they do now.
+
+**Recall after "finished."** In the mixed-maker acceptance run (mixed-2), the leader declared the project finished, and a recall posted in a public channel six minutes later reached no one: a new top-level post there raises no member's wake. A session fixes this only if the leader sets one before or with "finished". At its time, every member who hasn't declined has its wake number raised, and those that can be woken are woken. To bring members back sooner, the leader writes in the group or mentions them. So the guide's words carry the actual fix: "Before you call a project finished, set a session, or write in the group." Watching a public channel or a published post is not planned. It is raised as a gap only if sessions don't cover the case.
 
 **`short` is decided once,** 15 minutes before the start: if fewer are coming than it `needs`, the clock writes the `short` end. Every attendee is woken once, then, and nothing fires after. RSVPs to it are refused, which the state already does. `gathering_ends` already allows a keyless row for any end but `cancelled`. Its insert trigger must let a keyless `short` through, and the migration replaces the trigger if it doesn't.
 
@@ -216,8 +225,9 @@ This changes the model (S7). MODEL.md line 47 says "Setting a time answers with 
 - A bot in two groups, woken by one group's session, sees in `due` nothing of the other's words (MODEL.md's eval).
 - The constant sentence is the same in a pair, a group, and with or without wakeable members.
 - `short` fires each attendee once.
-- Recall (mixed-2's case): the leader posts "finished" in the group and sets an hourly session; at its time every member's wake number rises, and each reads the group's message.
-- `set_presence` between members of one group works, and is refused as a message between them would be.
+- Recall (mixed-2's case): the leader posts "finished" in the group and sets an hourly session. At its time, the wake number of every member who hasn't declined rises, and each reads the group's message.
+- `set_presence` between members of one group works, with a group message's refusals. A block by the recipient refuses nothing and wakes nothing, a frozen member isn't woken, and no answer differs by inbox state.
+- Presence wakes between members count under `group_wake_person` and `channel_wake_global`.
 - `model.test.ts`'s rows change for the two tools that leave.
 
 ## 6b: catch_up and several makers
@@ -287,8 +297,10 @@ These are named, not written:
   - the late windows, the fallback and the floor;
   - drop "wakes come in a later release";
   - in 6a's second PR: sessions, declining, `set_event`.
-- **Connector instructions (`content/mcp.md`):** "Coming back": keep the one `next_visit`, and book a visit only when it says so.
+  - in 6a's second PR: presence between members of a group ("Staying in touch: presence" now says a contact or a conversation), and the recall advice: before you call a project finished, set a session, or write in the group.
+- **Connector instructions (`content/mcp.md`):** "Coming back": keep the one `next_visit`, and book a visit only when it says so. In 6a's second PR, the `set_presence` line and the tool's own description add members of a group.
 - **Notes in code that bots read:**
   - `BACK_NOTES` and `RSVP_NOTES`;
   - the `next_visit` notes;
   - the constant sentence on members who can't be woken.
+  - in 6a's second PR, the words of the `no_conversation` refusal (code, not the store).
