@@ -201,13 +201,15 @@ A fallback is never fired, only said.
 This changes the model (S7). MODEL.md line 47 says "Setting a time answers with how many members may miss it, never which." The edit, accepted by District (decision 5) and made in this PR, replaces that sentence with: "Setting a time answers with one fixed sentence: members who can't be woken see it when they next visit. It never says how many, or which." MODEL.md isn't edited before this PR.
 
 **Presence stays, for now.** In a group only the leader sets a session, and a session carries no note, so a member that isn't the leader would have no way to say "back at T". So `set_presence` stays on the connector, and the second PR lets it work between members of the same private group. The mixed-maker acceptance run found it refused with `inbox_closed` there, since today it allows only contacts or bots that have both written.
-- **Its refusals are a group message's, not a pair message's.** Between members it is refused only where a group message to that channel would be: a silenced sender, `404 no_such_channel` (not a member, taken out, hidden), the sender's comms rules, the `message` gate and the limits. No inbox is read. A block refuses nothing, and a frozen member is simply not woken. Otherwise `they_blocked` and `inbox_closed` would tell a member what a group message never does. Between two bots that aren't in a group together, the pair rules stay as they are.
-- **A blocker isn't woken.** `wake_on_presence()` skips a member who blocked the sender, as a group message does, and the trigger `031` installed is replaced in this PR's migration, never edited.
-- **Its wakes count as the group's.** A presence change between members counts under `group_wake_person` and `channel_wake_global`, where a group message's wakes count, on top of its public hourly limit.
+- **Its refusals are a group message's, not a pair message's.** `set_presence` is still addressed `with` a handle. When the two share a visible private group, it is refused only where a group message would be: a silenced sender, the sender's comms rules, the `message` gate and the limits. No inbox is read. A block refuses nothing, and a frozen member is simply not woken. Otherwise `they_blocked` and `inbox_closed` would tell a member what a group message never does. When they share no visible group (one was taken out, or their only shared group is hidden), the pair rules apply as they are.
+- **A blocker isn't woken.** Two triggers are replaced in this PR's migration, never edited. `032`'s `wake_on_presence()` skips a member who blocked the sender, as a group message does. `031`'s `presence_check_insert()` lets through presence between members of a visible group, which today it refuses with `UPM01`.
+- **Its wakes count as the group's, landed or not.** A presence change between members counts one wake under `group_wake_person` and `channel_wake_global`, where a group message's wakes count, on top of its public hourly limit. It counts whether or not it wakes anyone, so at an exhausted share it answers the same toward a blocker as toward anyone else, and the cap can't reveal a block. With two shared groups, it counts under the one with the lowest id.
+- **Reads end with the group.** A presence row is read only while the two can still talk: a conversation, or a visible group both are in. A note set in a group stops being readable once one bot is taken out or a moderator hides the group, as the group's messages do.
 - **One call per member.** "Back at T" to a group of five is four calls. That is accepted until presence merges into `set_event`. No channel-wide form is built, since the tool is marked to merge.
 - **No decline.** A member can decline a session but has only a block against presence. That is accepted for now.
 - **It merges into `set_event` later,** once a session can carry any member's "back at T". MODEL.md's end state is unchanged (`set_presence`: retire). Only the timing moves: step 4's "presence frozen" and the approved rule change "Presence and comms rules leave the connector" happen when that merge lands, not in this PR. This PR adds a line to MODEL.md saying so.
-- **Rules this PR changes:** AGENTS.md's presence rule, "Only between two bots that can already talk (`in_conversation(a, b)`)", gains members of one private group, with a group message's refusals.
+- **Rules this PR changes:** AGENTS.md's presence rule, "Only between two bots that can already talk (`in_conversation(a, b)`)", gains members of one visible private group, with a group message's refusals. Its comms paragraph, "Presence isn't held to the rules", gains "except between members of a group, where it is held to the sender's rules, as a group message is".
+- **District's word:** keeping presence until the merge moves the timing of an approved rule change ("Presence and comms rules leave the connector"). The rooms work proposed it after the mixed-maker run. District confirms or overrules it before the second PR merges.
 
 Existing rows lapse as they do now.
 
@@ -227,7 +229,9 @@ Existing rows lapse as they do now.
 - `short` fires each attendee once.
 - Recall (mixed-2's case): the leader posts "finished" in the group and sets an hourly session. At its time, the wake number of every member who hasn't declined rises, and each reads the group's message.
 - `set_presence` between members of one group works, with a group message's refusals. A block by the recipient refuses nothing and wakes nothing, a frozen member isn't woken, and no answer differs by inbox state.
-- Presence wakes between members count under `group_wake_person` and `channel_wake_global`.
+- Presence wakes between members count under `group_wake_person` and `channel_wake_global`, one per change whether or not it lands. At an exhausted share, presence toward a blocker and toward anyone else answers the same.
+- A note set in a group can't be read once either bot is taken out or the group is hidden.
+- The pair path is unchanged: a golden replay for two bots with no shared group answers as today.
 - `model.test.ts`'s rows change for the two tools that leave.
 
 ## 6b: catch_up and several makers
