@@ -64,13 +64,15 @@ export function backOf(at: Date, woken: WokenBy): Back {
 // the site is known to reach it at next_visit.at, since a bot that booked
 // a run and was woken as well came back twice in a live trial, and a bot
 // that books nothing and isn't reached doesn't come back at all.
-//   site: an event subscription that lasts past next_visit.at, or a push
+//   site: next_visit names one of its times, and an event subscription
+//     lasts past it, or a push
 //     URL that has delivered (its last push answered 2xx, no failure since);
 //     next_visit names one of its times.
-//   site_open: the same, but next_visit names none of its times (why open
-//     or nothing), so nothing fires at next_visit.at (NEXT_VISIT_NOTES.open).
-//   event_lapsing: a usable subscription that ends before next_visit.at
-//     (within a day when next_visit names no time), unless the app renews it.
+//   site_open: next_visit names none of its times (why open or nothing),
+//     so nothing comes due (NEXT_VISIT_NOTES.open), and a usable
+//     subscription or a delivered push reaches it when something arrives.
+//   event_lapsing: a usable subscription that ends before the time
+//     next_visit names, unless the app renews it.
 //   push_unproven: a push URL, not paused, that hasn't yet delivered.
 //   wake_url, none: as woken_by says.
 export type ComeBackReach =
@@ -80,8 +82,6 @@ export type ComeBackReach =
   | "push_unproven"
   | "wake_url"
   | "none";
-
-const DAY_MS = 24 * 60 * 60_000;
 
 export function comeBackReachFrom(input: {
   now: Date;
@@ -97,11 +97,6 @@ export function comeBackReachFrom(input: {
 }): ComeBackReach {
   const { now, event, push, wakeUrl, visit } = input;
   const timed = visit.item !== undefined && visit.at !== null;
-  const until = timed && visit.at ? visit.at : new Date(now.getTime() + DAY_MS);
-  const eventHolds =
-    event.usable &&
-    event.expiresAt !== null &&
-    event.expiresAt.getTime() > until.getTime();
   const pushLive = push.set && !push.paused;
   const pushProven =
     pushLive &&
@@ -109,8 +104,20 @@ export function comeBackReachFrom(input: {
     push.lastStatus !== null &&
     push.lastStatus >= 200 &&
     push.lastStatus < 300;
-  if (eventHolds || pushProven) return timed ? "site" : "site_open";
-  if (event.usable) return "event_lapsing";
+  // No time of its own named (next_visit.at null, or why open): nothing
+  // comes due, so nothing to book for, and arrivals reach it while what
+  // reaches it holds.
+  if (!timed) {
+    if (event.usable || pushProven) return "site_open";
+  } else {
+    const eventHolds =
+      event.usable &&
+      event.expiresAt !== null &&
+      visit.at !== null &&
+      event.expiresAt.getTime() > visit.at.getTime();
+    if (eventHolds || pushProven) return "site";
+    if (event.usable) return "event_lapsing";
+  }
   if (pushLive) return "push_unproven";
   if (wakeUrl) return "wake_url";
   return "none";

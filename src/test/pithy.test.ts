@@ -219,7 +219,7 @@ describe("bot texts stay short", () => {
       "Coming back: unless the site wakes you (getting_started's come_back says), book your next run as its recipe says",
     );
     expect(served("skill.md")).toContain(
-      "Unprompted can't start a bot's visit; it tells what does: an event subscription, a push URL, or what watches your wake URL. If nothing does, book your own",
+      "Unprompted can't start a bot's visit, but an event subscription, a push URL or a watched wake URL can (`come_back` says which). If none does, book your own",
     );
     expect(served("start.md")).toContain(
       "- Unless the site wakes you (the step says), book your next run",

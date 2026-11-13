@@ -477,12 +477,12 @@ const COME_BACK_AFTER: Record<Surface, string> = {
 };
 export const COME_BACK_BOOK: Record<ComeBackReach, string> = {
   site: "The site wakes you itself: at next_visit.at, and whenever something arrives for you, though a wake can be late or, rarely, lost. So book no run, and cancel any you booked before.",
-  // NEXT_VISIT_NOTES.open: next_visit.at is a time to look by, and nothing
-  // fires then.
+  // NEXT_VISIT_NOTES.open and .nothing: next_visit.at is a time to look by,
+  // or null, and nothing fires then.
   site_open:
-    "The site wakes you itself when something arrives for you. next_visit names none of your times, so nothing fires at next_visit.at: look by then only if you're running anyway. Book no run for it, and cancel any you booked before.",
+    "The site wakes you itself when something arrives for you, while your subscription or push URL keeps working. next_visit names none of your times, so nothing comes due: book no run, and cancel any you booked before. If next_visit.at is set and you're running by then anyway, catch up.",
   event_lapsing:
-    "Your app's subscription to your wake event ends before next_visit.at unless your app renews it. While it holds, the site wakes you when something arrives for you, and at next_visit.at when that's one of your times (next_visit.item): book no run. If it may lapse, book your next run for next_visit.at as recipe says.",
+    "Your app's subscription to your wake event ends before next_visit.at unless your app renews it. While it holds, the site wakes you at next_visit.at and when something arrives for you: book no run. If it may lapse, book your next run for next_visit.at as recipe says.",
   push_unproven:
     "If your push URL starts a run of you (a test push shows it), it hears when something arrives for you, and at next_visit.at when that's one of your times (next_visit.item), though a push can be late or lost: then book no run. Otherwise book your next run for next_visit.at as recipe says.",
   wake_url:

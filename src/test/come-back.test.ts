@@ -262,7 +262,7 @@ describe("which come_back a bot gets, with no database", () => {
     );
   });
 
-  it("falls back while a subscription ends before next_visit.at, or within a day with no time named", () => {
+  it("falls back only while a subscription ends before the time next_visit names", () => {
     const sub = (ms: number) => ({ usable: true, expiresAt: at(ms) });
     expect(
       comeBackReachFrom({ ...none, event: sub(2 * hour), visit: item }),
@@ -270,12 +270,26 @@ describe("which come_back a bot gets, with no database", () => {
     expect(
       comeBackReachFrom({ ...none, event: sub(hour / 2), visit: item }),
     ).toBe("event_lapsing");
-    expect(comeBackReachFrom({ ...none, event: sub(48 * hour) })).toBe(
+    // No time named, whether next_visit.at is null (nothing) or a time to
+    // look by (open): nothing comes due, so however soon the subscription
+    // ends there's nothing to book for.
+    const open = { at: at(24 * hour) };
+    for (const visit of [{ at: null }, open])
+      for (const ms of [hour / 2, 20 * hour, 48 * hour])
+        expect(comeBackReachFrom({ ...none, event: sub(ms), visit })).toBe(
+          "site_open",
+        );
+    expect(comeBackReachFrom({ ...none, push: delivered, visit: open })).toBe(
       "site_open",
     );
-    expect(comeBackReachFrom({ ...none, event: sub(20 * hour) })).toBe(
-      "event_lapsing",
-    );
+    // An unproven push with no time named stays unsure.
+    expect(
+      comeBackReachFrom({
+        ...none,
+        push: { ...delivered, lastStatus: null },
+        visit: { at: null },
+      }),
+    ).toBe("push_unproven");
     // A paused subscription isn't usable.
     expect(
       comeBackReachFrom({
@@ -315,9 +329,10 @@ describe("which come_back a bot gets, with no database", () => {
       expect(COME_BACK_BOOK[r]).toMatch(
         /book your next run for next_visit\.at as recipe says\.$/,
       );
-    // With no time named, nothing fires at next_visit.at, as
-    // NEXT_VISIT_NOTES.open says.
-    expect(COME_BACK_BOOK.site_open).toMatch(/nothing fires at next_visit\.at/);
+    // With no time named, nothing comes due, as NEXT_VISIT_NOTES.open and
+    // .nothing say, and the line reads whether next_visit.at is set or null.
+    expect(COME_BACK_BOOK.site_open).toMatch(/nothing comes due/);
+    expect(COME_BACK_BOOK.site_open).toMatch(/If next_visit\.at is set/);
     expect(COME_BACK_BOOK.push_unproven).toMatch(/late or lost/);
   });
 });
@@ -370,18 +385,44 @@ describe("come_back, by how the site reaches the bot", () => {
     await expectReach(b, "site", "event");
   });
 
-  it("a subscription that ends before next_visit.at, or within a day with no time named, keeps the recipe", async () => {
-    const b = await register("lapsing");
-    // The default lasts a day, which ends before a day from now.
+  it("a default subscription with no time named books nothing, whether next_visit.at is null or open", async () => {
+    // A new bot: nothing named, nothing open, next_visit.at null.
+    const b = await register("plain");
     await subscribe(b);
-    await expectReach(b, "event_lapsing", "event");
-    for (const { step } of await comeBacks(b))
-      expect(step.how).toMatch(/unless your app renews it/);
+    const start = await call(startRoute, { key: b.key, path: "/v1/me/start" });
+    expect(comeBackOf(start.body.steps).next_visit).toMatchObject({
+      at: null,
+      why: "nothing",
+    });
+    await expectReach(b, "site_open", "event");
+    // A thread it started today keeps something open: a time to look by,
+    // and nothing that fires.
+    await db()`DELETE FROM rate_limits`;
+    const t = await call(postRoute, {
+      key: b.key,
+      body: { channel: "meta", title: "Open", body: "Anyone?" },
+    });
+    expect(t.status).toBe(201);
+    const again = await call(startRoute, { key: b.key, path: "/v1/me/start" });
+    expect(comeBackOf(again.body.steps).next_visit).toMatchObject({
+      why: "open",
+    });
+    await expectReach(b, "site_open", "event");
+  });
+
+  it("a subscription that ends before the time next_visit names keeps the recipe", async () => {
     // Ten minutes, against a time an hour ahead.
     const c = await register("short");
     await subscribe(c, EVENT_TTL_MIN_MS);
     await backInAnHour(c);
     await expectReach(c, "event_lapsing", "event");
+    for (const { step } of await comeBacks(c))
+      expect(step.how).toMatch(/unless your app renews it/);
+    // The default day, against the same hour: it holds.
+    const d = await register("daylong");
+    await subscribe(d);
+    await backInAnHour(d);
+    await expectReach(d, "site", "event");
   });
 
   it("a paused subscription brings the recipe back", async () => {
