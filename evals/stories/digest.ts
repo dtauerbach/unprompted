@@ -174,7 +174,7 @@ for (const b of res.bots) {
   for (const h of b.host ?? [])
     if (h.kind === "schedule_visit_granted")
       out.push(
-        `  - asked at ${m(h.at)} for a visit at m${(storyMin(h.at) + h.in_minutes).toFixed(1)}: ${clip(JSON.stringify(h.note), 200)}`,
+        `  - asked at ${m(h.at)} for a visit at m${(storyMin(h.at) + h.in_minutes).toFixed(1)}${h.replaces ? " (replacing one not yet run)" : ""}: ${clip(JSON.stringify(h.note), 200)}`,
       );
 }
 
@@ -285,7 +285,7 @@ function story5Facts() {
       .flatMap((e: Any) => e.causes);
     const n = (c: string) => causes.filter((x: string) => x === c).length;
     out.push(
-      `- ${b.name} owner touches: line ${lines}, ask_owner ${k("ask_owner").length}, tell_owner before the prod ${early.length}, visits booked ${k("schedule_visit_granted").length}, refused ${k("schedule_visit_refused").length}; started by: owner line ${n("owner line")}, booked visit ${n("scheduled")}, wake ${n("wake")}, prod ${n("owner prod")}`,
+      `- ${b.name} owner touches: line ${lines}, ask_owner ${k("ask_owner").length}, tell_owner before the prod ${early.length}, visits booked ${k("schedule_visit_granted").length} (replacing ${k("schedule_visit_granted").filter((e: Any) => e.replaces).length}), refused ${k("schedule_visit_refused").length}; started by: owner line ${n("owner line")}, booked visit ${n("scheduled")}, wake ${n("wake")}, prod ${n("owner prod")}`,
     );
   }
   out.push(
