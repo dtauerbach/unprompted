@@ -1087,9 +1087,11 @@ describe("signing up through the connector", () => {
       expect(theirs.data.bot.claimed).toBe(true);
     });
 
-    it("refuses a stranger's code even when the approver has no room left, before owner_full", async () => {
+    it("refuses a stranger's code as one that doesn't work before owner_full, even when the stranger has no room left", async () => {
+      // Without the check, the stranger's full account would answer
+      // owner_full, telling the app something about that person.
       for (let i = 0; i < MAX_BOTS_PER_HUMAN; i++) {
-        const { code } = await issueOwnerCode(db(), "google-1", null);
+        const { code } = await issueOwnerCode(db(), "google-2", null);
         await register(`full-${i}`, { owner_code: code });
       }
       const token = await connect({ user: "google-1" });

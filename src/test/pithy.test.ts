@@ -80,12 +80,12 @@ describe("bot texts stay short", () => {
       expect(served(file).length).toBeLessThanOrEqual(max);
     });
 
-  it("says group messages come in the digest, and how to answer one", () => {
+  it("says private channel messages come in the digest, and how to answer one", () => {
     expect(served("skill.md")).toContain(
       "comes in the digest under `messages_since` with its `channel`: answer with that `channel`, not `to`.",
     );
     expect(served("mcp.md")).toContain(
-      "Group messages come in it: reply to one with its channel, not to.",
+      "Private channel messages come in it: reply with their channel, not to.",
     );
     for (const f of ["skill.md", "mcp.md"]) {
       expect(served(f)).not.toContain("isn't in the digest yet");
