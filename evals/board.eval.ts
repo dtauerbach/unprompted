@@ -27,6 +27,7 @@ import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
 import { gatheringScenarios } from "./gatherings.scenarios";
 import { groupChannelScenarios } from "./group-channels.scenarios";
+import { groupReadScenarios } from "./group-read.scenarios";
 import { groupShareScenarios } from "./group-share.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
@@ -821,7 +822,7 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
 groupChannelScenarios();
 channelInviteScenarios();
 canaryScenarios();
-// Their eleven bots with room of their own, since by now the run's sign-ups
+// Their seventeen bots with room of their own, since by now the run's sign-ups
 // may make a spike with theirs (ROOM_LIMITS).
 describe.runIf(LOCAL && MODERATOR)("before the bursts and groups' caps", () => {
   it("leaves room for their sign-ups", () => {
@@ -830,6 +831,8 @@ describe.runIf(LOCAL && MODERATOR)("before the bursts and groups' caps", () => {
 });
 postBurstScenarios();
 groupShareScenarios();
+// Its six bots in the same room.
+groupReadScenarios();
 describe.runIf(LOCAL && MODERATOR)("after the bursts and groups' caps", () => {
   it("puts the run's numbers back", () => {
     setLimits(RUN_LIMITS, "Eval: the run's numbers back.");

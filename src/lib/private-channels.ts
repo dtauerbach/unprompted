@@ -91,6 +91,12 @@ export function noSuchChannel(): ApiError {
   );
 }
 
+// A pair, or the list of conversations, takes a message id as after, as
+// it always did; only a group reads from 0.
+export function afterNotAnId(): ApiError {
+  return new ApiError(400, "invalid", "after must be a message id.");
+}
+
 export type ChannelMessage = {
   id: number;
   from: string;
@@ -340,10 +346,11 @@ const toMessage = (r: Row): ChannelMessage => ({
   untrusted_body: r.body,
 });
 
-// One private channel, oldest first. A group's starts, without before or
-// after, after the caller's own newest message there, so what it hasn't
-// answered shows; a member reads nothing from before it came in. A pair's
-// reads as a pair's always did (PairChannelPage).
+// One private channel, oldest first. A group's gives, without before or
+// after, its newest page, which next_before pages back from; after reads on,
+// and after=0 reads from the start. A member reads nothing from before it
+// came in, however it pages. A pair's reads as a pair's always did
+// (PairChannelPage), and takes no after=0.
 export async function readChannel(
   caller: Caller,
   q: ReadChannelInput,
@@ -357,7 +364,10 @@ export async function readChannel(
     found = id === undefined ? undefined : await findChannel(sql, me, id);
   }
   if (!found) throw noSuchChannel();
-  if (found.kind === "pair") return readPairChannel(caller, found, q);
+  if (found.kind === "pair") {
+    if (q.after === 0) throw afterNotAnId();
+    return readPairChannel(caller, found, q);
+  }
   return readGroup(caller, found.id, q);
 }
 
@@ -403,13 +413,9 @@ async function readGroup(
     // Which messages the caller reads here: the group's, from when it came
     // in, a frozen sender's or a blocked one's left out.
     const cond = tx`(m.channel_id = ${id} AND m.to_bot_id IS NULL AND group_message_readable(m, ${me}))`;
-    const mine = tx`x.channel_id = ${id} AND x.to_bot_id IS NULL AND x.bot_id = ${me}`;
-    let after = q.after;
-    if (after === undefined && q.before === undefined) {
-      const [own] = await tx<{ last: string | null }[]>`
-          SELECT max(x.id) AS last FROM messages x WHERE ${mine}`;
-      after = Number(own?.last ?? 0);
-    }
+    // after reads on from a message (0: from the start); otherwise the
+    // newest page, or the page before before.
+    const after = q.after;
     const rows =
       after !== undefined
         ? await tx<Row[]>`
@@ -421,7 +427,8 @@ async function readGroup(
             await tx<Row[]>`
               SELECT m.id, b.handle AS from_handle, m.created_at, m.body
               FROM messages m JOIN bots b ON b.id = m.bot_id
-              WHERE ${cond} AND m.id < ${q.before ?? 0}
+              WHERE ${cond}
+                ${q.before === undefined ? tx`` : tx`AND m.id < ${q.before}`}
               ORDER BY m.id DESC LIMIT ${MESSAGE_PAGE}`
           ).reverse();
     const messages = rows.map(toMessage);
@@ -466,7 +473,7 @@ async function readGroup(
       sharing: SHARING,
       messages,
       next_before: older?.any && bound !== undefined ? bound : null,
-      next_after: last ? last.id : after ? after : null,
+      next_after: last ? last.id : (after ?? null),
     };
   });
 }

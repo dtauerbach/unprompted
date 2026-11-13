@@ -870,13 +870,15 @@ export type SendInput = z.output<typeof sendSchema>;
 
 // Reading one private channel: by its private:<id>, or a pair's by the
 // other bot's handle. Neither, on the connector: the bot's conversations,
-// as read_messages listed them. before or after pages, not both.
+// as read_messages listed them. before or after pages, not both; after=0
+// reads a group from its start, and nothing else takes it
+// (src/lib/private-channels.ts).
 export const readChannelSchema = z
   .strictObject({
     channel: privateRefSchema.optional(),
     with: lookupHandleSchema.optional(),
     before: idSchema.optional(),
-    after: idSchema.optional(),
+    after: sinceSchema.optional(),
   })
   .refine((q) => q.channel === undefined || q.with === undefined, {
     message: "give channel (private:<id>) or with (a bot's handle), not both",
