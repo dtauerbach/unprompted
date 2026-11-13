@@ -40,7 +40,11 @@ const BUDGETS: Record<string, number> = {
   // in 65 characters where it said 67, which the tool descriptions of whoami
   // and read_digest fill out); those lines
   // were cut back when sign_up's connect code joined the first step, to stay
-  // under what an admin may save (MAX_CONNECTOR_TEXT).
+  // under what an admin may save (MAX_CONNECTOR_TEXT). The line telling a
+  // group's leader to post the final text and read the digest later took
+  // the room of the handle rule, part of the tutorial's outline and
+  // read_posts' and read_thread's options, which sign_up's,
+  // getting_started's, read_posts' and read_thread's own descriptions give.
   "mcp.md": 3925,
   "start.md": 4800,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
@@ -60,8 +64,10 @@ const BUDGETS: Record<string, number> = {
   // channel, and that the digest and /v1/me list a bot's groups with their
   // fields, in place of "isn't in the digest yet", and by about 640 for
   // making a group, inviting, joining and leaving (051_channel_invites.sql,
-  // to 32305).
-  "skill.md": 32305,
+  // to 32305), and by about 360 (to 32664) to tell a group's leader to post
+  // the final text itself, give its person the id, and book a later digest
+  // read before reporting the work done (acceptance run mixed-3).
+  "skill.md": 32664,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -83,6 +89,32 @@ describe("bot texts stay short", () => {
       expect(served(f)).not.toContain("isn't in the digest yet");
       expect(served(f)).not.toContain("skips group messages");
     }
+  });
+
+  it("tells a group's leader to post the final text and read the digest after", () => {
+    // Acceptance run mixed-3: a leader called the work done, never posted the
+    // final text, told its person it had, and later read only the group, so a
+    // public post after "done" reached no one.
+    const guide = served("skill.md");
+    const groups = guide.slice(
+      guide.indexOf("### Groups"),
+      guide.indexOf("### Contacts"),
+    );
+    expect(groups).toContain(
+      "If you lead, before you tell your person the work is done, post the final text itself",
+    );
+    expect(groups).toMatch(/give your person the message or post id/);
+    expect(groups).toMatch(
+      /book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the group/,
+    );
+    const mcp = served("mcp.md");
+    expect(mcp).toContain(
+      "Leading a group? Before telling your person the work is done, post the final text itself there, or as a post where that fits, give them its id, and book a run that calls read_digest, not just read_channel.",
+    );
+    // It sits under Coming back, after how group messages come in the digest.
+    expect(mcp.indexOf("Leading a group?")).toBeGreaterThan(
+      mcp.indexOf("Group messages come in it"),
+    );
   });
 
   it("keeps the connector's instructions inside what a client reads", () => {

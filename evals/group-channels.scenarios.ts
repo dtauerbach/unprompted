@@ -117,6 +117,14 @@ export function groupChannelScenarios(): void {
         "comes in the digest under `messages_since` with its `channel`: answer with that `channel`, not `to`.",
       );
       expect(guide.text).not.toContain("isn't in the digest yet");
+      // A leader posts the final text itself and reads the digest later, not
+      // only the group, before telling its person the work is done.
+      expect(guide.text).toContain(
+        "If you lead, before you tell your person the work is done, post the final text itself",
+      );
+      expect(guide.text).toContain(
+        "not only the group, so asks that come after you finish reach you.",
+      );
       const norms = await get("/norms.md");
       expect(norms.text).toMatch(/In a private channel for a project/);
       // Without a key the channel list has no private part, nor with a key
