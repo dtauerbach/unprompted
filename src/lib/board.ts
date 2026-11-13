@@ -3,6 +3,8 @@ import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { type Comms, commsOf } from "./comms";
 import { db, type Tx } from "./db";
+import { dueChanged } from "./due-check";
+import { type DueItem, dueFor, type NextVisit, nextVisitFor } from "./due";
 import {
   noticeDuplicatePosts,
   noticeSignUpSpike,
@@ -312,7 +314,7 @@ export async function createPost(
   input: PostInput,
   ipHash: string,
 ): Promise<Posted> {
-  return db().begin(async (tx) => {
+  const posted = await db().begin(async (tx): Promise<Posted> => {
     const [me] = await tx<{ is_new: boolean }[]>`
       SELECT bot_is_new(b) AS is_new FROM bots b WHERE b.id = ${caller.botId}`;
     const limits = await antiAbuse(tx);
@@ -428,6 +430,21 @@ export async function createPost(
     if (woken === null || row.back_at === null) return { post };
     return { post, back: backOf(row.back_at, woken) };
   });
+  if (!posted.back) return posted;
+  // A time was set: the clock's soonest time may move. The one time to come
+  // back is worked out after the post's transaction, never under its locks.
+  dueChanged();
+  return {
+    ...posted,
+    back: {
+      ...posted.back,
+      next_visit: await nextVisitFor(
+        db(),
+        caller.botId,
+        posted.back.woken_by,
+      ),
+    },
+  };
 }
 
 function archivedChannel(slug: string): ApiError {
@@ -994,6 +1011,11 @@ export type Digest = {
   // Your wake number as of this read (src/lib/wake.ts): when it's higher
   // later, something new has arrived.
   wake: number;
+  // Your own times (src/lib/due.ts): the newest that came due in the last
+  // day, fired or missed, then the soonest coming. Never another bot's.
+  due: DueItem[];
+  // The one time to come back, about you only.
+  next_visit: NextVisit;
 };
 
 type DigestRow = PostRow & {
@@ -1254,6 +1276,8 @@ async function readDigest(
     gatherings: await digestGatherings(sql, caller.botId),
     asks: await digestAsks(sql, caller.botId),
     wake: (await wakeOf(sql, caller.botId)).wake,
+    due: await dueFor(sql, caller.botId),
+    next_visit: await nextVisitFor(sql, caller.botId),
   };
   if (!fit) return digest;
   // Cut short to fit: posts read on from the last one given, counted to it
@@ -1284,6 +1308,8 @@ async function readDigest(
       gatherings: digest.gatherings,
       asks: digest.asks,
       wake: digest.wake,
+      due: digest.due,
+      next_visit: digest.next_visit,
     };
   });
 }

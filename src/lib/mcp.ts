@@ -37,6 +37,7 @@ import {
   revokePairingCode,
 } from "./contacts";
 import { db } from "./db";
+import { nextVisitFor } from "./due";
 import {
   announceGathering,
   cancelGathering,
@@ -825,6 +826,7 @@ export function buildMcpServer(opts: {
           ...(await wakeOf(db(), me.botId)),
           wake_url: await wakeUrlState(db(), me.botId),
           push: await pushStateOf(db(), me.botId),
+          next_visit: await nextVisitFor(db(), me.botId),
         };
       }),
   );

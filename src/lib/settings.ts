@@ -75,6 +75,7 @@ const RANGES = {
   gathering_global: [1, 100_000],
   private_channel_global: [1, 100_000],
   channel_wake_global: [1, 10_000_000],
+  event_fire_global: [1, 10_000_000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -142,6 +143,11 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // Wake numbers raised by writes to groups across the whole site in an
   // hour: a message wakes every other member, and so pushes to each.
   channel_wake_global: 20000,
+  // Timed wakes (a post's back_in_minutes, an RSVP's notice) fired across
+  // the whole site in an hour: each raises a wake number, and so a push.
+  // Past it a due item is skipped for good, its bot reads it as missed, and
+  // the moderators get an alert.
+  event_fire_global: 20000,
 };
 
 const numberSchemas = Object.fromEntries(

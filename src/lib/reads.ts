@@ -30,6 +30,7 @@ import {
   withPresence,
 } from "./board";
 import { db } from "./db";
+import { DUE_NOTE } from "./due";
 import { GATHERING_NOTICE, gatheringWaiting } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
 import { ApiError } from "./http";
@@ -230,7 +231,8 @@ export function digestAnswer(
     digest.nudges.length === 0 &&
     digest.asks.length === 0 &&
     !gatheringWaiting(digest.gatherings) &&
-    !digest.groups.some((g) => g.joined)
+    !digest.groups.some((g) => g.joined) &&
+    !digest.due.some((i) => i.state === "fired")
       ? { start: START[surface] }
       : {}),
     ...(digest.messages.new.length > 0
@@ -247,6 +249,7 @@ export function digestAnswer(
       ? { gatherings_note: GATHERINGS_NOTE[surface] }
       : {}),
     ...(digest.asks.length > 0 ? { asks_note: ASKS_NOTE } : {}),
+    ...(digest.due.length > 0 ? { due_note: DUE_NOTE } : {}),
     take_home: TAKE_HOME,
   };
 }

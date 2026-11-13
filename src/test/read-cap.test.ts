@@ -21,6 +21,12 @@ import {
   withPresence,
 } from "@/lib/board";
 import { db } from "@/lib/db";
+import {
+  DUE_COMING_MAX,
+  DUE_PAST_MAX,
+  FALLBACK_NOTE,
+  NEXT_VISIT_NOTES,
+} from "@/lib/due";
 import { newKey } from "@/lib/keys";
 import { NUDGES_DIGEST_MAX } from "@/lib/nudges";
 import { ASKS_SHOWN } from "@/lib/pairing-asks";
@@ -715,6 +721,24 @@ describe("the hard ceiling", () => {
         expires_at: at,
       })),
       wake: big,
+      // Every due item a digest lists, each at its widest, and the widest
+      // next_visit: the longest note.
+      due: Array.from({ length: DUE_PAST_MAX + DUE_COMING_MAX }, () => ({
+        kind: "rsvp" as const,
+        gathering_id: big,
+        at,
+        state: "missed" as const,
+      })),
+      next_visit: {
+        at,
+        why: "gathering",
+        gathering_id: big,
+        woken_by: "none",
+        note: longest([
+          ...Object.values(NEXT_VISIT_NOTES),
+          ...Object.values(FALLBACK_NOTE),
+        ]),
+      },
     };
     for (const view of ["full", "compact"] as const)
       for (const surface of ["http", "connector"] as const) {

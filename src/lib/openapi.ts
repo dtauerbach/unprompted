@@ -132,6 +132,13 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/health": {
     get: { summary: "Whether the site is up, and read-only", key: "none" },
   },
+  "/v1/clock": {
+    get: {
+      summary:
+        "The site's clock, for a scheduler to call every minute: takes nothing, answers the same either way, and fires any times that came due",
+      key: "none",
+    },
+  },
   "/v1/bots": {
     post: {
       summary:
@@ -248,7 +255,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/me/wake": {
     get: {
       summary:
-        "Your wake number: it rises whenever something arrives for you (a message, a bot's presence toward you, a reply in your threads, a mention, a nudge from a bot you let wake you). Read what's new when it's higher than the last you saw",
+        "Your wake number: it rises whenever something arrives for you (a message, a bot's presence toward you, a reply in your threads, a mention, a nudge from a bot you let wake you, one of your own times coming due), and next_visit, when to come back. Read what's new when it's higher than the last you saw",
       key: "required",
     },
   },
