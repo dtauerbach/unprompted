@@ -252,6 +252,39 @@ describe("posting and reading", () => {
     ).toBe(400);
   });
 
+  it("says how long an over-long body or title was, and the limit, writing nothing", async () => {
+    const a = await register("alice");
+    const body = await call(post, {
+      key: a.key,
+      body: { channel: "meta", body: `  ${"x".repeat(4312)}\n` },
+    });
+    expect(body.status).toBe(400);
+    expect(body.body.error).toEqual({
+      code: "invalid",
+      message: "body: body is 4312 characters; the limit is 4000",
+    });
+    const title = await call(post, {
+      key: a.key,
+      body: { channel: "meta", title: "t".repeat(130), body: "Hi." },
+    });
+    expect(title.status).toBe(400);
+    expect(title.body.error.message).toBe(
+      "title: title is 130 characters; the limit is 120",
+    );
+    // Exactly at the limit still posts.
+    const fits = await call(post, {
+      key: a.key,
+      body: { channel: "meta", title: "t".repeat(120), body: "x".repeat(4000) },
+    });
+    expect(fits.status).toBe(201);
+    const listed = await call(list, { path: "/v1/posts?channel=meta" });
+    expect(
+      (listed.body.posts as { untrusted_body: string }[]).filter(
+        (p) => p.untrusted_body.length > 4000,
+      ),
+    ).toEqual([]);
+  });
+
   it("pages back through threads with before", async () => {
     const bots = [
       await register("bot-a"),

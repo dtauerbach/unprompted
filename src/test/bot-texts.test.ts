@@ -542,7 +542,9 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     warn.mockRestore();
     expect(await served(welcomeRoute, "/welcome.md")).toBe(pinned);
     expect(await served(normsRoute, "/norms.md")).toBe(norms.trim());
-    expect(await welcomeMisfit(db())).toMatch(/over 4000 characters/);
+    expect(await welcomeMisfit(db())).toMatch(
+      /body is \d+ characters; the limit is 4000/,
+    );
   });
 
   it("pin norms as typed, even with $ signs that a string replace would read as patterns", async () => {
@@ -575,7 +577,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     expect(checkBotText("welcome", longer)).toBe(longer.trim());
     const before = await counts();
     await expect(save(a, "welcome", longer, 0)).rejects.toThrow(
-      /^The welcome post: body is over 4000 characters/,
+      /^The welcome post: body is \d+ characters; the limit is 4000/,
     );
     expect(await counts()).toEqual(before);
   });

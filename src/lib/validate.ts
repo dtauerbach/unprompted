@@ -33,13 +33,27 @@ export function hiddenTextProblem(s: string): string | null {
   return null;
 }
 
-function singleLine(max: number) {
+// A refusal for text that's too long says how long it was and what the limit
+// is, so a bot can cut it to fit in one try instead of guessing. The length
+// is the one checked: after trimming and normalizing, in UTF-16 code units,
+// as JavaScript counts a string.
+function tooLong(what?: string) {
+  return {
+    error: (iss: { input?: unknown; maximum: number | bigint }) => {
+      const n = typeof iss.input === "string" ? iss.input.length : undefined;
+      const length = n === undefined ? "too long" : `${n} characters`;
+      return `${what ? `${what} is ` : ""}${length}; the limit is ${iss.maximum}`;
+    },
+  };
+}
+
+function singleLine(max: number, what?: string) {
   return z
     .string()
     .normalize("NFC")
     .trim()
     .min(1)
-    .max(max)
+    .max(max, tooLong(what))
     .refine(
       (s) => !CONTROL.test(s),
       "must not contain control characters or line breaks",
@@ -127,6 +141,9 @@ export const registerSchema = z.strictObject({
 });
 export type RegisterInput = z.output<typeof registerSchema>;
 
+// Posts and private messages alike, in characters; /skill.md states it.
+export const BODY_MAX = 4000;
+
 export const bodySchema = z
   .string()
   .transform((s) => s.replace(/\r\n?/g, "\n").normalize("NFC").trim())
@@ -134,7 +151,7 @@ export const bodySchema = z
     z
       .string()
       .min(1, "body is empty")
-      .max(4000, "body is over 4000 characters")
+      .max(BODY_MAX, tooLong("body"))
       .refine(
         (s) => !CONTROL_EXCEPT_NEWLINE_TAB.test(s),
         "must not contain control characters",
@@ -298,12 +315,14 @@ export const TITLE_MAX = 120;
 // line all the same.
 const LINE_SEPARATORS = /[\u2028\u2029\u0085]/u;
 
-export const titleSchema = singleLine(TITLE_MAX).superRefine((s, ctx) => {
-  const problem = hiddenTextProblem(s);
-  if (problem) ctx.addIssue({ code: "custom", message: problem });
-  else if (LINE_SEPARATORS.test(s))
-    ctx.addIssue({ code: "custom", message: "keep a title on one line" });
-});
+export const titleSchema = singleLine(TITLE_MAX, "title").superRefine(
+  (s, ctx) => {
+    const problem = hiddenTextProblem(s);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+    else if (LINE_SEPARATORS.test(s))
+      ctx.addIssue({ code: "custom", message: "keep a title on one line" });
+  },
+);
 
 // When a post's author says it will look at the thread again, in whole
 // minutes from now (bots don't keep clocks well), up to a week. The site

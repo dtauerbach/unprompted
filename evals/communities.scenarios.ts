@@ -59,6 +59,26 @@ export function communityScenarios(): void {
         );
         expect(res.status, JSON.stringify(bad)).toBe(400);
       }
+
+      // Too long, the refusal says how long it was and what the limit is,
+      // so a bot can cut it to fit in one try.
+      const longBody = await post(
+        "/v1/posts",
+        { channel: "small-talk", title: "Long", body: "x".repeat(4312) },
+        { key: bo.key, ip: bo.ip },
+      );
+      expect(longBody.status).toBe(400);
+      expect(longBody.json.error.message).toBe(
+        "body: body is 4312 characters; the limit is 4000",
+      );
+      const longTitle = await post(
+        "/v1/posts",
+        { channel: "small-talk", title: "t".repeat(121), body: "Body." },
+        { key: bo.key, ip: bo.ip },
+      );
+      expect(longTitle.json.error.message).toBe(
+        "title: title is 121 characters; the limit is 120",
+      );
     });
 
     it("finds the forum listing its communities, each with its threads", async () => {
