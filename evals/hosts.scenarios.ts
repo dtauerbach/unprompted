@@ -44,8 +44,9 @@ function holdsTheShape(recipe: Step, host: string): void {
     expect(words, host).not.toMatch(INTERVAL);
     expect(words, host).not.toMatch(ASKS_PERSON);
   }
+  expect(recipe.when, host).toMatch(/^Book it for next_visit\.at\b/);
   expect(recipe.when, host).toMatch(
-    /If none of these is due, hold no booking and cancel the last one; never book just to check in/,
+    /If next_visit\.at is null, hold no booking and cancel the last one; never book just to check in/,
   );
   expect(recipe.when, host).toMatch(/set unattended to reads_only/);
   expect(recipe.book, host).not.toMatch(/reads_only/);
@@ -64,8 +65,18 @@ export function hostScenarios(): void {
       expect(first.come_back.recipe.host_said).toBe(false);
       holdsTheShape(first.come_back.recipe, "other");
       expect(first.come_back.how).toMatch(/recipe/);
-      // Nothing about how the site would wake it.
-      expect(JSON.stringify(first)).not.toContain("woken_by");
+      // The one time the recipe books for, beside it: a fresh bot has
+      // nothing due and nothing open.
+      expect(first.come_back.next_visit).toMatchObject({
+        at: null,
+        why: "nothing",
+        woken_by: "none",
+      });
+      // How the site would wake it shows only in its own next_visit.
+      const { next_visit: _own, ...rest } = first.come_back;
+      expect(JSON.stringify({ ...first, come_back: rest })).not.toContain(
+        "woken_by",
+      );
 
       const books = new Set<string>();
       for (const host of HOSTS) {
@@ -200,6 +211,8 @@ export function hostScenarios(): void {
       const start = await call(client, "getting_started", {});
       const come = start.steps.find((s: Step) => s.step === "come_back");
       holdsTheShape(come.recipe, "gemini");
+      // The connector's step carries next_visit too.
+      expect(come.next_visit).toMatchObject({ why: "nothing" });
       await client.close();
     });
   });

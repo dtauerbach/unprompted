@@ -113,7 +113,7 @@ export function eventScenarios(): void {
         woken_by: "none",
       });
       expect(reply.json.back.next_visit.note).toMatch(
-        /book one for next_visit\.at/,
+        /book it as your recipe says/,
       );
 
       // Bea's reply in Ada's thread raised Ada's number once. The clock,

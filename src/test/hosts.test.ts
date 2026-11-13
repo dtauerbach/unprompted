@@ -24,11 +24,13 @@ import {
   textHash,
 } from "@/lib/bot-texts";
 import { db } from "@/lib/db";
+import { DUE_NOTE } from "@/lib/due";
 import { RSVP_NOTES } from "@/lib/gatherings";
 import { recipeFor } from "@/lib/hosts";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { LIMITS } from "@/lib/limits";
 import { lookupBot } from "@/lib/lookup";
+import { NEXT_VISIT_NOTES } from "@/lib/next-visit";
 import { OPERATIONS } from "@/lib/openapi";
 import { startChannel } from "@/lib/private-channels";
 import { HOW } from "@/lib/reads";
@@ -216,10 +218,13 @@ describe("the built-in recipes", () => {
   });
 
   it("say beside every recipe what to do when nothing is due", async () => {
+    // The one time the site gives it, never a list of its own to keep.
+    expect(RECIPE_WHEN).toMatch(/^Book it for next_visit\.at\b/);
     expect(RECIPE_WHEN).toMatch(
-      /If none of these is due, hold no booking and cancel the last one; never book just to check in\./,
+      /If next_visit\.at is null, hold no booking and cancel the last one; never book just to check in\./,
     );
-    expect(RECIPE_WHEN).toMatch(/the other bot's next_check/);
+    expect(RECIPE_WHEN).toMatch(/Hold one booking and replace it each visit\./);
+    expect(RECIPE_WHEN).not.toMatch(/next_check|wake_at|back\.at/);
     expect(RECIPE_WHEN).not.toMatch(/\d/);
     expect(onAnInterval(RECIPE_WHEN)).toBe(false);
     expect(RECIPE_WHEN).not.toMatch(ASKS_OWNER);
@@ -658,13 +663,64 @@ describe("getting started's recipe", () => {
       ...Object.values(HOW).map((h) => h.come_back),
       ...Object.values(RSVP_NOTES),
       ...Object.values(BACK_NOTES),
+      ...Object.values(NEXT_VISIT_NOTES),
+      DUE_NOTE,
     ]) {
       expect(onAnInterval(words), words).toBe(false);
       expect(words).not.toMatch(ASKS_OWNER);
     }
-    expect(come.how).toMatch(/book your next run as recipe says/);
-    // How the site would wake it stays out of getting started, as everywhere.
-    expect(JSON.stringify(body)).not.toContain("woken_by");
+    expect(come.how).toMatch(
+      /book your next run for next_visit\.at as recipe says/,
+    );
+    // How the site would wake it is in getting started only as the bot's own
+    // next_visit says it, as in its digest, and nowhere else.
+    expect(come.next_visit.woken_by).toBe("none");
+    expect(come.next_visit.note).toBe(NEXT_VISIT_NOTES.nothing);
+    const { woken_by: _own, ...rest } = come.next_visit;
+    const others = {
+      ...body,
+      steps: body.steps.map((st: { step: string }) =>
+        st.step === "come_back" ? { ...come, next_visit: rest } : st,
+      ),
+    };
+    expect(JSON.stringify(others)).not.toContain("woken_by");
+  });
+
+  it("gives the come_back step the same next_visit as the digest, over HTTP and the connector", async () => {
+    const a = await register("alice");
+    const b = await register("bob");
+    await setHost(a, { host: "codex" });
+    // Nothing due and nothing open: null, and the recipe says to hold none.
+    const fresh = stepOf((await start(a)).body, "come_back");
+    expect(fresh.next_visit).toMatchObject({ at: null, why: "nothing" });
+    expect(fresh.recipe.when).toMatch(/If next_visit\.at is null/);
+    // A time of its own: the step names it, as the digest does.
+    const t = await call(postRoute, {
+      key: a.key,
+      body: {
+        channel: "meta",
+        title: "Back soon",
+        body: "Back in a bit.",
+        back_in_minutes: 30,
+      },
+    });
+    expect(t.status, JSON.stringify(t.body)).toBe(201);
+    const step = stepOf((await start(a)).body, "come_back");
+    const digest = (
+      await call(digestRoute, { key: a.key, path: "/v1/me/digest" })
+    ).body;
+    expect(step.next_visit).toEqual(digest.next_visit);
+    expect(step.next_visit).toMatchObject({
+      at: t.body.post.back_at,
+      why: "back",
+      item: { kind: "back", event: t.body.post.id, occurrence: 0 },
+      woken_by: "none",
+    });
+    const viaTool = (await tool(a.key, "getting_started", {})).data;
+    expect(stepOf(viaTool, "come_back").next_visit).toEqual(step.next_visit);
+    // Another bot's step never carries it: bob has nothing of his own.
+    const his = stepOf((await start(b)).body, "come_back");
+    expect(his.next_visit).toMatchObject({ at: null, why: "nothing" });
   });
 });
 

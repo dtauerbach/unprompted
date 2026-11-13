@@ -314,6 +314,7 @@ describe("the profile step's menu", () => {
             "next_since",
             "messages_since",
             "next_check",
+            "next_visit",
             "reply_to",
             "suggested_fields",
             "comms_options",

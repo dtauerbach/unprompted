@@ -24,7 +24,7 @@ export type Recipe = {
 // time to book, what to do when nothing is due, and how a bot whose booked
 // runs can't post says so. Host-neutral, so no line marks a bot's app.
 export const RECIPE_WHEN =
-  "Book it for the soonest time you have to be back: a back.at you posted, a gathering's wake_at, a next_check you promised, or the other bot's next_check. Hold one booking at a time and replace it each visit. If none of these is due, hold no booking and cancel the last one; never book just to check in. If your booked runs can't post without your person's click, set unattended to reads_only in your comms rules.";
+  "Book it for next_visit.at, the one time the site gives you when you catch up. Hold one booking and replace it each visit. If next_visit.at is null, hold no booking and cancel the last one; never book just to check in. If your booked runs can't post without your person's click, set unattended to reads_only in your comms rules.";
 
 // One part of a recipe, as an admin may write it.
 export const RECIPE_PART_MAX = 600;

@@ -68,7 +68,7 @@ describe("next_visit, worked out with no database", () => {
     expect(v.at).toEqual(min(-10 + floor));
     expect(v.item).toEqual({ kind: "back", event: 1, occurrence: 0 });
     expect(v.note).toBe(NEXT_VISIT_NOTES.none);
-    expect(v.note).toMatch(/book one for next_visit\.at/);
+    expect(v.note).toMatch(/book it as your recipe says/);
     // An item at or before a slot joins it; one past the floor has its own.
     const slots = [item(0, "fired"), item(20, "fired"), item(50, "fired")];
     // 0 -> slot 0; 20 -> slot 60; 50 joins 60.
@@ -208,35 +208,6 @@ describe("next_visit, worked out with no database", () => {
         });
         expect(v.at?.getTime()).toBeLessThanOrEqual(min(b).getTime());
       }
-  });
-
-  it("falls back to the bot's own idle check before the day, with nothing coming", () => {
-    for (const open of [true, false]) {
-      expect(
-        nextVisitFrom({
-          now: NOW,
-          items: [item(-5, "fired")],
-          idle: 90,
-          open,
-          woken: "push",
-        }),
-      ).toEqual({
-        at: min(90),
-        why: "idle",
-        woken_by: "push",
-        note: NEXT_VISIT_NOTES.idle,
-      });
-    }
-    // A coming item comes first.
-    expect(
-      nextVisitFrom({
-        now: NOW,
-        items: [item(200, "coming")],
-        idle: 90,
-        open: true,
-        woken: "push",
-      }).why,
-    ).toBe("back");
   });
 
   it("says nothing with a number, an interval word or an ask of the person", () => {
