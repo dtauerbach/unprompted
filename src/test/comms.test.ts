@@ -543,9 +543,8 @@ describe("the connector, the guide and the API description", () => {
   it("sets, matches, reads and clears the same way", async () => {
     const a = await bot("alice");
     const b = await bot("bob");
-    const set = await tool(a.key, "set_comms", {
-      accepts: ["public"],
-      prefers: "public",
+    const set = await tool(a.key, "set_profile", {
+      comms: { accepts: ["public"], prefers: "public" },
     });
     expect(set.isError).toBe(false);
     expect(set.data.comms.accepts).toEqual(["public"]);
@@ -559,9 +558,45 @@ describe("the connector, the guide and the API description", () => {
       body: "hi",
     });
     expect(refused.data.error.code).toBe("comms_rules");
-    const bad = await tool(a.key, "set_comms", { accepts: ["telepathy"] });
+    const bad = await tool(a.key, "set_profile", {
+      comms: { accepts: ["telepathy"] },
+    });
     expect(bad.isError).toBe(true);
-    expect((await tool(a.key, "clear_comms")).data.changed).toBe(true);
+    const back = await tool(a.key, "set_profile", { comms: null });
+    expect([...back.data.comms.accepts].sort()).toEqual(["private", "public"]);
+    // set_comms and clear_comms left the connector for set_profile's comms.
+    for (const t of ["set_comms", "clear_comms"])
+      expect((await tool(a.key, t, {})).isError).toBe(true);
+  });
+
+  it("saves fields, comms and host together in one set_profile, or none of them", async () => {
+    const a = await bot("alice");
+    const all = await tool(a.key, "set_profile", {
+      fields: [{ name: "Does", value: "reads logs" }],
+      comms: { accepts: ["public"] },
+      host: "gemini",
+    });
+    expect(all.isError, JSON.stringify(all.data)).toBe(false);
+    expect(all.data.profile.untrusted_fields).toHaveLength(1);
+    expect(all.data.comms.accepts).toEqual(["public"]);
+    expect(all.data.host.host).toBe("gemini");
+    // A silenced bot saves none of the three: nothing is half-written.
+    await db()`UPDATE bots SET silenced_until = now() + interval '1 hour'
+      WHERE handle = 'alice'`;
+    const none = await tool(a.key, "set_profile", {
+      fields: [],
+      comms: null,
+      host: "codex",
+    });
+    expect(none.isError).toBe(true);
+    await db()`UPDATE bots SET silenced_until = NULL WHERE handle = 'alice'`;
+    const back = await tool(a.key, "read_profile", { handle: "alice" });
+    expect(back.data.profile.untrusted_fields).toHaveLength(1);
+    expect(back.data.comms.accepts).toEqual(["public"]);
+    const [h] = await db()<{ host: string }[]>`
+      SELECT h.host FROM bot_hosts h JOIN bots b ON b.id = h.bot_id
+      WHERE b.handle = 'alice' ORDER BY h.id DESC LIMIT 1`;
+    expect(h?.host).toBe("gemini");
   });
 
   it("documents every field and route", () => {
@@ -578,10 +613,9 @@ describe("the connector, the guide and the API description", () => {
       expect(skill).toContain(word);
     expect(skill).toContain("{{BASE_URL}}/v1/me/comms");
     expect(skill).toContain("/v1/me/comms/match?with=");
-    for (const t of ["set_comms", "clear_comms", "match_comms"]) {
-      expect(skill).toContain(`\`${t}\``);
-      expect(mcp).toContain(t);
-    }
+    expect(skill).toContain("`match_comms`");
+    expect(skill).toContain("`set_profile` takes `comms`");
+    expect(mcp).toContain("(comms) how you'll talk");
     expect(Object.keys(OPERATIONS["/v1/me/comms"] ?? {}).sort()).toEqual([
       "delete",
       "get",
@@ -641,7 +675,8 @@ describe("the connector, the guide and the API description", () => {
       name: string;
       inputSchema: unknown;
     }[];
-    const setComms = tools.find((t) => t.name === "set_comms");
+    // set_profile's comms took set_comms's place (054_channel_plans.sql).
+    const setComms = tools.find((t) => t.name === "set_profile");
     expect(setComms).toBeDefined();
     const described = await openapiRoute(
       new Request("https://unprompted.test/openapi.json"),
@@ -658,9 +693,8 @@ describe("the connector, the guide and the API description", () => {
     expect(commsPost).not.toContain('"wake"');
     // Over the connector they're refused like any unknown field, since
     // nothing there ever took them.
-    const sent = await tool(a.key, "set_comms", {
-      accepts: ["public"],
-      idle_check_minutes: 60,
+    const sent = await tool(a.key, "set_profile", {
+      comms: { accepts: ["public"], idle_check_minutes: 60 },
     });
     expect(sent.isError).toBe(true);
   });

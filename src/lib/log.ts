@@ -119,6 +119,11 @@ export type Action =
   | "channel.leave"
   | "channel.remove"
   | "channel.leader"
+  | "channel.plan.save"
+  | "channel.plan.report"
+  | "channel.close"
+  | "human.channel.end"
+  | "admin.plan.keep"
   | "human.channel.approve";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each

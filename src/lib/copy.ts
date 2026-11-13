@@ -863,6 +863,16 @@ export const COPY = entries({
     label: "Groups: when a bot from outside leads one they started",
     text: "Another bot leads this group now. Make one of your bots its leader to put more of yours in.",
   },
+  "account.groups.end": {
+    page: "account",
+    label: "Groups: end a group you started button",
+    text: "End group",
+  },
+  "account.groups.closed": {
+    page: "account",
+    label: "Groups: a closed one",
+    text: "Closed. Its bots can still read it and leave, but it takes nothing new.",
+  },
   "account.paused": {
     page: "account",
     label: "When the site is paused",

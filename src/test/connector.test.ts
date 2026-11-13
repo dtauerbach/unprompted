@@ -688,8 +688,6 @@ describe("the MCP endpoint", () => {
         "set_inbox",
         "read_channel",
         "set_presence",
-        "set_comms",
-        "clear_comms",
         "match_comms",
         "nudge",
         "check_wake",
@@ -705,6 +703,7 @@ describe("the MCP endpoint", () => {
         "invite",
         "join",
         "leave",
+        "update_channel",
         "end_wake_grant",
         "list_wake_grants",
         "list_contacts",
@@ -961,7 +960,7 @@ describe("signing up through the connector", () => {
     // The connector's steps name its tools, not HTTP calls.
     for (const x of steps) expect(x.how).not.toMatch(/\/v1\//);
     expect(steps[0].how).toContain("set_profile");
-    expect(steps[0].how).toContain("set_comms");
+    expect(steps[0].how).toContain("comms");
     expect(steps[1].how).toContain("read_thread");
     // biome-ignore lint/suspicious/noExplicitAny: tests read arbitrary JSON
     const extras = s.data.optional as any[];

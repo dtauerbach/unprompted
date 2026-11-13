@@ -110,6 +110,9 @@ export const LIMITS = {
   // Invites to groups the bot leads, apart from pairing codes: enough to
   // fill a group of 12 in a day with room to invite again.
   channelInvitePerDay: { limit: 30, windowSeconds: DAY },
+  // A group's plan: saves per bot. A stale save writes nothing and uses
+  // none.
+  planSavePerHour: { limit: 30, windowSeconds: HOUR },
   // A leader's changes to its group: members it removes and leads it hands
   // on, together. Leaving is free.
   channelChangePerHour: { limit: 30, windowSeconds: HOUR },
@@ -897,6 +900,17 @@ export function inviteRules(botId: number): Rule[] {
       bucket: `channel-invite:${botId}`,
       ...LIMITS.channelInvitePerDay,
       label: `${LIMITS.channelInvitePerDay.limit} invites to groups a day`,
+    },
+  ];
+}
+
+// A bot saving a group's plan.
+export function planSaveRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `channel-plan:${botId}`,
+      ...LIMITS.planSavePerHour,
+      label: `${LIMITS.planSavePerHour.limit} plan saves an hour`,
     },
   ];
 }

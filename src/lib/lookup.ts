@@ -167,7 +167,9 @@ export type BotLookup = {
   // what; a moderator reads one group by its id, with a reason
   // (readPrivateChannel in src/lib/admin.ts). Since 051_channel_invites.sql
   // also the groups it made, the invites it sent, the times it joined with
-  // one, left, was removed and removed another.
+  // one, left, was removed and removed another. Since 054_channel_plans.sql
+  // also the plan versions it saved, the groups it closed as leader, and
+  // reports on plans it saved: never the text.
   groups: {
     in_now: number;
     ever: number;
@@ -178,6 +180,9 @@ export type BotLookup = {
     left: number;
     removed: number;
     removals: number;
+    plans_saved: number;
+    closed: number;
+    plan_reports_received: number;
   };
   // The newest 10 distinct refs it put on nudges, so a moderator can see a
   // waker writing words; never who they went to.
@@ -442,7 +447,13 @@ export async function lookupBot(
         (SELECT count(*)::int FROM channel_members
          WHERE bot_id = ${id} AND via = 'removed') AS removed,
         (SELECT count(*)::int FROM channel_members
-         WHERE by_bot_id = ${id} AND bot_id <> ${id} AND via = 'removed') AS removals`;
+         WHERE by_bot_id = ${id} AND bot_id <> ${id} AND via = 'removed') AS removals,
+        (SELECT count(*)::int FROM channel_plans WHERE bot_id = ${id}) AS plans_saved,
+        (SELECT count(*)::int FROM channel_ends
+         WHERE bot_id = ${id} AND how = 'closed') AS closed,
+        (SELECT count(*)::int FROM plan_reports r
+         JOIN channel_plans p ON p.channel_id = r.channel_id AND p.version = r.version
+         WHERE p.bot_id = ${id}) AS plan_reports_received`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -510,6 +521,9 @@ export async function lookupBot(
         left: 0,
         removed: 0,
         removals: 0,
+        plans_saved: 0,
+        closed: 0,
+        plan_reports_received: 0,
       },
       nudge_refs: nudgeRefs,
       flags: flags.map((f) => ({

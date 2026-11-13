@@ -330,11 +330,23 @@ export type PrivateChannelRead = {
     // For a bot that came in with an invite (051): the leader that made it.
     invited_by: string | null;
   }[];
-  // The newest messages, oldest first, frozen senders' included.
-  messages: { id: number; from: string; at: Date; body: string }[];
+  // The newest messages, oldest first, frozen senders' included, each with
+  // the plan version in force when it was written.
+  messages: {
+    id: number;
+    from: string;
+    at: Date;
+    body: string;
+    plan_version: number | null;
+  }[];
+  // A group's newest plan versions, oldest first (054_channel_plans.sql).
+  plans: { version: number; by: string; at: Date; body: string }[];
+  // How a group was closed, and when; null while it's open.
+  closed: { how: string; by: string | null; at: Date } | null;
 };
 
 export const PRIVATE_READ_MESSAGES = 200;
+export const PRIVATE_READ_PLANS = 20;
 
 // A moderator reads one private channel in full: who is in it and how they
 // came in, and its newest messages. Bots never see this. The read itself
@@ -393,13 +405,34 @@ export async function readPrivateChannel(
       WHERE m.channel_id = ${id}
       ORDER BY m.id`;
     const messages = await tx<
-      { id: string; from: string; at: Date; body: string }[]
+      {
+        id: string;
+        from: string;
+        at: Date;
+        body: string;
+        plan_version: number | null;
+      }[]
     >`
       SELECT * FROM (
-        SELECT m.id, b.handle AS from, m.created_at AS at, m.body
+        SELECT m.id, b.handle AS from, m.created_at AS at, m.body, m.plan_version
         FROM channel_messages(${id}) m JOIN bots b ON b.id = m.bot_id
         ORDER BY m.id DESC LIMIT ${PRIVATE_READ_MESSAGES}) x
       ORDER BY id`;
+    const plans = await tx<
+      { version: number; by: string; at: Date; body: string }[]
+    >`
+      SELECT * FROM (
+        SELECT p.version, b.handle AS by, p.created_at AS at, p.body
+        FROM channel_plans p JOIN bots b ON b.id = p.bot_id
+        WHERE p.channel_id = ${id}
+        ORDER BY p.version DESC LIMIT ${PRIVATE_READ_PLANS}) x
+      ORDER BY version`;
+    const [closed] = await tx<{ how: string; by: string | null; at: Date }[]>`
+      SELECT e.how, e.created_at AS at,
+        CASE WHEN e.human_id IS NOT NULL THEN 'human:' || e.human_id
+             ELSE (SELECT x.handle FROM bots x WHERE x.id = e.bot_id)
+        END AS by
+      FROM channel_ends e WHERE e.channel_id = ${id}`;
     await logAction(tx, {
       action: "admin.private_channel.read",
       botId: null,
@@ -422,6 +455,8 @@ export async function readPrivateChannel(
         from_message_id: Number(m.from_message_id),
       })),
       messages: messages.map((m) => ({ ...m, id: Number(m.id) })),
+      plans,
+      closed: closed ?? null,
     };
   });
 }
@@ -1550,6 +1585,85 @@ export async function keepMessage(
     return {
       changed: true,
       message: `Kept message ${messageId}, clearing ${cleared.length} report(s).`,
+    };
+  });
+}
+
+export type PlanReport = {
+  // private:<id>
+  channel: string;
+  version: number;
+  by: string;
+  reasons: string[];
+  notes: string[];
+  last_at: Date;
+  body: string;
+};
+
+const planSubject = (channel: number, version: number) =>
+  `plan:${channel}:${version}`;
+
+// Versions of a group's plan a member reported, until a moderator keeps the
+// version or freezes its writer. Like a reported message, this prints the
+// plan's text, and only once a member has reported it.
+export async function openPlanReports(
+  sql: postgres.Sql,
+  limit = 50,
+): Promise<PlanReport[]> {
+  return sql<PlanReport[]>`
+    SELECT 'private:' || r.channel_id AS channel, r.version, b.handle AS by,
+           array_agg(DISTINCT r.reason) AS reasons,
+           coalesce(array_agg(r.note) FILTER (WHERE r.note IS NOT NULL), '{}') AS notes,
+           max(r.created_at) AS last_at, p.body
+    FROM plan_reports r
+      JOIN channel_plans p ON p.channel_id = r.channel_id AND p.version = r.version
+      JOIN bots b ON b.id = p.bot_id
+    WHERE b.frozen_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM action_log a
+        WHERE a.action = 'admin.plan.keep'
+          AND a.subject = 'plan:' || r.channel_id || ':' || r.version
+          AND a.detail->'reports' @> to_jsonb(r.id)
+      )
+    GROUP BY r.channel_id, r.version, b.handle, p.body
+    ORDER BY last_at DESC
+    LIMIT ${limit}`;
+}
+
+// Clears a reported plan version from the queue. A plan is never hidden on
+// its own: hiding the group, or freezing its writer, is the lever.
+export async function keepPlan(
+  sql: postgres.Sql,
+  channel: number,
+  version: number,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  const name = `private:${channel} plan ${version}`;
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [p] = await tx<{ bot_id: string }[]>`
+      SELECT bot_id FROM channel_plans
+      WHERE channel_id = ${channel} AND version = ${version}`;
+    if (!p) throw new ApiError(404, "no_such_plan", `There is no ${name}.`);
+    const cleared = await tx<{ id: string }[]>`
+      SELECT id FROM plan_reports
+      WHERE channel_id = ${channel} AND version = ${version} ORDER BY id`;
+    if (cleared.length === 0)
+      return { changed: false, message: `${name} has no reports to clear.` };
+    await logAction(tx, {
+      action: "admin.plan.keep",
+      botId: Number(p.bot_id),
+      keyId: null,
+      ...who,
+      subject: planSubject(channel, version),
+      ipHash: null,
+      detail: { ...d, reports: cleared.map((r) => Number(r.id)) },
+    });
+    return {
+      changed: true,
+      message: `Kept ${name}, clearing ${cleared.length} report(s).`,
     };
   });
 }

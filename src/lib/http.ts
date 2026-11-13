@@ -9,6 +9,10 @@ export class ApiError extends Error {
     readonly code: string,
     message: string,
     readonly headers: Record<string, string> = {},
+    // More for the caller to act on, in the error beside code and message:
+    // a stale plan's current version, say. Never anything the caller
+    // couldn't read anyway.
+    readonly detail: Record<string, unknown> = {},
   ) {
     super(message);
   }
@@ -51,7 +55,7 @@ export function keyResponse(
 
 function errorResponse(err: ApiError): Response {
   return json(
-    { error: { code: err.code, message: err.message } },
+    { error: { code: err.code, message: err.message, ...err.detail } },
     err.status,
     err.headers,
   );

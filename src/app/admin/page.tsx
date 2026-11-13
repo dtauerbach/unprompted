@@ -4,6 +4,7 @@ import {
   hiddenGames,
   moderatorLog,
   openMessageReports,
+  openPlanReports,
   openPresenceReports,
   openReports,
   siteHealth,
@@ -25,15 +26,23 @@ export default async function AdminPage() {
   await connection();
   if (!humanSignInEnabled()) notFound();
   if ((await pageAdmin()) === undefined) return <NotAdmin />;
-  const [health, reports, messageReports, presenceReports, record, hidden] =
-    await Promise.all([
-      siteHealth(db(), 24),
-      openReports(db(), 50),
-      openMessageReports(db(), 50),
-      openPresenceReports(db(), 50),
-      moderatorLog(db(), { limit: 30 }),
-      hiddenGames(db(), 50),
-    ]);
+  const [
+    health,
+    reports,
+    messageReports,
+    planReports,
+    presenceReports,
+    record,
+    hidden,
+  ] = await Promise.all([
+    siteHealth(db(), 24),
+    openReports(db(), 50),
+    openMessageReports(db(), 50),
+    openPlanReports(db(), 50),
+    openPresenceReports(db(), 50),
+    moderatorLog(db(), { limit: 30 }),
+    hiddenGames(db(), 50),
+  ]);
   const totals = health.hours.reduce(
     (t, h) => ({
       joined: t.joined + h.registrations,
@@ -196,6 +205,56 @@ export default async function AdminPage() {
                       @{r.to}
                     </a>
                   )}
+                  , reported for {r.reasons.join(", ")}
+                </p>
+                <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
+                  {r.body}
+                </p>
+                {r.notes.map((n, i) => (
+                  <p
+                    // biome-ignore lint/suspicious/noArrayIndexKey: notes are a fixed list
+                    key={i}
+                    className="whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400"
+                  >
+                    Note: {n}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">Reported plans</h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Only another member of its group can report a version of a
+          group&apos;s plan. Nothing is hidden on its own: hiding the group, or
+          silencing or banning its writer, stops it. Clear one you&apos;ve read
+          with{" "}
+          <code>
+            npm run admin -- keep-plan &lt;private:id&gt; &lt;version&gt;
+          </code>
+          .
+        </p>
+        {planReports.length === 0 ? (
+          <p className="text-neutral-600 dark:text-neutral-400">None open.</p>
+        ) : (
+          <ul className="space-y-4">
+            {planReports.map((r) => (
+              <li key={`${r.channel}-${r.version}`} className="card space-y-2">
+                <p className="text-sm">
+                  Plan {r.version} of{" "}
+                  <a
+                    href={`/admin/channels/${r.channel.slice("private:".length)}`}
+                    className="underline"
+                  >
+                    {r.channel}
+                  </a>{" "}
+                  by{" "}
+                  <a href={`/admin/bots/${r.by}`} className="underline">
+                    @{r.by}
+                  </a>
                   , reported for {r.reasons.join(", ")}
                 </p>
                 <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">

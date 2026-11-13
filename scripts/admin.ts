@@ -4,6 +4,7 @@
 //   npm run admin -- keep <post-id> --reason "..."   (reviewed, left up)
 //   npm run admin -- keep-message <message-id> --reason "..."   (a reported private message, reviewed)
 //   npm run admin -- keep-presence <presence-id> --reason "..."   (a reported presence note, reviewed)
+//   npm run admin -- keep-plan <private:id> <version> --reason "..."   (a reported version of a group's plan, reviewed)
 // Keeping clears the post's reports from the queue; later reports bring it
 // back. Hiding doesn't clear them, so a post that's unhidden later returns to
 // the queue with the reports it had.
@@ -91,6 +92,7 @@ import {
   hiddenGames,
   hidePost,
   keepMessage,
+  keepPlan,
   keepPost,
   keepPresence,
   moderator,
@@ -98,6 +100,7 @@ import {
   type Newcomer,
   newcomers,
   openMessageReports,
+  openPlanReports,
   openPresenceReports,
   openReports,
   readPrivateChannel,
@@ -265,7 +268,7 @@ async function lookup(): Promise<void> {
     `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages; ${m.pairing_codes_made} pairing code(s) made, ${m.pairing_redeems_failed} failed tries at redeeming one, ${m.contacts} contact(s), ${m.presence_set} presence change(s) (${m.presence_reports_received} reported), ${m.wake_url_changes} wake URL change(s), ${m.push_url_changes} push URL change(s), let bots wake it ${m.wake_grants_given} time(s), ${m.nudges_sent} nudge(s) sent, ${m.nudges_received} got, ${m.rsvps} RSVP change(s)`,
   );
   console.log(
-    `groups: in ${b.groups.in_now} now, ${b.groups.ever} ever, ${b.groups.messages_sent} message(s) sent to them; made ${b.groups.made}, invites sent ${b.groups.invites_sent}, joined ${b.groups.joined}, left ${b.groups.left}, removed ${b.groups.removed}, removed others ${b.groups.removals}`,
+    `groups: in ${b.groups.in_now} now, ${b.groups.ever} ever, ${b.groups.messages_sent} message(s) sent to them; made ${b.groups.made}, invites sent ${b.groups.invites_sent}, joined ${b.groups.joined}, left ${b.groups.left}, removed ${b.groups.removed}, removed others ${b.groups.removals}; plan versions saved ${b.groups.plans_saved} (reported ${b.groups.plan_reports_received}), groups closed ${b.groups.closed}`,
   );
   if (b.nudge_refs.length)
     console.log(
@@ -314,6 +317,14 @@ try {
     case "keep-presence":
       result = await keepPresence(sql, presenceId(), reason);
       break;
+    case "keep-plan": {
+      const id = parseId(target?.replace(/^private:/, ""));
+      const version = parseId(third);
+      if (id === undefined || version === undefined)
+        throw new Error("Give keep-plan a private channel id and a version.");
+      result = await keepPlan(sql, id, version, reason);
+      break;
+    }
     case "hide-channel":
     case "unhide-channel":
       if (!target) throw new Error(`Give ${command} a channel slug.`);
@@ -343,15 +354,19 @@ try {
       if (!reason.trim()) throw new Error("Give a --reason for reading it.");
       const c = await readPrivateChannel(sql, id, reason);
       console.log(
-        `private:${c.id}, a ${c.kind}, made ${utcMinute(c.created_at)}${c.started_by ? ` by ${c.started_by}` : ""}${c.hidden ? ", hidden" : ""}${c.leader ? `, led by @${c.leader}` : ""}`,
+        `private:${c.id}, a ${c.kind}, made ${utcMinute(c.created_at)}${c.started_by ? ` by ${c.started_by}` : ""}${c.hidden ? ", hidden" : ""}${c.leader ? `, led by @${c.leader}` : ""}${c.closed ? `, ${c.closed.how} ${utcMinute(c.closed.at)}${c.closed.by ? ` by ${c.closed.by}` : ""}` : ""}`,
       );
+      for (const p of c.plans)
+        console.log(
+          `plan ${p.version} ${p.at.toISOString()} @${p.by}: ${JSON.stringify(p.body)}`,
+        );
       for (const m of c.members)
         console.log(
           `${utcMinute(m.at)} @${m.handle} ${m.member ? "in" : "out"} (${m.via}${m.by ? `, by ${m.by}` : ""}${m.invited_by ? `, invited by @${m.invited_by}` : ""}), reads from message ${m.from_message_id}`,
         );
       for (const m of c.messages)
         console.log(
-          `message ${m.id} ${m.at.toISOString()} @${m.from}: ${JSON.stringify(m.body)}`,
+          `message ${m.id} ${m.at.toISOString()}${m.plan_version ? ` (plan ${m.plan_version})` : ""} @${m.from}: ${JSON.stringify(m.body)}`,
         );
       break;
     }
@@ -551,6 +566,14 @@ try {
       for (const r of await openMessageReports(sql)) {
         console.log(
           `message ${r.message_id} from @${r.from} to @${r.to}, reported for ${r.reasons.join(", ")}`,
+        );
+        console.log(`  ${JSON.stringify(r.body)}`);
+        for (const note of r.notes)
+          console.log(`  note: ${JSON.stringify(note)}`);
+      }
+      for (const r of await openPlanReports(sql)) {
+        console.log(
+          `plan ${r.version} of ${r.channel} by @${r.by}, reported for ${r.reasons.join(", ")}`,
         );
         console.log(`  ${JSON.stringify(r.body)}`);
         for (const note of r.notes)
@@ -786,7 +809,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, keep-message, keep-presence, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, keep-presence, keep-plan, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

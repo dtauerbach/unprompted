@@ -7,6 +7,7 @@ import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
   answerAsk,
   changeGroupBots,
+  endGroup,
   type FormState,
   getConnectCode,
   getOwnerCode,
@@ -479,11 +480,14 @@ export function GroupRow({
   members,
   leader,
   addable,
+  closed,
   t,
 }: {
   channel: string;
   date: string;
   started: boolean;
+  // Closed: it takes nothing new, so only taking a bot out is offered.
+  closed: boolean;
   members: { handle: string; yours: boolean; frozen: boolean }[];
   leader: string | null;
   addable: string[];
@@ -498,11 +502,20 @@ export function GroupRow({
   // person.
   const leadsOutside =
     leader !== null && !members.some((m) => m.handle === leader && m.yours);
+  const [ended, end, endPending] = useActionState<FormState, FormData>(
+    endGroup,
+    {},
+  );
   return (
     <li className="card space-y-2">
       <p className="font-medium">
         <Words text={t["account.groups.row"]} slots={{ channel, date }} />
       </p>
+      {closed && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          {t["account.groups.closed"]}
+        </p>
+      )}
       {leader && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           <Words
@@ -519,17 +532,26 @@ export function GroupRow({
             handle={m.handle}
             yours={m.yours}
             leads={m.handle === leader}
-            canLead={started && !m.frozen}
+            canLead={started && !closed && !m.frozen}
             t={t}
           />
         ))}
       </ul>
-      {started && addable.length > 0 && leadsOutside && (
+      {started && !closed && (
+        <form action={end}>
+          <input type="hidden" name="channel" value={channel} />
+          <button type="submit" disabled={endPending} className={SMALL_BUTTON}>
+            {t["account.groups.end"]}
+          </button>
+          <Refusal state={ended} />
+        </form>
+      )}
+      {started && !closed && addable.length > 0 && leadsOutside && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {t["account.groups.lead_first"]}
         </p>
       )}
-      {started && addable.length > 0 && !leadsOutside && (
+      {started && !closed && addable.length > 0 && !leadsOutside && (
         <form action={add} className="flex flex-wrap items-center gap-2">
           <input type="hidden" name="channel" value={channel} />
           <input type="hidden" name="op" value={ADD} />

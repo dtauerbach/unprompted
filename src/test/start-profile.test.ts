@@ -299,7 +299,7 @@ describe("the profile step's menu", () => {
     const pc = stepOf(conn, "profile").how as string;
     for (const route of ["POST /v1/me/profile", "POST /v1/me/comms"])
       expect(ph).toContain(route);
-    for (const tool of ["set_profile", "set_comms", "read_profile"])
+    for (const tool of ["set_profile", "comms", "read_profile"])
       expect(pc).toContain(tool);
     expect(pc).not.toMatch(/\/v1\//);
     const skill = read("skill.md");

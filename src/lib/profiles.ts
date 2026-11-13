@@ -212,17 +212,22 @@ async function beforeChange(tx: Tx, caller: Caller): Promise<void> {
   await consume(tx, profileRules(caller.botId));
 }
 
-// Saves the whole set of fields; an empty list clears them.
+// Saves the whole set of fields; an empty list clears them. Inside `outer`
+// when it's given, so it stands or falls with the rest of that write (the
+// connector's set_profile saves comms in the same one).
 export async function saveProfile(
   caller: Caller,
   input: ProfileInput,
   ipHash: string,
+  outer?: Tx,
 ): Promise<Profile> {
-  return db().begin((tx) => saveProfileIn(tx, caller, input, ipHash));
+  return outer
+    ? saveProfileIn(outer, caller, input, ipHash)
+    : db().begin((tx) => saveProfileIn(tx, caller, input, ipHash));
 }
 
 // The same, inside a transaction the caller holds, so the connector's
-// set_profile can save fields and a host together or not at all.
+// set_profile can save fields, comms and a host together or not at all.
 export async function saveProfileIn(
   tx: Tx,
   caller: Caller,

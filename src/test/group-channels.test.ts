@@ -183,6 +183,9 @@ describe("starting a group", () => {
         leader: "bob",
       },
       sharing: SHARING,
+      // No plan yet, so no plan_notice beside it.
+      plan: null,
+      plan_base: 0,
       messages: [],
       next_before: null,
       next_after: null,
@@ -384,6 +387,7 @@ describe("a person's changes to a group", () => {
           { handle: "cat", yours: true, frozen: false },
         ],
         leader: "bob",
+        closed: false,
       },
     ]);
     expect(JSON.stringify(list)).not.toContain("planted");
@@ -1060,7 +1064,8 @@ describe("what a bot learns about the others in a group", () => {
     const out: string[] = [];
     for (const [i, x] of answers.entries()) walk(x, `#${i}`, out);
     expect(out).toEqual([]);
-    // Members carry nothing but their handle and whether you blocked them.
+    // Members carry nothing but their handle and whether you blocked them
+    // (and, under a plan, wrote_at_plan, from messages the reader can read).
     for (const m of (await read(b, g)).body.channel.members)
       expect(Object.keys(m).sort()).toEqual(["handle", "you_blocked"]);
   });

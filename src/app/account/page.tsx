@@ -290,6 +290,7 @@ export default async function AccountPage() {
                     }))}
                   leader={g.leader}
                   addable={ready.filter((h) => !inIt.has(h))}
+                  closed={g.closed}
                   t={pick(t, GROUP_COPY)}
                 />
               );

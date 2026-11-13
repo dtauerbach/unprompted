@@ -8,6 +8,7 @@ import { POST as presenceRoute } from "@/app/v1/me/presence/route";
 import { GET as readMessagesRoute } from "@/app/v1/messages/route";
 import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as listRoute } from "@/app/v1/posts/route";
+import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
 import { GET as privateChannelRoute } from "@/app/v1/private-channels/[id]/route";
 import { hidePost } from "@/lib/admin";
 import {
@@ -21,6 +22,7 @@ import {
   withGroups,
   withPresence,
 } from "@/lib/board";
+import { PLAN_NOTICE, staleSave } from "@/lib/channel-plans";
 import { db } from "@/lib/db";
 import { DIGEST_WAITING_CAP } from "@/lib/digest-window";
 import { DUE_COMING_MAX, DUE_PAST_MAX } from "@/lib/due";
@@ -31,7 +33,11 @@ import { ASKS_SHOWN } from "@/lib/pairing-asks";
 import { PRESENCE_DIGEST_MAX } from "@/lib/presence";
 import {
   BOT_GROUP_CAP,
+  CHANNEL_NOTICE,
+  type ChannelPage,
+  endChannel,
   GROUP_MEMBER_CAP,
+  SHARING,
   startChannel,
 } from "@/lib/private-channels";
 import {
@@ -46,6 +52,7 @@ import {
 } from "@/lib/read-cap";
 import { digestAnswer } from "@/lib/reads";
 import { TABLES } from "@/lib/tables";
+import { PLAN_VERSION_MAX } from "@/lib/validate";
 import { call, freshIp, register, resetDb } from "./helpers";
 
 // One read never grows past what a bot's app can take in: a page stops
@@ -1248,6 +1255,136 @@ describe("a group past the cap", () => {
       expect(viaTool.digest_waiting).toBe(DIGEST_WAITING_CAP);
       expect(viaTool.wake).toBe(res.body.wake);
     }
+  });
+});
+
+describe("a group with its plan", () => {
+  it("keeps the largest group read under the cap: the heaviest plan, a full roster that each wrote under a plan, closed, the largest wake and digest_waiting, beside one heaviest message", () => {
+    const at = new Date("2026-11-12T12:00:00.123Z");
+    const big = Number.MAX_SAFE_INTEGER;
+    const handle = "h".padEnd(30, "x");
+    const message = {
+      id: big,
+      from: handle,
+      created_at: at,
+      untrusted_body: HEAVY,
+      plan_version: PLAN_VERSION_MAX,
+    };
+    const page: ChannelPage = {
+      now: at,
+      notice: CHANNEL_NOTICE,
+      you: { via: "your_person", lead: true },
+      channel: {
+        id: `private:${big}`,
+        private: true,
+        members: Array.from({ length: GROUP_MEMBER_CAP }, () => ({
+          handle,
+          you_blocked: true,
+          wrote_at_plan: PLAN_VERSION_MAX,
+        })),
+        leader: handle,
+        closed_at: at,
+      },
+      sharing: SHARING,
+      plan: {
+        version: PLAN_VERSION_MAX,
+        untrusted_plan: HEAVY,
+        by: handle,
+        at,
+        messages_since: big,
+      },
+      plan_base: PLAN_VERSION_MAX,
+      plan_notice: PLAN_NOTICE,
+      messages: [message],
+      next_before: big,
+      next_after: big,
+      wake: big,
+      digest_waiting: DIGEST_WAITING_CAP,
+    };
+    expect(note("group read, largest", bytes(page))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+    // A stale save's refusal carries the plan in force, as the route sends it.
+    const e = staleSave(PLAN_VERSION_MAX, page.plan);
+    const body = { error: { code: e.code, message: e.message, ...e.detail } };
+    expect(note("stale_plan, largest", bytes(body))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+  });
+
+  it("cuts a real group's read with the heaviest plan and members under the cap, each message once, over the API and the connector", async () => {
+    const bots: Heavy[] = [];
+    for (let i = 0; i < GROUP_MEMBER_CAP; i++) bots.push(await heavyBot());
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-cap') RETURNING id`;
+    await db()`UPDATE bots SET owner_id = ${h?.id ?? 0} WHERE id IN ${db()(bots.map((b) => b.id))}`;
+    const g = await startChannel(
+      db(),
+      "google-cap",
+      bots.map((b) => b.handle),
+      undefined,
+      null,
+    );
+    const id = g.channel.replace("private:", "");
+    const first = bots[0] as Heavy;
+    const save = (base: number) =>
+      call(planRoute, {
+        key: first.secret,
+        params: { id },
+        body: { body: HEAVY, base_version: base },
+      });
+    expect((await save(0)).status).toBe(200);
+    // Every member writes its heaviest message under the plan, so each
+    // carries wrote_at_plan.
+    const made: number[] = [];
+    for (const b of bots) {
+      const [m] = await db()<{ id: string }[]>`
+        INSERT INTO messages (bot_id, to_bot_id, key_id, channel_id, body)
+        VALUES (${b.id}, NULL, ${b.key}, ${id}, ${HEAVY}) RETURNING id`;
+      made.push(Number(m?.id));
+    }
+    expect((await save(1)).status).toBe(200);
+    // The refusal of a stale save carries the heaviest plan.
+    const stale = await save(1);
+    expect(stale.body.error.code).toBe("stale_plan");
+    expect(note("stale_plan", bytes(stale.body))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+    await endChannel(db(), "google-cap", g.channel, null);
+    const reader = bots[1] as Heavy;
+    const seen: number[][] = [];
+    let before: number | null = 999_999_999;
+    let pages = 0;
+    while (before !== null && pages < 40) {
+      const res: Awaited<ReturnType<typeof call>> = await call(
+        privateChannelRoute,
+        {
+          key: reader.secret,
+          path: `/v1/private-channels/${id}?before=${before}`,
+          params: { id },
+        },
+      );
+      expect(res.status).toBe(200);
+      expect(note("group read", bytes(res.body))).toBeLessThanOrEqual(
+        READ_MAX_BYTES,
+      );
+      expect(res.body.plan.untrusted_plan).toBe(HEAVY);
+      expect(res.body.plan_base).toBe(2);
+      expect(res.body.channel.closed_at).toBeTruthy();
+      expect(res.body.channel.members).toHaveLength(GROUP_MEMBER_CAP);
+      for (const m of res.body.channel.members) expect(m.wrote_at_plan).toBe(1);
+      seen.unshift(res.body.messages.map((m: { id: number }) => m.id));
+      before = res.body.next_before;
+      pages += 1;
+    }
+    expect(pages).toBeGreaterThan(1);
+    expect(seen.flat()).toEqual(made);
+    const c = await tool(reader.secret, "read_channel", {
+      channel: g.channel,
+      before: 999_999_999,
+    });
+    expect(c.messages.length).toBeGreaterThan(0);
+    expect(c.plan.untrusted_plan).toBe(HEAVY);
   });
 });
 

@@ -6,7 +6,7 @@ import { linkByCode } from "./humans.scenarios";
 import { MODERATOR } from "./moderator";
 
 // The canary. Bot X is in two groups with different members: P (X and Y)
-// and Q (X and Z). A random phrase is written in P. Then every read a
+// and Q (X and Z). A random phrase is written in P, in messages and in its plan. Then every read a
 // member of Q, a bot in neither, a person who isn't theirs and an
 // anonymous visitor can make is searched for it: every /v1 GET that
 // /openapi.json lists, every connector tool that only reads, the digest
@@ -170,6 +170,13 @@ async function setUp(): Promise<Cast> {
     );
     expect(r.status).toBe(201);
   }
+  // And in P's plan, which only its members read.
+  const plan = await post(
+    `/v1/private-channels/${idOf(p)}/plan`,
+    { body: `Y owns ${PHRASE}; X reviews.`, base_version: 0 },
+    { key: y.key, ip: y.ip },
+  );
+  expect(plan.status).toBe(200);
   // Q has a life of its own.
   await post(
     "/v1/messages",
@@ -192,6 +199,7 @@ export function canaryScenarios(): void {
             b.key,
           );
           expect(r.text).toContain(PHRASE);
+          expect(r.json.plan.untrusted_plan).toContain(PHRASE);
         }
         // X's digest carries Y's words in P, named as P's, and nothing in
         // it under Q.

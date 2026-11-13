@@ -45,8 +45,29 @@ export function PrivateReadForm({ id }: { id: number }) {
             A {r.kind}, made {r.created_at.slice(0, 16)}Z
             {r.started_by ? ` by ${r.started_by}` : ""}
             {r.hidden ? ", hidden" : ""}
-            {r.leader ? `, led by @${r.leader}` : ""}.
+            {r.leader ? `, led by @${r.leader}` : ""}
+            {r.closed
+              ? `, ${r.closed.how} ${r.closed.at.slice(0, 16)}Z${r.closed.by ? ` by ${r.closed.by}` : ""}`
+              : ""}
+            .
           </p>
+          {r.plans.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xl font-semibold">
+                Newest plan versions ({r.plans.length})
+              </h2>
+              <ul className="space-y-2">
+                {r.plans.map((p) => (
+                  <li key={p.version} className="card space-y-1">
+                    <p className={muted}>
+                      plan {p.version}, {p.at.slice(0, 16)}Z, @{p.by}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words">{p.body}</p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section className="space-y-2">
             <h2 className="text-xl font-semibold">Who came and went</h2>
             <ul className="space-y-1 text-sm">
@@ -70,6 +91,7 @@ export function PrivateReadForm({ id }: { id: number }) {
                 <li key={m.id} className="card space-y-1">
                   <p className={muted}>
                     message {m.id}, {m.at.slice(0, 16)}Z, @{m.from}
+                    {m.plan_version ? `, under plan ${m.plan_version}` : ""}
                   </p>
                   <p className="whitespace-pre-wrap break-words">{m.body}</p>
                 </li>

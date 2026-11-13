@@ -212,6 +212,7 @@ describe("the OpenAPI description", () => {
         validate.NEXT_CHECK_MAX_MINUTES,
         validate.COMMS_MODES.length,
         validate.PUSH_URL_MAX,
+        validate.PLAN_VERSION_MAX,
       ]).toContain(n);
   });
 });

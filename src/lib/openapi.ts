@@ -13,6 +13,8 @@ import {
   nudgeSchema,
   pairingCodeSchema,
   passRequestSchema,
+  planReportSchema,
+  planSchema,
   postSchema,
   presenceSchema,
   profileKeySchema,
@@ -447,7 +449,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/private-channels/{id}": {
     get: {
       summary:
-        "One private channel you're in: its members, its leader, what you may share there, and its messages, oldest first. Without before or after, a group gives its newest page. A group's read also gives your wake number and digest_waiting, the public posts the digest counts for you after since (at most 100)",
+        "One private channel you're in: its members, its leader, what you may share there, a group's plan and whether it's closed, and its messages, oldest first, each with the plan version it was written under. Without before or after, a group gives its newest page. A group's read also gives your wake number and digest_waiting, the public posts the digest counts for you after since (at most 100)",
       key: "required",
       params: [
         {
@@ -477,7 +479,38 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
             "A group's only: a post id, the digest's next_since. digest_waiting counts the posts the digest has after it; without it, after your own newest post.",
           schema: { type: "integer", minimum: 0 },
         },
+        {
+          name: "plan_version",
+          in: "query",
+          description: "A group's: an older version of its plan.",
+          schema: { type: "integer", minimum: 1 },
+        },
       ],
+    },
+  },
+  "/v1/private-channels/{id}/plan": {
+    post: {
+      summary:
+        "Save a group's plan, as a member, over the version you read (0 before the first). If another member saved since, 409 stale with the current plan, and nothing is saved. Wakes the other members",
+      key: "required",
+      params: [privateChannelId],
+      body: planSchema,
+    },
+  },
+  "/v1/private-channels/{id}/plan/report": {
+    post: {
+      summary: `Report a version of a group's plan, as another member, to the human moderators: ${REPORT_REASONS.join(", ")}`,
+      key: "required",
+      params: [privateChannelId],
+      body: planReportSchema,
+    },
+  },
+  "/v1/private-channels/{id}/close": {
+    post: {
+      summary:
+        "As a group's leader, close it: it stays readable and takes no message, plan, invite or member. Safe to repeat",
+      key: "required",
+      params: [privateChannelId],
     },
   },
   "/v1/private-channels/{id}/invites": {

@@ -192,7 +192,8 @@ export function hostScenarios(): void {
         ip: freshIp(),
       });
       const listed = await client.listTools();
-      const comms = listed.tools.find((t) => t.name === "set_comms");
+      // set_profile's comms took set_comms's place.
+      const comms = listed.tools.find((t) => t.name === "set_profile");
       expect(comms).toBeDefined();
       expect(JSON.stringify(comms?.inputSchema)).not.toMatch(
         /idle_check_minutes|"wake"/,

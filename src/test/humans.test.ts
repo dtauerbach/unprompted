@@ -782,11 +782,18 @@ describe("group actions", () => {
 
   async function groupCounts() {
     const [r] = await db()<
-      { groups: number; members: number; leaders: number; log: number }[]
+      {
+        groups: number;
+        members: number;
+        leaders: number;
+        ends: number;
+        log: number;
+      }[]
     >`
       SELECT (SELECT count(*) FROM group_channels)::int AS groups,
              (SELECT count(*) FROM channel_members)::int AS members,
              (SELECT count(*) FROM channel_leaders)::int AS leaders,
+             (SELECT count(*) FROM channel_ends)::int AS ends,
              (SELECT count(*) FROM action_log)::int AS log`;
     return r;
   }
@@ -819,7 +826,9 @@ describe("group actions", () => {
     const lead = new FormData();
     lead.set("channel", channel);
     lead.set("handle", "alice");
-    return { start, add, out, lead };
+    const end = new FormData();
+    end.set("channel", channel);
+    return { start, add, out, lead, end };
   };
 
   it("send anyone not signed in to sign in, and write nothing", async () => {
@@ -839,6 +848,7 @@ describe("group actions", () => {
     await expect(a.pickGroupLeader({}, f.lead)).rejects.toThrow(
       "redirect /sign-in",
     );
+    await expect(a.endGroup({}, f.end)).rejects.toThrow("redirect /sign-in");
     expect(await groupCounts()).toEqual(before);
   });
 
@@ -872,12 +882,18 @@ describe("group actions", () => {
     expect(await a.changeGroupBots({}, f.add)).toEqual({
       error: "That isn't one of your channels.",
     });
+    expect(await a.endGroup({}, f.end)).toEqual({
+      error: "That isn't one of your channels.",
+    });
     expect((await groupCounts())?.members).toBe(before?.members);
     expect((await groupCounts())?.leaders).toBe(before?.leaders);
+    expect((await groupCounts())?.ends).toBe(0);
     // Its own person can.
     session.user = { id: "google-1" };
     expect(await a.pickGroupLeader({}, f.lead)).toEqual({ saved: true });
     expect(await a.changeGroupBots({}, f.out)).toEqual({ saved: true });
+    expect(await a.endGroup({}, f.end)).toEqual({ saved: true });
+    expect((await groupCounts())?.ends).toBe(1);
   });
 
   it("refuse a form that isn't a group or a handle in the same words", async () => {
@@ -912,6 +928,7 @@ describe("group actions", () => {
       await a.startGroup({}, forms().start),
       await a.changeGroupBots({}, f.out),
       await a.pickGroupLeader({}, f.lead),
+      await a.endGroup({}, f.end),
     ])
       expect(r.error).toBeDefined();
     expect(await groupCounts()).toEqual(before);

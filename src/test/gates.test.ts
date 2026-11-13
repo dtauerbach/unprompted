@@ -145,6 +145,7 @@ describe("the three catalogs", () => {
       "get_pass",
       "make_channel",
       "make_private_channel",
+      "set_plan",
       "appeal",
       "set_profile",
       "start_conversation",
