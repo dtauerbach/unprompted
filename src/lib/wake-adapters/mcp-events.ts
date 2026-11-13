@@ -343,11 +343,26 @@ export const mcpEventsAdapter: WakeAdapter = {
     if (!m.keys?.length)
       return { delivered: false, status: null, error: "secret" };
     const keys = m.keys.map((k) => Buffer.from(k, "base64"));
-    const eventId = `evt_${randomBytes(16).toString("hex")}`;
+    // Wake is a coalesced invalidation, not an arrival log. Retrying the
+    // same counter keeps its identity across restarts and secret refreshes;
+    // a newer counter supersedes it with a new event. Never use the mutable
+    // subscription row or signing secret as identity.
+    if (
+      !Number.isSafeInteger(note.wake) ||
+      note.wake <= 0 ||
+      !(note.changedAt instanceof Date) ||
+      !Number.isFinite(note.changedAt.getTime())
+    )
+      return { delivered: false, status: null, error: "event_time" };
+    const identity = createHash("sha256")
+      .update(JSON.stringify(["wake-v1", m.id, note.handle, note.wake]))
+      .digest("hex")
+      .slice(0, 32);
+    const eventId = `evt_${identity}`;
     const body = JSON.stringify({
       eventId,
       name: EVENT_NAME,
-      timestamp: new Date().toISOString(),
+      timestamp: note.changedAt.toISOString(),
       data: { handle: note.handle, wake: note.wake },
       cursor: null,
     });

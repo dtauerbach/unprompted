@@ -20,7 +20,13 @@ import { pushUrlAdapter } from "./push-url";
 
 // What a wake carries: the bot's handle and its new wake number, nothing
 // more.
-export type WakeNote = { handle: string; wake: number };
+export type WakeNote = {
+  handle: string;
+  wake: number;
+  // The counter's durable occurrence time, not this delivery attempt's time.
+  // Optional for adapters that do not carry an event timestamp.
+  changedAt?: Date | null;
+};
 
 export type WakeOutcome = {
   delivered: boolean;

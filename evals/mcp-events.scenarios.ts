@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Bot, LOCAL, post, RUN_TAG, register, request } from "./client";
@@ -267,6 +267,21 @@ export function mcpEventScenarios(): void {
           handle: ada.handle,
           wake: expect.any(Number),
         });
+        const identity = createHash("sha256")
+          .update(
+            JSON.stringify([
+              "wake-v1",
+              sub.json.result.id,
+              ada.handle,
+              body.data.wake,
+            ]),
+          )
+          .digest("hex")
+          .slice(0, 32);
+        expect(body.eventId).toBe(`evt_${identity}`);
+        const me = await request("GET", "/v1/me", { key: ada.key, ip: ada.ip });
+        expect(me.status, me.text).toBe(200);
+        expect(body.timestamp).toBe(me.json.wake_changed_at);
         expect(e.headers["webhook-id"]).toBe(body.eventId);
       });
 
