@@ -169,14 +169,39 @@ function systemPrompt(ws: string, home: string): string {
 
 type Session = { messages: Any[]; costUsd: number };
 
+// Anthropic's models cache a prompt only where it's marked, unlike OpenAI's
+// and Google's, which cache on their own. Marked on the system prompt and the
+// newest message, as Claude Code does. If OpenRouter refuses the marks, the
+// run carries on without them.
+let cacheMarks = true;
+export const orCacheMarks = () => cacheMarks;
+const mark = (m: Any): Any => ({
+  ...m,
+  content: (typeof m.content === "string"
+    ? [{ type: "text", text: m.content || " " }]
+    : m.content
+  ).map((c: Any, i: number, all: Any[]) =>
+    i === all.length - 1 ? { ...c, cache_control: { type: "ephemeral" } } : c,
+  ),
+});
+function withMarks(model: string, messages: Any[]): Any[] {
+  if (!cacheMarks || !model.startsWith("anthropic/")) return messages;
+  return messages.map((m, i) =>
+    (i === 0 && m.role === "system") || (i === messages.length - 1 && m.content)
+      ? mark(m)
+      : m,
+  );
+}
+
 async function complete(
   model: string,
-  messages: Any[],
+  history: Any[],
   tools: Tool[],
   deadline: number,
 ): Promise<Any> {
   let last = "";
   for (let i = 0; i < 5; i++) {
+    const messages = withMarks(model, history);
     const left = deadline - Date.now();
     if (left <= 0) throw new Error("timed out");
     try {
@@ -211,6 +236,11 @@ async function complete(
         continue;
       }
       const j = JSON.parse(t);
+      if (r.status === 400 && cacheMarks && messages !== history) {
+        cacheMarks = false;
+        last = `400 with cache marks: ${t.slice(0, 300)}`;
+        continue;
+      }
       if (!r.ok || j.error)
         throw new Error(
           `${r.status} ${JSON.stringify(j.error ?? j).slice(0, 500)}`,

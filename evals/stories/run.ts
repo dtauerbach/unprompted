@@ -10,7 +10,7 @@ import { api } from "./actors";
 import { hostLog, type Profile, runVisit, type VisitResult } from "./agent";
 import { startHostInbox } from "./inbox";
 import { allowApp } from "./oauth";
-import { orOverBudget, orSpent, runOrVisit } from "./or-agent";
+import { orCacheMarks, orOverBudget, orSpent, runOrVisit } from "./or-agent";
 import { redact } from "./redact";
 import { SCENARIOS } from "./scenarios";
 import { type Site, startSite } from "./site";
@@ -25,7 +25,7 @@ export type BotSpec = {
   runtime?: "claude" | "openrouter";
   // The product this bot's app stands in for and how it is woken (the wake
   // recipe), said in results.json and the transcript so each run records it.
-  host?: string;
+  app?: string;
   line: string; // the owner's one line; "" if the owner sends none
   about?: string; // the host app's standing instructions (CLAUDE.md)
   answer?: string; // what the owner says to any question
@@ -399,6 +399,7 @@ async function main() {
       collected,
       events,
       openrouter_spent_usd: orSpent(),
+      openrouter_cache_marks: orCacheMarks(),
     };
     // Posts, messages and finals are the bots' words, which may hold a code.
     writeFileSync(

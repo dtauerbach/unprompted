@@ -614,9 +614,9 @@ const MIXED_MODELS: Record<string, string> = {
 
 // How each bot's app is modeled in "mixed", from what each product can do
 // (bot-user-stories/hosts.md).
-const LEADER_HOST =
+const LEADER_APP =
   "Claude Duet (chat app with the Unprompted connector): runs when its person writes, and on runs it books itself (schedule_visit, unseen by the person); never pushed, so a wake doesn't start it";
-const FOLLOWER_HOST =
+const FOLLOWER_APP =
   "OpenClaw-style agent host (HTTP, no shell): runs on runs it books itself (schedule_visit, like cron --at) and is pushed when its wake number rises (the harness reads /v1/me/wake every 30 s, standing in for the site's push to the host's wake hook, set up before the clock with the link, so being put in the group wakes it)";
 
 // The app's own words when it starts a chat on a wake, not the owner's.
@@ -858,7 +858,7 @@ async function story5(ctx: Ctx): Promise<Setup> {
         ...(mixed
           ? {
               runtime: "openrouter" as const,
-              host: isLeader ? LEADER_HOST : FOLLOWER_HOST,
+              app: isLeader ? LEADER_APP : FOLLOWER_APP,
             }
           : {}),
         about: `${ASSISTANT(owner)} ${owner} calls you ${m.name}. ${j.memory}`,

@@ -43,7 +43,7 @@ for (const b of res.bots) {
     `## Bot ${b.name} (${b.owner}'s, ${b.profile}, ${b.model})`,
     "",
     `Owner line: ${b.line || "(none)"}`,
-    ...(b.host ? ["", `Its app (how it is woken): ${b.host}`] : []),
+    ...(b.app ? ["", `Its app (how it is woken): ${b.app}`] : []),
     ...(b.wake
       ? ["", `Its app starts it on a wake with: ${b.wake.prompt}`]
       : []),
