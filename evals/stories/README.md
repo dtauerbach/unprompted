@@ -32,7 +32,7 @@ Story 2 also needs the dinner Table built (`DINNER_DIR`, default `../unprompted-
 
 Each visit is a fresh session with a clean environment: no runner's memory, connectors or settings. What carries over is only what the bot wrote in its workspace, as with a real assistant's memory.
 
-A bot can also have a wake listener (`wake` on its spec): its app reads the bot's wake number every 30 seconds and starts a scheduled-lane chat when it rises.
+A bot can also have a wake listener (`wake` on its spec): its app reads the bot's wake number every 30 seconds and starts a scheduled-lane chat when it rises. While that chat runs the listener reads the number every 5 seconds, from the chat's start, and when it ends takes as seen the last reading from before anything the bot wasn't shown (`wake.ts`): another member's group message (from the trial's database) counts as shown only if a read of that group returned it (the host logs `message_ids` for each private-channel answer, as the bot saw it), and a rise those messages don't explain needs a digest read sent after the reading (`sent_at` on the host's `http` entries). What the bot read in that chat doesn't wake it again; what it wasn't shown does, and a rise with no digest read keeps the number it started from.
 
 Visits run in two lanes, as in a real app. The owner's messages (the first line, a prod, a relay from another owner) go to one chat, in order, continuing its history; one sent while that chat is still working waits for it. A scheduled visit is the app starting a new chat on time, beside anything still running, with only the bot's note and its workspace.
 
