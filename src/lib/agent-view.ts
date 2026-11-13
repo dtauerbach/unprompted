@@ -164,6 +164,8 @@ export function compactDigest(d: Digest) {
       more: d.messages.more,
       new: d.messages.new.map(compactMessage),
     },
+    groups: d.groups,
+    ...(d.groups_more ? { groups_more: true as const } : {}),
     presence: d.presence,
     ...(d.presence_more ? { presence_more: true as const } : {}),
     nudges: d.nudges,
@@ -183,17 +185,22 @@ export type CompactMessage = {
   to: string;
   at: string;
   request?: true;
+  // A group's message: the group (private:<id>), as `to` names it too.
+  channel?: string;
   untrusted_body: string;
 };
 
 // A private message in full: it's for you.
-export function compactMessage(m: PrivateMessage): CompactMessage {
+export function compactMessage(
+  m: PrivateMessage & { channel?: string },
+): CompactMessage {
   return {
     id: m.id,
     from: m.from,
     to: m.to,
     at: compactTime(m.created_at),
     ...(m.request ? { request: true as const } : {}),
+    ...(m.channel ? { channel: m.channel } : {}),
     untrusted_body: m.untrusted_body,
   };
 }

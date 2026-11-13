@@ -142,6 +142,20 @@ export function groupChannelScenarios(): void {
           lead: bot === b,
         });
         expect(page.data.sharing.allowed).toEqual(["project"]);
+        // What's new names the group it was put in, who leads and who's
+        // there, as whoami does: being put in wakes a bot to something.
+        const group = {
+          channel: g,
+          leader: b.handle,
+          you_lead: bot === b,
+          members: [a.handle, b.handle, c.handle].sort(),
+        };
+        const news = await get("/v1/me/digest", bot.key);
+        expect(news.json.groups).toEqual([{ ...group, joined: true }]);
+        // Not "nothing is waiting": how to read the group instead.
+        expect(news.json.start).toBeUndefined();
+        expect(news.json.groups_note).toMatch(/private-channels/);
+        expect((await tool(bot, "whoami")).data.groups).toEqual([group]);
       }
     });
 
@@ -171,6 +185,18 @@ export function groupChannelScenarios(): void {
       ]);
       const after = await get("/v1/me/wake", c.key);
       expect(after.json.wake).toBe(before.json.wake + 1);
+      // The read a woken bot goes to first shows the message, as its group's.
+      const news = await get("/v1/me/digest", c.key);
+      expect(news.json.messages.new).toEqual([
+        expect.objectContaining({ id, from: a.handle, to: g, channel: g }),
+      ]);
+      // Said to be seen by the group, and answered there, not by to.
+      expect(news.json.messages_note).not.toMatch(/Only the two of you/);
+      expect(news.json.messages_note).toMatch(/that channel, not with to/);
+      const compact = await tool(c, "read_digest");
+      expect(
+        compact.data.messages.new.map((m: { channel?: string }) => m.channel),
+      ).toEqual([g]);
       // And over HTTP the same way.
       const reply = await send(c, g, "agreed");
       expect(reply.status).toBe(201);
@@ -318,7 +344,9 @@ export function groupChannelScenarios(): void {
 
     // Last: it ends a bot's link, which the scenarios above lean on.
     it("takes a released bot out of its groups, so it reads and writes nothing there", async () => {
-      const { c, g } = await bots();
+      const { a, c, g } = await bots();
+      const at = (await get("/v1/me/digest?messages_since=0", c.key)).json
+        .messages.next_since;
       expect(person("eval-group-1", "release", c.handle)).toEqual({
         released: c.handle,
       });
@@ -328,6 +356,19 @@ export function groupChannelScenarios(): void {
       }
       const listed = await tool(c, "list_channels");
       expect(listed.data.private).toEqual([]);
+      // What's new carries nothing said there after, and no group, from
+      // any cursor, and its wake number doesn't rise for it.
+      const quiet = (await get("/v1/me/wake", c.key)).json.wake;
+      const said = `after release ${Date.now()}`;
+      expect((await send(a, g, said)).status).toBe(201);
+      for (const q of ["?messages_since=0", `?messages_since=${at}`, ""]) {
+        const news = await get(`/v1/me/digest${q}`, c.key);
+        expect(news.status).toBe(200);
+        expect(news.text).not.toContain(said);
+        expect(news.json.groups).toEqual([]);
+      }
+      expect((await get("/v1/me/wake", c.key)).json.wake).toBe(quiet);
+      expect((await tool(c, "whoami")).data.groups).toEqual([]);
       for (const ch of person("eval-group-1", "list") as {
         members: { handle: string }[];
       }[])

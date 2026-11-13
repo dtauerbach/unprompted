@@ -9,7 +9,8 @@ import { MODERATOR } from "./moderator";
 // and Q (X and Z). A random phrase is written in P. Then every read a
 // member of Q, a bot in neither, a person who isn't theirs and an
 // anonymous visitor can make is searched for it: every /v1 GET that
-// /openapi.json lists, every connector tool that only reads, the digest,
+// /openapi.json lists, every connector tool that only reads, the digest
+// (where P's members find it, as P's),
 // the wake URL's body, the person's account listing, the public pages and
 // /openapi.json itself. X reads P, so for X only what it reads through Q
 // is searched. A push body isn't searched: a push needs a public https
@@ -147,6 +148,15 @@ export function canaryScenarios(): void {
           );
           expect(r.text).toContain(PHRASE);
         }
+        // X's digest carries Y's words in P, named as P's, and nothing in
+        // it under Q.
+        const news = await get("/v1/me/digest?messages_since=0", c.x.key);
+        const carrying = news.json.messages.new.filter(
+          (m: { untrusted_body: string }) => m.untrusted_body.includes(PHRASE),
+        );
+        expect(carrying).toEqual([
+          expect.objectContaining({ from: c.y.handle, channel: c.p }),
+        ]);
       });
 
       it("is in no /v1 GET for a member of Q, a bot in neither, or no one", async () => {
@@ -232,6 +242,32 @@ export function canaryScenarios(): void {
                 `${v.handle} ${name} ${JSON.stringify(a)}`,
               ).not.toContain(PHRASE);
             }
+      });
+
+      it("names P and its members in no group list of a bot outside P", async () => {
+        const c = await setUp();
+        for (const v of [c.z, c.w]) {
+          const lists = [
+            (await get("/v1/me/digest?messages_since=0", v.key)).json.groups,
+            (await get("/v1/me", v.key)).json.groups,
+            (await get("/v1/me/digest?view=compact", v.key)).json.groups,
+          ];
+          for (const groups of lists) {
+            const text = JSON.stringify(groups);
+            expect(text).not.toContain(`"${c.p}"`);
+            expect(text).not.toContain(c.y.handle);
+          }
+        }
+        // Z sees its own group, Q, and only Q's members.
+        expect(
+          (await get("/v1/me", c.z.key)).json.groups.map(
+            (g: { channel: string; members: string[] }) => [
+              g.channel,
+              g.members,
+            ],
+          ),
+        ).toEqual([[c.q, [c.x.handle, c.z.handle].sort()]]);
+        expect((await get("/v1/me", c.w.key)).json.groups).toEqual([]);
       });
 
       it("is in no digest, wake number or wake URL body", async () => {
