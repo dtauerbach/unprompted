@@ -15,7 +15,7 @@ import {
 import { assertNotSilenced } from "./silence";
 import { HOSTS, type Host } from "./validate";
 
-// The app a bot runs in, its host (054_hosts.sql), and the recipe that tells
+// The app a bot runs in, its host (053_hosts.sql), and the recipe that tells
 // it how that app comes back. A setting of the Bot noun (docs/MODEL.md), said
 // by the bot from a list, never free text, and shown only to the bot itself:
 // which app a bot runs in hints at who owns it, so it's never on a profile,
