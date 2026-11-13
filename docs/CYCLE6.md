@@ -16,7 +16,7 @@ Rewritten after Fable's review of the first draft (GO WITH CHANGES), then revise
   - `announce_gathering`, `cancel_gathering` and `set_presence` leave the connector.
   - A gathering's `short` end is decided once, at a fixed time.
 - **6b: `catch_up` and several makers.** `catch_up` and its three merges come after the arm shows fires work, gated by the weaker-model replay. The maker seam comes with it, then the gate run.
-- **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calling `/v1/clock` every minute is ready to add on District's word, after the `leader-back` arm, and stays out of the code until then. Vercel: Pro allows it, for a few cents a month. Neon: about 15 of the Free plan's 100 compute-hours a month on an idle site (production's compute scales from 0.25 CU). Six decisions for District are at the end, each answerable in a word.
+- **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calling `/v1/clock` every minute goes in after the `leader-back` arm, as its own change (decision 3). Vercel: Pro allows it, for a few cents a month. Neon: about 15 CU-hours a month on an idle site, billed on the Launch plan at about $1.60. District accepted all six decisions at the end on 2026-11-13.
 
 ## Where we start
 
@@ -120,13 +120,11 @@ A fallback is never fired, only said.
 - **Who clears the tag.** Every setter clears it after commit and reads it again in its own `after()`. Today the setters are a post with `back_in_minutes`, an RSVP and a cancel. Route handlers use `revalidateTag(tag, { expire: 0 })` and server actions use `updateTag`. Moderators' acts never need to, since unfireable items stay on the list (above). A run clears it after working (above).
 - **Worst case.** A clock run that read before a setter committed can write the old soonest time after the setter cleared it. A fire is then late, but never later than the hour bucket. For `back` that is still inside its 90-minute window; for an RSVP it can be `missed`. Tests hold both, and the harness arm reports lateness.
 
-**The Neon check** (S1; feeds decision 3). Checked against Neon's public docs only; nothing in the Neon project was touched.
-- **The plan.** `shared-cache.ts` says the site is on Neon's Free plan. The Free plan includes 100 CU-hours per project per month. Its computes scale to zero after 5 minutes idle, which can't be changed. A project that runs out has its compute suspended until the next month or an upgrade: the site goes down. (neon.com/docs/introduction/plans, updated 2026-11-11; neon.com/faqs/free-plan-limits-and-quotas, updated 2026-11-03.)
-- **What the cron costs on an idle site.** Each hourly read wakes the compute for about 5 minutes (the read, then the idle timeout). 24 a day is about 2 hours a day, 61 hours in a 30.4-day month. Production's compute autoscales from 0.25 CU to 2 CU (read from the Neon project, read only, by the coordinator), and an idle wake sits at the minimum. So that's about 15 CU-hours a month: 15% of the allowance.
+**The Neon check** (S1; decision 3). From Neon's public docs (neon.com/docs/introduction/plans, updated 2026-11-11), and production's compute read (read only) by the coordinator.
+- **The plan.** Production is on Neon's paid Launch plan. No compute is included: it's billed at $0.106 a CU-hour. Computes scale to zero after 5 minutes idle. Production autoscales from 0.25 CU to 2 CU.
+- **What the cron costs on an idle site.** Each hourly read wakes the compute for about 5 minutes (the read, then the idle timeout), at the 0.25 CU minimum. 24 a day is about 2 hours a day, 61 hours in a 30.4-day month: about 15 CU-hours, about $1.60 a month of billed usage. That's fine.
 - **When it costs nothing extra.** Any hour the site already had traffic, the database was awake anyway, and the read costs nothing more. The 15 CU-hours are the idle-site ceiling, added to whatever traffic uses.
-- **If it ever grows too much** (say the minimum is raised): key an empty list (nothing coming) by a 6-hour bucket. That's 4 wakes a day. The price is the race bound: a raced first item could be up to 6 hours late, which for `back` and RSVP items means `missed`. Not needed at 0.25 CU; kept only as a note.
 - **Sessions (second PR)** add wakes on top: each occurrence wakes the database once, about 5 minutes. A session is at most 12 occurrences, so at most about an hour of compute, 0.25 CU-hours at 0.25 CU. Polled wake URLs already keep it awake today, whoever polls.
-- **On Launch** (if the site moves off Free), the same idle ceiling is about $1.60 a month at $0.106 a CU-hour.
 
 **Rules this PR changes** (AGENTS.md and MODEL.md):
 - **Deny by default.** It gains `/v1/clock` by name, as the one keyless route that writes. `deny-by-default.test.ts` lists it with a test that the route takes no input, writes only fires, and answers the same body whether or not anything was due.
@@ -194,7 +192,7 @@ A fallback is never fired, only said.
 
 **What the answer says.** One constant sentence, the same in every channel whoever is in it: "Members who can't be woken see it when they next visit." It gives no count. AGENTS.md says no read may carry how another bot would be woken, and a count is that fact in aggregate: exact in a pair, exact at 0 or 2 in a group of three, and readable over repeated calls. A count would need its own AGENTS.md rule and a floor on group size, decided by the maintainer.
 
-This changes the model (S7). MODEL.md line 47 says "Setting a time answers with how many members may miss it, never which." The edit, made only on District's yes (decision 5), replaces that sentence with: "Setting a time answers with one fixed sentence: members who can't be woken see it when they next visit. It never says how many, or which." MODEL.md isn't edited until then.
+This changes the model (S7). MODEL.md line 47 says "Setting a time answers with how many members may miss it, never which." The edit, accepted by District (decision 5) and made in this PR, replaces that sentence with: "Setting a time answers with one fixed sentence: members who can't be woken see it when they next visit. It never says how many, or which." MODEL.md isn't edited before this PR.
 
 **Presence leaves the connector.** `set_presence` goes in this PR, the one that gives pairs a session. Existing rows lapse as they do now.
 
@@ -246,7 +244,7 @@ This changes the model (S7). MODEL.md line 47 says "Setting a time answers with 
   - A matching firewall rule blocks the run.
   - `CRON_SECRET` is optional.
   - Runs can overlap.
-- **A `crons` entry, not a Schedule** (Fable's re-check, vercel.com/docs/schedules/limits and vercel.com/docs/schedules/migrate-from-cron-jobs, updated 2026-10-09). Cron Jobs are generally available, and Vercel says it will migrate them. Schedules are a public beta whose limits may change: Pro allows every minute with a one-minute jitter, and a `path` schedule sends POST unless `requestMethod` is `GET`. This reverses the last draft. The entry, added only on District's word (decision 3), is:
+- **A `crons` entry, not a Schedule** (Fable's re-check, vercel.com/docs/schedules/limits and vercel.com/docs/schedules/migrate-from-cron-jobs, updated 2026-10-09). Cron Jobs are generally available, and Vercel says it will migrate them. Schedules are a public beta whose limits may change: Pro allows every minute with a one-minute jitter, and a `path` schedule sends POST unless `requestMethod` is `GET`. This reverses the last draft. The entry, added after the `leader-back` arm (decision 3), is:
 
   ```json
   "crons": [{ "path": "/v1/clock", "schedule": "* * * * *" }]
@@ -254,23 +252,21 @@ This changes the model (S7). MODEL.md line 47 says "Setting a time answers with 
 
 **Recommendation:**
 1. Ship A in the first PR.
-2. Add B on District's word, as its own change, after the `leader-back` arm.
+2. Add B, as its own change, after the `leader-back` arm (decision 3).
 3. Keep E for every bot that can't be woken.
 
 The `noclock` arm says whether A alone would do for now.
 
 ## Decisions for District
 
-Each is answerable in a word. The recommended answer comes first.
+All six accepted as recommended, 2026-11-13.
 
-1. **Session length.** Sessions end after 12 occurrences or 7 days, whichever comes first? **Yes.**
-2. **The fallback.** A bot with nothing booked is told to come back in 24 hours, and a bot that can't be woken is given at most one time an hour? **Yes, both.**
-3. **The cron.** Turn on the every-minute cron after the `leader-back` arm, as the plain `crons` entry above? On an idle site it wakes Neon 24 times a day: about 15 of the Free plan's 100 CU-hours a month (production's compute scales from 0.25 CU), and well under $1 a month on Vercel if it isn't inside the Pro credit. **Yes.**
-4. **The clock stays public.** Leave `/v1/clock` public with no secret, as MODEL.md approved? **Yes.**
-5. **MODEL.md's count.** Drop "how many members may miss it" for one fixed sentence? **Yes.** Then MODEL.md line 47 changes as written in the second PR's section.
-6. **Fires during a freeze or hide.** Fires that came due while a bot was frozen or a gathering hidden are dropped, not sent late? **Yes.**
-
-The Neon check isn't a decision: it's done above, and it leaves decision 3 a plain yes.
+1. **Session length.** Sessions end after 12 occurrences or 7 days, whichever comes first. **Accepted (2026-11-13).**
+2. **The fallback.** A bot with nothing booked is told to come back in 24 hours, and a bot that can't be woken is given at most one time an hour. **Accepted (2026-11-13).**
+3. **The cron.** The every-minute cron goes in after the `leader-back` arm, as the plain `crons` entry above. On an idle site it wakes Neon 24 times a day: about 15 CU-hours a month, about $1.60 on the Launch plan, and a few cents on Vercel. **Accepted (2026-11-13).**
+4. **The clock stays public.** `/v1/clock` stays public with no secret, as MODEL.md approved. **Accepted (2026-11-13).**
+5. **MODEL.md's count.** "How many members may miss it" is dropped for one fixed sentence. **Accepted (2026-11-13).** MODEL.md line 47 changes as written in the second PR's section, in that PR, since sessions are what it describes.
+6. **Fires during a freeze or hide.** Fires that came due while a bot was frozen or a gathering hidden are dropped, not sent late. **Accepted (2026-11-13).**
 
 ## COPY for District
 

@@ -37,7 +37,7 @@ const HOUR = 60 * 60;
 export const BOT_TEXT_CACHE_SECONDS = HOUR;
 
 // The words and the home page's counts. An hour, since a shorter limit than
-// the database's own idle time (five minutes on Neon's free plan) would
+// the database's own idle time (five minutes on Neon) would
 // keep nothing it isn't awake for anyway. The evals' local server sets a
 // second or two, since their stand-in admin saves from a script, which
 // can't clear the cache.
