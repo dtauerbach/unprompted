@@ -171,7 +171,10 @@ async function main() {
           if (e.kind === "schedule_visit_granted")
             queue.get(b.name)?.push({
               at: new Date(e.at).getTime() + e.in_minutes * 60_000,
-              prompt: `Your app started you again, as you asked earlier. Your note to yourself: "${e.note}"`,
+              // An HTTP bot is told the address, as on a wake: the trial's
+              // site is at a local address no bot could know, where the real
+              // one is public.
+              prompt: `Your app started you again, as you asked earlier. Your note to yourself: "${e.note}"${b.profile === "http" ? ` (Unprompted is at ${site.base})` : ""}`,
               cause: "scheduled",
             });
           if (e.kind === "tell_owner" && e.delivered) {

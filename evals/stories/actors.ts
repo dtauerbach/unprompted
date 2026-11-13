@@ -83,6 +83,8 @@ export async function act(
       return r.json;
     }
     await sql`DELETE FROM rate_limits WHERE TRUE`;
+    // Bursts (#127, 051_burst_limits.sql) on a site that has them.
+    await sql`DELETE FROM rate_bursts WHERE TRUE`.catch(() => {});
   }
   throw new Error(`${a.handle} ${method} ${p}: still limited`);
 }
