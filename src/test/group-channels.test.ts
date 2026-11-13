@@ -2375,6 +2375,137 @@ describe("a plain read of a group, and after=0", () => {
     }
   });
 
+  it("answers a hidden group's read the same, byte for byte, as one that doesn't exist, by every cursor", async () => {
+    const { a, b, g } = await three();
+    const m = (await send(a, g, "hidden words")).body.message.id as number;
+    await setPrivateChannelHidden(db(), Number(num(g)), true, "test");
+    const none = await read(b, "private:999999", "?after=0");
+    expect(none.status).toBe(404);
+    for (const q of [
+      "",
+      "?after=0",
+      `?after=${m - 1}`,
+      `?after=${m}`,
+      `?before=${m + 1}`,
+      "?before=999999999",
+    ]) {
+      const res = await read(b, g, q);
+      expect(res.status, q).toBe(404);
+      expect(JSON.stringify(res.body), q).toBe(JSON.stringify(none.body));
+      expect(res.headers.get("content-type"), q).toBe(
+        none.headers.get("content-type"),
+      );
+    }
+    const noneTool = await tool(b.key, "read_channel", {
+      channel: "private:999999",
+      after: 0,
+    });
+    for (const args of [
+      { channel: g },
+      { channel: g, after: 0 },
+      { channel: g, before: m + 1 },
+    ]) {
+      const res = await tool(b.key, "read_channel", args);
+      expect(res.isError).toBe(true);
+      expect(JSON.stringify(res.data)).toBe(JSON.stringify(noneTool.data));
+    }
+  });
+
+  it("gives a member nothing of another group when it pages with that group's message ids", async () => {
+    const { a, b, c, g } = await three();
+    // A second group of the same person's bots, without cat.
+    const other = await group("google-p", [a, b]);
+    const mine: number[] = [];
+    const theirs: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      mine.push((await send(a, g, `ours ${i}`)).body.message.id);
+      theirs.push((await send(b, other, `not for cat ${i}`)).body.message.id);
+    }
+    const ids = (body: { messages: { id: number }[] }) =>
+      body.messages.map((x) => x.id);
+    for (const t of theirs) {
+      for (const q of [`?after=${t}`, `?before=${t}`]) {
+        const res = await read(c, g, q);
+        expect(res.status, q).toBe(200);
+        expect(JSON.stringify(res.body), q).not.toContain("not for cat");
+        for (const id of ids(res.body)) expect(mine, q).toContain(id);
+        // A cursor on an empty page is worked out from the one it passed
+        // in; none names another of the other group's messages.
+        for (const cur of [res.body.next_after, res.body.next_before])
+          if (cur !== null)
+            expect(
+              theirs.filter((x) => x !== t),
+              q,
+            ).not.toContain(cur);
+      }
+      for (const args of [
+        { channel: g, after: t },
+        { channel: g, before: t },
+      ]) {
+        const res = await tool(c.key, "read_channel", args);
+        expect(JSON.stringify(res.data)).not.toContain("not for cat");
+      }
+    }
+    // Paging its own group from the other's ids finds its own in order.
+    expect(ids((await read(c, g, `?after=${theirs[0]}`)).body)).toEqual(
+      mine.slice(1),
+    );
+    expect(ids((await read(c, g, `?before=${theirs[2]}`)).body)).toEqual(mine);
+    // And the other group itself is the one 404, whatever the cursor.
+    for (const q of ["", "?after=0", `?after=${mine[0]}`, `?before=${mine[2]}`])
+      expect((await read(c, other, q)).body.error.code, q).toBe(
+        "no_such_channel",
+      );
+  });
+
+  it("shows a bot taken out and put back nothing from before or from the gap, by any cursor", async () => {
+    const { a, b, g } = await three();
+    const said: number[] = [];
+    said.push((await send(a, g, "early words")).body.message.id);
+    await setOwnBots(db(), "google-p", g, [], ["bob"], null);
+    said.push((await send(a, g, "gap words")).body.message.id);
+    said.push((await send(a, g, "gap words again")).body.message.id);
+    await setOwnBots(db(), "google-p", g, ["bob"], [], null);
+    const back = (await send(a, g, "back now")).body.message.id as number;
+    const cursors = [
+      "",
+      "?after=0",
+      "?before=999999999",
+      `?before=${back}`,
+      `?before=${back + 1}`,
+      ...said.flatMap((id) => [
+        `?after=${id - 1}`,
+        `?after=${id}`,
+        `?before=${id}`,
+        `?before=${id + 1}`,
+      ]),
+    ];
+    for (const q of cursors) {
+      const res = await read(b, g, q);
+      expect(res.status, q).toBe(200);
+      const text = JSON.stringify(res.body);
+      expect(text, q).not.toContain("early words");
+      expect(text, q).not.toContain("gap words");
+      for (const m of res.body.messages) expect(m.id, q).toBe(back);
+      expect(res.body.next_before, q).toBeNull();
+    }
+    for (const args of [
+      { channel: g },
+      { channel: g, after: 0 },
+      { channel: g, before: back },
+      ...said.map((id) => ({ channel: g, after: id - 1 })),
+      ...said.map((id) => ({ channel: g, before: id + 1 })),
+    ]) {
+      const res = await tool(b.key, "read_channel", args);
+      expect(res.isError).toBe(false);
+      const text = JSON.stringify(res.data);
+      expect(text).not.toContain("early words");
+      expect(text).not.toContain("gap words");
+    }
+    expect(bodies((await read(b, g)).body)).toEqual(["back now"]);
+    expect(bodies((await read(b, g, "?after=0")).body)).toEqual(["back now"]);
+  });
+
   it("keeps a pair's reads as they were: no after=0, by id, by handle or through the connector", async () => {
     const a = await bot("alice");
     const b = await bot("bob");
