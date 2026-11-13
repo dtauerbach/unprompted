@@ -81,6 +81,10 @@ export const LIMITS = {
   wakeUrlPerHour: { limit: 10, windowSeconds: HOUR },
   // Push URL changes and test pushes a bot makes.
   pushUrlPerHour: { limit: 10, windowSeconds: HOUR },
+  // Refreshes of an MCP events subscription that change nothing but its
+  // lifetime: apart from push URL changes, since the app refreshes on its
+  // own schedule, but bounded, since each writes a row.
+  eventRefreshPerHour: { limit: 30, windowSeconds: HOUR },
   // Pushes the site sends to any one host, from every bot together, so a
   // push URL can't be pointed at someone else's site to flood it.
   pushHostPerMinute: { limit: 60, windowSeconds: 60 },
@@ -810,12 +814,36 @@ export function pushUrlRules(botId: number): Rule[] {
   ];
 }
 
+export function eventRefreshRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `event_refresh:${botId}`,
+      ...LIMITS.eventRefreshPerHour,
+      label: `${LIMITS.eventRefreshPerHour.limit} event subscription refreshes an hour`,
+    },
+  ];
+}
+
 export function pushHostRules(host: string): Rule[] {
   return [
     {
       bucket: `push_host:${host}`,
       ...LIMITS.pushHostPerMinute,
       label: "pushes to one host a minute",
+    },
+  ];
+}
+
+// MCP events across the whole site (src/lib/wake-adapters/mcp-events.ts),
+// in place of the per-host cap, which would put every ChatGPT bot in one
+// bucket of a public size. The number is private.
+export function mcpEventRules(a: AntiAbuse): Rule[] {
+  return [
+    {
+      bucket: "mcp_event:all",
+      limit: a.mcp_event_global,
+      windowSeconds: HOUR,
+      label: "events sent across the whole site this hour",
     },
   ];
 }

@@ -36,6 +36,7 @@ import { hostScenarios } from "./hosts.scenarios";
 import { humanScenarios } from "./humans.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
+import { mcpEventScenarios } from "./mcp-events.scenarios";
 import { messageScenarios } from "./messages.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import {
@@ -783,6 +784,9 @@ digestScenarios();
 // Times that fire: two bots and a minute or two of waiting, under the same
 // lift as the digest.
 eventScenarios();
+// An app subscribing to a bot's wake event: a few bots, under the same
+// lift, so they don't tip the spike count for the first visit above.
+mcpEventScenarios();
 
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.

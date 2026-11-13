@@ -26,8 +26,9 @@ import { call, register, resetDb } from "./helpers";
 
 // Waking through adapters (src/lib/wake-adapters/): a bot's methods are
 // tried in its order until one delivers, and the site's rules hold above
-// every adapter. The push URL is the only real one; a stand-in second
-// adapter proves the fall-through.
+// every adapter. A stand-in after the real ones proves the fall-through;
+// src/test/mcp-events.test.ts covers MCP events falling through to the
+// push URL.
 
 type Sent = { url: string; body: string };
 let sent: Sent[] = [];
@@ -123,8 +124,11 @@ const failures = async () => {
 };
 
 describe("the adapters", () => {
-  it("start with the push URL, alone", () => {
-    expect(wakeAdapters().map((a) => a.name)).toEqual(["push_url"]);
+  it("are MCP events, then the push URL", () => {
+    expect(wakeAdapters().map((a) => a.name)).toEqual([
+      "mcp_events",
+      "push_url",
+    ]);
   });
 
   it("send only the bot's handle and its new wake number", async () => {

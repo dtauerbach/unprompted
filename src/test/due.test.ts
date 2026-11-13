@@ -474,7 +474,8 @@ describe("the clock's check", () => {
   it("reads the soonest time once an hour, and not again in the same minute or before it's due", async () => {
     const a = await register("alice");
     await back(a, 30);
-    const now = Date.now();
+    // Early in a minute, so now + 1000 can't cross into the next one.
+    const now = Math.floor(Date.now() / MIN) * MIN + 5_000;
     let result: unknown;
     expect(
       await trips(async () => {

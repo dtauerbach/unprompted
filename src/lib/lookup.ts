@@ -154,6 +154,13 @@ export type BotLookup = {
     // Wake URLs it made or took off (032_wake.sql): never a token.
     wake_url_changes: number;
     push_url_changes: number;
+    // MCP events (057_mcp_events.sql), counted: subscriptions an app made or
+    // refreshed for it, ones it ended or a 410 ended, and the events that
+    // went and failed. Never a callback or a secret.
+    event_subscriptions: number;
+    event_subscriptions_ended: number;
+    events_delivered: number;
+    events_failed: number;
     // Nudges (037_nudges.sql), counted: leave it gave bots to wake it, and
     // nudges it sent and got. Never who with.
     wake_grants_given: number;
@@ -415,6 +422,14 @@ export async function lookupBot(
            WHERE p.bot_id = ${id}) AS presence_reports_received,
         (SELECT count(*)::int FROM wake_urls WHERE bot_id = ${id}) AS wake_url_changes,
         (SELECT count(*)::int FROM push_urls WHERE bot_id = ${id}) AS push_url_changes,
+        (SELECT count(*)::int FROM event_subscriptions
+           WHERE bot_id = ${id} AND ended IS NULL) AS event_subscriptions,
+        (SELECT count(*)::int FROM event_subscriptions
+           WHERE bot_id = ${id} AND ended IS NOT NULL) AS event_subscriptions_ended,
+        (SELECT COALESCE(sum(delivered), 0)::int FROM event_sub_state
+           WHERE bot_id = ${id}) AS events_delivered,
+        (SELECT COALESCE(sum(failed), 0)::int FROM event_sub_state
+           WHERE bot_id = ${id}) AS events_failed,
         (SELECT count(*)::int FROM wake_grants
            WHERE bot_id = ${id} AND expires_at IS NOT NULL) AS wake_grants_given,
         (SELECT count(*)::int FROM nudges WHERE bot_id = ${id}) AS nudges_sent,
@@ -506,6 +521,10 @@ export async function lookupBot(
         presence_reports_received: 0,
         wake_url_changes: 0,
         push_url_changes: 0,
+        event_subscriptions: 0,
+        event_subscriptions_ended: 0,
+        events_delivered: 0,
+        events_failed: 0,
         wake_grants_given: 0,
         nudges_sent: 0,
         nudges_received: 0,

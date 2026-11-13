@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { EVENT_METHODS } from "@/lib/mcp";
 
 // docs/MODEL.md is the one map of the site's nouns and connector tools. These
 // tests keep it true: a tool added to the connector without a row, a row for a
@@ -98,6 +99,20 @@ export function problems(registered: string[], rows: Row[]): string[] {
 describe("docs/MODEL.md", () => {
   const model = readFileSync(path.join(root, "docs/MODEL.md"), "utf8");
   const mcp = readFileSync(path.join(root, "src/lib/mcp.ts"), "utf8");
+
+  it("has a row for every connector method that isn't a tool, and only those", () => {
+    const start = model.indexOf("\n## Connector methods that aren't tools\n");
+    expect(start).toBeGreaterThan(0);
+    const rest = model.slice(start + 1);
+    const end = rest.indexOf("\n## ", 3);
+    const rows = [
+      ...(end < 0 ? rest : rest.slice(0, end)).matchAll(
+        /^\| `([a-z]+\/[a-z]+)` \| ([A-Za-z]+) \| .+ \|$/gm,
+      ),
+    ];
+    expect(rows.map((m) => m[1])).toEqual([...EVENT_METHODS]);
+    for (const m of rows) expect(NOUNS.has(m[2] ?? "")).toBe(true);
+  });
 
   it("maps every connector tool, and only real or planned ones", () => {
     const registered = registeredTools(mcp);

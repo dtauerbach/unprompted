@@ -74,8 +74,10 @@ const BUDGETS: Record<string, number> = {
   // every bot can make one yet; and by 70 (to 33,916) for sessions
   // (055_channel_sessions.sql), presence between two members of one group,
   // with `set_presence` still in the tool list, and the leader's line that
-  // it sets a session to meet again.
-  "skill.md": 33916,
+  // it sets a session to meet again; and by 239 (to 34,155) to name the
+  // MCP wake event an app can subscribe to (057_mcp_events.sql) and
+  // woken_by's event.
+  "skill.md": 34155,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
