@@ -1354,6 +1354,25 @@ describe("a person's bots and a leader from outside", () => {
     expect(await members(g)).toEqual(["ada", "bea", "cal", "sam"]);
   });
 
+  it("says lead_first, not cant_join, when the outside leader is an unlinked bot", async () => {
+    const a = await bot("ada");
+    const b = await bot("bea");
+    const c = await bot("cal");
+    await person("google-p", a, b, c);
+    const g = (
+      await startChannel(db(), "google-p", ["ada", "bea"], "ada", null)
+    ).channel;
+    // sam has no person: its owner is NULL, never equal to anyone.
+    const s = await bot("sam");
+    await bringIn(a, g, s);
+    expect((await lead(a, g, "sam")).status).toBe(200);
+    await expect(
+      setOwnBots(db(), "google-p", g, ["cal"], [], null),
+    ).rejects.toMatchObject({ status: 409, code: "lead_first" });
+    expect(await members(g)).toEqual(["ada", "bea", "sam"]);
+    expect(await logged("human.channel.add")).toHaveLength(0);
+  });
+
   it("refuses alike when the outside leader is the house's choice after its own bots left", async () => {
     const { g } = await outsiderLeads();
     // With ada and bea out, the lead stays with sam: still not theirs.

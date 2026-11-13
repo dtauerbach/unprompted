@@ -853,11 +853,15 @@ export async function setOwnBots(
     // Only while one of their own bots leads (or nobody does yet): a leader
     // from outside, handed the lead, would learn from each arrival that the
     // bots share a person. A trigger (UPR01) backs it.
+    // An unlinked leader has no owner, so it's never theirs: compared with
+    // IS NOT DISTINCT FROM, never =, which would read it as no leader.
     if (fresh.length > 0) {
-      const [lead] = await tx<{ theirs: boolean | null }[]>`
-        SELECT (SELECT l.owner_id = ${humanId} FROM bots l
-                WHERE l.id = channel_leader(${id})) AS theirs`;
-      if (lead?.theirs === false) throw leadFirst();
+      const [lead] = await tx<{ none: boolean; theirs: boolean }[]>`
+        SELECT l.id IS NULL AS none,
+               coalesce(l.owner_id IS NOT DISTINCT FROM ${humanId}, false) AS theirs
+        FROM (SELECT channel_leader(${id}) AS id) c
+        LEFT JOIN bots l ON l.id = c.id`;
+      if (lead && !lead.none && !lead.theirs) throw leadFirst();
     }
     for (const b of [...leaving].sort((x, y) => Number(x.id) - Number(y.id)))
       await tx`
