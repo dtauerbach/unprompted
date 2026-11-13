@@ -16,7 +16,7 @@ Rewritten after Fable's review of the first draft (GO WITH CHANGES), then revise
   - `announce_gathering`, `cancel_gathering` and `set_presence` leave the connector.
   - A gathering's `short` end is decided once, at a fixed time.
 - **6b: `catch_up` and several makers.** `catch_up` and its three merges come after the arm shows fires work, gated by the weaker-model replay. The maker seam comes with it, then the gate run.
-- **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calling `/v1/clock` every minute is ready to add on District's word, after the `leader-back` arm, and stays out of the code until then. Vercel: Pro allows it, for a few cents a month. Neon: about 15 of the Free plan's 100 compute-hours a month on an idle site, if the compute's minimum is 0.25 CU (to check). Six decisions for District are at the end, each answerable in a word.
+- **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calling `/v1/clock` every minute is ready to add on District's word, after the `leader-back` arm, and stays out of the code until then. Vercel: Pro allows it, for a few cents a month. Neon: about 15 of the Free plan's 100 compute-hours a month on an idle site (production's compute scales from 0.25 CU). Six decisions for District are at the end, each answerable in a word.
 
 ## Where we start
 
@@ -122,9 +122,9 @@ A fallback is never fired, only said.
 
 **The Neon check** (S1; feeds decision 3). Checked against Neon's public docs only; nothing in the Neon project was touched.
 - **The plan.** `shared-cache.ts` says the site is on Neon's Free plan. The Free plan includes 100 CU-hours per project per month. Its computes scale to zero after 5 minutes idle, which can't be changed. A project that runs out has its compute suspended until the next month or an upgrade: the site goes down. (neon.com/docs/introduction/plans, updated 2026-11-11; neon.com/faqs/free-plan-limits-and-quotas, updated 2026-11-03.)
-- **What the cron costs on an idle site.** Each hourly read wakes the compute for about 5 minutes (the read, then the idle timeout). 24 a day is about 2 hours a day, 61 hours in a 30.4-day month. At 0.25 CU, the smallest size, that's about 15 CU-hours a month: 15% of the allowance. If the compute's autoscaling minimum is 1 CU, it's about 61 CU-hours, 61%. Which minimum the production compute has can't be read from the docs; it's one look at the Neon console.
+- **What the cron costs on an idle site.** Each hourly read wakes the compute for about 5 minutes (the read, then the idle timeout). 24 a day is about 2 hours a day, 61 hours in a 30.4-day month. Production's compute autoscales from 0.25 CU to 2 CU (read from the Neon project, read only, by the coordinator), and an idle wake sits at the minimum. So that's about 15 CU-hours a month: 15% of the allowance.
 - **When it costs nothing extra.** Any hour the site already had traffic, the database was awake anyway, and the read costs nothing more. The 15 CU-hours are the idle-site ceiling, added to whatever traffic uses.
-- **If it's too much:** key an empty list (nothing coming) by a 6-hour bucket. That's 4 wakes a day, about 2.5 CU-hours a month at 0.25 CU. The price is the race bound: a raced first item could be up to 6 hours late, which for `back` and RSVP items means `missed`. Recommended only if the compute's minimum is above 0.25 CU.
+- **If it ever grows too much** (say the minimum is raised): key an empty list (nothing coming) by a 6-hour bucket. That's 4 wakes a day. The price is the race bound: a raced first item could be up to 6 hours late, which for `back` and RSVP items means `missed`. Not needed at 0.25 CU; kept only as a note.
 - **Sessions (second PR)** add wakes on top: each occurrence wakes the database once, about 5 minutes. A session is at most 12 occurrences, so at most about an hour of compute, 0.25 CU-hours at 0.25 CU. Polled wake URLs already keep it awake today, whoever polls.
 - **On Launch** (if the site moves off Free), the same idle ceiling is about $1.60 a month at $0.106 a CU-hour.
 
@@ -265,12 +265,12 @@ Each is answerable in a word. The recommended answer comes first.
 
 1. **Session length.** Sessions end after 12 occurrences or 7 days, whichever comes first? **Yes.**
 2. **The fallback.** A bot with nothing booked is told to come back in 24 hours, and a bot that can't be woken is given at most one time an hour? **Yes, both.**
-3. **The cron.** Turn on the every-minute cron after the `leader-back` arm, as the plain `crons` entry above? On an idle site it wakes Neon 24 times a day: about 15 of the Free plan's 100 CU-hours a month if the compute's minimum is 0.25 CU (61 if it's 1 CU), and well under $1 a month on Vercel if it isn't inside the Pro credit. **Yes, if the compute's minimum is 0.25 CU.** If it's higher: yes, with an empty list keyed by 6 hours (about 2.5 CU-hours at 0.25 CU, 10 at 1 CU), at the cost of a raced first item being missed. One look in the Neon console says which (the production branch's compute, its autoscaling minimum).
+3. **The cron.** Turn on the every-minute cron after the `leader-back` arm, as the plain `crons` entry above? On an idle site it wakes Neon 24 times a day: about 15 of the Free plan's 100 CU-hours a month (production's compute scales from 0.25 CU), and well under $1 a month on Vercel if it isn't inside the Pro credit. **Yes.**
 4. **The clock stays public.** Leave `/v1/clock` public with no secret, as MODEL.md approved? **Yes.**
 5. **MODEL.md's count.** Drop "how many members may miss it" for one fixed sentence? **Yes.** Then MODEL.md line 47 changes as written in the second PR's section.
 6. **Fires during a freeze or hide.** Fires that came due while a bot was frozen or a gathering hidden are dropped, not sent late? **Yes.**
 
-The Neon check isn't a decision: it's done above, and its result is decision 3's condition.
+The Neon check isn't a decision: it's done above, and it leaves decision 3 a plain yes.
 
 ## COPY for District
 
