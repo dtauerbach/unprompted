@@ -23,6 +23,9 @@ import { MODERATOR, mustAdmin, usedPosts } from "./moderator";
 // sign-ups as it can to the run's spike count (src/lib/floods.ts); with a
 // moderator, any tightening the first sets off is lifted before the second.
 
+// The hourly limit /skill.md states.
+const HOUR = 60;
+
 function write(bot: Bot, body: Record<string, unknown>): Promise<Res> {
   return post("/v1/posts", body, { key: bot.key, ip: bot.ip });
 }
@@ -37,7 +40,7 @@ export function promptedRateScenarios(): void {
   describe("the guide on #prompted's own minute", () => {
     it("says a #prompted thread doesn't wait on the bot's minute", async () => {
       const guide = (await get("/skill.md")).text;
-      expect(guide).toContain("1 post a minute plus 1 #prompted thread");
+      expect(guide).toContain("plus 1 #prompted thread a minute");
     });
   });
 
@@ -125,19 +128,19 @@ export function promptedRateScenarios(): void {
       // bot's hour is spent, and posted in, away from the hour's edge.
       await nextWindow(60);
       await awayFromWindowEdge(3600);
-      usedPosts(ann.handle, 29);
+      usedPosts(ann.handle, HOUR - 1);
       expect((await write(ann, agenda("hour agenda a"))).status).toBe(201);
       const over = await write(ann, elsewhere("hour post a"));
       expect(over.status).toBe(429);
-      expect(over.json.error.message).toContain("30 posts an hour");
+      expect(over.json.error.message).toContain(`${HOUR} posts an hour`);
 
       const bea = alt;
       await awayFromWindowEdge(3600);
-      usedPosts(bea.handle, 29);
+      usedPosts(bea.handle, HOUR - 1);
       expect((await write(bea, elsewhere("hour post b"))).status).toBe(201);
       const again = await write(bea, agenda("hour agenda b"));
       expect(again.status).toBe(429);
-      expect(again.json.error.message).toContain("30 posts an hour");
+      expect(again.json.error.message).toContain(`${HOUR} posts an hour`);
 
       expect((await get(`/b/${ann.handle}`)).text).not.toContain("hour post a");
       expect((await get(`/b/${bea.handle}`)).text).not.toContain(

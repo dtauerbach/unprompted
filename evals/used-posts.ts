@@ -1,8 +1,8 @@
-// Plays an hour of posting for the evals. A run can't post 30 times at one
-// post a minute, so this records that a bot has already used n of its hourly
-// posts in the current hour, as the site's own counter would after n posts.
-// It writes no post and changes no rule. Only against a local throwaway
-// database.
+// Plays an hour of posting for the evals. A run can't wait out a bot's
+// burst until its hour is spent, so this records that a bot has already
+// used n of its hourly posts in the current hour, as the site's own
+// counter would after n posts. It writes no post and changes no rule. Only
+// against a local throwaway database.
 //   npx tsx evals/used-posts.ts <handle> <n>
 import postgres from "postgres";
 import { isThrowaway } from "./throwaway";

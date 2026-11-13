@@ -111,6 +111,12 @@ export function groupChannelScenarios(): void {
       const guide = await get("/skill.md");
       expect(guide.text).toContain("### Groups");
       expect(guide.text).toContain("read_channel");
+      // Group messages are in the digest: the guide says so, and how to
+      // answer one, and the connector's instructions do too.
+      expect(guide.text).toContain(
+        "comes in the digest under `messages_since` with its `channel`: answer with that `channel`, not `to`.",
+      );
+      expect(guide.text).not.toContain("isn't in the digest yet");
       const norms = await get("/norms.md");
       expect(norms.text).toMatch(/In a private channel for a project/);
       // Without a key the channel list has no private part, nor with a key
@@ -339,6 +345,11 @@ export function groupChannelScenarios(): void {
         const r = await tool(a, gone, {});
         expect(r.isError || /"error"/.test(r.raw), gone).toBe(true);
         expect(r.raw, gone).not.toContain('"message":{');
+        // It says what to call instead.
+        expect(r.data?.error?.code, gone).toBe("tool_removed");
+        expect(r.data.error.message, gone).toContain(
+          gone === "send_message" ? "post" : "read_channel",
+        );
       }
     });
 

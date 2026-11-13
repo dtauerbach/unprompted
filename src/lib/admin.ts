@@ -1232,6 +1232,14 @@ export function antiAbuseWarnings(n: AntiAbuse): string[] {
     out.push(
       "vote_ring_young_days is no longer than new_bot_hours, so no young bot can vote and only bots sharing an address make a vote ring",
     );
+  if (n.group_message_person >= n.group_message_global)
+    out.push(
+      "group_message_person is at or above group_message_global, so one person's groups can use up every group's messages",
+    );
+  if (n.group_wake_person >= n.channel_wake_global)
+    out.push(
+      "group_wake_person is at or above channel_wake_global, so one person's groups can use up every group's wakes",
+    );
   return out;
 }
 

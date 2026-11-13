@@ -147,7 +147,7 @@ async function run(setup: Setup, sql: postgres.Sql | undefined) {
   const started = new Date();
   // mtimes have coarse resolution on some filesystems.
   const since = started.getTime() - 2000;
-  if (sql) await sql`TRUNCATE rate_limits`;
+  if (sql) await sql`TRUNCATE rate_limits, rate_bursts`;
   const args = ["-p", LINE, "--output-format", "stream-json", "--verbose"];
   if (setup.tools.length) args.push("--allowedTools", ...setup.tools);
   // Only the tools named here, not the runner's own connectors, so a run

@@ -5,10 +5,12 @@ import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
 import {
-  channelWakeRules,
   consume,
-  messageRules,
+  type GroupOwner,
+  groupMessageRules,
+  groupWakeRules,
   personChannelRules,
+  personOwner,
   privateChannelRules,
 } from "./limits";
 import { logAction } from "./log";
@@ -194,6 +196,16 @@ async function wakeCount(tx: Tx, id: number, me: number): Promise<number> {
   return r?.n ?? 0;
 }
 
+// Whose share a group's messages count against: the person who started it,
+// or the bot, once bots start groups. Fixed for the group's life.
+async function groupOwner(tx: Tx, id: number): Promise<GroupOwner> {
+  const [g] = await tx<{ owner: string }[]>`
+    SELECT coalesce('person:' || human_id, 'bot:' || bot_id) AS owner
+    FROM group_channels WHERE channel_id = ${id}`;
+  if (!g) throw noSuchChannel();
+  return g.owner;
+}
+
 // A message to a group the bot is in. Refusals that don't depend on the
 // channel come first or not at all, so a bot that isn't a member learns
 // nothing from them about whether the channel exists.
@@ -217,18 +229,21 @@ export async function sendToChannel(
       );
     await assertAllowed(tx, caller.botId, "message");
     // The insert lock before the limits, as a pair's message takes them
-    // (sendMessage), since both count against the same message limits: a
-    // group message holding a limit row while waiting for the insert lock
-    // would deadlock with a pair message holding the lock while waiting for
-    // that row. The channel lock after the limits, since a person's change
-    // holds the group-wake row while it waits for the channel lock.
+    // (sendMessage): every message write takes the same locks in the same
+    // order. The channel lock after the limits, since a person's change
+    // holds the group-wake row while it waits for the channel lock. A
+    // group's own limits, not a pair's: its members are there because their
+    // people put them there. Its messages and wakes count against its
+    // person's share, then caps of groups' own, so one person's groups
+    // can't use them up for every other group, and no group can for pairs.
     await tx`SELECT pg_advisory_xact_lock(hashtext('unprompted.messages.insert'))`;
+    const owner = await groupOwner(tx, id);
     const limits = await antiAbuse(tx);
-    await consume(tx, messageRules(caller.botId, false, limits));
+    await consume(tx, groupMessageRules(caller.botId, owner, limits));
     // The wakes this message would raise, counted before the channel lock:
     // close enough for a site-wide cap.
     const wakes = await wakeCount(tx, id, caller.botId);
-    if (wakes > 0) await consume(tx, channelWakeRules(limits), wakes);
+    if (wakes > 0) await consume(tx, groupWakeRules(owner, limits), wakes);
     // The sender's own row before the channel's lock: the insert's
     // forbid_frozen() locks it for share, and a release of this bot holds
     // it for no key update while it waits for each of its groups' locks, so taking
@@ -745,7 +760,13 @@ export async function startChannel(
     const limits = await antiAbuse(tx);
     await consume(tx, privateChannelRules(limits));
     await assertCanJoin(tx, bots);
-    await consume(tx, channelWakeRules(limits), bots.length);
+    // The wakes it raises count against this person's share as a message's
+    // do, so their own changes can't use up the site's for other groups.
+    await consume(
+      tx,
+      groupWakeRules(personOwner(humanId), limits),
+      bots.length,
+    );
     const [c] = await tx<{ id: string }[]>`
       INSERT INTO private_channels DEFAULT VALUES RETURNING id`;
     if (!c) throw new Error("private channel insert returned nothing");
@@ -814,7 +835,11 @@ export async function setOwnBots(
       if ((await rosterSize(tx, id)) + fresh.length > GROUP_MEMBER_CAP)
         throw channelFull();
       await assertCanJoin(tx, fresh);
-      await consume(tx, channelWakeRules(await antiAbuse(tx)), fresh.length);
+      await consume(
+        tx,
+        groupWakeRules(await groupOwner(tx, id), await antiAbuse(tx)),
+        fresh.length,
+      );
     }
     await tx`SELECT lock_private_channel(${id})`;
     for (const b of [...leaving].sort((x, y) => Number(x.id) - Number(y.id)))

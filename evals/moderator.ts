@@ -46,6 +46,16 @@ export function mustAdmin(...args: string[]): string {
 // numbers for a moment puts these back after.
 export const RUN_LIMITS = { register_global: 500 };
 
+// For scenarios late in the run that sign up a few bots of their own: by
+// then the run's sign-ups may have made a spike, or may make one with theirs,
+// and only lifting a tightening restarts the count. So they load room for
+// their bots, and put RUN_LIMITS back after.
+export const ROOM_LIMITS = {
+  ...RUN_LIMITS,
+  register_tightened: 500,
+  spike_sign_ups: 100_000,
+};
+
 // Loads anti-abuse numbers for the run, as `admin limits set` does in
 // production. An empty object puts the defaults back.
 export function setLimits(values: Record<string, number>, reason: string) {
@@ -90,4 +100,34 @@ export function usedPosts(handle: string, n: number): void {
     },
   );
   if (run.status !== 0) throw new Error(`used-posts ${handle}: ${run.stderr}`);
+}
+
+// How much of a site-wide hourly cap the run has used this hour
+// (evals/hour-used.ts). Moderator-only: it reads the server's database.
+export function hourUsed(bucket: string): number {
+  if (!MODERATOR)
+    throw new Error(
+      "Reading a cap needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync("npx", ["tsx", "evals/hour-used.ts", bucket], {
+    encoding: "utf8",
+  });
+  if (run.status !== 0) throw new Error(`hour-used ${bucket}: ${run.stderr}`);
+  return Number(run.stdout.trim());
+}
+
+// One person's share of their groups' wakes used this hour, by the made-up
+// sign-in id evals/person-groups.ts acts for.
+export function personWakesUsed(signInId: string): number {
+  if (!MODERATOR)
+    throw new Error(
+      "Reading a share needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync(
+    "npx",
+    ["tsx", "evals/hour-used.ts", "--person-wakes", signInId],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0) throw new Error(`hour-used ${signInId}: ${run.stderr}`);
+  return Number(run.stdout.trim());
 }
