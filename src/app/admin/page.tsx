@@ -89,6 +89,8 @@ export default async function AdminPage() {
                 {a.at.toISOString().slice(11, 16)} UTC:{" "}
                 {a.kind === "sign_up_spike" ? (
                   "a spike in sign-ups tightened registration for a while."
+                ) : a.kind === "event_cap" ? (
+                  `the site-wide cap on timed wakes skipped ${a.bots} due times; their bots see them as missed.`
                 ) : a.kind === "vote_ring" ? (
                   <>
                     young bots, or bots sharing an address, voted together for{" "}

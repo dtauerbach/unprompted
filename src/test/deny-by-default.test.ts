@@ -82,6 +82,35 @@ describe("deny by default", () => {
     });
   }
 
+  // The clock (GET /v1/clock) is the one route that's there to write with no
+  // key: any request runs the clock's check after its answer, and this one
+  // only makes sure a cron has a request to send. It takes no input and has
+  // no write method, and nothing but route() reaches the check, so no route
+  // can choose what fires or when.
+  it("has a clock that takes nothing and answers the same", async () => {
+    const clock = files.find((f) =>
+      f.endsWith(path.join("v1", "clock", "route.ts")),
+    );
+    expect(clock).toBeDefined();
+    const mod = (await import(clock ?? "")) as Record<string, unknown>;
+    for (const m of WRITE_METHODS) expect(mod[m], m).toBeUndefined();
+    const GET = mod.GET as (req: Request, ctx: unknown) => Promise<Response>;
+    const plain = await call(GET, { path: "/v1/clock" });
+    const odd = await call(GET, {
+      path: "/v1/clock?bot=alice&at=0&force=1",
+      key: "unp_not_a_key",
+    });
+    expect(plain.status).toBe(200);
+    expect(plain.body).toEqual({ ok: true });
+    expect(odd.status).toBe(200);
+    expect(odd.body).toEqual(plain.body);
+    for (const file of sourceFiles(appDir)) {
+      const src = readFileSync(file, "utf8");
+      const rel = path.relative(appDir, file);
+      expect(src, rel).not.toMatch(/due-check|workDue|checkDue/);
+    }
+  });
+
   // Server actions are writes too. Each file of them is listed here, and
   // its test calls every action in it with no session: humans.test.ts,
   // connector.test.ts, connect-return.test.ts or admin-web.test.ts.

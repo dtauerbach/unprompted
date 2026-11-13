@@ -9,6 +9,7 @@ import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, pushHostRules, pushUrlRules } from "./limits";
 import { logAction } from "./log";
+import { isReadOnly } from "./read-only";
 import { PUSH_URL_MAX } from "./validate";
 import { wakeOf } from "./wake";
 import {
@@ -478,6 +479,9 @@ const pastPushUrl = () => wakeAdapters().length > 1;
 export async function drainPushes(
   deliver: Deliver = deliverer,
 ): Promise<number> {
+  // The kill switch stops pushes, whoever starts the drain: they write and
+  // call out.
+  if (isReadOnly()) return 0;
   return (await drainBatch(deliver)).sent;
 }
 
@@ -503,7 +507,22 @@ async function drainBatch(
     // Hosts over their limit this round, and for how long.
     const capped = new Map<string, number>();
     for (const r of rows) {
-      const { any, usable } = await methodsFor(tx, Number(r.bot_id));
+      // One bot whose methods can't be read doesn't stop the batch: it's
+      // put off by the gap, and the rest go on.
+      let methods: Awaited<ReturnType<typeof methodsFor>>;
+      try {
+        methods = await tx.savepoint((sp) =>
+          methodsFor(sp as unknown as Tx, Number(r.bot_id)),
+        );
+      } catch (e) {
+        console.error(e);
+        await tx`
+          UPDATE push_state
+          SET pending_since = now() + make_interval(secs => ${PUSH_GAP_SECONDS})
+          WHERE bot_id = ${r.bot_id}`;
+        continue;
+      }
+      const { any, usable } = methods;
       // Nothing to wake it by any more: nothing waits.
       if (!any) {
         await tx`UPDATE push_state SET pending_since = NULL WHERE bot_id = ${r.bot_id}`;
@@ -543,23 +562,34 @@ async function drainBatch(
     return { out, seen: rows.length };
   });
   const { out: claimed, seen } = batch;
+  // Each bot apart: one whose send or record throws is logged and the
+  // others' still go out and are recorded.
   await Promise.all(
     claimed.map(async (r) => {
-      const botId = Number(r.bot_id);
-      const { wake } = await wakeOf(sql, botId);
-      const note = { handle: r.handle, wake };
-      for (const [i, m] of r.methods.entries()) {
-        // A method past the first counts against its own host's cap when
-        // it's reached; one over its cap is passed over this time.
-        if (i > 0) {
-          const wait = await sql.begin((tx) =>
-            hostWait(tx, m.registration.address),
+      try {
+        const botId = Number(r.bot_id);
+        const { wake } = await wakeOf(sql, botId);
+        const note = { handle: r.handle, wake };
+        for (const [i, m] of r.methods.entries()) {
+          // A method past the first counts against its own host's cap when
+          // it's reached; one over its cap is passed over this time.
+          if (i > 0) {
+            const wait = await sql.begin((tx) =>
+              hostWait(tx, m.registration.address),
+            );
+            if (wait !== undefined) continue;
+          }
+          const outcome = await sendOne(
+            m.adapter,
+            m.registration,
+            note,
+            deliver,
           );
-          if (wait !== undefined) continue;
+          await m.adapter.record(sql, botId, outcome);
+          if (outcome.delivered) break;
         }
-        const outcome = await sendOne(m.adapter, m.registration, note, deliver);
-        await m.adapter.record(sql, botId, outcome);
-        if (outcome.delivered) break;
+      } catch (e) {
+        console.error(e);
       }
     }),
   );
@@ -626,6 +656,7 @@ export async function drainForAWhile(
   deliver: Deliver = deliverer,
   forMs: number = DRAIN_FOR_MS,
 ): Promise<void> {
+  if (isReadOnly()) return;
   const until = Date.now() + forMs;
   while (Date.now() < until) {
     // A full batch may have more behind it: go on at once. It can't spin,

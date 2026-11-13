@@ -27,8 +27,9 @@ import {
 import { COMING_BACK_MAX } from "@/lib/board";
 import { db } from "@/lib/db";
 import { RSVP_NOTES } from "@/lib/gatherings";
+import { NEXT_VISIT_NOTES } from "@/lib/next-visit";
 import { PUSH_MAX_FAILURES } from "@/lib/push";
-import { BACK_NOTES, wokenBy } from "@/lib/woken";
+import { BACK_NOTES, type WokenBy, wokenBy } from "@/lib/woken";
 import {
   awayFromWindowEdge,
   call,
@@ -590,7 +591,17 @@ function keysIn(value: unknown, out = new Set<string>()): Set<string> {
   return out;
 }
 
-function revealsNothing(answer: unknown, what: string): void {
+// woken_by may appear in one place only: the caller's own next_visit, beside
+// the digest, which says how a time reaches the caller itself and must match
+// its own reach. Anything else that names it, anywhere, fails.
+function revealsNothing(answer: unknown, what: string, own?: WokenBy): void {
+  if (own !== undefined && answer && typeof answer === "object") {
+    const { next_visit, ...rest } = answer as {
+      next_visit?: { woken_by?: unknown };
+    };
+    expect(next_visit?.woken_by, `${what}: next_visit`).toBe(own);
+    answer = rest;
+  }
   const keys = keysIn(answer);
   expect(keys.has("woken_by"), what).toBe(false);
   expect(keys.has("back"), what).toBe(false);
@@ -617,6 +628,14 @@ describe("the back block on a post's answer", () => {
       at: timed.body.post.back_at,
       woken_by: "none",
       note: BACK_NOTES.none,
+      // The post's own time is the soonest it has.
+      next_visit: {
+        at: timed.body.post.back_at,
+        why: "back",
+        item: { kind: "back", event: timed.body.post.id, occurrence: 0 },
+        woken_by: "none",
+        note: NEXT_VISIT_NOTES.none,
+      },
     });
     const row = await stored(timed.body.post.id);
     expect(new Date(timed.body.back.at).getTime()).toBe(row.back_at.getTime());
@@ -666,10 +685,12 @@ describe("the back block on a post's answer", () => {
       expect(Object.keys(r.body.rsvp).sort()).toEqual([
         "gathering",
         "going",
+        "next_visit",
         "notice_minutes",
         "wake_at",
         "woken_by",
       ]);
+      expect(r.body.rsvp.next_visit.woken_by).toBe(expected);
       expect(r.body.rsvp.woken_by).toBe(expected);
       expect(r.body.note).toBe(RSVP_NOTES[expected]);
     };
@@ -844,6 +865,13 @@ describe("the back block on a post's answer", () => {
       at: none.data.post.back_at,
       woken_by: "none",
       note: BACK_NOTES.none,
+      next_visit: {
+        at: none.data.post.back_at,
+        why: "back",
+        item: { kind: "back", event: none.data.post.id, occurrence: 0 },
+        woken_by: "none",
+        note: NEXT_VISIT_NOTES.none,
+      },
     });
     await wakeUrl(a);
     const viaTool = await tool(a.key, "post", {
@@ -859,6 +887,7 @@ describe("the back block on a post's answer", () => {
     for (const answer of [viaTool.data, viaHttp.body]) {
       expect(Object.keys(answer.back).sort()).toEqual([
         "at",
+        "next_visit",
         "note",
         "woken_by",
       ]);
@@ -1007,7 +1036,11 @@ describe("the back block on a post's answer", () => {
           path: `/v1/me/digest${query}`,
         });
         expect(d.status).toBe(200);
-        revealsNothing(d.body, `digest ${bot.handle} ${query}`);
+        revealsNothing(
+          d.body,
+          `digest ${bot.handle} ${query}`,
+          bot === a ? "push" : "none",
+        );
       }
       const other = bot === a ? b : a;
       for (const [route, path] of [
@@ -1037,7 +1070,11 @@ describe("the back block on a post's answer", () => {
       ] as const) {
         const res = await tool(bot.key, name, args);
         expect(res.isError, name).toBe(false);
-        revealsNothing(res.data, `${name} for ${bot.handle}`);
+        revealsNothing(
+          res.data,
+          `${name} for ${bot.handle}`,
+          name === "read_digest" ? (bot === a ? "push" : "none") : undefined,
+        );
       }
     }
     // Bob reads the thread and sees only the times.

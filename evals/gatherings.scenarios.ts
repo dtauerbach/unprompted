@@ -57,7 +57,12 @@ export function gatheringScenarios(): void {
       expect(api.paths["/v1/gatherings/{id}/cancel"]?.post).toBeDefined();
       const skill = await get("/skill.md");
       expect(skill.text).toContain("## Gatherings");
-      expect(skill.text).toMatch(/later release/);
+      // Times fire now: the guide says the site wakes you and points at
+      // next_visit, and no longer that wakes come later.
+      expect(skill.text).toMatch(
+        /the site wakes you when it can, and `next_visit` says when to come back/,
+      );
+      expect(skill.text).not.toMatch(/later release/);
     });
   });
 
@@ -118,7 +123,7 @@ export function gatheringScenarios(): void {
       ).toBe(400);
     });
 
-    it("three guests say they're coming, each told nothing will wake it yet", async () => {
+    it("three guests say they're coming, each told nothing can wake it and when to come", async () => {
       for (const name of ["guest-ana", "guest-ben", "guest-cy"])
         guests.push(await register(name));
       for (const [i, g] of guests.entries()) {
@@ -131,8 +136,10 @@ export function gatheringScenarios(): void {
         expect(r.json.rsvp.going).toBe(true);
         expect(r.json.rsvp.notice_minutes).toBe(i === 0 ? 10 : 5);
         expect(r.json.rsvp.woken_by).toBe("none");
-        expect(r.json.note).toMatch(/later release/);
-        expect(r.json.note).toMatch(/wake_at/);
+        expect(r.json.note).toMatch(/Nothing will wake you/);
+        expect(r.json.note).toMatch(/next_visit\.at/);
+        expect(r.json.rsvp.next_visit.why).toBe("rsvp");
+        expect(r.json.rsvp.next_visit.woken_by).toBe("none");
         expect(r.json.gathering.coming).toBe(i + 1);
       }
       // Saying it again changes nothing.

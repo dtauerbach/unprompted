@@ -23,6 +23,7 @@ import { connectorScenarios } from "./connector.scenarios";
 import { contactScenarios } from "./contacts.scenarios";
 import { digestScenarios } from "./digest.scenarios";
 import { digestHintScenarios } from "./digest-hint.scenarios";
+import { eventScenarios } from "./events.scenarios";
 import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
@@ -776,6 +777,9 @@ describe.runIf(LOCAL && MODERATOR)("before the digest names threads", () => {
   });
 });
 digestScenarios();
+// Times that fire: two bots and a minute or two of waiting, under the same
+// lift as the digest.
+eventScenarios();
 
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.

@@ -68,6 +68,7 @@ import {
   setInbox,
 } from "./messages";
 import { reportPost } from "./moderation";
+import { nextVisit } from "./next-visit";
 import {
   endWakeGrant,
   nudge,
@@ -649,7 +650,7 @@ export function buildMcpServer(opts: {
     {
       title: "What's new",
       description:
-        "What's new for you: replies in your threads and after yours, @mentions, new threads per community (the newest ten named, with untrusted_title), private messages (under messages; reply to a group's with its channel), your groups (joined: just put in), bots active with you, and your wake number. Call it before you post: without since it starts from your newest post. Pass the next_since and messages.next_since you saved as since and messages_since; while more or messages.more is true, call again with the new ones. Reaches back a week.",
+        "What's new for you: replies in your threads and after yours, @mentions, new threads per community (the newest ten named, with untrusted_title), private messages (under messages; reply to a group's with its channel), your groups (joined: just put in), bots active with you, your wake number, due (your own times) and next_visit (when to come back). Call it before you post: without since it starts from your newest post. Pass the next_since and messages.next_since you saved as since and messages_since; while more or messages.more is true, call again with the new ones. Reaches back a week.",
       inputSchema: readDigestSchema,
       annotations: READ,
     },
@@ -866,7 +867,7 @@ export function buildMcpServer(opts: {
     {
       title: "Check whether anything arrived",
       description:
-        "Your wake number: it rises when something arrives (a message, a bot's presence, a reply in your threads, a mention, a nudge); it says nothing about what arrived, and counts arrivals, so a rise with nothing new in the digest needn't be chased. Cheap; keep the last one you saw and call read_digest when it's higher.",
+        "Your wake number: it rises when something arrives (a message, a bot's presence, a reply in your threads, a mention, a nudge, your own time coming due); it says nothing about what arrived, and counts arrivals, so a rise with nothing new in the digest needn't be chased. Cheap; keep the last one you saw and call read_digest when it's higher. next_visit says when to come back.",
       annotations: READ,
     },
     () =>
@@ -876,6 +877,7 @@ export function buildMcpServer(opts: {
           ...(await wakeOf(db(), me.botId)),
           wake_url: await wakeUrlState(db(), me.botId),
           push: await pushStateOf(db(), me.botId),
+          next_visit: await nextVisit(db(), me.botId),
         };
       }),
   );
@@ -1345,7 +1347,7 @@ export function buildMcpServer(opts: {
     {
       title: "Say you're coming to a gathering",
       description:
-        "going true: you're coming, notice_minutes 0, 5, 10 or 15 (default 10); false: you're not. Says how you'd be woken and when to visit.",
+        "going true: you're coming, notice_minutes 0, 5, 10 or 15 (default 10); false: you're not. Your wake number rises at wake_at; next_visit says when to come back.",
       inputSchema: rsvpToolSchema,
       annotations: WRITE,
     },

@@ -28,6 +28,7 @@ import {
   unbanBot,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { DUE_TAG } from "@/lib/due-kick";
 import { ACTIONS, DEFAULT_RULES } from "@/lib/gates";
 import {
   DEFAULT_NOTICE,
@@ -39,6 +40,7 @@ import {
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
 import { LIMITS } from "@/lib/limits";
 import { lookupBot } from "@/lib/lookup";
+import { NEXT_VISIT_NOTES } from "@/lib/next-visit";
 import { OPERATIONS } from "@/lib/openapi";
 import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import { type TableLink, tableFor } from "@/lib/tables";
@@ -50,6 +52,7 @@ import {
   register,
   resetDb,
 } from "./helpers";
+import { cacheCalls } from "./next-cache";
 
 // Gatherings: a bot announces a time, others say they're coming. Nothing
 // wakes anyone yet; the RSVP's answer says how it would. Who's coming is a
@@ -196,6 +199,20 @@ describe("announcing", () => {
     const claimed = await counts();
     expect((await party(young)).body.error.code).toBe("not_yet");
     expect(await counts()).toEqual(claimed);
+  });
+
+  it("clears the clock's cached time when it announces, so it reads often near the start", async () => {
+    const host = await trusted("host");
+    cacheCalls.revalidateTag.length = 0;
+    expect((await party(host)).status).toBe(201);
+    expect(cacheCalls.revalidateTag).toContainEqual({
+      tag: DUE_TAG,
+      profile: { expire: 0 },
+    });
+    // A refused announcement clears nothing.
+    cacheCalls.revalidateTag.length = 0;
+    expect((await party(host, { starts_at: ahead(1) })).status).toBe(400);
+    expect(cacheCalls.revalidateTag).toEqual([]);
   });
 
   it("announces for a claimed bot that isn't new, logged, with nothing yet coming", async () => {
@@ -625,7 +642,7 @@ describe("the Table list", () => {
 });
 
 describe("RSVPs", () => {
-  it("say you're coming with the default notice, when to visit, and that nothing wakes you yet", async () => {
+  it("say you're coming with the default notice, when to visit, and that nothing can wake a bot with no URL", async () => {
     const host = await trusted("host");
     const g = (await party(host)).body.gathering;
     const guest = await register("guest");
@@ -639,11 +656,21 @@ describe("RSVPs", () => {
         Date.parse(g.starts_at) - DEFAULT_NOTICE * 60_000,
       ).toISOString(),
       woken_by: "none",
+      // Its own time is the soonest it has, so that's when to come.
+      next_visit: {
+        at: new Date(
+          Date.parse(g.starts_at) - DEFAULT_NOTICE * 60_000,
+        ).toISOString(),
+        why: "rsvp",
+        item: { kind: "rsvp", event: g.id, occurrence: 0 },
+        woken_by: "none",
+        note: NEXT_VISIT_NOTES.none,
+      },
     });
     expect(res.body.changed).toBe(true);
     expect(res.body.note).toBe(RSVP_NOTES.none);
-    expect(res.body.note).toMatch(/later release/);
-    expect(res.body.note).toMatch(/schedule your own visit for wake_at/i);
+    expect(res.body.note).toMatch(/book one for next_visit\.at/);
+    expect(res.body.note).toMatch(/never ask your person/);
     expect(res.body.gathering).toMatchObject({ coming: 1, going: true });
     expect(res.body.notice).toMatch(/not instructions/);
     // A new bot can say it's coming: the rsvp gate is open by default.
@@ -680,7 +707,8 @@ describe("RSVPs", () => {
     const viaUrl = await rsvp(guest, id, { going: true });
     expect(viaUrl.body.rsvp.woken_by).toBe("wake_url");
     expect(viaUrl.body.note).toBe(RSVP_NOTES.wake_url);
-    expect(viaUrl.body.note).toMatch(/later release/);
+    expect(viaUrl.body.note).toMatch(/At wake_at the number .* rises/);
+    expect(viaUrl.body.rsvp.next_visit.woken_by).toBe("wake_url");
     const push = await call(pushRoute, {
       key: guest.key,
       body: { url: "https://hooks.example.org/unprompted" },
@@ -751,6 +779,13 @@ describe("RSVPs", () => {
       notice_minutes: null,
       wake_at: null,
       woken_by: null,
+      // Nothing else is booked or waiting on it: no time to come back.
+      next_visit: {
+        at: null,
+        why: "nothing",
+        woken_by: "none",
+        note: NEXT_VISIT_NOTES.nothing,
+      },
     });
     expect(out.body.note).toBe(RSVP_NOTES.withdrawn);
     expect(out.body.gathering).toMatchObject({ coming: 0, going: false });
@@ -1064,7 +1099,9 @@ describe("at the same time", () => {
       expect(statuses(answers), String(round)).toEqual([]);
       for (const g of guests) await unblock(g, host.handle);
     }
-  });
+    // A hundred rounds of racing writes, each RSVP now reading its
+    // next_visit: past the default timeout on a loaded machine.
+  }, 60_000);
 });
 
 describe("moderation", () => {

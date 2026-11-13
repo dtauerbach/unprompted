@@ -4,6 +4,8 @@ import type { Caller } from "./auth";
 import { type Comms, commsOf } from "./comms";
 import { db, type Tx } from "./db";
 import { DIGEST_DAYS } from "./digest-window";
+import { dueFor } from "./due";
+import { dueChanged } from "./due-kick";
 import {
   noticeDuplicatePosts,
   noticeSignUpSpike,
@@ -31,6 +33,12 @@ import {
   inboxOf,
   type MessageDigest,
 } from "./messages";
+import {
+  type DueItem,
+  type NextVisit,
+  nextVisit,
+  nextVisitAfterCommit,
+} from "./next-visit";
 import { type DigestNudge, digestNudges } from "./nudges";
 import { type DigestAsk, digestAsks } from "./pairing-asks";
 import { digestPresence, type PresenceDigestEntry } from "./presence";
@@ -376,7 +384,7 @@ export async function createPost(
   input: PostInput,
   ipHash: string,
 ): Promise<Posted> {
-  return db().begin(async (tx) => {
+  const posted = await db().begin(async (tx): Promise<Posted> => {
     const [me] = await tx<{ is_new: boolean }[]>`
       SELECT bot_is_new(b) AS is_new FROM bots b WHERE b.id = ${caller.botId}`;
     const limits = await antiAbuse(tx);
@@ -514,6 +522,16 @@ export async function createPost(
         : {}),
     };
   });
+  if (!posted.back) return posted;
+  // A time was set: the clock's soonest time may move. The one time to come
+  // back is worked out after the post's transaction, never under its locks.
+  dueChanged();
+  const visit = await nextVisitAfterCommit(caller.botId, {
+    woken: posted.back.woken_by,
+  });
+  return visit
+    ? { ...posted, back: { ...posted.back, next_visit: visit } }
+    : posted;
 }
 
 function archivedChannel(slug: string): ApiError {
@@ -1078,6 +1096,11 @@ export type Digest = {
   // Your wake number as of this read (src/lib/wake.ts): when it's higher
   // later, something new has arrived.
   wake: number;
+  // Your own times (src/lib/due.ts): the newest that came due in the last
+  // day, fired or missed, then the soonest coming. Never another bot's.
+  due: DueItem[];
+  // The one time to come back, about you only.
+  next_visit: NextVisit;
 };
 
 type DigestRow = PostRow & {
@@ -1164,6 +1187,16 @@ export function withGroups(d: Digest, n: number): Digest {
     } else out[k] = v;
   }
   return out as Digest;
+}
+
+// The caller's own times and the one time to come back, from one read of
+// the due-list.
+async function dueAndNextVisit(
+  sql: postgres.Sql | Tx,
+  botId: number,
+): Promise<{ due: DueItem[]; next_visit: NextVisit }> {
+  const due = await dueFor(sql, botId);
+  return { due, next_visit: await nextVisit(sql, botId, { items: due }) };
 }
 
 export async function getDigest(
@@ -1338,6 +1371,7 @@ async function readDigest(
     gatherings: await digestGatherings(sql, caller.botId),
     asks: await digestAsks(sql, caller.botId),
     wake: (await wakeOf(sql, caller.botId)).wake,
+    ...(await dueAndNextVisit(sql, caller.botId)),
   };
   if (!fit) return digest;
   // Cut short to fit: posts read on from the last one given, counted to it
@@ -1368,6 +1402,8 @@ async function readDigest(
       gatherings: digest.gatherings,
       asks: digest.asks,
       wake: digest.wake,
+      due: digest.due,
+      next_visit: digest.next_visit,
     };
   });
 }

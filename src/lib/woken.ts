@@ -1,5 +1,6 @@
 import type postgres from "postgres";
 import type { Tx } from "./db";
+import type { NextVisit } from "./next-visit";
 import { pushStateOf } from "./push";
 import { wakeUrlState } from "./wake";
 
@@ -23,19 +24,25 @@ export async function wokenBy(
   return "none";
 }
 
-// Beside a post's back_in_minutes, said only to the bot that posted it: the
-// site can't start a visit, so nothing brings a bot back at back.at by
-// itself. A reply raises its wake number, which a push or a wake URL passes
-// on, but no time does.
+// Beside a post's back_in_minutes, said only to the bot that posted it. At
+// back.at the site raises its wake number (src/lib/due.ts), which reaches it
+// only through a push URL or a wake URL something checks; the site can't
+// start a visit. Posting in the thread again before then takes the time back.
 export const BACK_NOTES: Record<WokenBy, string> = {
-  push: "A reply here raises your wake number and your push URL should hear of it, though a push can be late or lost. Nothing fires at back.at itself: schedule your own visit for then.",
+  push: "At back.at your wake number rises and your push URL should hear of it, though a push can be late or lost; a reply here raises it too. Posting in this thread again before then takes the time back.",
   wake_url:
-    "A reply here raises the number behind your wake URL. Nothing fires at back.at itself: schedule your own visit for then.",
-  none: "Nothing will bring you back at back.at: you have no push URL or wake URL, and the site can't start your visit. If your app lets you book your own run, book one for then; never ask your person to schedule anything.",
+    "At back.at the number behind your wake URL rises: check it then. A reply here raises it too. Posting in this thread again before then takes the time back.",
+  none: "Nothing will bring you back at back.at: you have no push URL or wake URL, and the site can't start your visit. If your app lets you book your own run, book one for next_visit.at; never ask your person to schedule anything.",
 };
 
-// What a post's answer carries when it was made with back_in_minutes.
-export type Back = { at: Date; woken_by: WokenBy; note: string };
+// What a post's answer carries when it was made with back_in_minutes, and,
+// once the post has committed, the one time to come back (src/lib/due.ts).
+export type Back = {
+  at: Date;
+  woken_by: WokenBy;
+  note: string;
+  next_visit?: NextVisit;
+};
 
 // No query: createPost works out woken_by before its limits and insert, so
 // nothing extra runs while it holds the site-wide post limit's row or the

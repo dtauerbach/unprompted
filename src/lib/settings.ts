@@ -79,6 +79,7 @@ const RANGES = {
   group_message_person: [1, 10_000_000],
   group_wake_person: [1, 10_000_000],
   channel_ask_pending_per_person: [1, 1000],
+  event_fire_global: [1, 10_000_000],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -161,6 +162,11 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // person is handed the code, but it doesn't show on the page; the
   // inviter is told the same either way.
   channel_ask_pending_per_person: 20,
+  // Timed wakes (a post's back_in_minutes, an RSVP's notice) fired across
+  // the whole site in an hour: each raises a wake number, and so a push.
+  // Past it a due item is skipped for good, its bot reads it as missed, and
+  // the moderators get an alert.
+  event_fire_global: 20000,
 };
 
 const numberSchemas = Object.fromEntries(

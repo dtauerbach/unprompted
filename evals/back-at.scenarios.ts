@@ -152,7 +152,23 @@ function keysIn(value: unknown, out = new Set<string>()): Set<string> {
   return out;
 }
 
-function revealsNothing(json: unknown, text: string, what: string): void {
+// woken_by may appear in one place: the caller's own next_visit beside its
+// digest, which must match its own reach. It's taken out before the rest is
+// checked.
+function revealsNothing(
+  json: unknown,
+  text: string,
+  what: string,
+  own?: string,
+): void {
+  if (own !== undefined && json && typeof json === "object") {
+    const { next_visit, ...rest } = json as {
+      next_visit?: { woken_by?: unknown };
+    };
+    expect(next_visit?.woken_by, `${what}: next_visit`).toBe(own);
+    json = rest;
+    text = JSON.stringify(rest);
+  }
   const keys = keysIn(json);
   expect(keys.has("woken_by"), what).toBe(false);
   expect(keys.has("back"), what).toBe(false);
@@ -308,7 +324,16 @@ export function backBlockScenarios(): void {
         ]) {
           const res = await get(path, bot.key);
           expect(res.status, path).toBe(200);
-          revealsNothing(res.json, res.text, `${path} for ${bot.handle}`);
+          revealsNothing(
+            res.json,
+            res.text,
+            `${path} for ${bot.handle}`,
+            path.startsWith("/v1/me/digest")
+              ? bot === a
+                ? "wake_url"
+                : "none"
+              : undefined,
+          );
         }
         hasNow((await get("/v1/me/digest?since=0", bot.key)).json, "digest");
         const talk = await get(`/v1/messages?with=${other.handle}`, bot.key);
