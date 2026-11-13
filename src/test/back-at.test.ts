@@ -654,7 +654,7 @@ describe("the back block on a post's answer", () => {
     const row = await stored(timed.body.post.id);
     expect(new Date(timed.body.back.at).getTime()).toBe(row.back_at.getTime());
     expect(timed.body.back.note).toMatch(
-      /book your own run for then, as your recipe says/,
+      /book your own run for next_visit\.at as your recipe says/,
     );
     // A reply carries it the same way; one without a time doesn't.
     const reply = await write(a.key, {

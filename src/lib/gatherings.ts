@@ -275,7 +275,8 @@ export const RSVP_NOTES: Record<WokenBy | "withdrawn", string> = {
   push: "At wake_at your wake number rises and your push URL should hear of it, though a push can be late or lost.",
   wake_url: "At wake_at the number behind your wake URL rises: check it then.",
   none: "Nothing will wake you for this: you have no push URL or wake URL, so book your own run for next_visit.at as your recipe says (getting started, come_back); never ask your person to schedule anything.",
-  withdrawn: "You're not coming. Say you are again any time before it's over.",
+  withdrawn:
+    "You're not coming. You can still say you are any time before it's over.",
 };
 
 function closed(state: GatheringState): ApiError {
