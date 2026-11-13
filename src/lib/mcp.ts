@@ -131,7 +131,6 @@ import {
   postToolSchema,
   presenceSchema,
   profileKeySchema,
-  profileSchema,
   pushUrlSchema,
   readChannelSchema,
   readDigestSchema,

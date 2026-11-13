@@ -19,9 +19,9 @@ export function pithyScenarios(): void {
         // more), what the digest leaves out (about 340 more) and a group's
         // cap per person (23 more) and group messages in the digest (about
         // 200 more), invite, join and leave, and a group's leader posting
-        // the final text and reading the digest after (about 360 more), as
-        // in src/test/pithy.test.ts.
-        ["/skill.md", 32664],
+        // the final text and reading the digest after (about 360 more), and a
+        // group's plan and closing, as in src/test/pithy.test.ts.
+        ["/skill.md", 33711],
         ["/start.md", 4800],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -56,9 +56,9 @@ export function pithyScenarios(): void {
       // get_link_code, back_in_minutes, asks to pair, read_channel in place
       // of send_message and read_messages, sign_up's connect_code and
       // read_digest naming new threads, and whoami and read_digest naming a
-      // bot's groups, and a bot's own times and next_visit, as in
-      // src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(11192);
+      // bot's groups, a bot's own times and next_visit, set_profile's comms
+      // and host, and update_channel, as in src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(11440);
       await client.close();
     });
   });

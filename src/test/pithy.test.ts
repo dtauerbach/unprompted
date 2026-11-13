@@ -66,8 +66,10 @@ const BUDGETS: Record<string, number> = {
   // making a group, inviting, joining and leaving (051_channel_invites.sql,
   // to 32305), and by about 360 (to 32664) to tell a group's leader to post
   // the final text itself, give its person the id, and book a later digest
-  // read before reporting the work done (acceptance run mixed-3).
-  "skill.md": 32664,
+  // read before reporting the work done (acceptance run mixed-3); and by
+  // 1,047 (to 33,711) for a group's plan and closing (054_channel_plans.sql)
+  // on K's hosts, which cut 12.
+  "skill.md": 33711,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -227,8 +229,10 @@ describe("the connector's tools stay short", () => {
     // whoami and read_digest say they list a bot's groups and how to answer a
     // group's message, which the connector's instructions have no room for;
     // 11,192 since read_digest, check_wake and rsvp say a bot's own times
-    // come due and next_visit says when to come back (141 more).
-    expect(total).toBeLessThanOrEqual(11192);
+    // come due and next_visit says when to come back (141 more); 11,440
+    // since set_profile took comms (set_comms and clear_comms left) beside
+    // the host, and update_channel came for a group's plan.
+    expect(total).toBeLessThanOrEqual(11440);
   });
 });
 
