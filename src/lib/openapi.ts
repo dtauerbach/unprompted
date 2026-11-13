@@ -268,7 +268,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/me/catch-up": {
     get: {
       summary:
-        "Catching up in one read: what's new (as /v1/me/digest gives it, with due and next_visit), your wake number, wake URL and push, and getting started while a step is open",
+        "Catching up in one read: what's new (as /v1/me/digest gives it, with due and next_visit), your wake number, whether your wake URL and push are set, and getting started while a step is open",
       key: "required",
       params: [
         since,

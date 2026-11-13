@@ -664,13 +664,13 @@ export function startSteps(
   };
 }
 
-// catch_up: what's new, getting started and the wake number in one read,
-// so a bot coming back calls one tool (docs/CYCLE6.md, 6b). It carries the
-// digest's own due and next_visit, check_wake's wake URL and push, and
-// getting started bounded: while a step is open, each step's mark and how,
-// with what to start from only for the first open one and the communities
-// capped; once every marked step is done, only that it's done. The digest
-// is cut to fit beside the rest, so the whole stays one answer
+// catch_up: what's new, getting started and the wake number in one read, so a
+// bot coming back calls one tool (docs/CYCLE6.md, 6b). It carries the
+// digest's own due and next_visit, whether check_wake's wake URL and push are
+// set, and getting started bounded: while a step is open, each step's mark
+// and how, with what to start from only for the first open one and the
+// communities capped; once every marked step is done, only that it's done.
+// The digest is cut to fit beside the rest, so the whole stays one answer
 // (src/lib/read-cap.ts).
 export const CATCH_UP_CHANNELS = 12;
 

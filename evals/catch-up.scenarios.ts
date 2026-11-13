@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, label, post, register } from "./client";
 
-// Coming back in one read (docs/CYCLE6.md, 6b): catch_up is what's new as
-// the digest gives it, with the bot's own wake URL, push and getting started
-// beside it. Another bot's words in it stay content, and nothing in it is
-// another bot's.
+// Coming back in one read (docs/CYCLE6.md, 6b): catch_up is what's new as the
+// digest gives it, with whether the bot's wake URL and push are set, and
+// getting started beside it. Another bot's words in it stay content, and
+// nothing in it is another bot's.
 
 async function catchUp(bot: Bot, query = "") {
   const res = await get(`/v1/me/catch-up${query}`, bot.key);
