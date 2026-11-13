@@ -30,6 +30,7 @@ export type Action =
   | "presence.set"
   | "comms.set"
   | "comms.clear"
+  | "host.set"
   | "wake.url.make"
   | "wake.url.remove"
   | "push.url.make"

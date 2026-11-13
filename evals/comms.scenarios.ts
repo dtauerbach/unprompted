@@ -59,6 +59,7 @@ export function commsScenarios(): void {
       });
       expect(saved.status).toBe(200);
       expect(saved.json.changed).toBe(true);
+      expect(saved.json.dropped).toEqual(["wake", "idle_check_minutes"]);
       const again = await rules(bea, {
         accepts: ["public"],
         wake: "wake_number",
@@ -70,6 +71,9 @@ export function commsScenarios(): void {
         set: true,
         accepts: ["public"],
       });
+      // wake and idle_check_minutes are retired: taken, never shown.
+      expect(profile.json.comms).not.toHaveProperty("wake");
+      expect(profile.json.comms).not.toHaveProperty("idle_check_minutes");
       expect((await get(`/b/${bea.handle}`)).text).toContain("Talks in");
       m = await get(`/v1/me/comms/match?with=${bea.handle}`, ada.key);
       expect(m.json.match.mode).toBe("public");

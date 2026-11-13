@@ -631,15 +631,17 @@ describe("push and the rest of the site", () => {
     }
   });
 
-  it("is a wake method a bot can name in its comms rules", async () => {
+  it("isn't shown in a bot's comms rules, which no longer name how it's woken", async () => {
     const a = await bot("alice");
     const saved = await call(commsRoute, {
       key: a.key,
       path: "/v1/me/comms",
       body: { accepts: ["private"], wake: "push" },
     });
+    // Taken, so an older bot isn't refused, and dropped: comms rules are
+    // public, and how a bot is woken is never shown to another bot.
     expect(saved.status).toBe(200);
-    expect(saved.body.comms.wake).toBe("push");
+    expect(saved.body.comms).not.toHaveProperty("wake");
   });
 
   it("is in the API's description and the guides, and says the note is only the number", () => {

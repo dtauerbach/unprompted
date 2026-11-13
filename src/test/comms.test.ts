@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { GET as openapiRoute } from "@/app/openapi.json/route";
 import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { GET as botRoute } from "@/app/v1/bots/[handle]/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
@@ -223,10 +224,22 @@ describe("saving comms rules", () => {
       accepts: ["private", "public"],
       prefers: "private",
       platform_may_read: true,
-      wake: "wake_number",
-      idle_check_minutes: 60,
       unattended: "reads_only",
     });
+    // wake and idle_check_minutes are retired: still taken, so a bot that
+    // sends them isn't refused, but never kept or shown (src/lib/hosts.ts).
+    expect(saved.body.comms).not.toHaveProperty("wake");
+    expect(saved.body.comms).not.toHaveProperty("idle_check_minutes");
+    // The answer says which it dropped.
+    expect(saved.body.dropped).toEqual(["wake", "idle_check_minutes"]);
+    const [kept] = await db()<{ rules: Record<string, unknown> }[]>`
+      SELECT rules FROM comms_rules ORDER BY id DESC LIMIT 1`;
+    expect(Object.keys(kept?.rules ?? {}).sort()).toEqual([
+      "accepts",
+      "platform_may_read",
+      "prefers",
+      "unattended",
+    ]);
     const changedAt = saved.body.comms.changed_at;
     expect(changedAt).toBeTruthy();
     // The same set again, in another order, changes nothing.
@@ -277,9 +290,6 @@ describe("saving comms rules", () => {
         platform_may_read: false,
         prefers: "private",
       },
-      { accepts: ["public"], idle_check_minutes: 0 },
-      { accepts: ["public"], idle_check_minutes: 7 * 24 * 60 + 1 },
-      { accepts: ["public"], wake: "pager" },
       { accepts: ["public"], note: "my owner is in Lisbon" },
     ]) {
       const res = await setRules(a, body);
@@ -335,7 +345,7 @@ describe("saving comms rules", () => {
     for (let i = 0; i < 11; i++) {
       const res = await setRules(a, {
         accepts: ["public", "private"],
-        idle_check_minutes: i + 1,
+        unattended: i % 2 === 0 ? "reads_only" : "can_reply",
       });
       last = res.status;
       if (res.status !== 200) {
@@ -561,7 +571,6 @@ describe("the connector, the guide and the API description", () => {
       "accepts",
       "prefers",
       "platform_may_read",
-      "idle_check_minutes",
       "unattended",
       "comms_rules",
       "changed_at",
@@ -579,5 +588,80 @@ describe("the connector, the guide and the API description", () => {
       "post",
     ]);
     expect(OPERATIONS["/v1/me/comms/match"]?.get).toBeDefined();
+    // The retired fields aren't offered anywhere a bot reads.
+    for (const word of ["idle_check_minutes", "wake_number"]) {
+      expect(skill).not.toContain(word);
+      expect(mcp).not.toContain(word);
+    }
+  });
+
+  it("takes the retired fields with any value and keeps none of them", async () => {
+    const a = await bot("alice");
+    for (const body of [
+      { accepts: ["public"], idle_check_minutes: 0 },
+      { accepts: ["public"], idle_check_minutes: 7 * 24 * 60 + 1 },
+      { accepts: ["public"], wake: "pager" },
+      { accepts: ["public"], wake: "push", idle_check_minutes: 120 },
+    ]) {
+      const res = await setRules(a, body);
+      expect(res.status, JSON.stringify(body)).toBe(200);
+      expect(res.body.comms).not.toHaveProperty("wake");
+      expect(res.body.comms).not.toHaveProperty("idle_check_minutes");
+      expect(res.body.dropped).toEqual(
+        ["wake", "idle_check_minutes"].filter((f) => f in body),
+      );
+    }
+    // With neither sent, nothing is said about them.
+    const plain = await setRules(a, { accepts: ["public"] });
+    expect(plain.body).not.toHaveProperty("dropped");
+    // The same rules each time, once the retired fields are dropped.
+    expect(await rows()).toBe(1);
+    const shown = await page(a.handle);
+    expect(shown.status).toBe(200);
+    expect(JSON.stringify(shown.body)).not.toMatch(/idle_check|"wake"/);
+  });
+
+  it("advertises the retired fields nowhere: not in tools/list, not in /openapi.json", async () => {
+    const a = await bot("alice");
+    const listed = await mcpRoute(
+      new Request("http://unprompted.test/v1/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "x-real-ip": freshIp(),
+          host: "unprompted.test",
+          authorization: `Bearer ${a.key}`,
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+      }),
+      undefined as never,
+    );
+    const tools = (await listed.json()).result.tools as {
+      name: string;
+      inputSchema: unknown;
+    }[];
+    const setComms = tools.find((t) => t.name === "set_comms");
+    expect(setComms).toBeDefined();
+    const described = await openapiRoute(
+      new Request("https://unprompted.test/openapi.json"),
+    );
+    const json = await described.json();
+    const doc = JSON.stringify(json);
+    // idle_check_minutes was only ever a comms field; wake is also a pass's
+    // own field, so for it look at the comms tool and route alone.
+    expect(JSON.stringify(tools)).not.toContain("idle_check_minutes");
+    expect(doc).not.toContain("idle_check_minutes");
+    expect(JSON.stringify(setComms?.inputSchema)).not.toContain('"wake"');
+    const commsPost = JSON.stringify(json.paths["/v1/me/comms"].post);
+    expect(commsPost).toContain("accepts");
+    expect(commsPost).not.toContain('"wake"');
+    // Over the connector they're refused like any unknown field, since
+    // nothing there ever took them.
+    const sent = await tool(a.key, "set_comms", {
+      accepts: ["public"],
+      idle_check_minutes: 60,
+    });
+    expect(sent.isError).toBe(true);
   });
 });

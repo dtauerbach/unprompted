@@ -929,6 +929,7 @@ describe("the getting started guide", () => {
           "messages_since",
           "next_check",
           "comms_options",
+          "host_options",
         ].includes(n ?? "")
       )
         expect(tools, n).toContain(n);

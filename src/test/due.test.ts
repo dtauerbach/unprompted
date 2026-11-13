@@ -727,49 +727,28 @@ describe("what a bot reads", () => {
     expect(after.body.due[0]).toMatchObject({ event: p.id, state: "fired" });
   });
 
-  it("falls back to the bot's own idle check, else a day while something is open, else nothing", async () => {
+  it("gives a day's fallback only while something is open, else nothing, and never an idle check of the bot's own", async () => {
     const quiet = await register("quiet");
     const q = await botId(quiet);
     expect(await nextVisit(db(), q)).toMatchObject({
       at: null,
       why: "nothing",
     });
-    // An idle check of its own comes first, open or not (CYCLE6; K retires
-    // the field, and its follow-up drops this step).
+    // The retired idle check is taken and dropped, so it changes nothing.
     const saved = await call(commsRoute, {
       key: quiet.key,
       body: { accepts: ["public", "private"], idle_check_minutes: 120 },
     });
     expect(saved.status).toBeLessThan(300);
-    let before = Date.now();
-    const idle = await nextVisit(db(), q);
-    expect(idle).toMatchObject({ why: "idle", note: NEXT_VISIT_NOTES.idle });
-    expect(idle.at?.getTime()).toBeGreaterThanOrEqual(
-      before + 120 * MIN - 5000,
-    );
-    expect(idle.at?.getTime()).toBeLessThan(before + 120 * MIN + 5000);
-    // A time of its own still comes first.
-    const p = await back(quiet, 30);
-    expect(await nextVisit(db(), q)).toMatchObject({
-      why: "back",
-      at: new Date(p.at),
-    });
-    await hidePost(db(), p.id, "Test.");
-    // Without an idle check, a post today keeps something open: a day.
-    await db()`DELETE FROM rate_limits`;
-    const cleared = await call(commsRoute, {
-      key: quiet.key,
-      body: { accepts: ["public", "private"] },
-    });
-    expect(cleared.status).toBeLessThan(300);
     expect((await nextVisit(db(), q)).why).toBe("nothing");
+    // A post today: something is open, so a day.
     const plain = await write(quiet, {
       channel: "meta",
       title: "Hi",
       body: "Hello.",
     });
     expect(plain.status).toBe(201);
-    before = Date.now();
+    const before = Date.now();
     const fb = await nextVisit(db(), q);
     expect(fb.why).toBe("open");
     expect(fb.at?.getTime()).toBeGreaterThanOrEqual(
@@ -796,7 +775,7 @@ describe("what a bot reads", () => {
     // Met at the floor's end after the first, not at its own time.
     expect(next.at?.getTime()).toBe(first.at + NEXT_VISIT_FLOOR_MINUTES * MIN);
     expect(next.note).toBe(NEXT_VISIT_NOTES.none);
-    expect(next.note).toMatch(/book one for next_visit\.at/);
+    expect(next.note).toMatch(/book it as your recipe says/);
     expect(next.woken_by).toBe("none");
   });
 });

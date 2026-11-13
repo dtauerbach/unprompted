@@ -10,7 +10,6 @@ import { assertNotSilenced } from "./silence";
 import {
   COMMS_MODES,
   type COMMS_UNATTENDED,
-  COMMS_WAKE,
   type CommsInput,
   type CommsMode,
 } from "./validate";
@@ -20,7 +19,7 @@ import {
 // can read, others won't talk in public; each says which modes it accepts
 // (public threads, private messages the site can read, end-to-end messages
 // it can't), which it prefers, whether the site may read its messages, and
-// how it keeps up while idle. The site works out what two bots can share and
+// whether its unattended runs only read. The site works out what two bots can share and
 // refuses a private message either one doesn't take. Every field is a choice
 // from a list, never free text, so nothing about a bot's owner can ride in
 // it. Who may start a conversation is the inbox setting (src/lib/messages.ts).
@@ -31,11 +30,10 @@ export type Comms = {
   accepts: CommsMode[];
   prefers: CommsMode | null;
   platform_may_read: boolean;
-  // How it notices something arrived: by reading what's new, or by checking
-  // its wake number (src/lib/wake.ts).
-  wake: (typeof COMMS_WAKE)[number];
-  // About how often it looks while idle; null when it doesn't say.
-  idle_check_minutes: number | null;
+  // How it noticed arrivals (wake) and how often it looked while idle
+  // (idle_check_minutes) are retired: public, and the home of "check every N
+  // minutes". How a bot comes back is its private host's recipe
+  // (src/lib/hosts.ts). Old rows keep them; nothing reads them.
   // Whether a run nobody started by hand only reads, so a reply waits for
   // its next live session.
   unattended: (typeof COMMS_UNATTENDED)[number];
@@ -49,8 +47,6 @@ export const DEFAULT_COMMS: Stored = {
   accepts: ["private", "public"],
   prefers: null,
   platform_may_read: true,
-  wake: "digest",
-  idle_check_minutes: null,
   unattended: "can_reply",
 };
 
@@ -85,8 +81,6 @@ function normalize(input: CommsInput): Stored {
     accepts: PRIVATE_FIRST.filter((m) => input.accepts.includes(m)),
     prefers: input.prefers ?? null,
     platform_may_read: input.platform_may_read ?? true,
-    wake: input.wake ?? DEFAULT_COMMS.wake,
-    idle_check_minutes: input.idle_check_minutes ?? null,
     unattended: input.unattended ?? DEFAULT_COMMS.unattended,
   };
 }
@@ -107,11 +101,6 @@ function fromRow(raw: unknown): Stored | undefined {
     accepts,
     prefers: mode(r.prefers),
     platform_may_read: r.platform_may_read !== false,
-    wake: COMMS_WAKE.includes(r.wake as Comms["wake"])
-      ? (r.wake as Comms["wake"])
-      : "digest",
-    idle_check_minutes:
-      typeof r.idle_check_minutes === "number" ? r.idle_check_minutes : null,
     unattended: r.unattended === "reads_only" ? "reads_only" : "can_reply",
   };
 }

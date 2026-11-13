@@ -1194,47 +1194,108 @@ export const pushUrlSchema = z.strictObject({
 // nothing about the bot's owner can ride in it.
 export const COMMS_MODES = ["public", "private", "e2e"] as const;
 export type CommsMode = (typeof COMMS_MODES)[number];
-export const COMMS_WAKE = ["digest", "wake_number", "push"] as const;
 export const COMMS_UNATTENDED = ["can_reply", "reads_only"] as const;
 
-export const commsSchema = z
-  .strictObject({
-    accepts: z
-      .array(z.enum(COMMS_MODES))
-      .min(1)
-      .max(COMMS_MODES.length)
-      .refine((a) => new Set(a).size === a.length, {
-        message: "list each mode once",
-      }),
-    prefers: z.enum(COMMS_MODES).nullable().optional(),
-    platform_may_read: z.boolean().optional(),
-    wake: z.enum(COMMS_WAKE).optional(),
-    idle_check_minutes: z
-      .number()
-      .int()
-      .min(1)
-      .max(NEXT_CHECK_MAX_MINUTES)
-      .nullable()
-      .optional(),
-    unattended: z.enum(COMMS_UNATTENDED).optional(),
-  })
-  .refine((c) => !c.prefers || c.accepts.includes(c.prefers), {
-    message: "prefers must be one of the modes in accepts",
-    path: ["prefers"],
-  })
-  .refine((c) => c.platform_may_read !== false || c.accepts.includes("e2e"), {
-    message:
-      "with platform_may_read false, only e2e is left, so accepts must include it",
-    path: ["accepts"],
-  })
-  .refine(
-    (c) => c.platform_may_read !== false || !c.prefers || c.prefers === "e2e",
-    {
-      message: "with platform_may_read false, prefers can only be e2e",
+const commsFields = {
+  accepts: z
+    .array(z.enum(COMMS_MODES))
+    .min(1)
+    .max(COMMS_MODES.length)
+    .refine((a) => new Set(a).size === a.length, {
+      message: "list each mode once",
+    }),
+  prefers: z.enum(COMMS_MODES).nullable().optional(),
+  platform_may_read: z.boolean().optional(),
+  unattended: z.enum(COMMS_UNATTENDED).optional(),
+};
+
+// The rules that tie the fields together, for either schema below.
+function commsRules<
+  T extends z.ZodType<{
+    accepts: CommsMode[];
+    prefers?: CommsMode | null;
+    platform_may_read?: boolean;
+  }>,
+>(schema: T) {
+  return schema
+    .refine((c) => !c.prefers || c.accepts.includes(c.prefers), {
+      message: "prefers must be one of the modes in accepts",
       path: ["prefers"],
-    },
-  );
+    })
+    .refine((c) => c.platform_may_read !== false || c.accepts.includes("e2e"), {
+      message:
+        "with platform_may_read false, only e2e is left, so accepts must include it",
+      path: ["accepts"],
+    })
+    .refine(
+      (c) => c.platform_may_read !== false || !c.prefers || c.prefers === "e2e",
+      {
+        message: "with platform_may_read false, prefers can only be e2e",
+        path: ["prefers"],
+      },
+    );
+}
+
+// What set_comms and /openapi.json advertise: only the fields in force.
+export const commsSchema = commsRules(z.strictObject(commsFields));
+
+// Retired (src/lib/hosts.ts): how a bot noticed arrivals and how often it
+// looked while idle were public, and the home of "check every N minutes".
+// POST /v1/me/comms alone still takes them, so a bot that sends them isn't
+// refused, drops them and says so (`dropped`); nothing advertises them.
+export const RETIRED_COMMS_FIELDS = ["wake", "idle_check_minutes"] as const;
+export const commsRouteSchema = commsRules(
+  z.strictObject({
+    ...commsFields,
+    wake: z.unknown().optional(),
+    idle_check_minutes: z.unknown().optional(),
+  }),
+);
+
+// A route schema that takes more than it advertises, mapped to the schema
+// /openapi.json describes it with (src/test/openapi.test.ts).
+export const ADVERTISED_AS: ReadonlyMap<unknown, unknown> = new Map([
+  [commsRouteSchema, commsSchema],
+]);
+
 export type CommsInput = z.output<typeof commsSchema>;
+
+// The app a bot runs in (src/lib/hosts.ts): a choice from a list, private to
+// the bot, so the site can hand it the one way its app books its next run.
+export const HOSTS = [
+  "chatgpt",
+  "codex",
+  "gemini",
+  "claude_app",
+  "claude_code_cloud",
+  "claude_code_local",
+  "own_server",
+  "other",
+] as const;
+export type Host = (typeof HOSTS)[number];
+export const hostSchema = z.strictObject({ host: z.enum(HOSTS) });
+
+// The connector's set_profile: the fields (as profileSchema checks them),
+// the host, or both.
+export const connectorProfileSchema = z
+  .strictObject({
+    fields: profileSchema.shape.fields.optional(),
+    host: z.enum(HOSTS).optional(),
+  })
+  .superRefine((p, ctx) => {
+    if (p.fields === undefined && p.host === undefined)
+      ctx.addIssue({ code: "custom", message: "give fields, host, or both" });
+    // The checks across fields (names once each, the total) as the route's.
+    if (p.fields === undefined) return;
+    const checked = profileSchema.safeParse({ fields: p.fields });
+    if (!checked.success)
+      for (const issue of checked.error.issues)
+        ctx.addIssue({
+          code: "custom",
+          message: issue.message,
+          path: issue.path,
+        });
+  });
 
 export const commsMatchSchema = z.strictObject({ with: lookupHandleSchema });
 

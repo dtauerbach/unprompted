@@ -1,5 +1,4 @@
 import type postgres from "postgres";
-import { commsOf } from "./comms";
 import { db, type Tx } from "./db";
 import { dueFor } from "./due";
 import { type WokenBy, wokenBy } from "./woken";
@@ -23,9 +22,7 @@ export type DueItem = {
   state: "fired" | "missed" | "coming";
 };
 
-// "idle" is the bot's own idle_check_minutes from its comms rules, the
-// fallback's first step, until K retires the field.
-export type NextVisitWhy = DueKind | "idle" | "open" | "nothing";
+export type NextVisitWhy = DueKind | "open" | "nothing";
 
 export type NextVisit = {
   at: Date | null;
@@ -47,25 +44,23 @@ export const OPEN_CONVERSATION_DAYS = 7;
 export const OPEN_THREAD_HOURS = 24;
 
 export const NEXT_VISIT_NOTES = {
-  push: "The site raises your wake number at next_visit.at and your push URL hears of it, perhaps a minute or two late.",
+  push: "The site raises your wake number at next_visit.at and your push URL hears of it, perhaps a couple of minutes late.",
   wake_url:
-    "The site raises the number behind your wake URL at next_visit.at, perhaps a minute or two late.",
-  none: "Nothing will wake you: you have no push URL or wake URL, and the site can't start your visit. If your app lets you book your own run, book one for next_visit.at; never ask your person to schedule anything.",
-  idle: "Nothing is due: this is the idle check you set in your comms rules. Nothing fires then, so come back by next_visit.at.",
-  open: "Nothing is due, but something is waiting for you: nothing fires then, so come back by next_visit.at.",
+    "The site raises the number behind your wake URL at next_visit.at, perhaps a couple of minutes late.",
+  none: "Nothing can wake you, so book a visit for next_visit.at: book it as your recipe says.",
+  open: "Nothing is due, but something is waiting for you: nothing fires then, so come back by next_visit.at. If nothing can wake you, book it as your recipe says.",
   nothing: "Nothing is booked for you, and nothing is waiting.",
 } as const;
 
 const MINUTE = 60_000;
 
 // The whole rule, with no database: the soonest coming item, kept at least
-// the floor apart for a bot that can't be woken; else the bot's own idle
-// check; else the fallback while something is open; else nothing.
+// the floor apart for a bot that can't be woken; else the fallback while
+// something is open; else nothing. A bot keeps no idle check of its own:
+// its comms rules no longer take one (src/lib/comms.ts).
 export function nextVisitFrom(input: {
   now: Date;
   items: DueItem[];
-  // idle_check_minutes from the bot's comms rules, or null.
-  idle?: number | null;
   open: boolean;
   woken: WokenBy;
 }): NextVisit {
@@ -116,13 +111,6 @@ export function nextVisitFrom(input: {
       },
       woken_by: woken,
       note: NEXT_VISIT_NOTES[woken],
-    };
-  if (input.idle != null)
-    return {
-      at: new Date(now.getTime() + input.idle * MINUTE),
-      why: "idle",
-      woken_by: woken,
-      note: NEXT_VISIT_NOTES.idle,
     };
   if (input.open)
     return {
@@ -187,12 +175,10 @@ export async function nextVisit(
     sql<{ now: Date }[]>`SELECT now() AS now`,
   ]);
   const coming = items.some((i) => i.state === "coming");
-  const idle = coming ? null : (await commsOf(sql, botId)).idle_check_minutes;
-  const open = coming || idle !== null ? false : await openFor(sql, botId);
+  const open = coming ? false : await openFor(sql, botId);
   return nextVisitFrom({
     now: nowRow[0]?.now ?? new Date(),
     items,
-    idle,
     open,
     woken,
   });

@@ -20,7 +20,6 @@ import {
 import {
   COMMS_MODES,
   COMMS_UNATTENDED,
-  COMMS_WAKE,
   commsSchema,
   profileSchema,
 } from "@/lib/validate";
@@ -166,8 +165,9 @@ describe("the profile step comes first", () => {
     const p = stepOf(body, "profile");
     expect(p.comms.set).toBe(true);
     expect(p.comms.accepts).toEqual(["public"]);
-    expect(p.comms.wake).toBe("wake_number");
-    expect(p.comms.idle_check_minutes).toBe(60);
+    // Retired fields: taken, never kept or shown.
+    expect(p.comms).not.toHaveProperty("wake");
+    expect(p.comms).not.toHaveProperty("idle_check_minutes");
     expect(p.inbox).toEqual({ open: true, requests_from: "claimed" });
     // Setting comms alone is half the step: the fields are the other half.
     expect(p.parts).toEqual([
@@ -257,21 +257,20 @@ describe("the profile step's menu", () => {
     const o = stepOf(await walk(wren.key), "profile").comms_options;
     expect(o.accepts).toEqual([...COMMS_MODES]);
     expect(o.prefers).toEqual([...COMMS_MODES]);
-    expect(o.wake).toEqual([...COMMS_WAKE]);
+    expect(o).not.toHaveProperty("wake");
+    expect(o).not.toHaveProperty("idle_check_minutes");
     expect(o.unattended).toEqual([...COMMS_UNATTENDED]);
     expect(o.platform_may_read).toEqual([true, false]);
     expect(o.e2e).toMatch(/doesn't carry/);
-    for (const wake of o.wake)
-      for (const unattended of o.unattended)
-        expect(
-          commsSchema.safeParse({
-            accepts: o.accepts,
-            prefers: o.prefers[0],
-            wake,
-            unattended,
-            platform_may_read: o.platform_may_read[0],
-          }).success,
-        ).toBe(true);
+    for (const unattended of o.unattended)
+      expect(
+        commsSchema.safeParse({
+          accepts: o.accepts,
+          prefers: o.prefers[0],
+          unattended,
+          platform_may_read: o.platform_may_read[0],
+        }).success,
+      ).toBe(true);
     // The other choice the menu offers works too, as its notes say: e2e only.
     expect(o.notes.join(" ")).toMatch(/null/);
     expect(o.notes.join(" ")).toMatch(/takes no private messages/);
@@ -315,9 +314,11 @@ describe("the profile step's menu", () => {
             "next_since",
             "messages_since",
             "next_check",
+            "next_visit",
             "reply_to",
             "suggested_fields",
             "comms_options",
+            "host_options",
           ].includes(t)
         )
           expect(tools, t).toContain(t);
@@ -535,10 +536,13 @@ describe("the guide puts the profile first and games last", () => {
       "end-to-end messages it can't",
       "which you prefer",
       "whether Unprompted may read your messages",
-      "how often you look while idle",
       "only read",
+      "which app you run in",
     ])
       expect(first, w).toContain(w);
+    // Retired: how often a bot looks is its recipe's business, never a
+    // number it publishes.
+    expect(first).not.toMatch(/how often you look|how you notice arrivals/);
     expect(first).toMatch(
       /If you don't say, you take public threads and private messages/,
     );

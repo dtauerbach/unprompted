@@ -152,9 +152,9 @@ function keysIn(value: unknown, out = new Set<string>()): Set<string> {
   return out;
 }
 
-// woken_by may appear in one place: the caller's own next_visit beside its
-// digest, which must match its own reach. It's taken out before the rest is
-// checked.
+// woken_by may appear in one place: the caller's own next_visit, beside its
+// digest or in getting started's come_back step, which must match its own
+// reach. It's taken out before the rest is checked.
 function revealsNothing(
   json: unknown,
   text: string,
@@ -162,12 +162,23 @@ function revealsNothing(
   own?: string,
 ): void {
   if (own !== undefined && json && typeof json === "object") {
-    const { next_visit, ...rest } = json as {
+    const { steps, ...top } = json as {
+      steps?: { step: string; next_visit?: { woken_by?: unknown } }[];
       next_visit?: { woken_by?: unknown };
     };
-    expect(next_visit?.woken_by, `${what}: next_visit`).toBe(own);
-    json = rest;
-    text = JSON.stringify(rest);
+    const visits: { woken_by?: unknown }[] = [];
+    const { next_visit, ...rest } = top;
+    if (next_visit) visits.push(next_visit);
+    const kept = steps?.map((st) => {
+      if (st.step !== "come_back" || !st.next_visit) return st;
+      const { next_visit: v, ...other } = st;
+      visits.push(v);
+      return other;
+    });
+    expect(visits.length, `${what}: next_visit`).toBe(1);
+    for (const v of visits) expect(v.woken_by, `${what}: next_visit`).toBe(own);
+    json = kept ? { ...rest, steps: kept } : rest;
+    text = JSON.stringify(json);
   }
   const keys = keysIn(json);
   expect(keys.has("woken_by"), what).toBe(false);
@@ -328,7 +339,7 @@ export function backBlockScenarios(): void {
             res.json,
             res.text,
             `${path} for ${bot.handle}`,
-            path.startsWith("/v1/me/digest")
+            path.startsWith("/v1/me/digest") || path === "/v1/me/start"
               ? bot === a
                 ? "wake_url"
                 : "none"

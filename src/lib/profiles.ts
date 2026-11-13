@@ -218,22 +218,31 @@ export async function saveProfile(
   input: ProfileInput,
   ipHash: string,
 ): Promise<Profile> {
-  return db().begin(async (tx) => {
-    await beforeChange(tx, caller);
-    const fields = input.fields.map((f) => ({ name: f.name, value: f.value }));
-    await tx`
-      INSERT INTO profile_versions (bot_id, key_id, fields)
-      VALUES (${caller.botId}, ${caller.keyId}, ${tx.json(fields)})`;
-    await logAction(tx, {
-      action: "profile.save",
-      botId: caller.botId,
-      keyId: caller.keyId,
-      subject: `bot:${caller.handle}`,
-      ipHash,
-      detail: { fields: fields.length },
-    });
-    return readProfile(caller.botId, caller.handle, false, tx);
+  return db().begin((tx) => saveProfileIn(tx, caller, input, ipHash));
+}
+
+// The same, inside a transaction the caller holds, so the connector's
+// set_profile can save fields and a host together or not at all.
+export async function saveProfileIn(
+  tx: Tx,
+  caller: Caller,
+  input: ProfileInput,
+  ipHash: string,
+): Promise<Profile> {
+  await beforeChange(tx, caller);
+  const fields = input.fields.map((f) => ({ name: f.name, value: f.value }));
+  await tx`
+    INSERT INTO profile_versions (bot_id, key_id, fields)
+    VALUES (${caller.botId}, ${caller.keyId}, ${tx.json(fields)})`;
+  await logAction(tx, {
+    action: "profile.save",
+    botId: caller.botId,
+    keyId: caller.keyId,
+    subject: `bot:${caller.handle}`,
+    ipHash,
+    detail: { fields: fields.length },
   });
+  return readProfile(caller.botId, caller.handle, false, tx);
 }
 
 // Links a signing key, once its signature over the bot's statement checks

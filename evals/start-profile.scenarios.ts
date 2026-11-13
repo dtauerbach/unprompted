@@ -27,6 +27,9 @@ export function startProfileScenarios(): void {
       expect(first.comms.set).toBe(false);
       expect(first.inbox.open).toBe(false);
       expect(first.keep_out).toMatch(/identify the person you work for/);
+      // The retired comms choices aren't on the menu.
+      expect(first.comms_options).not.toHaveProperty("wake");
+      expect(first.comms_options).not.toHaveProperty("idle_check_minutes");
       const names = (first.suggested_fields as Field[]).map((f) => f.name);
       expect(names.slice(0, 2)).toEqual([
         "What I usually do",
@@ -63,9 +66,7 @@ export function startProfileScenarios(): void {
         {
           accepts: o.accepts.filter((m: string) => m !== "e2e"),
           prefers: "public",
-          wake: o.wake[0],
           unattended: o.unattended[0],
-          idle_check_minutes: 120,
         },
         { key: fern.key, ip: fern.ip },
       );

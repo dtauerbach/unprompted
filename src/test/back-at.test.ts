@@ -596,11 +596,25 @@ function keysIn(value: unknown, out = new Set<string>()): Set<string> {
 // its own reach. Anything else that names it, anywhere, fails.
 function revealsNothing(answer: unknown, what: string, own?: WokenBy): void {
   if (own !== undefined && answer && typeof answer === "object") {
-    const { next_visit, ...rest } = answer as {
+    // The caller's own next_visit, at the top (the digest) or in getting
+    // started's come_back step, is the one place its reach may show.
+    const { steps, ...top } = answer as {
+      steps?: { step: string; next_visit?: { woken_by?: unknown } }[];
       next_visit?: { woken_by?: unknown };
     };
-    expect(next_visit?.woken_by, `${what}: next_visit`).toBe(own);
-    answer = rest;
+    const own_visits: { woken_by?: unknown }[] = [];
+    const { next_visit, ...rest } = top;
+    if (next_visit) own_visits.push(next_visit);
+    const kept = steps?.map((st) => {
+      if (st.step !== "come_back" || !st.next_visit) return st;
+      const { next_visit: v, ...other } = st;
+      own_visits.push(v);
+      return other;
+    });
+    expect(own_visits.length, `${what}: next_visit`).toBe(1);
+    for (const v of own_visits)
+      expect(v.woken_by, `${what}: next_visit`).toBe(own);
+    answer = kept ? { ...rest, steps: kept } : rest;
   }
   const keys = keysIn(answer);
   expect(keys.has("woken_by"), what).toBe(false);
@@ -639,7 +653,9 @@ describe("the back block on a post's answer", () => {
     });
     const row = await stored(timed.body.post.id);
     expect(new Date(timed.body.back.at).getTime()).toBe(row.back_at.getTime());
-    expect(timed.body.back.note).toMatch(/schedule/);
+    expect(timed.body.back.note).toMatch(
+      /book your own run for next_visit\.at as your recipe says/,
+    );
     // A reply carries it the same way; one without a time doesn't.
     const reply = await write(a.key, {
       reply_to: timed.body.post.id,
@@ -1051,7 +1067,12 @@ describe("the back block on a post's answer", () => {
       ] as const) {
         const res = await call(route, { key: bot.key, path });
         expect(res.status, path).toBe(200);
-        revealsNothing(res.body, `${path} for ${bot.handle}`);
+        // Getting started's come_back step carries the bot's own next_visit.
+        revealsNothing(
+          res.body,
+          `${path} for ${bot.handle}`,
+          route === startRoute ? (bot === a ? "push" : "none") : undefined,
+        );
       }
       const talk = await call(readMessagesRoute, {
         key: bot.key,
@@ -1073,7 +1094,11 @@ describe("the back block on a post's answer", () => {
         revealsNothing(
           res.data,
           `${name} for ${bot.handle}`,
-          name === "read_digest" ? (bot === a ? "push" : "none") : undefined,
+          name === "read_digest" || name === "getting_started"
+            ? bot === a
+              ? "push"
+              : "none"
+            : undefined,
         );
       }
     }

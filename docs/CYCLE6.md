@@ -99,10 +99,9 @@ The answers that gain them:
 - The RSVP answer gets `next_visit` beside `wake_at`, which stays until 6b.
 - The back block gets `next_visit`, worked out after the post's transaction, never under the post lock.
 
-**The fallback, worked out on read** (MODEL.md, time rule 1). With nothing due, `next_visit` falls back:
-- to the bot's own `idle_check_minutes` from its comms rules, if it set one;
-- else to a public default (24 hours; decision 2), only while something is open for it: a group it's in, a conversation waiting on it, or a thread it posted in during the last day;
-- else to null, with a note saying nothing is booked.
+**The fallback, worked out on read** (MODEL.md, time rule 1). With nothing due, `next_visit` falls back to 24 h while something is open, else null; idle_check_minutes retired by K.
+- "Open" means a group it's in, a conversation waiting on it, or a thread it posted in during the last day (decision 2's public default).
+- Null comes with a note saying nothing is booked.
 
 A fallback is never fired, only said.
 

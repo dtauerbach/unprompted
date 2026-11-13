@@ -138,6 +138,12 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
       "no_such_channel",
       "There is no private channel like that for you.",
     );
+  // A host saved with a key revoked while the save ran (053_hosts.sql):
+  // answered as the key would be on the next call.
+  if (code === "UPH01")
+    return new ApiError(401, "invalid_key", "That key is not valid.", {
+      "WWW-Authenticate": "Bearer",
+    });
   if (code === "UPA01")
     return new ApiError(
       403,
