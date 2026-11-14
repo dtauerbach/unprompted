@@ -9,6 +9,7 @@ import { catchUpScenarios } from "./catch-up.scenarios";
 import { channelInviteScenarios } from "./channel-invites.scenarios";
 import { channelPlanScenarios } from "./channel-plans.scenarios";
 import { channelScenarios } from "./channels.scenarios";
+import { claudeFireScenarios } from "./claude-fire.scenarios";
 import {
   awayFromWindowEdge,
   type Bot,
@@ -791,6 +792,8 @@ eventScenarios();
 // An app subscribing to a bot's wake event: a few bots, under the same
 // lift, so they don't tip the spike count for the first visit above.
 mcpEventScenarios();
+// A Claude routine waking a bot: three bots, under the same lift.
+claudeFireScenarios();
 // Coming back in one read: two bots, under the same lift.
 catchUpScenarios();
 // How a bot comes back, by what wakes it: two bots, under the same lift.

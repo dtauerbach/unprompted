@@ -224,11 +224,12 @@ export async function makePushUrl(
       INSERT INTO push_urls (bot_id, key_id, url, salt)
       VALUES (${caller.botId}, ${caller.keyId}, ${url}, ${salt})`;
     // A fresh URL starts with a clean record, and nothing waiting, unless
-    // an event subscription still has a wake to send.
+    // an event subscription or a routine still has a wake to send.
     await tx`
       INSERT INTO push_state (bot_id) VALUES (${caller.botId})
       ON CONFLICT (bot_id) DO UPDATE
         SET pending_since = CASE WHEN event_sub_live(${caller.botId})
+                                      OR fire_trigger_live(${caller.botId})
                                  THEN push_state.pending_since END,
             last_sent_at = NULL, last_status = NULL, failures = 0`;
     // The host only: the rest of the URL is the bot's business.
@@ -262,7 +263,8 @@ export async function removePushUrl(
       INSERT INTO push_urls (bot_id, key_id) VALUES (${caller.botId}, ${caller.keyId})`;
     await tx`
       UPDATE push_state SET pending_since = NULL
-      WHERE bot_id = ${caller.botId} AND NOT event_sub_live(${caller.botId})`;
+      WHERE bot_id = ${caller.botId} AND NOT event_sub_live(${caller.botId})
+        AND NOT fire_trigger_live(${caller.botId})`;
     await logAction(tx, {
       action: "push.url.remove",
       botId: caller.botId,
@@ -275,7 +277,26 @@ export async function removePushUrl(
   });
 }
 
-export type Delivery = { status: number | null; error?: string; body?: string };
+export type Delivery = {
+  status: number | null;
+  error?: string;
+  body?: string;
+  // Seconds the answer's Retry-After asked to wait, when it said.
+  retryAfter?: number;
+};
+
+// A Retry-After header as seconds: a whole number of them, or an HTTP date.
+// Undefined when there's none or it doesn't parse.
+export function retryAfterSeconds(
+  h: string | string[] | undefined,
+): number | undefined {
+  const v = (Array.isArray(h) ? h[0] : h)?.trim();
+  if (!v) return undefined;
+  if (/^\d{1,9}$/.test(v)) return Number(v);
+  const at = Date.parse(v);
+  if (Number.isNaN(at)) return undefined;
+  return Math.max(Math.ceil((at - Date.now()) / 1000), 0);
+}
 
 // readBody: read up to that many bytes of the answer, within the same
 // deadline, for a send that must check what came back (an MCP events
@@ -344,14 +365,20 @@ export const httpsDeliver: Deliver = (url, body, headers, opts) =>
         },
         (res) => {
           const status = res.statusCode ?? null;
+          const wait = retryAfterSeconds(res.headers["retry-after"]);
+          const after = wait === undefined ? {} : { retryAfter: wait };
           const max = opts?.readBody ?? 0;
           if (max <= 0) {
-            finish({ status });
+            finish({ status, ...after });
             res.destroy();
             return;
           }
           readCapped(res, max, (text) => {
-            finish({ status, ...(text === undefined ? {} : { body: text }) });
+            finish({
+              status,
+              ...after,
+              ...(text === undefined ? {} : { body: text }),
+            });
             res.destroy();
           });
         },
@@ -426,6 +453,7 @@ async function sendWithin(
   deliver: Deliver,
 ): Promise<WakeOutcome> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const sentAt = new Date();
   const late = new Promise<WakeOutcome>((resolve) => {
     timer = setTimeout(
       () => resolve({ delivered: false, status: null, error: "timeout" }),
@@ -433,7 +461,7 @@ async function sendWithin(
     );
   });
   try {
-    return await Promise.race([
+    const outcome = await Promise.race([
       adapter.send(registration, note, deliver).catch(
         (): WakeOutcome => ({
           delivered: false,
@@ -443,6 +471,7 @@ async function sendWithin(
       ),
       late,
     ]);
+    return { ...outcome, sentAt };
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -450,8 +479,10 @@ async function sendWithin(
 
 // One method's send, held to the site's rules: an address the push checks
 // or the adapter's own refuse (an MCP events callback off the provider's
-// hosts) is never sent to and counts as a failure.
-async function sendOne(
+// hosts) is never sent to and counts as a failure. Exported for a person's
+// test fire of a Claude routine (src/lib/claude-fire.ts), which keeps to
+// the same rules.
+export async function sendOne(
   adapter: WakeAdapter,
   registration: WakeRegistration,
   note: WakeNote,
@@ -543,11 +574,13 @@ type Claimed = {
 
 // Which bots may be claimed: one whose live push URL isn't paused, or whose
 // event subscription could wake it (event_sub_usable(), 057_mcp_events.sql),
+// or whose routine could (fire_trigger_usable(), 061_claude_fire.sql),
 // asked bot by bot in the claim and in nextDue below. A bot paused on every
 // method it has (push_state.failures counts only the push URL's, so a bot
-// with no push URL must have a usable subscription) waits, unclaimed, for a
-// test push or a fresh subscription that works, rather than being claimed
-// and put off again every few seconds for good.
+// with no push URL must have a usable subscription or routine) waits,
+// unclaimed, for a test push, a fresh subscription or a test fire that
+// works, rather than being claimed and put off again every few seconds for
+// good.
 
 // Sends what's waiting: claims a few bots marked pending, at most one push
 // per bot every PUSH_GAP_SECONDS and a bounded number per host a minute,
@@ -578,6 +611,7 @@ async function drainBatch(
         AND s.pending_since <= now()
         AND ((s.failures < ${PUSH_MAX_FAILURES} AND push_url_live(s.bot_id))
              OR event_sub_usable(s.bot_id, ${PUSH_MAX_FAILURES})
+             OR fire_trigger_usable(s.bot_id, ${PUSH_MAX_FAILURES})
              OR ${standIns()})
         AND (s.last_sent_at IS NULL
              OR s.last_sent_at < now() - make_interval(secs => ${PUSH_GAP_SECONDS}))
@@ -681,7 +715,7 @@ async function drainBatch(
             note,
             deliver,
           );
-          await m.adapter.record(sql, botId, outcome);
+          await m.adapter.record(sql, botId, outcome, note);
           if (outcome.delivered) {
             delivered = true;
             break;
@@ -692,7 +726,7 @@ async function drainBatch(
           if (at && (!retry || at < retry)) retry = at;
         }
         // Nothing delivered, and a method that retries a failure (MCP
-        // events, which the provider asks to be retried): the bot is queued
+        // events, which the provider asks to be retried, and routines): the bot is queued
         // again for then, unless an arrival already queued it. The method's
         // own pause, after PUSH_MAX_FAILURES in a row, ends the retries.
         if (!delivered && retry)
@@ -776,6 +810,7 @@ export async function nextDue(): Promise<Date | null> {
     WHERE pending_since IS NOT NULL
       AND ((failures < ${PUSH_MAX_FAILURES} AND push_url_live(bot_id))
            OR event_sub_usable(bot_id, ${PUSH_MAX_FAILURES})
+           OR fire_trigger_usable(bot_id, ${PUSH_MAX_FAILURES})
            OR ${standIns()})`;
   return r?.due ?? null;
 }

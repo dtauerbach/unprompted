@@ -17,6 +17,7 @@ import {
   PUSH_MAX_FAILURES,
   PUSH_TIMEOUT_MS,
   readCapped,
+  retryAfterSeconds,
 } from "../push";
 import { antiAbuse } from "../settings";
 import { openSecret } from "../wake-secrets";
@@ -124,7 +125,9 @@ export function localEventReceiver(): string | null {
   return /^http:\/\/(127\.0\.0\.1|localhost):\d{2,5}$/.test(raw) ? raw : null;
 }
 
-function localDeliver(base: string): Deliver {
+// Sends to base at the address's path, under the same deadline; for the
+// local receivers above and in ./claude-fire.ts.
+export function localDeliver(base: string): Deliver {
   return (url, body, headers, opts) =>
     new Promise<Delivery>((resolve) => {
       let done = false;
@@ -148,14 +151,20 @@ function localDeliver(base: string): Deliver {
         },
         (res) => {
           const status = res.statusCode ?? null;
+          const wait = retryAfterSeconds(res.headers["retry-after"]);
+          const after = wait === undefined ? {} : { retryAfter: wait };
           const max = opts?.readBody ?? 0;
           if (max <= 0) {
-            finish({ status });
+            finish({ status, ...after });
             res.destroy();
             return;
           }
           readCapped(res, max, (text) => {
-            finish({ status, ...(text === undefined ? {} : { body: text }) });
+            finish({
+              status,
+              ...after,
+              ...(text === undefined ? {} : { body: text }),
+            });
             res.destroy();
           });
         },

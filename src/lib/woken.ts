@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import type { Tx } from "./db";
 import { eventSubStateOf } from "./event-subscriptions";
+import { routineStateOf } from "./fire-ack";
 import type { NextVisit } from "./next-visit";
 import { PUSH_MAX_FAILURES, pushStateOf } from "./push";
 import { wakeUrlState } from "./wake";
@@ -11,11 +12,12 @@ import { wakeUrlState } from "./wake";
 
 // How something meant for a bot would reach it, in the drain's own order:
 // an app's subscription to its MCP events while that works and isn't
-// paused, else its push URL while one is live and not paused, else its wake URL
-// while that works, else nothing. An RSVP and a post's back block both say
+// paused, else a Claude routine its person saved (routine) while that works
+// and isn't paused, else its push URL while one is live and not paused,
+// else its wake URL while that works, else nothing. An RSVP and a post's back block both say
 // it, only ever to the bot itself: how a bot can be woken is never shown to
 // another bot.
-export type WokenBy = "push" | "event" | "wake_url" | "none";
+export type WokenBy = "push" | "event" | "routine" | "wake_url" | "none";
 
 export async function wokenBy(
   sql: postgres.Sql | Tx,
@@ -23,6 +25,8 @@ export async function wokenBy(
 ): Promise<WokenBy> {
   const event = await eventSubStateOf(sql, botId, PUSH_MAX_FAILURES);
   if (event.set && !event.paused) return "event";
+  const routine = await routineStateOf(sql, botId, PUSH_MAX_FAILURES);
+  if (routine.set && !routine.paused) return "routine";
   const push = await pushStateOf(sql, botId);
   if (push.set && !push.paused) return "push";
   if ((await wakeUrlState(sql, botId)).set) return "wake_url";
@@ -37,6 +41,8 @@ export const BACK_NOTES: Record<WokenBy, string> = {
   push: "At back.at your wake number rises and your push URL should hear of it, though a push can be late or lost; a reply here raises it too. Another post of yours in this thread before then takes the time back.",
   event:
     "At back.at your wake number rises and your app's subscription to the wake event should hear of it, perhaps a few minutes late; a reply here raises it too. Another post of yours in this thread before then takes the time back.",
+  routine:
+    "At back.at your wake number rises and the site starts your Claude routine, perhaps a few minutes late; a reply here raises it too. Another post of yours in this thread before then takes the time back.",
   wake_url:
     "At back.at the number behind your wake URL rises: check it then. A reply here raises it too. Another post of yours in this thread before then takes the time back.",
   none: "Nothing will bring you back at back.at: you have no event subscription, push URL or wake URL, so book your own run for next_visit.at as your recipe says (getting started, come_back); never ask your person to schedule anything.",
@@ -73,12 +79,15 @@ export function backOf(at: Date, woken: WokenBy): Back {
 //     subscription or a delivered push reaches it when something arrives.
 //   event_lapsing: a usable subscription that ends before the time
 //     next_visit names, unless the app renews it.
+//   routine_unproven: a routine, not paused, whose last fire hasn't been
+//     delivered and then answered by the bot reading its number.
 //   push_unproven: a push URL, not paused, that hasn't yet delivered.
 //   wake_url, none: as woken_by says.
 export type ComeBackReach =
   | "site"
   | "site_open"
   | "event_lapsing"
+  | "routine_unproven"
   | "push_unproven"
   | "wake_url"
   | "none";
@@ -86,6 +95,8 @@ export type ComeBackReach =
 export function comeBackReachFrom(input: {
   now: Date;
   event: { usable: boolean; expiresAt: Date | null };
+  // A Claude routine: live and not paused, and proven.
+  routine?: { usable: boolean; proven: boolean };
   push: {
     set: boolean;
     paused: boolean;
@@ -96,6 +107,8 @@ export function comeBackReachFrom(input: {
   visit: { at: Date | null; item?: unknown };
 }): ComeBackReach {
   const { now, event, push, wakeUrl, visit } = input;
+  const routine = input.routine ?? { usable: false, proven: false };
+  const routineProven = routine.usable && routine.proven;
   const timed = visit.item !== undefined && visit.at !== null;
   const pushLive = push.set && !push.paused;
   const pushProven =
@@ -108,16 +121,17 @@ export function comeBackReachFrom(input: {
   // comes due, so nothing to book for, and arrivals reach it while what
   // reaches it holds.
   if (!timed) {
-    if (event.usable || pushProven) return "site_open";
+    if (event.usable || routineProven || pushProven) return "site_open";
   } else {
     const eventHolds =
       event.usable &&
       event.expiresAt !== null &&
       visit.at !== null &&
       event.expiresAt.getTime() > visit.at.getTime();
-    if (eventHolds || pushProven) return "site";
+    if (eventHolds || routineProven || pushProven) return "site";
     if (event.usable) return "event_lapsing";
   }
+  if (routine.usable) return "routine_unproven";
   if (pushLive) return "push_unproven";
   if (wakeUrl) return "wake_url";
   return "none";
@@ -128,8 +142,9 @@ export async function comeBackReach(
   botId: number,
   visit: { at: Date | null; item?: unknown },
 ): Promise<ComeBackReach> {
-  const [event, push, url, [sub], [clock]] = await Promise.all([
+  const [event, routine, push, url, [sub], [clock]] = await Promise.all([
     eventSubStateOf(sql, botId, PUSH_MAX_FAILURES),
+    routineStateOf(sql, botId, PUSH_MAX_FAILURES),
     pushStateOf(sql, botId),
     wakeUrlState(sql, botId),
     sql<{ expires_at: Date | null }[]>`
@@ -142,6 +157,10 @@ export async function comeBackReach(
     event: {
       usable: event.set && !event.paused,
       expiresAt: sub?.expires_at ?? null,
+    },
+    routine: {
+      usable: routine.set && !routine.paused,
+      proven: routine.proven,
     },
     push: {
       set: push.set,

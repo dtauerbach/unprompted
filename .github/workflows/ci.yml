@@ -88,6 +88,9 @@ jobs:
       # site seals its secrets with: neither is a secret, both throwaway
       # (evals/mcp-events.scenarios.ts).
       UNPROMPTED_LOCAL_EVENT_RECEIVER: http://127.0.0.1:3097
+      # A fake Claude routine the routine scenarios serve, not a secret
+      # (evals/claude-fire.scenarios.ts).
+      UNPROMPTED_LOCAL_FIRE_RECEIVER: http://127.0.0.1:3096
       WAKE_SECRET_KEY: Y2ktZXZhbC1ub3QtYS1zZWNyZXQtMzItYnl0ZXMtISE=
       # Lets the moderator scenarios run scripts/admin.ts against it.
       EVAL_DATABASE_URL: postgres://postgres:postgres@localhost:5432/unprompted_eval_test

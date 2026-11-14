@@ -14,7 +14,10 @@ import {
   linkWithCode,
   pickGroupLeader,
   releaseOwnedBot,
+  removeClaudeFire,
+  setClaudeFire,
   startGroup,
+  testClaudeFire,
 } from "./actions";
 import type {
   AskCopy,
@@ -23,6 +26,7 @@ import type {
   GroupCopy,
   LinkCodeCopy,
   OwnerCodeCopy,
+  RoutineCopy,
   StartGroupCopy,
 } from "./copy-keys";
 
@@ -586,5 +590,170 @@ export function GroupRow({
         </ul>
       )}
     </li>
+  );
+}
+
+// What the page worked out for one bot's routine, already in words: the
+// routine's id alone, never its token, which the site can't show back.
+export type RoutineView = {
+  routine: string | null;
+  // Lines in the page's own words: when it last went, failing, paused,
+  // unanswered, or why the site took it off.
+  lines: string[];
+  attempts: { key: string; line: string; excerpt: string | null }[];
+};
+
+const smallButton =
+  "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800";
+
+// A Claude routine that wakes one bot. The token field is a password field
+// the browser isn't asked to remember, and nothing puts it back: the form
+// answers only whether it was saved.
+export function RoutineForm({
+  handle,
+  view,
+  t,
+}: {
+  handle: string;
+  view: RoutineView;
+  t: Record<RoutineCopy, string>;
+}) {
+  const [saved, save, saving] = useActionState<FormState, FormData>(
+    setClaudeFire,
+    {},
+  );
+  const [removed, remove, removing] = useActionState<FormState, FormData>(
+    removeClaudeFire,
+    {},
+  );
+  const [tested, test, testing] = useActionState<FormState, FormData>(
+    testClaudeFire,
+    {},
+  );
+  const mine = (st: FormState) => st.handle === handle || st.error;
+  const said = [saved, removed, tested].filter(mine).map((st) =>
+    st.error
+      ? { error: true, text: st.error }
+      : {
+          error: false,
+          text:
+            st.routine === "saved"
+              ? t["account.routine.saved"]
+              : st.routine === "removed"
+                ? t["account.routine.removed"]
+                : st.routine === "fired"
+                  ? t["account.routine.tested_ok"]
+                  : st.routine === "failed"
+                    ? t["account.routine.tested_failed"].replace(
+                        "{status}",
+                        String(st.status ?? ""),
+                      )
+                    : t["account.routine.tested_unreachable"],
+        },
+  );
+  return (
+    <details className="w-full space-y-2">
+      <summary className="cursor-pointer text-sm font-medium">
+        {t["account.routine.title"]}
+      </summary>
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        {t["account.routine.lead"]}
+      </p>
+      {view.routine && (
+        <p className="text-sm">
+          <Words
+            text={t["account.routine.set"]}
+            slots={{
+              routine: <span className="font-mono">{view.routine}</span>,
+            }}
+          />
+        </p>
+      )}
+      {view.lines.map((l) => (
+        <p key={l} className="text-sm text-neutral-600 dark:text-neutral-400">
+          {l}
+        </p>
+      ))}
+      {said.map((x) => (
+        <p
+          key={x.text}
+          className={
+            x.error
+              ? "text-sm text-amber-700 dark:text-amber-300"
+              : "text-sm text-neutral-700 dark:text-neutral-300"
+          }
+        >
+          {x.text}
+        </p>
+      ))}
+      <form action={save} className="space-y-2">
+        <input type="hidden" name="handle" value={handle} />
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
+            {t["account.routine.url_field"]}
+          </span>
+          <input
+            name="routine"
+            required
+            autoComplete="off"
+            spellCheck={false}
+            className="block w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 font-mono text-sm dark:border-neutral-700"
+          />
+        </label>
+        <label className="block space-y-1">
+          <span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
+            {t["account.routine.token_field"]}
+          </span>
+          <input
+            name="token"
+            type="password"
+            required
+            autoComplete="new-password"
+            spellCheck={false}
+            className="block w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 font-mono text-sm dark:border-neutral-700"
+          />
+        </label>
+        <button type="submit" disabled={saving} className={smallButton}>
+          {t["account.routine.save"]}
+        </button>
+      </form>
+      {view.routine && (
+        <div className="flex flex-wrap gap-2">
+          <form action={test}>
+            <input type="hidden" name="handle" value={handle} />
+            <button type="submit" disabled={testing} className={smallButton}>
+              {t["account.routine.test"]}
+            </button>
+          </form>
+          <form action={remove}>
+            <input type="hidden" name="handle" value={handle} />
+            <button type="submit" disabled={removing} className={smallButton}>
+              {t["account.routine.remove"]}
+            </button>
+          </form>
+        </div>
+      )}
+      {view.attempts.length > 0 && (
+        <div className="space-y-1">
+          <h3 className="text-sm font-medium">
+            {t["account.routine.attempts"]}
+          </h3>
+          <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-400">
+            {view.attempts.map((a) => (
+              <li key={a.key} className="whitespace-pre-wrap break-words">
+                {a.line}
+                {a.excerpt !== null && (
+                  <>
+                    {" "}
+                    {t["account.routine.excerpt"]}{" "}
+                    <span className="font-mono">{a.excerpt}</span>
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </details>
   );
 }

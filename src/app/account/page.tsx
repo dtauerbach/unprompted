@@ -6,6 +6,7 @@ import { RefreshOnReturn } from "@/components/refresh";
 import { Words } from "@/components/words";
 import { adminHome } from "@/lib/admin-home";
 import { roleFor } from "@/lib/admins";
+import { type ClaudeFireView, listClaudeFires } from "@/lib/claude-fire";
 import { CONNECT_CODE_MINUTES } from "@/lib/connect-codes";
 import { fill } from "@/lib/copy";
 import { db } from "@/lib/db";
@@ -21,6 +22,7 @@ import { pageOrigin } from "@/lib/page-origin";
 import { listAsks } from "@/lib/pairing-asks";
 import { listPersonChannels } from "@/lib/private-channels";
 import { isReadOnly } from "@/lib/settings";
+import { exactUtc } from "@/lib/time";
 import { signOut } from "./actions";
 import {
   ASK_COPY,
@@ -28,6 +30,8 @@ import {
   GROUP_COPY,
   LINK_CODE_COPY,
   OWNER_CODE_COPY,
+  ROUTINE_COPY,
+  type RoutineCopy,
   SERVICES_COPY,
   START_GROUP_COPY,
 } from "./copy-keys";
@@ -39,12 +43,70 @@ import {
   LinkCodeForm,
   OwnerCodeForm,
   ReleaseForm,
+  RoutineForm,
+  type RoutineView,
   StartGroupForm,
 } from "./forms";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await pageCopy();
   return { title: t["account.title"] };
+}
+
+// A bot's routine in the page's words, worked out here so the browser gets
+// lines, not the record: the routine's id, when fires went and what came
+// back, and never its token, which the site can't show back.
+function routineView(
+  v: ClaudeFireView | undefined,
+  t: Record<RoutineCopy, string>,
+): RoutineView {
+  if (!v) return { routine: null, lines: [], attempts: [] };
+  const lines: string[] = [];
+  if (v.ended === "unauthorized")
+    lines.push(t["account.routine.ended_unauthorized"]);
+  if (v.ended === "not_found") lines.push(t["account.routine.ended_not_found"]);
+  if (v.routine) {
+    lines.push(
+      v.last_delivered_at
+        ? fill(t["account.routine.last"], { at: exactUtc(v.last_delivered_at) })
+        : t["account.routine.never"],
+    );
+    if (v.paused) lines.push(t["account.routine.paused"]);
+    else if (v.failing) lines.push(t["account.routine.failing"]);
+    if (v.unanswered_at)
+      lines.push(
+        fill(t["account.routine.unanswered"], {
+          at: exactUtc(v.unanswered_at),
+        }),
+      );
+  }
+  return {
+    routine: v.routine,
+    lines,
+    attempts: v.attempts.map((a) => {
+      const extra = [
+        a.status === null
+          ? null
+          : fill(t["account.routine.status"], { status: a.status }),
+        a.retry_after === null
+          ? null
+          : fill(t["account.routine.retry_after"], { seconds: a.retry_after }),
+      ].filter((x): x is string => x !== null);
+      return {
+        key: `${a.wake}:${a.attempt}:${a.sent_at.toISOString()}`,
+        line: [
+          fill(t["account.routine.attempt"], {
+            at: exactUtc(a.sent_at),
+            wake: a.wake,
+            attempt: a.attempt,
+            outcome: t[`account.routine.outcome.${a.outcome}`],
+          }),
+          ...extra,
+        ].join(", "),
+        excerpt: a.excerpt,
+      };
+    }),
+  };
 }
 
 function pick<K extends string>(t: Record<K, string>, keys: readonly K[]) {
@@ -60,13 +122,17 @@ export default async function AccountPage() {
   const user = await sessionUser();
   if (!user) redirect("/sign-in");
   const humanId = await findHuman(db(), user.id);
-  const [bots, asks, groups, origin, admin] = await Promise.all([
+  const [bots, asks, groups, origin, admin, routines] = await Promise.all([
     humanId === undefined ? [] : listOwnedBots(db(), humanId),
     humanId === undefined ? [] : listAsks(db(), humanId),
     humanId === undefined ? [] : listPersonChannels(db(), humanId),
     pageOrigin(),
     roleFor(db(), user.id),
+    humanId === undefined
+      ? new Map<string, ClaudeFireView>()
+      : listClaudeFires(db(), humanId),
   ]);
+  const routineCopy = pick(t, ROUTINE_COPY);
   const writable = !isReadOnly();
   // Only a person's own bots that aren't frozen can go into a group.
   const ready = bots.filter((b) => !b.frozen).map((b) => b.handle);
@@ -251,6 +317,13 @@ export default async function AccountPage() {
                     handle={b.handle}
                     minutes={CONNECT_CODE_MINUTES}
                     t={pick(t, CONNECT_CODE_COPY)}
+                  />
+                )}
+                {writable && !b.frozen && (
+                  <RoutineForm
+                    handle={b.handle}
+                    view={routineView(routines.get(b.handle), routineCopy)}
+                    t={routineCopy}
                   />
                 )}
               </li>

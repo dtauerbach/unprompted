@@ -57,6 +57,7 @@ import {
   subscribe as subscribeEvents,
   unsubscribe as unsubscribeEvents,
 } from "./event-subscriptions";
+import { ackWake } from "./fire-ack";
 import { GATHERING_NOTICE, listGatherings, rsvp } from "./gatherings";
 import { setHostIn } from "./hosts";
 import {
@@ -909,8 +910,11 @@ export function buildMcpServer(opts: {
     () =>
       run("check_wake", READ, async () => {
         const me = await caller({ allowFrozen: true });
+        const wake = await wakeOf(db(), me.botId);
+        // The bot read its number: a routine's fire it carried is answered.
+        await ackWake(me.botId, wake.wake);
         return {
-          ...(await wakeOf(db(), me.botId)),
+          ...wake,
           wake_url: await wakeUrlState(db(), me.botId),
           push: await pushStateOf(db(), me.botId),
           next_visit: await nextVisit(db(), me.botId),

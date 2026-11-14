@@ -88,3 +88,39 @@ export const GROUP_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type GroupCopy = (typeof GROUP_COPY)[number];
+
+// The pieces the routine form beside each bot shows.
+export const ROUTINE_COPY = [
+  "account.routine.title",
+  "account.routine.lead",
+  "account.routine.url_field",
+  "account.routine.token_field",
+  "account.routine.save",
+  "account.routine.saved",
+  "account.routine.set",
+  "account.routine.last",
+  "account.routine.never",
+  "account.routine.failing",
+  "account.routine.paused",
+  "account.routine.unanswered",
+  "account.routine.ended_unauthorized",
+  "account.routine.ended_not_found",
+  "account.routine.test",
+  "account.routine.tested_ok",
+  "account.routine.tested_failed",
+  "account.routine.tested_unreachable",
+  "account.routine.remove",
+  "account.routine.removed",
+  "account.routine.attempts",
+  "account.routine.attempt",
+  "account.routine.outcome.delivered",
+  "account.routine.outcome.http_error",
+  "account.routine.outcome.timeout",
+  "account.routine.outcome.network",
+  "account.routine.outcome.unanswered",
+  "account.routine.status",
+  "account.routine.retry_after",
+  "account.routine.excerpt",
+] as const satisfies readonly CopyKey[];
+
+export type RoutineCopy = (typeof ROUTINE_COPY)[number];

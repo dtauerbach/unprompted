@@ -265,7 +265,7 @@ async function lookup(): Promise<void> {
     );
   const m = b.messages;
   console.log(
-    `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages; ${m.pairing_codes_made} pairing code(s) made, ${m.pairing_redeems_failed} failed tries at redeeming one, ${m.contacts} contact(s), ${m.presence_set} presence change(s) (${m.presence_reports_received} reported), ${m.wake_url_changes} wake URL change(s), ${m.push_url_changes} push URL change(s), ${m.event_subscriptions} MCP event subscription(s) made or refreshed (${m.event_subscriptions_ended} ended), ${m.events_delivered} event(s) delivered, ${m.events_failed} failed, let bots wake it ${m.wake_grants_given} time(s), ${m.nudges_sent} nudge(s) sent, ${m.nudges_received} got, ${m.rsvps} RSVP change(s)`,
+    `inbox ${m.inbox_open ? `open, new conversations from ${m.requests_from}` : "closed"}; private messages: ${m.sent} sent (${m.conversations_started} starting a conversation), ${m.received} received, blocked by ${m.blocked_by} bot(s), ${m.reports_received} report(s) on its messages; ${m.pairing_codes_made} pairing code(s) made, ${m.pairing_redeems_failed} failed tries at redeeming one, ${m.contacts} contact(s), ${m.presence_set} presence change(s) (${m.presence_reports_received} reported), ${m.wake_url_changes} wake URL change(s), ${m.push_url_changes} push URL change(s), ${m.event_subscriptions} MCP event subscription(s) made or refreshed (${m.event_subscriptions_ended} ended), ${m.events_delivered} event(s) delivered, ${m.events_failed} failed, ${m.routine_changes} Claude routine change(s), ${m.fires_delivered} fire(s) delivered, ${m.fires_failed} failed, ${m.fires_unanswered} unanswered, let bots wake it ${m.wake_grants_given} time(s), ${m.nudges_sent} nudge(s) sent, ${m.nudges_received} got, ${m.rsvps} RSVP change(s)`,
   );
   console.log(
     `groups: in ${b.groups.in_now} now, ${b.groups.ever} ever, ${b.groups.messages_sent} message(s) sent to them; made ${b.groups.made}, invites sent ${b.groups.invites_sent}, joined ${b.groups.joined}, left ${b.groups.left}, removed ${b.groups.removed}, removed others ${b.groups.removals}; plan versions saved ${b.groups.plans_saved} (reported ${b.groups.plan_reports_received}), groups closed ${b.groups.closed}`,
@@ -273,6 +273,10 @@ async function lookup(): Promise<void> {
   if (b.nudge_refs.length)
     console.log(
       `latest nudge refs, its own words: ${b.nudge_refs.map((r) => `${JSON.stringify(r.ref)} (${utcMinute(r.at)})`).join(", ")}`,
+    );
+  for (const f of b.fire_attempts)
+    console.log(
+      `routine fire ${utcMinute(f.sent_at)}: wake ${f.wake}, try ${f.attempt}, ${f.outcome}${f.status === null ? "" : `, HTTP ${f.status}`}${f.retry_after === null ? "" : `, Retry-After ${f.retry_after}s`}${f.unanswered_at === null ? "" : `, unanswered ${utcMinute(f.unanswered_at)}`}${f.excerpt ? `: ${JSON.stringify(f.excerpt)}` : ""}`,
     );
   for (const c of b.channels_made)
     console.log(

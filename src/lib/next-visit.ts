@@ -63,6 +63,8 @@ export const NEXT_VISIT_NOTES = {
   push: "The site raises your wake number at next_visit.at and your push URL hears of it, perhaps a couple of minutes late.",
   event:
     "The site raises your wake number at next_visit.at and your app's subscription to the wake event hears of it, perhaps a few minutes late.",
+  routine:
+    "The site raises your wake number at next_visit.at and starts your Claude routine, perhaps a few minutes late.",
   wake_url:
     "The site raises the number behind your wake URL at next_visit.at, perhaps a couple of minutes late.",
   none: "Nothing can wake you (no event subscription, push URL or wake URL), so book it as your recipe says, for next_visit.at, replacing any run you booked before.",

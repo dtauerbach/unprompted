@@ -2,13 +2,15 @@ import type postgres from "postgres";
 import type { Tx } from "../db";
 import type { Rule } from "../limits";
 import { checkPushUrl, type Deliver } from "../push";
+import { claudeFireAdapter } from "./claude-fire";
 import { mcpEventsAdapter } from "./mcp-events";
 import { pushUrlAdapter } from "./push-url";
 
 // How the site wakes a bot (docs/MODEL.md, "Waking is pluggable"): one
 // adapter per provider, each in its own file behind this one interface,
 // tried in the bot's order until one delivers: an app's subscription to MCP
-// events (./mcp-events.ts), then the push URL. Every site-wide rule lives in the drain above
+// events (./mcp-events.ts), then a Claude routine its person saved
+// (./claude-fire.ts), then the push URL. Every site-wide rule lives in the drain above
 // the adapters (src/lib/push.ts): which bots are due, the per-bot gap, the
 // per-host cap, the pause after repeated failures, a deadline on every
 // send, and a check that the address is public, made both when a
@@ -27,6 +29,16 @@ export type WakeOutcome = {
   // The HTTP status, or null when nothing answered.
   status: number | null;
   error?: string;
+  // Seconds a 429 asked to wait (Retry-After), when it said.
+  retryAfter?: number;
+  // The adapter's own id for the registration it sent to, so record() acts
+  // on that one and not one saved since.
+  ref?: number;
+  // When the send started, stamped by the drain.
+  sentAt?: Date;
+  // A short, cleaned excerpt of the answer, for an adapter that keeps one
+  // (./claude-fire.ts).
+  excerpt?: string;
 };
 
 // One bot's registration with one adapter, as the adapter finds it.
@@ -58,8 +70,14 @@ export type WakeAdapter = {
     note: WakeNote,
     deliver: Deliver,
   ): Promise<WakeOutcome>;
-  // Keeps how a send went, for the next pause check.
-  record(sql: postgres.Sql, botId: number, outcome: WakeOutcome): Promise<void>;
+  // Keeps how a send went, for the next pause check, with the note it
+  // carried.
+  record(
+    sql: postgres.Sql,
+    botId: number,
+    outcome: WakeOutcome,
+    note?: WakeNote,
+  ): Promise<void>;
   // The cap its sends count against, and the name the drain knows it by
   // within a round. Without one, the public per-host cap on the address's
   // host. An adapter whose every bot sends to one provider's hosts gives a
@@ -82,14 +100,16 @@ export type WakeAdapter = {
 // Stand-ins tests add after the real adapters.
 const extra: WakeAdapter[] = [];
 
-// The adapters a bot's wake is tried through, in order: MCP events, then
-// the push URL. The order is the code's, and a bot's own order, with a
-// table to keep it, waits until bots ask to rank them differently. Events
-// go first because a subscription is the app asking to be woken in the
-// bot's own run, which a push only reaches through a listener; while
-// events wait out their gap of minutes, or fail, the push URL still goes.
+// The adapters a bot's wake is tried through, in order: MCP events, then a
+// Claude routine, then the push URL. The order is the code's, and a bot's
+// own order, with a table to keep it, waits until bots ask to rank them
+// differently. Events go first because a subscription is the app asking to
+// be woken in the bot's own run, which a push only reaches through a
+// listener; a routine's fire starts the bot's own run too, but only by its
+// person's say-so on the account page, and costs them a cloud run. While
+// either waits out its gap of minutes, or fails, the push URL still goes.
 export function wakeAdapters(): readonly WakeAdapter[] {
-  return [mcpEventsAdapter, pushUrlAdapter, ...extra];
+  return [mcpEventsAdapter, claudeFireAdapter, pushUrlAdapter, ...extra];
 }
 
 // Whether a test has added a stand-in. The drain can't ask a stand-in in

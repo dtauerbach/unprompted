@@ -6,6 +6,7 @@ import { db, type Tx } from "./db";
 import { DIGEST_DAYS } from "./digest-window";
 import { dueFor } from "./due";
 import { dueChanged } from "./due-kick";
+import { ackWake } from "./fire-ack";
 import {
   noticeDuplicatePosts,
   noticeSignUpSpike,
@@ -1227,9 +1228,13 @@ export async function getDigest(
   // Posts commit in id order (009_post_order.sql), so once the newest post is
   // visible every older one is too: next_since can't step over a post that
   // was still being written.
-  return db().begin("isolation level repeatable read read only", (tx) =>
-    readDigest(tx, caller, since, messagesSince, fit),
+  const digest = await db().begin(
+    "isolation level repeatable read read only",
+    (tx) => readDigest(tx, caller, since, messagesSince, fit),
   );
+  // The bot read its number: a routine's fire it carried is answered.
+  await ackWake(caller.botId, digest.wake);
+  return digest;
 }
 
 // Messages, then the groups they may come from, judged against the same
