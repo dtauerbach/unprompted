@@ -2,7 +2,7 @@ import { unstable_cache } from "next/cache";
 import { db } from "./db";
 import { soonestDue, workDue } from "./due";
 import { clearDue, DUE_TAG, minuteStamp } from "./due-kick";
-import { drainForAWhile } from "./push";
+import { drainForAWhile, nextDue } from "./push";
 import { isReadOnly } from "./read-only";
 import { buildKey, timeBucket } from "./shared-cache";
 
@@ -22,10 +22,16 @@ import { buildKey, timeBucket } from "./shared-cache";
 //    cache and reads Postgres, due or not: on an idle site with a cron, 24
 //    wakes a day.
 //
+// The same entry keeps the soonest time a waiting push is due (nextDue() in
+// src/lib/push.ts), so a push an adapter's gap held past a drain's round
+// goes out from here with no other request. A drain that leaves one waiting
+// clears the tag.
+//
 // Every write that sets a time clears the tag after it commits, and again
 // in its own after() (dueChanged() in src/lib/due-kick.ts), and a run
-// clears it after working and reads the soonest time again while the
-// database is awake. A run that read before a setter committed can still
+// clears it after working and draining, and reads the soonest time again
+// while the database is awake. A run cut off before that repeats the next
+// minute. A run that read before a setter committed can still
 // write the old time after the setter cleared it. For a back item that
 // makes a fire late, inside its window. An RSVP's window ends 30 minutes
 // after its gathering starts, so near a start the entry is keyed by five
@@ -46,14 +52,22 @@ export const DUE_NEAR_MS = 90 * 60 * 1000;
 // push it starts can take up to the push timeout past it.
 export const DUE_ROUND_MS = 45_000;
 
-type Soonest = { next: string | null; start: string | null };
+// next: the soonest item on the due-list; push: the soonest push held back
+// past a drain's round (src/lib/push.ts clears the tag when it leaves one).
+type Soonest = {
+  next: string | null;
+  start: string | null;
+  push: string | null;
+};
 
 const cachedSoonest = unstable_cache(
   async (_build: string, _span: number, _bucket: number): Promise<Soonest> => {
     const s = await soonestDue(db());
+    const push = await nextDue();
     return {
       next: s.next ? s.next.toISOString() : null,
       start: s.start ? s.start.toISOString() : null,
+      push: push ? push.toISOString() : null,
     };
   },
   ["due-soonest"],
@@ -64,16 +78,19 @@ function read(span: number): Promise<Soonest> {
   return cachedSoonest(buildKey("due"), span, timeBucket(span));
 }
 
-// The soonest time an item comes due, as the cache has it: by the hour, or
-// by five minutes near a gathering's start.
+// The soonest time an item comes due, and a held push may go, as the cache
+// has them: by the hour, or by five minutes near a gathering's start.
 export async function soonestCached(
   now: number = Date.now(),
-): Promise<string | null> {
+): Promise<{ next: string | null; push: string | null }> {
   let s = await read(HOUR);
   if (s.start !== null && Date.parse(s.start) - now <= DUE_NEAR_MS)
     s = await read(NEAR);
-  return s.next;
+  return { next: s.next, push: s.push };
 }
+
+const reached = (at: string | null, now: number) =>
+  at !== null && Date.parse(at) <= now;
 
 // Minutes this process claimed in Next's cache: the cached function runs
 // only on a miss, so only the instance that filled the entry sees its minute
@@ -109,14 +126,19 @@ export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   const mine = claimed.delete(minute);
   if (!mine) return "stamped";
   const soonest = await soonestCached(now);
-  if (soonest === null || Date.parse(soonest) > now) return "not_due";
-  const run = await workDue(new Date(now));
+  const due = reached(soonest.next, now);
+  const held = reached(soonest.push, now);
+  if (!due && !held) return "not_due";
+  const fired = due ? (await workDue(new Date(now))).fired : 0;
+  // The pushes its fires raised, and any held past an earlier round,
+  // awaited here within the deadline: this already runs after the answer,
+  // with nothing further to run it after. The drain stops under the kill
+  // switch too (src/lib/push.ts). A held push another round sent since the
+  // cache read costs this one drain that finds nothing.
+  const left = until - Date.now();
+  if ((fired > 0 || held) && left > 0) await drainForAWhile(undefined, left);
+  // Then the next times, read while the database is awake.
   clearDue();
   await soonestCached(now);
-  // The pushes its fires raised, awaited here within the deadline: this
-  // already runs after the answer, with nothing further to run it after.
-  // The drain stops under the kill switch too (src/lib/push.ts).
-  const left = until - Date.now();
-  if (run.fired > 0 && left > 0) await drainForAWhile(undefined, left);
   return "worked";
 }

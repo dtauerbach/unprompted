@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import { clearDue } from "./due-kick";
 import { isReadOnly } from "./read-only";
 
 // Pushes go out from the requests the site already gets, after each write's
@@ -45,6 +46,9 @@ export function kickPushes(now: number = Date.now()): void {
         }
       } catch (e) {
         console.error(e);
+        // A held push this round would have left to the clock: let the
+        // clock read it again (src/lib/due-check.ts).
+        clearDue();
       } finally {
         done();
       }

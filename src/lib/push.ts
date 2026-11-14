@@ -5,6 +5,7 @@ import { BlockList, isIP, type LookupFunction } from "node:net";
 import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
+import { clearDue } from "./due-kick";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { consume, pushHostRules, pushUrlRules, type Rule } from "./limits";
@@ -764,7 +765,9 @@ export async function sweepAdapters(
 }
 
 // The next time a push that's waiting may go out, or null if none waits.
-async function nextDue(): Promise<Date | null> {
+// The clock's check reads it too (src/lib/due-check.ts), so a push held
+// past a round goes out with no other request.
+export async function nextDue(): Promise<Date | null> {
   const [r] = await db()<{ due: Date | null }[]>`
     SELECT min(GREATEST(pending_since,
                         COALESCE(last_sent_at + make_interval(secs => ${PUSH_GAP_SECONDS}),
@@ -782,7 +785,10 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Sends what's waiting, then keeps an eye out for a little while: pushes
 // held back by the gap, or by a host's cap, go out when it ends. An arrival
 // after this round has nothing left to wait for starts its own round, from
-// the write that brought it.
+// the write that brought it. A push still held when the round ends (an
+// event's gap is longer than a round) is left to the clock: the round
+// clears its cached soonest time, so the next check reads when the push may
+// go and sends it then, with no other request.
 export async function drainForAWhile(
   deliver: Deliver = deliverer,
   forMs: number = DRAIN_FOR_MS,
@@ -799,7 +805,12 @@ export async function drainForAWhile(
     const due = await nextDue();
     if (!due) return;
     const wait = Math.max(due.getTime() - Date.now(), 1000);
-    if (Date.now() + wait > until) return;
+    if (Date.now() + wait > until) {
+      clearDue();
+      return;
+    }
     await sleep(wait);
   }
+  // Out of time after a full batch: there may be more behind it.
+  clearDue();
 }

@@ -7,7 +7,9 @@ import { json, route } from "@/lib/http";
 // request, at most once a minute per process (src/lib/due-kick.ts); this
 // route only makes sure there is a request. What the check writes is fires,
 // each raising the wake number of the bot whose own time came
-// (src/lib/due.ts), never anything a caller chose. Never cached, since a
+// (src/lib/due.ts), and the pushes already waiting for their time, the
+// ones its fires raised and any an adapter's gap held past a drain's round
+// (src/lib/push.ts), never anything a caller chose. Never cached, since a
 // cached answer never runs the function.
 export const dynamic = "force-dynamic";
 // A check that works awaits the pushes it raised within one deadline,

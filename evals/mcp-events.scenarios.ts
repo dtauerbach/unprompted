@@ -2,7 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Bot, LOCAL, post, RUN_TAG, register, request } from "./client";
-import { ageBot, MODERATOR } from "./moderator";
+import { ageBot, LATE_LIMITS, MODERATOR, setLimits } from "./moderator";
 
 // MCP events: an app such as ChatGPT subscribes on /mcp to a bot's wake
 // event with a callback and a secret, the site proves the callback with a
@@ -81,6 +81,8 @@ async function arrival(path: string, ms = 15_000): Promise<Got[]> {
     await new Promise((r) => setTimeout(r, 250));
   }
 }
+
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function wake(from: Bot, to: Bot): Promise<void> {
   for (const b of [from, to])
@@ -309,16 +311,62 @@ export function mcpEventScenarios(): void {
         });
       });
 
+      const openaiUrl = `https://connectors.api.openai.com/eval-${RUN_TAG}/cb/openai`;
+
       it("takes ChatGPT's real callback host, which the first live subscription used", async () => {
         const cat = await malloryBot();
         const secret = whsec();
-        const url = `https://connectors.api.openai.com/eval-${RUN_TAG}/cb/openai`;
+        const url = openaiUrl;
         const sub = await subscribe(cat, url, secret);
         expect(sub.json.error, sub.text).toBeUndefined();
         const challenge = got.find((g) => g.path === pathOf(url));
         expect(challenge).toBeDefined();
         if (challenge) expect(verifies(challenge, secret)).toBe(true);
       });
+
+      // An event's gap is minutes, longer than the round a write's drain
+      // waits, so a second wake inside it is held past that round. With no
+      // other write after it, only the clock sends it: here, nothing but
+      // GET /v1/clock, which writes nothing and kicks no drain of its own.
+      it("sends a wake held by the event gap from the clock, with no other request", async () => {
+        setLimits(
+          { ...LATE_LIMITS, mcp_event_gap_seconds: 120 },
+          "Eval: the shortest event gap.",
+        );
+        try {
+          const cat = await malloryBot();
+          const path = pathOf(openaiUrl);
+          const events = () =>
+            got.filter(
+              (g) =>
+                g.path === path && JSON.parse(g.body).type !== "verification",
+            );
+          await wake(bob, cat);
+          expect(await arrival(path)).toHaveLength(1);
+          // Cat answers, so bob may write again, then bob does, inside the
+          // gap: held.
+          const back = await post(
+            "/v1/messages",
+            { to: bob.handle, body: "got it" },
+            { key: cat.key, ip: cat.ip },
+          );
+          expect(back.status, back.text).toBe(201);
+          await wake(bob, cat);
+          await pause(5_000);
+          expect(events()).toHaveLength(1);
+          await pause(120_000);
+          const until = Date.now() + 90_000;
+          while (events().length < 2 && Date.now() < until) {
+            await request("GET", "/v1/clock");
+            await pause(5_000);
+          }
+          expect(events()).toHaveLength(2);
+          const second = events()[1] as Got;
+          expect(JSON.parse(second.body).data.handle).toBe(cat.handle);
+        } finally {
+          setLimits(LATE_LIMITS, "Eval: the lift it runs under, back.");
+        }
+      }, 300_000);
 
       it("ends with unsubscribe, which is safe to repeat", async () => {
         const un = {

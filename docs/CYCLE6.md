@@ -16,7 +16,7 @@ Rewritten after Fable's review of the first draft (GO WITH CHANGES), then revise
   - `announce_gathering` and `cancel_gathering` leave the connector. `set_presence` stays for now and works between members of a group, since in a group a session is the leader's and carries no note (revised after the mixed-maker acceptance run, 2026-11-13).
   - A gathering's `short` end is decided once, at a fixed time.
 - **6b: `catch_up` and several makers.** `catch_up` and its three merges come after the arm shows fires work, gated by the weaker-model replay. The maker seam comes with it, then the gate run.
-- **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calling `/v1/clock` every minute goes in after the `leader-back` arm, as its own change (decision 3). Vercel: Pro allows it, for a few cents a month. Neon: about 15 CU-hours a month on an idle site, billed on the Launch plan at about $1.60. District accepted all six decisions at the end on 2026-11-13.
+- **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calls `/v1/clock` every minute (decision 3). It was to go in after the `leader-back` arm; with the trials paused it came forward on 2026-11-14, when a second wake inside ChatGPT's event gap waited minutes for unrelated traffic, so the clock now sends pushes held past a drain's round too. Vercel: Pro allows it, for a few cents a month. Neon: about 15 CU-hours a month on an idle site, billed on the Launch plan at about $1.60. District accepted all six decisions at the end on 2026-11-13.
 
 ## Where we start
 
@@ -123,7 +123,7 @@ A fallback is never fired, only said.
 
 **The Neon check** (S1; decision 3). From Neon's public docs (neon.com/docs/introduction/plans, updated 2026-11-11), and production's compute read (read only) by the coordinator.
 - **The plan.** Production is on Neon's paid Launch plan. No compute is included: it's billed at $0.106 a CU-hour. Computes scale to zero after 5 minutes idle. Production autoscales from 0.25 CU to 2 CU.
-- **What the cron costs on an idle site.** Each hourly read wakes the compute for about 5 minutes (the read, then the idle timeout), at the 0.25 CU minimum. 24 a day is about 2 hours a day, 61 hours in a 30.4-day month: about 15 CU-hours, about $1.60 a month of billed usage. That's fine.
+- **What the cron costs on an idle site.** Each hourly read wakes the compute for about 5 minutes (the read, then the idle timeout), at the 0.25 CU minimum. 24 a day is about 2 hours a day, 61 hours in a 30.4-day month: about 15 CU-hours, about $1.60 a month of billed usage. That's fine. A held push or a failing callback's retries add a wake per event gap while they last, on a site that idle, which the pause bounds.
 - **When it costs nothing extra.** Any hour the site already had traffic, the database was awake anyway, and the read costs nothing more. The 15 CU-hours are the idle-site ceiling, added to whatever traffic uses.
 - **Sessions (second PR)** add wakes on top: each occurrence wakes the database once per distinct notice among its members, about 5 minutes each. A session is at most 12 occurrences, so at most about an hour of compute per distinct notice among its members, 0.25 CU-hours at 0.25 CU. Polled wake URLs already keep it awake today, whoever polls.
 
