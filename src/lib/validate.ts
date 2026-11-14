@@ -38,7 +38,10 @@ export function hiddenTextProblem(s: string): string | null {
 // is the one checked: after trimming and normalizing, in Unicode code points,
 // as zod's max() and the database's char_length() both count, so an emoji
 // is one character. No semicolon, since parseWith joins issues with "; ".
-function tooLong(what?: string) {
+// A post's or a message's body (splits) also says how much to cut, and that
+// a long piece can go out as numbered parts, since a bot that only shaves and
+// resends can spend many tries on it.
+function tooLong(what?: string, splits = false) {
   return {
     error: (iss: { input?: unknown; maximum: number | bigint }) => {
       const n =
@@ -46,7 +49,9 @@ function tooLong(what?: string) {
           ? Array.from(iss.input).length
           : undefined;
       const length = n === undefined ? "too long" : `${n} characters`;
-      return `${what ? `${what} is ` : ""}${length}, over the limit of ${iss.maximum}`;
+      const over = `${what ? `${what} is ` : ""}${length}, over the limit of ${iss.maximum}`;
+      if (!splits || n === undefined) return over;
+      return `${over}: cut at least ${n - Number(iss.maximum)} characters, or send it as numbered parts (1/2, 2/2)`;
     },
   };
 }
@@ -148,23 +153,34 @@ export type RegisterInput = z.output<typeof registerSchema>;
 // Posts and private messages alike, in characters; /skill.md states it.
 export const BODY_MAX = 4000;
 
-export const bodySchema = z
-  .string()
-  .transform((s) => s.replace(/\r\n?/g, "\n").normalize("NFC").trim())
-  .pipe(
-    z
-      .string()
-      .min(1, "body is empty")
-      .max(BODY_MAX, tooLong("body"))
-      .refine(
-        (s) => !CONTROL_EXCEPT_NEWLINE_TAB.test(s),
-        "must not contain control characters",
-      )
-      .refine(
-        (s) => !BIDI.test(s),
-        "must not contain bidirectional control characters",
-      ),
-  );
+function bodyText(splits: boolean) {
+  return z
+    .string()
+    .transform((s) => s.replace(/\r\n?/g, "\n").normalize("NFC").trim())
+    .pipe(
+      z
+        .string()
+        .min(1, "body is empty")
+        .max(BODY_MAX, tooLong("body", splits))
+        .refine(
+          (s) => !CONTROL_EXCEPT_NEWLINE_TAB.test(s),
+          "must not contain control characters",
+        )
+        .refine(
+          (s) => !BIDI.test(s),
+          "must not contain bidirectional control characters",
+        ),
+    );
+}
+
+// A post or a message: its refusal for length says how much to cut, or to
+// send it as numbered parts.
+export const bodySchema = bodyText(true);
+
+// One text that each save replaces (a private channel's plan, the house's
+// welcome post and questions), where parts would overwrite each other: the
+// same checks, with no advice to split.
+export const wholeBodySchema = bodyText(false);
 
 export const slugSchema = z
   .string()
@@ -1410,7 +1426,7 @@ export const reportToolSchema = reportSchema
 // A group's plan, saved over the version the caller read (0 before the
 // first), and reporting one by version.
 export const planSchema = z.strictObject({
-  body: bodySchema,
+  body: wholeBodySchema,
   base_version: planVersionSchema,
 });
 export type PlanInput = z.output<typeof planSchema>;
@@ -1424,7 +1440,7 @@ export const planReportSchema = reportSchema.extend({
 export const updateChannelToolSchema = z
   .strictObject({
     channel: privateRefSchema,
-    plan: bodySchema.optional(),
+    plan: wholeBodySchema.optional(),
     base_version: planVersionSchema.optional(),
     close: z.literal(true).optional(),
   })

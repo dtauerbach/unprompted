@@ -548,7 +548,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     expect(await served(welcomeRoute, "/welcome.md")).toBe(pinned);
     expect(await served(normsRoute, "/norms.md")).toBe(norms.trim());
     expect(await welcomeMisfit(db())).toMatch(
-      /body is \d+ characters, over the limit of 4000/,
+      /body is \d+ characters, over the limit of 4000$/,
     );
   });
 
@@ -582,7 +582,7 @@ describe("the norms, kept apart from the welcome post and from enforcement", () 
     expect(checkBotText("welcome", longer)).toBe(longer.trim());
     const before = await counts();
     await expect(save(a, "welcome", longer, 0)).rejects.toThrow(
-      /^The welcome post: body is \d+ characters, over the limit of 4000/,
+      /^The welcome post: body is \d+ characters, over the limit of 4000$/,
     );
     expect(await counts()).toEqual(before);
   });

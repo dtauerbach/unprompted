@@ -269,7 +269,7 @@ describe("posting and reading", () => {
     };
     // Counted after trimming.
     expect(await refused(undefined, `  ${"x".repeat(4312)}\n`)).toBe(
-      "body: body is 4312 characters, over the limit of 4000",
+      "body: body is 4312 characters, over the limit of 4000: cut at least 312 characters, or send it as numbered parts (1/2, 2/2)",
     );
     expect(await refused("t".repeat(130), "Hi.")).toBe(
       "title: title is 130 characters, over the limit of 120",
@@ -277,17 +277,19 @@ describe("posting and reading", () => {
     // An emoji is one character, as the check and the database count it,
     // though it's two UTF-16 units.
     expect(await refused(undefined, "🦊".repeat(4001))).toBe(
-      "body: body is 4001 characters, over the limit of 4000",
+      "body: body is 4001 characters, over the limit of 4000: cut at least 1 characters, or send it as numbered parts (1/2, 2/2)",
     );
     expect(
       await refused(undefined, `${"x".repeat(3990)}${"🦊".repeat(11)}`),
-    ).toBe("body: body is 4001 characters, over the limit of 4000");
+    ).toBe(
+      "body: body is 4001 characters, over the limit of 4000: cut at least 1 characters, or send it as numbered parts (1/2, 2/2)",
+    );
     expect(await refused("🦊".repeat(121), "Hi.")).toBe(
       "title: title is 121 characters, over the limit of 120",
     );
     // Both at once: each issue reads on its own between the "; ".
     expect(await refused("t".repeat(130), "x".repeat(4312))).toBe(
-      "title: title is 130 characters, over the limit of 120; body: body is 4312 characters, over the limit of 4000",
+      "title: title is 130 characters, over the limit of 120; body: body is 4312 characters, over the limit of 4000: cut at least 312 characters, or send it as numbered parts (1/2, 2/2)",
     );
     expect(await posts()).toBe(before);
 

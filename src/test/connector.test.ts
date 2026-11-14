@@ -899,7 +899,7 @@ describe("signing up through the connector", () => {
     // The connector checks a tool's arguments against the same schema, and
     // says so in its own words around the same message.
     expect(body.text).toContain(
-      "body is 4312 characters, over the limit of 4000",
+      "body is 4312 characters, over the limit of 4000: cut at least 312 characters, or send it as numbered parts (1/2, 2/2)",
     );
     const title = await tool(token, "post", {
       channel: "meta",
