@@ -264,19 +264,58 @@ async function story3(ctx: Ctx): Promise<Setup> {
       ];
   const answerers = [cast[1] as Actor, cast[3] as Actor];
   // The two answerers reply to each asker's first thread, 10 and 40 minutes
-  // after it appears.
-  const answered: { bot_id: number; thread: number; at: string }[] = [];
-  const answer = async (thread: { id: number; at: number }) => {
-    for (const [i, delay] of [10, 40].entries()) {
+  // after it appears (10 and 25 in "mixed", whose later askers start a few
+  // minutes in, so both answers land before the minute-55 prod and the end).
+  const delays = mixed ? [10, 25] : [10, 40];
+  const answered: {
+    handle: string;
+    thread: number;
+    at: string;
+    replies: { by: string; at: string; post?: number; error?: string }[];
+  }[] = [];
+  // One answerer's replies go out one at a time, at least 61 seconds apart,
+  // so none meets the site's one-a-minute limit (act() would clear every
+  // bot's limits, the askers' included, to get past it).
+  const lastAt = new Map<number, number>();
+  const queue = new Map<number, Promise<void>>();
+  const reply = (
+    who: Actor,
+    thread: number,
+    body: string,
+    log: (typeof answered)[number],
+  ) => {
+    const prev = queue.get(who.id) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      await until((lastAt.get(who.id) ?? 0) + 61_000);
+      try {
+        const r = await act(site.base, site.sql, who, "POST", "/v1/posts", {
+          reply_to: thread,
+          body,
+        });
+        log.replies.push({
+          by: who.handle,
+          at: new Date().toISOString(),
+          post: Number(r?.post?.id ?? r?.id),
+        });
+      } catch (e) {
+        log.replies.push({
+          by: who.handle,
+          at: new Date().toISOString(),
+          error: String(e).slice(0, 200),
+        });
+      }
+      lastAt.set(who.id, Date.now());
+    });
+    queue.set(who.id, next);
+    return next;
+  };
+  const answer = async (
+    thread: { id: number; at: number },
+    log: (typeof answered)[number],
+  ) => {
+    for (const [i, delay] of delays.entries()) {
       await until(thread.at + delay * 60_000);
-      await act(
-        site.base,
-        site.sql,
-        answerers[i] as Actor,
-        "POST",
-        "/v1/posts",
-        { reply_to: thread.id, body: ANSWERS[i] },
-      ).catch(() => {});
+      await reply(answerers[i] as Actor, thread.id, ANSWERS[i] as string, log);
     }
   };
   const background = (async () => {
@@ -284,21 +323,34 @@ async function story3(ctx: Ctx): Promise<Setup> {
     const started = new Map<number, Promise<void>>();
     while (started.size < askers.length && Date.now() < stop) {
       await sleep(20_000);
-      const rows = await site.sql<
-        { id: number; created_at: Date; bot_id: number }[]
-      >`
-        SELECT p.id, p.created_at, p.bot_id FROM posts p JOIN channels c ON c.id = p.channel_id
-        WHERE p.parent_id IS NULL AND c.slug <> 'prompted' AND p.created_at > now() - interval '2 hours'
-          AND NOT (p.bot_id = ANY(${[...ids]})) AND p.bot_id NOT IN (SELECT id FROM bots WHERE is_house)
-        ORDER BY p.id`;
+      let rows: {
+        id: number;
+        created_at: Date;
+        bot_id: number;
+        handle: string;
+      }[];
+      try {
+        rows = await site.sql`
+          SELECT p.id, p.created_at, p.bot_id, b.handle FROM posts p
+          JOIN channels c ON c.id = p.channel_id JOIN bots b ON b.id = p.bot_id
+          WHERE p.parent_id IS NULL AND c.slug <> 'prompted' AND p.created_at > now() - interval '2 hours'
+            AND NOT (p.bot_id = ANY(${[...ids]})) AND NOT b.is_house
+          ORDER BY p.id`;
+      } catch {
+        // A passing database error: look again next round.
+        continue;
+      }
+      const handles = new Map(rows.map((r) => [Number(r.bot_id), r.handle]));
       for (const [bot, thread] of firstThreads(rows))
         if (!started.has(bot)) {
-          answered.push({
-            bot_id: bot,
+          const log = {
+            handle: handles.get(bot) ?? String(bot),
             thread: thread.id,
             at: new Date(thread.at).toISOString(),
-          });
-          started.set(bot, answer(thread));
+            replies: [],
+          };
+          answered.push(log);
+          started.set(bot, answer(thread, log));
         }
     }
     await Promise.all(started.values());
