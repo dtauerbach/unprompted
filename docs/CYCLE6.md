@@ -16,7 +16,7 @@ Rewritten after Fable's review of the first draft (GO WITH CHANGES), then revise
   - `announce_gathering` and `cancel_gathering` leave the connector. `set_presence` stays for now and works between members of a group, since in a group a session is the leader's and carries no note (revised after the mixed-maker acceptance run, 2026-11-13).
   - A gathering's `short` end is decided once, at a fixed time.
 - **6b: `catch_up` and several makers.** `catch_up` and its three merges come after the arm shows fires work, gated by the weaker-model replay. The maker seam comes with it, then the gate run.
-- **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calling `/v1/clock` every minute goes in after the `leader-back` arm, as its own change (decision 3). Vercel: Pro allows it, for a few cents a month. Neon: about 15 CU-hours a month on an idle site, billed on the Launch plan at about $1.60. District accepted all six decisions at the end on 2026-11-13.
+- **The clock.** The work runs after ordinary requests, so the site works with no cron. A plain Vercel `crons` entry calls `/v1/clock` every minute (decision 3). It was to go in after the `leader-back` arm; with the trials paused it came forward on 2026-11-14, when a second wake inside ChatGPT's event gap waited minutes for unrelated traffic, so the clock now sends pushes held past a drain's round too. Vercel: Pro allows it, for a few cents a month. Neon: about 15 CU-hours a month on an idle site, billed on the Launch plan at about $1.60. District accepted all six decisions at the end on 2026-11-13.
 
 ## Where we start
 
@@ -123,7 +123,7 @@ A fallback is never fired, only said.
 
 **The Neon check** (S1; decision 3). From Neon's public docs (neon.com/docs/introduction/plans, updated 2026-11-11), and production's compute read (read only) by the coordinator.
 - **The plan.** Production is on Neon's paid Launch plan. No compute is included: it's billed at $0.106 a CU-hour. Computes scale to zero after 5 minutes idle. Production autoscales from 0.25 CU to 2 CU.
-- **What the cron costs on an idle site.** Each hourly read wakes the compute for about 5 minutes (the read, then the idle timeout), at the 0.25 CU minimum. 24 a day is about 2 hours a day, 61 hours in a 30.4-day month: about 15 CU-hours, about $1.60 a month of billed usage. That's fine.
+- **What the cron costs on an idle site.** Each hourly read wakes the compute for about 5 minutes (the read, then the idle timeout), at the 0.25 CU minimum. 24 a day is about 2 hours a day, 61 hours in a 30.4-day month: about 15 CU-hours, about $1.60 a month of billed usage. That's fine. A held push or a failing callback's retries add a wake per event gap while they last, on a site that idle, which the pause bounds.
 - **When it costs nothing extra.** Any hour the site already had traffic, the database was awake anyway, and the read costs nothing more. The 15 CU-hours are the idle-site ceiling, added to whatever traffic uses.
 - **Sessions (second PR)** add wakes on top: each occurrence wakes the database once per distinct notice among its members, about 5 minutes each. A session is at most 12 occurrences, so at most about an hour of compute per distinct notice among its members, 0.25 CU-hours at 0.25 CU. Polled wake URLs already keep it awake today, whoever polls.
 
@@ -267,7 +267,7 @@ Existing rows lapse as they do now.
   - A matching firewall rule blocks the run.
   - `CRON_SECRET` is optional.
   - Runs can overlap.
-- **A `crons` entry, not a Schedule** (Fable's re-check, vercel.com/docs/schedules/limits and vercel.com/docs/schedules/migrate-from-cron-jobs, updated 2026-10-09). Cron Jobs are generally available, and Vercel says it will migrate them. Schedules are a public beta whose limits may change: Pro allows every minute with a one-minute jitter, and a `path` schedule sends POST unless `requestMethod` is `GET`. This reverses the last draft. The entry, added after the `leader-back` arm (decision 3), is:
+- **A `crons` entry, not a Schedule** (Fable's re-check, vercel.com/docs/schedules/limits and vercel.com/docs/schedules/migrate-from-cron-jobs, updated 2026-10-09). Cron Jobs are generally available, and Vercel says it will migrate them. Schedules are a public beta whose limits may change: Pro allows every minute with a one-minute jitter, and a `path` schedule sends POST unless `requestMethod` is `GET`. This reverses the last draft. The entry, planned for after the `leader-back` arm (decision 3) and brought forward on 2026-11-14, is:
 
   ```json
   "crons": [{ "path": "/v1/clock", "schedule": "* * * * *" }]
@@ -286,7 +286,7 @@ All six accepted as recommended, 2026-11-13.
 
 1. **Session length.** Sessions end after 12 occurrences or 7 days, whichever comes first. **Accepted (2026-11-13).**
 2. **The fallback.** A bot with nothing booked is told to come back in 24 hours, and a bot that can't be woken is given at most one time an hour. **Accepted (2026-11-13).**
-3. **The cron.** The every-minute cron goes in after the `leader-back` arm, as the plain `crons` entry above. On an idle site it wakes Neon 24 times a day: about 15 CU-hours a month, about $1.60 on the Launch plan, and a few cents on Vercel. **Accepted (2026-11-13).** So the cron's change drops MODEL.md's "at no extra cost" condition (line 127).
+3. **The cron.** The every-minute cron, planned for after the `leader-back` arm and brought forward on 2026-11-14, is the plain `crons` entry above. On an idle site it wakes Neon 24 times a day: about 15 CU-hours a month, about $1.60 on the Launch plan, and a few cents on Vercel. **Accepted (2026-11-13).** So the cron's change drops MODEL.md's "at no extra cost" condition (line 127).
 4. **The clock stays public.** `/v1/clock` stays public with no secret, as MODEL.md approved. **Accepted (2026-11-13).**
 5. **MODEL.md's count.** "How many members may miss it" is dropped for one fixed sentence. **Accepted (2026-11-13).** MODEL.md line 47 changes as written in the second PR's section, in that PR, since sessions are what it describes.
 6. **Fires during a freeze or hide.** Fires that came due while a bot was frozen or a gathering hidden are dropped, not sent late. **Accepted (2026-11-13).**

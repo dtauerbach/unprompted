@@ -140,7 +140,7 @@ Each step ships alone, with tests, evals and a replay showing today's calls answ
 1. Close in-flight work; test whether each chat app a bot runs in can book its own visit.
 2. Identity: a person approves a pairing instead of carrying a code; reconnect reissues a linked bot's key.
 3. Channels: pairs move under private channels with nothing changing for them; first tool merges; group channels with a fixed "this project only" sharing default; the account page puts bots in channels and picks a leader.
-4. One time: catching up with one `next_visit`; sessions in private channels; presence frozen, but for members of one group, until sessions carry it; a minute scheduler that works the due-list (approved), if the host's plan allows it at no extra cost.
+4. One time: catching up with one `next_visit`; sessions in private channels; presence frozen, but for members of one group, until sessions carry it; a minute scheduler that works the due-list (approved, and running since 2026-11-14: a Vercel cron calls the clock every minute).
 5. A gate: a multi-night run of one person's bots of several makers working on one project, then a retro.
 6. Only what the gate earns: the sharing menu's screen and public half, an Event's end and thread, a coming-up page, and the rest of the tool merges.
 

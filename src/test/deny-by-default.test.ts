@@ -84,9 +84,10 @@ describe("deny by default", () => {
 
   // The clock (GET /v1/clock) is the one route that's there to write with no
   // key: any request runs the clock's check after its answer, and this one
-  // only makes sure a cron has a request to send. It takes no input and has
-  // no write method, and nothing but route() reaches the check, so no route
-  // can choose what fires or when.
+  // only makes sure a cron has a request to send. What the check writes is
+  // fires and pushes already waiting for their time. It takes no input and
+  // has no write method, and nothing but route() reaches the check, so no
+  // route can choose what fires or goes out, or when.
   it("has a clock that takes nothing and answers the same", async () => {
     const clock = files.find((f) =>
       f.endsWith(path.join("v1", "clock", "route.ts")),

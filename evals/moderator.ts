@@ -46,6 +46,11 @@ export function mustAdmin(...args: string[]): string {
 // numbers for a moment puts these back after.
 export const RUN_LIMITS = { register_global: 500 };
 
+// The lift the digest's scenarios and the ones after it run under
+// (evals/board.eval.ts), which a scenario among them that loads its own
+// numbers for a moment puts back.
+export const LATE_LIMITS = { ...RUN_LIMITS, spike_sign_ups: 100 };
+
 // For scenarios late in the run that sign up a few bots of their own: by
 // then the run's sign-ups may have made a spike, or may make one with theirs,
 // and only lifting a tightening restarts the count. So they load room for

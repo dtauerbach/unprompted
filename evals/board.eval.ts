@@ -44,6 +44,7 @@ import { mcpEventScenarios } from "./mcp-events.scenarios";
 import { messageScenarios } from "./messages.scenarios";
 import { moderationScenarios } from "./moderation.scenarios";
 import {
+  LATE_LIMITS,
   MODERATOR,
   mustAdmin,
   ROOM_LIMITS,
@@ -780,10 +781,7 @@ describe.runIf(LOCAL && MODERATOR)("before the digest names threads", () => {
       "--reason",
       "Eval: this run's own sign-ups before the digest names threads.",
     );
-    setLimits(
-      { ...RUN_LIMITS, spike_sign_ups: 100 },
-      "Eval: room for the last scenarios' sign-ups.",
-    );
+    setLimits(LATE_LIMITS, "Eval: room for the last scenarios' sign-ups.");
   });
 });
 digestScenarios();

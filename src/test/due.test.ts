@@ -32,7 +32,7 @@ import {
   NEXT_VISIT_NOTES,
   nextVisit,
 } from "@/lib/next-visit";
-import { useDeliver } from "@/lib/push";
+import { drainForAWhile, useDeliver } from "@/lib/push";
 import { call, freshIp, register, resetDb } from "./helpers";
 import { cacheCalls, PINNED_CLOCK, setCacheClock } from "./next-cache";
 
@@ -683,6 +683,63 @@ describe("the clock near a gathering's start", () => {
     process.env.UNPROMPTED_READ_ONLY = "1";
     expect(await checkDue(q.at + MIN)).toBe("read_only");
     expect(sent).toHaveLength(1);
+  });
+
+  // An event's gap (minutes) is longer than a drain's round, so a wake that
+  // arrives inside it is held past the round that saw it. Before, it went
+  // out only when some later write kicked another drain, which on a quiet
+  // site could be hours; now the clock sends it.
+  it("sends a push held past a drain's round on its next check, with no other request", async () => {
+    const a = await register("alice");
+    const set = await call(pushRoute, {
+      key: a.key,
+      body: { url: "https://hooks.example.org/unprompted" },
+    });
+    expect(set.status).toBe(201);
+    const hold = (by: string) =>
+      db().unsafe(
+        `INSERT INTO push_state (bot_id, pending_since)
+         SELECT id, now() + interval '${by}' FROM bots WHERE handle = 'alice'
+         ON CONFLICT (bot_id) DO UPDATE SET pending_since = EXCLUDED.pending_since`,
+      );
+    await hold("1 hour");
+    // The round that sees it held past its end leaves it to the clock.
+    cacheCalls.revalidateTag.length = 0;
+    await drainForAWhile(undefined, 2_000);
+    expect(sent).toHaveLength(0);
+    expect(cacheCalls.revalidateTag).toContainEqual({
+      tag: DUE_TAG,
+      profile: { expire: 0 },
+    });
+    const now = Math.floor(Date.now() / MIN) * MIN + 5_000;
+    expect(await checkDue(now)).toBe("not_due");
+    // Before its time, the cached time answers with no connection.
+    expect(await trips(() => checkDue(now + 10 * MIN))).toBe(0);
+    expect(sent).toHaveLength(0);
+    // Its time comes (the hold moved into the past stands for the wait).
+    await hold("-1 second");
+    expect(await checkDue(now + 61 * MIN)).toBe("worked");
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]?.body ?? "{}")).toMatchObject({ bot: "alice" });
+    // Nothing left: the next minute stays off the database.
+    expect(await trips(() => checkDue(now + 62 * MIN))).toBe(0);
+  });
+
+  it("drains no held push under the kill switch", async () => {
+    const a = await register("alice");
+    await call(pushRoute, {
+      key: a.key,
+      body: { url: "https://hooks.example.org/unprompted" },
+    });
+    await db()`
+      INSERT INTO push_state (bot_id, pending_since)
+      SELECT id, now() - interval '1 second' FROM bots WHERE handle = ${a.handle}
+      ON CONFLICT (bot_id) DO UPDATE SET pending_since = EXCLUDED.pending_since`;
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect(await checkDue(Date.now())).toBe("read_only");
+    // The drain stops on its own too, whoever calls it.
+    await drainForAWhile(undefined, 2000);
+    expect(sent).toHaveLength(0);
   });
 });
 

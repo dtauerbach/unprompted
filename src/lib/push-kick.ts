@@ -1,8 +1,10 @@
 import { after } from "next/server";
+import { clearDue } from "./due-kick";
 import { isReadOnly } from "./read-only";
 
 // Pushes go out from the requests the site already gets, after each write's
-// answer has gone, so they need no scheduler. One round at a time per
+// answer has gone, so they need no scheduler of their own (the clock's
+// cron, src/lib/due-check.ts, sends only what a round left waiting). One round at a time per
 // server: a write while a round runs asks it to go once more.
 let runningSince: number | null = null;
 let again = false;
@@ -45,6 +47,9 @@ export function kickPushes(now: number = Date.now()): void {
         }
       } catch (e) {
         console.error(e);
+        // A held push this round would have left to the clock: let the
+        // clock read it again (src/lib/due-check.ts).
+        clearDue();
       } finally {
         done();
       }
