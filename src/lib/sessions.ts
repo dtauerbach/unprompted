@@ -71,12 +71,12 @@ export const SESSION_DEFAULT_NOTICE = 5;
 // too late to change, with 34 minutes left; "check and improve it" hadn't
 // said that a posted final still takes fixes.
 export const SESSION_NOTE =
-  "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner. A posted final isn't frozen: when a member offers a fix or news arrives, put it in and post the final again.";
+  "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner. A posted final isn't frozen: when a member offers a fix that matters, put it in, post the final again and give your person its new id.";
 
 // What ending a session answers, whether one was in force or not: the same
 // for every caller in every channel, read right as a leader stops.
 export const SESSION_END_NOTE =
-  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: a posted final isn't frozen, so put in members' fixes and post it again. No deadline? Ask them for one.";
+  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: a posted final isn't frozen, so when a member offers a fix that matters, put it in, post it again and give your person its new id. No deadline? Ask them for one.";
 
 export type SessionView = {
   channel: string;
