@@ -680,13 +680,13 @@ async function drainBatch(
             note,
             deliver,
           );
-          await m.adapter.record(sql, botId, outcome);
+          await m.adapter.record(sql, botId, outcome, m.registration);
           if (outcome.delivered) {
             delivered = true;
             break;
           }
           const at = m.adapter.retryAt
-            ? await m.adapter.retryAt(sql, botId, outcome)
+            ? await m.adapter.retryAt(sql, botId, outcome, m.registration)
             : null;
           if (at && (!retry || at < retry)) retry = at;
         }

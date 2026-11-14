@@ -33,6 +33,8 @@ export type WakeOutcome = {
 export type WakeRegistration = {
   // Where the wake goes: an https URL, held to the push checks.
   address: string;
+  // Immutable registration version, for adapters that fence late outcomes.
+  generation?: string;
   // The adapter's own material for signing or addressing the wake.
   secret: string;
   // Failures in a row; the drain pauses the method past PUSH_MAX_FAILURES.
@@ -59,7 +61,12 @@ export type WakeAdapter = {
     deliver: Deliver,
   ): Promise<WakeOutcome>;
   // Keeps how a send went, for the next pause check.
-  record(sql: postgres.Sql, botId: number, outcome: WakeOutcome): Promise<void>;
+  record(
+    sql: postgres.Sql,
+    botId: number,
+    outcome: WakeOutcome,
+    registration: WakeRegistration,
+  ): Promise<void>;
   // The cap its sends count against, and the name the drain knows it by
   // within a round. Without one, the public per-host cap on the address's
   // host. An adapter whose every bot sends to one provider's hosts gives a
@@ -72,6 +79,7 @@ export type WakeAdapter = {
     sql: postgres.Sql,
     botId: number,
     outcome: WakeOutcome,
+    registration: WakeRegistration,
   ): Promise<Date | null>;
   // Clears what its registrations no longer need once their time is past,
   // run by the drain at most once a minute in a process, when it's already

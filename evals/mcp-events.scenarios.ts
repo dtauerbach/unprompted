@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { createServer, type Server } from "node:http";
+import { createServer, type Server, type ServerResponse } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Bot, LOCAL, post, RUN_TAG, register, request } from "./client";
 import { ageBot, MODERATOR } from "./moderator";
@@ -26,6 +26,9 @@ type Got = { path: string; headers: Record<string, string>; body: string };
 const got: Got[] = [];
 // Paths that answer every challenge with the first one they saw.
 const replaying = new Map<string, string>();
+// A scenario can hold one delivery while it replaces the subscription via
+// real HTTP. Challenges are never held, including the replacement's.
+const held = new Map<string, (response: ServerResponse) => void>();
 
 let server: Server | undefined;
 
@@ -213,6 +216,11 @@ export function mcpEventScenarios(): void {
               res.end(JSON.stringify({ challenge }));
               return;
             }
+            const hold = held.get(path);
+            if (hold) {
+              hold(res);
+              return;
+            }
             res.writeHead(200);
             res.end();
           });
@@ -304,6 +312,67 @@ export function mcpEventScenarios(): void {
           code: -32015,
           data: { reason: "challenge_failed" },
         });
+      });
+
+      it("a late 410 from the old callback cannot end its HTTP replacement", async () => {
+        const target = await register("evt-race");
+        const oldUrl = callback("race-old");
+        const newUrl = callback("race-new");
+        const newSecret = whsec();
+        expect(
+          (await subscribe(target, oldUrl, whsec())).json.error,
+        ).toBeUndefined();
+        let release: (() => void) | undefined;
+        let arrived: () => void = () => {};
+        const pending = new Promise<void>((resolve) => {
+          arrived = resolve;
+        });
+        held.set(pathOf(oldUrl), (res) => {
+          release = () => {
+            res.writeHead(410);
+            res.end();
+          };
+          arrived();
+        });
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await wake(bob, target);
+          await Promise.race([
+            pending,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () => reject(new Error("old callback never arrived")),
+                15_000,
+              );
+            }),
+          ]);
+          const replacement = await subscribe(target, newUrl, newSecret);
+          expect(replacement.json.error, replacement.text).toBeUndefined();
+          release?.();
+          release = undefined;
+          held.delete(pathOf(oldUrl));
+          // Delivery runs after the HTTP response. Allow its bounded network
+          // phase (3s) to settle before testing the replacement over HTTP.
+          // The unit race also awaits the drain itself, without this delay.
+          await new Promise((resolve) => setTimeout(resolve, 3500));
+          const challenges = () =>
+            got.filter(
+              (g) =>
+                g.path === pathOf(newUrl) &&
+                JSON.parse(g.body).type === "verification",
+            ).length;
+          expect(challenges()).toBe(1);
+          const refresh = await subscribe(target, newUrl, newSecret);
+          expect(refresh.json.error, refresh.text).toBeUndefined();
+          expect(refresh.json.result.id).toBe(replacement.json.result.id);
+          // A surviving same-secret subscription refreshes without another
+          // challenge. Ending it on the stale 410 would require a new one.
+          expect(challenges()).toBe(1);
+        } finally {
+          if (timer) clearTimeout(timer);
+          release?.();
+          held.delete(pathOf(oldUrl));
+        }
       });
 
       it("ends with unsubscribe, which is safe to repeat", async () => {
