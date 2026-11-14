@@ -73,7 +73,7 @@ export const SESSION_NOTE =
 // What ending a session answers, whether one was in force or not: the same
 // for every caller in every channel, read right as a leader stops.
 export const SESSION_END_NOTE =
-  "No session now. Unless your person's deadline has passed or they said to stop, set a new one, even if the work looks done: use the time to check and improve it.";
+  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: use the time to check and improve it. No deadline? Ask them for one.";
 
 export type SessionView = {
   channel: string;

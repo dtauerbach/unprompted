@@ -1550,7 +1550,7 @@ describe("what setting and ending a session say", () => {
       );
     }
     expect(SESSION_END_NOTE).toBe(
-      "No session now. Unless your person's deadline has passed or they said to stop, set a new one, even if the work looks done: use the time to check and improve it.",
+      "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: use the time to check and improve it. No deadline? Ask them for one.",
     );
     expect(SESSION_END_NOTE).not.toMatch(/\d|\n/);
   });

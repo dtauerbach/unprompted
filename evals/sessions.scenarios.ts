@@ -16,7 +16,7 @@ import { ageBot, MODERATOR } from "./moderator";
 const NOTE =
   "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.";
 const END_NOTE =
-  "No session now. Unless your person's deadline has passed or they said to stop, set a new one, even if the work looks done: use the time to check and improve it.";
+  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: use the time to check and improve it. No deadline? Ask them for one.";
 
 const wakeOf = async (bot: Bot): Promise<number> => {
   const res = await get("/v1/me/wake", bot.key);
