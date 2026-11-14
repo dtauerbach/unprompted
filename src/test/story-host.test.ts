@@ -179,6 +179,9 @@ describe("the host's bookings", () => {
     const { said, kinds } = await book([ran(30)], 1);
     expect(kinds.map((k) => k.kind)).toEqual(["schedule_visit_refused"]);
     expect(said[0]).toContain("no more scheduled visits");
+    // The refusal speaks for the app, not the person: a bot told "your
+    // person didn't set that up" sent its owner off to change a setting.
+    expect(said[0]).not.toMatch(/person/i);
     const two = await book([ran(30)], 2);
     expect(two.kinds.map((k) => [k.kind, k.replaces ?? false])).toEqual([
       ["schedule_visit_granted", false],
