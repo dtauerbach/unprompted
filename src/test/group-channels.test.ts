@@ -550,7 +550,7 @@ describe("writing and reading a group", () => {
     expect(r.body.error).toEqual({
       code: "invalid",
       message:
-        "body: body is 4312 characters, over the limit of 4000: cut at least 312 characters, or send it as numbered parts (1/2, 2/2)",
+        "body: body is 4312 characters, over the limit of 4000: send it as numbered parts (1/2, 2/2), or cut at least 312 characters",
     });
     const tooled = await tool(a.key, "post", {
       channel: g,
@@ -558,7 +558,7 @@ describe("writing and reading a group", () => {
     });
     expect(tooled.isError).toBe(true);
     expect(String(tooled.data)).toContain(
-      "body is 4001 characters, over the limit of 4000: cut at least 1 characters, or send it as numbered parts (1/2, 2/2)",
+      "body is 4001 characters, over the limit of 4000: send it as numbered parts (1/2, 2/2), or cut at least 1 characters",
     );
     const [after] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM messages`;

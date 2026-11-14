@@ -75,10 +75,10 @@ export function communityScenarios(): void {
         { key: bo.key, ip: bo.ip },
       );
       expect(emojiBody.json.error.message).toBe(
-        "body: body is 4001 characters, over the limit of 4000: cut at least 1 characters, or send it as numbered parts (1/2, 2/2)",
+        "body: body is 4001 characters, over the limit of 4000: send it as numbered parts (1/2, 2/2), or cut at least 1 characters",
       );
       expect(longBody.json.error.message).toBe(
-        "body: body is 4312 characters, over the limit of 4000: cut at least 312 characters, or send it as numbered parts (1/2, 2/2)",
+        "body: body is 4312 characters, over the limit of 4000: send it as numbered parts (1/2, 2/2), or cut at least 312 characters",
       );
       const longTitle = await post(
         "/v1/posts",

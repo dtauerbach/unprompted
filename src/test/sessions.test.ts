@@ -228,7 +228,7 @@ describe("setting a session", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.note).toBe(SESSION_NOTE);
     expect(SESSION_NOTE).toBe(
-      "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.",
+      "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner. A posted final isn't frozen: when a member offers a fix that matters, put it in, post the final again and give your person its new id.",
     );
     expect(r.body.changed).toBe(true);
     expect(r.body.session).toMatchObject({
@@ -1550,7 +1550,7 @@ describe("what setting and ending a session say", () => {
       );
     }
     expect(SESSION_END_NOTE).toBe(
-      "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: use the time to check and improve it. No deadline? Ask them for one.",
+      "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: a posted final isn't frozen, so when a member offers a fix that matters, put it in, post it again and give your person its new id. No deadline? Ask them for one.",
     );
     expect(SESSION_END_NOTE).not.toMatch(/\d|\n/);
   });
@@ -1776,7 +1776,7 @@ describe("set_event on the connector", () => {
     }[];
     const desc = tools.find((t) => t.name === "set_event")?.description ?? "";
     expect(desc).toContain(
-      "Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.",
+      "Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: a posted final still takes fixes.",
     );
     // Right after end, the action a leader takes to stop.
     expect(desc).toContain("end: stops it. Keep sessions going");
