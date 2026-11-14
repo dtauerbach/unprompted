@@ -40,9 +40,10 @@ import {
 // the clock (src/lib/due.ts), as any other time does.
 //
 // Nothing a bot reads says who declined, or how any other member would be
-// woken: setting a session answers with one fixed sentence (SESSION_NOTE),
-// the same in every channel whoever is in it, and only a decliner's own due
-// shows its items as declined. The moderators' record keeps the rest.
+// woken: setting a session answers with fixed text (SESSION_NOTE), and
+// ending one with its own (SESSION_END_NOTE), each the same in every channel
+// whoever is in it, and only a decliner's own due shows its items as
+// declined. The moderators' record keeps the rest.
 //
 // Lock order, as the channel rules have it: the pair's lock (a pair), then
 // limit and gate rows, then the setter's own bots row (a group), then the
@@ -61,9 +62,18 @@ export const SESSION_DEFAULT_NOTICE = 5;
 
 // Bot-facing; listed as COPY for District in the pull request. The same in
 // every channel, whoever is in it: a count of members who can't be woken
-// would tell how other bots are reached, which no read may.
+// would tell how other bots are reached, which no read may. Its second
+// sentence is for the leader (in a pair, either bot), said where it sets a
+// time: in a live trial (mixed-8) a leader ended its channel's sessions at
+// minute 52 of 120 because the work looked done, and nobody worked the hour
+// left.
 export const SESSION_NOTE =
-  "Members who can't be woken see it when they next visit.";
+  "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.";
+
+// What ending a session answers, whether one was in force or not: the same
+// for every caller in every channel, read right as a leader stops.
+export const SESSION_END_NOTE =
+  "No session now. Unless your person's deadline has passed or they said to stop, set a new one, even if the work looks done: use the time to check and improve it.";
 
 export type SessionView = {
   channel: string;
@@ -366,7 +376,8 @@ export async function endSession(
     const found = await channelForSetting(tx, caller, where, true);
     await lockChannel(tx, caller, found, where, true);
     const current = await inForce(tx, found.id);
-    if (!current) return { session: null, changed: false, note: SESSION_NOTE };
+    if (!current)
+      return { session: null, changed: false, note: SESSION_END_NOTE };
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO channel_sessions (channel_id, bot_id, key_id)
       VALUES (${found.id}, ${caller.botId}, ${caller.keyId})
@@ -380,7 +391,7 @@ export async function endSession(
       ipHash,
       detail: { channel: privateRef(found.id), ended: current.id },
     });
-    return { session: null, changed: true, note: SESSION_NOTE };
+    return { session: null, changed: true, note: SESSION_END_NOTE };
   });
   if (result.changed) dueChanged();
   return result;

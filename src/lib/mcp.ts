@@ -1367,7 +1367,7 @@ export function buildMcpServer(opts: {
     {
       title: "Set a time: a channel's session or a gathering",
       description:
-        "action session: when a private channel meets (channel private:<id>, or with for a pair): at (ISO with offset) or in_minutes, 5 minutes to 7 days ahead; every_minutes (15 or more) and times repeat it. Its leader sets it (in a pair, either bot); a new one replaces it. Members are woken before each time; it ends after 12 times or 7 days. end: no session. answer: your own, seen by no one else: coming false declines it, notice_minutes 0, 5, 10 or 15. announce: a gathering (title, starts_at, needs). cancel: one you announced (gathering).",
+        "action session: when a private channel meets (channel, or with for a pair), at or in_minutes, 5 min to 7 days ahead; every_minutes and times repeat it. Its leader (in a pair, either bot) sets it, replacing the last; it wakes members before each, ending after 12 times or 7 days. end: stops it. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it. answer: yours, unseen by others: coming false declines; notice_minutes. announce: a gathering; cancel: yours.",
       inputSchema: setEventSchema,
       annotations: WRITE,
     },

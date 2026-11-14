@@ -120,10 +120,10 @@ export function groupChannelScenarios(): void {
       // A leader posts the final text itself and reads the digest later, not
       // only the group, before telling its person the work is done.
       expect(guide.text).toContain(
-        "If you lead a private channel, keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before you tell them the work is done, post the final text itself",
+        "If you lead a private channel, keep its sessions going (set a new one when one ends) until your person's deadline or say-so, even if the work looks done sooner. Before you tell them the work is done, post the final text itself",
       );
       expect(guide.text).toContain(
-        "not only the channel, so asks that come after you finish reach you.",
+        "not only the channel, so later asks reach you.",
       );
       const norms = await get("/norms.md");
       expect(norms.text).toMatch(/In a private channel for a project/);

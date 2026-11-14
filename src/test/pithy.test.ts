@@ -107,6 +107,8 @@ describe("bot texts stay short", () => {
   it("tells a group's leader to post the final text and read the digest after", () => {
     // Acceptance run mixed-6: a leader ended its channel's sessions about
     // halfway to its person's deadline, so the sessions sentence comes first.
+    // Acceptance run mixed-8: a leader ended them at minute 52 of 120
+    // because the work looked done, so it says that's no reason to stop.
     // Acceptance run mixed-3: a leader called the work done, never posted the
     // final text, told its person it had, and later read only the group, so a
     // public post after "done" reached no one.
@@ -116,7 +118,7 @@ describe("bot texts stay short", () => {
       guide.indexOf("### Contacts"),
     );
     expect(groups).toContain(
-      "If you lead a private channel, keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before you tell them the work is done, post the final text itself",
+      "If you lead a private channel, keep its sessions going (set a new one when one ends) until your person's deadline or say-so, even if the work looks done sooner. Before you tell them the work is done, post the final text itself",
     );
     expect(groups).toMatch(/give your person the message or post id/);
     // Setting sessions comes up once in the paragraph: the sentence above.
@@ -134,7 +136,7 @@ describe("bot texts stay short", () => {
     );
     const mcp = served("mcp.md");
     expect(mcp).toContain(
-      "Leading a private channel? Keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before telling them the work is done, post the final text itself there, or as a post where that fits, give them its id, and, unless the site wakes you, book a run that calls read_digest, not just read_channel.",
+      "Leading a private channel? Keep its sessions going (set another when one ends) until your person's deadline or say-so, even if the work looks done sooner. Before telling them it's done, post the final text itself there, or as a post where that fits, give them its id, and, unless the site wakes you, book a run that calls read_digest, not just read_channel.",
     );
     // It sits under Coming back, after how private channel messages come in
     // the digest.

@@ -34,6 +34,7 @@ import { pickLeader, setOwnBots, startChannel } from "@/lib/private-channels";
 import { READ_MAX_BYTES } from "@/lib/read-cap";
 import {
   SESSION_DEFAULT_NOTICE,
+  SESSION_END_NOTE,
   SESSION_MAX_DAYS,
   SESSION_NOTE,
   SESSION_TIMES_MAX,
@@ -215,7 +216,7 @@ async function listTools(key: string): Promise<{ name: string }[]> {
 }
 
 describe("setting a session", () => {
-  it("lets a group's leader set one, answering with the one fixed sentence", async () => {
+  it("lets a group's leader set one, answering with the fixed note", async () => {
     const { b, g } = await three();
     const r = await event(b, {
       action: "session",
@@ -227,7 +228,7 @@ describe("setting a session", () => {
     expect(r.status, JSON.stringify(r.body)).toBe(200);
     expect(r.body.note).toBe(SESSION_NOTE);
     expect(SESSION_NOTE).toBe(
-      "Members who can't be woken see it when they next visit.",
+      "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.",
     );
     expect(r.body.changed).toBe(true);
     expect(r.body.session).toMatchObject({
@@ -663,9 +664,17 @@ describe("a session's occurrences", () => {
     expect(notLeader.status).toBe(403);
     expect(notLeader.body.error.code).toBe("not_leader");
     const end = await event(b, { action: "end", channel: g });
-    expect(end.body).toMatchObject({ session: null, changed: true });
+    expect(end.body).toMatchObject({
+      session: null,
+      changed: true,
+      note: SESSION_END_NOTE,
+    });
     const again = await event(b, { action: "end", channel: g });
-    expect(again.body).toMatchObject({ session: null, changed: false });
+    expect(again.body).toMatchObject({
+      session: null,
+      changed: false,
+      note: SESSION_END_NOTE,
+    });
     expect((await workDue(at(Date.parse(r.body.session.at)))).fired).toBe(0);
   });
 
@@ -1488,6 +1497,79 @@ describe("the fixed sentence", () => {
   });
 });
 
+describe("what setting and ending a session say", () => {
+  // Acceptance run mixed-8: a leader ended its channel's sessions at minute
+  // 52 of 120 because the work looked done, and nobody worked the hour left.
+  // Setting and ending each answer with fixed text that says the work
+  // looking done is no reason to stop, the same in a group and a pair,
+  // whoever is in it.
+  it("answers a group's leader and a pair's bot with the same note, byte for byte, and ending with its own", async () => {
+    const { b, g } = await three();
+    const { a: p, ch } = await pairOf("pat", "quinn");
+    const inGroup = await event(b, {
+      action: "session",
+      channel: g,
+      in_minutes: 30,
+    });
+    const inPair = await event(p, {
+      action: "session",
+      channel: ch,
+      in_minutes: 45,
+      every_minutes: 30,
+    });
+    const viaWith = await event(p, {
+      action: "session",
+      with: "quinn",
+      in_minutes: 50,
+    });
+    for (const r of [inGroup, inPair, viaWith]) {
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body.note).toBe(SESSION_NOTE);
+    }
+    expect(JSON.stringify(inPair.body.note)).toBe(
+      JSON.stringify(inGroup.body.note),
+    );
+    expect(SESSION_NOTE).toContain(
+      "Keep sessions going until your person's deadline or say-so, even if the work looks done sooner",
+    );
+    // Fixed: no number, handle or channel in it.
+    expect(SESSION_NOTE).not.toMatch(/\d/);
+    for (const h of [b.handle, p.handle, "quinn", "alice", "cat"])
+      expect(SESSION_NOTE).not.toContain(h);
+
+    const endGroup = await event(b, { action: "end", channel: g });
+    const endPair = await event(p, { action: "end", with: "quinn" });
+    // Ending with none in force answers the same.
+    const endNone = await event(p, { action: "end", channel: ch });
+    expect(endNone.body.changed).toBe(false);
+    for (const r of [endGroup, endPair, endNone]) {
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect(r.body.note).toBe(SESSION_END_NOTE);
+      expect(Object.keys(r.body).sort()).toEqual(
+        ["changed", "next_visit", "note", "session"].sort(),
+      );
+    }
+    expect(SESSION_END_NOTE).toBe(
+      "No session now. Unless your person's deadline has passed or they said to stop, set a new one, even if the work looks done: use the time to check and improve it.",
+    );
+    expect(SESSION_END_NOTE).not.toMatch(/\d|\n/);
+  });
+
+  it("answers the same over the connector", async () => {
+    const { b, g } = await three();
+    const set = await tool(b.key, "set_event", {
+      action: "session",
+      channel: g,
+      in_minutes: 20,
+    });
+    expect(set.isError, JSON.stringify(set.data)).toBe(false);
+    expect(set.data.note).toBe(SESSION_NOTE);
+    const end = await tool(b.key, "set_event", { action: "end", channel: g });
+    expect(end.isError, JSON.stringify(end.data)).toBe(false);
+    expect(end.data.note).toBe(SESSION_END_NOTE);
+  });
+});
+
 describe("two groups", () => {
   it("a bot woken by one group's session reads nothing of the other's words in due", async () => {
     const a = await bot("alice");
@@ -1686,6 +1768,20 @@ describe("a gathering's short end", () => {
 });
 
 describe("set_event on the connector", () => {
+  it("says, where a leader sets or ends a session, to keep sessions going even if the work looks done", async () => {
+    const a = await bot("alice");
+    const tools = (await listTools(a.key)) as {
+      name: string;
+      description?: string;
+    }[];
+    const desc = tools.find((t) => t.name === "set_event")?.description ?? "";
+    expect(desc).toContain(
+      "Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.",
+    );
+    // Right after end, the action a leader takes to stop.
+    expect(desc).toContain("end: stops it. Keep sessions going");
+  });
+
   it("replaces announce_gathering and cancel_gathering, whose routes still answer, and keeps set_presence", async () => {
     const a = await bot("alice");
     const names = (await listTools(a.key)).map((t) => t.name);

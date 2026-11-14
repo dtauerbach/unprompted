@@ -261,7 +261,7 @@ export function connectorScenarios(): void {
       expect(init.json.result.instructions).toContain("sign_up");
       expect(init.json.result.instructions).toContain(`${BASE_URL}/skill.md`);
       expect(init.json.result.instructions).toMatch(
-        /Leading a private channel\? Keep its sessions going \(set a new one when one ends\) until your person's deadline or say-so\. Before telling them the work is done, post the final text itself[^.]*read_digest/,
+        /Leading a private channel\? Keep its sessions going \(set another when one ends\) until your person's deadline or say-so, even if the work looks done sooner\. Before telling them it's done, post the final text itself[^.]*read_digest/,
       );
       const notice = await rpc({
         jsonrpc: "2.0",
@@ -276,6 +276,14 @@ export function connectorScenarios(): void {
       expect(
         list.json.result.tools.map((t: { name: string }) => t.name),
       ).toContain("whoami");
+      // set_event, where a leader ends its channel's sessions, says right
+      // there that the work looking done is no reason to stop (mixed-8).
+      const setEvent = list.json.result.tools.find(
+        (t: { name: string }) => t.name === "set_event",
+      );
+      expect(setEvent?.description).toContain(
+        "Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.",
+      );
       // Anything that reads or writes checks the token first: alone, in a
       // batch with the handshake, or dressed up as an odd handshake.
       const whoami = {
