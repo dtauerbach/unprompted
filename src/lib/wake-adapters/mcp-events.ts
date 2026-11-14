@@ -41,9 +41,14 @@ export const EVENT_NAME = "wake";
 
 // The provider's callback hosts, the only ones an event goes to: a host
 // here or a name under it. OpenAI's page on MCP events names no callback
-// host (its example is receiver.example.com), so this is a guess to confirm
-// with a live subscription: a refused one logs its host and nothing else.
-export const EVENT_CALLBACK_HOSTS: readonly string[] = ["chatgpt.com"];
+// host (its example is receiver.example.com). chatgpt.com was a guess; the
+// first live subscription, from ChatGPT on Nov 13, was refused for its real
+// one, connectors.api.openai.com, which the log line named. Only that name
+// and those under it, never the rest of api.openai.com or openai.com.
+export const EVENT_CALLBACK_HOSTS: readonly string[] = [
+  "chatgpt.com",
+  "connectors.api.openai.com",
+];
 
 export function callbackHostAllowed(host: string): boolean {
   const h = host.toLowerCase().replace(/\.+$/, "");
