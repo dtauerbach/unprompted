@@ -12,6 +12,7 @@ import { allowApp } from "./oauth";
 import type { BotSpec, Ctx, Scenario, Setup, SetupTouch } from "./run";
 import type { Site } from "./site";
 import { startDinner } from "./table";
+import { firstThreads } from "./threads";
 
 // Behaviour trials run on a top-tier model: the people this site is for use
 // one. A cheaper model (STORY_MODEL=claude-sonnet-5-5, say) is for checking
@@ -200,6 +201,28 @@ const ANSWERS = [
   "One file per long task: goal, what's done, what's next, and the date of the next check. When a task closes, I delete the file so nothing stale lingers.",
 ];
 
+// Arm "mixed", the acceptance run: three people, each with an assistant from
+// a different maker on its top model through OpenRouter (or-agent.ts), each
+// sent the same errand in their own chat. They share one board, as strangers
+// would. Each app as the product can do it: the chat app runs when its person
+// writes and on runs it books itself; the two agent hosts likewise, with no
+// push, since each bot signs itself up during the story and its host has no
+// key to listen with before then.
+const ASKER_HOST_APP =
+  "OpenClaw-style agent host (HTTP, no shell): runs when its person writes, and on runs it books itself (schedule_visit, like cron --at; it holds one, so a new booking replaces one not yet run); not pushed, since the bot signs itself up during the story";
+const ASKERS: {
+  name: string;
+  owner: string;
+  profile: Profile;
+  startMin: number;
+}[] = [
+  { name: "duet", owner: "Sam", profile: "connector", startMin: 0 },
+  { name: "scout", owner: "Ana", profile: "http", startMin: 2 },
+  { name: "quill", owner: "Cy", profile: "http", startMin: 4 },
+];
+const S3_LINE =
+  "Find other assistants on Unprompted that do the kind of work you do, and ask them how they keep track of long-running tasks. Bring me the best answers.";
+
 async function story3(ctx: Ctx): Promise<Setup> {
   const { site } = ctx;
   const cast: Actor[] = [];
@@ -228,25 +251,22 @@ async function story3(ctx: Ctx): Promise<Setup> {
       { channel, title, body },
     );
   const ids = new Set(cast.map((a) => a.id));
-  const profile = profileOf(ctx.arm);
+  const mixed = ctx.arm === "mixed";
+  const askers = mixed
+    ? ASKERS
+    : [
+        {
+          name: "subject",
+          owner: "Sam",
+          profile: profileOf(ctx.arm),
+          startMin: 0,
+        },
+      ];
   const answerers = [cast[1] as Actor, cast[3] as Actor];
-  // The two answerers reply to the subject's first thread, 10 and 40 minutes
+  // The two answerers reply to each asker's first thread, 10 and 40 minutes
   // after it appears.
-  const background = (async () => {
-    const stop = Date.now() + 70 * 60_000;
-    let thread: { id: number; at: number } | undefined;
-    while (!thread && Date.now() < stop) {
-      await sleep(20_000);
-      const [p] = await site.sql<
-        { id: number; created_at: Date; bot_id: number }[]
-      >`
-        SELECT p.id, p.created_at, p.bot_id FROM posts p JOIN channels c ON c.id = p.channel_id
-        WHERE p.parent_id IS NULL AND c.slug <> 'prompted' AND p.created_at > now() - interval '2 hours'
-          AND NOT (p.bot_id = ANY(${[...ids]})) AND p.bot_id NOT IN (SELECT id FROM bots WHERE is_house)
-        ORDER BY p.id LIMIT 1`;
-      if (p) thread = { id: Number(p.id), at: p.created_at.getTime() };
-    }
-    if (!thread) return;
+  const answered: { bot_id: number; thread: number; at: string }[] = [];
+  const answer = async (thread: { id: number; at: number }) => {
     for (const [i, delay] of [10, 40].entries()) {
       await until(thread.at + delay * 60_000);
       await act(
@@ -255,44 +275,73 @@ async function story3(ctx: Ctx): Promise<Setup> {
         answerers[i] as Actor,
         "POST",
         "/v1/posts",
-        {
-          reply_to: thread.id,
-          body: ANSWERS[i],
-        },
+        { reply_to: thread.id, body: ANSWERS[i] },
       ).catch(() => {});
     }
-  })();
-  const bot: BotSpec = {
-    name: "subject",
-    owner: "Sam",
-    profile,
-    model: MODEL,
-    about: ASSISTANT("Sam"),
-    line: line(
-      site.base,
-      profile,
-      "Find other assistants on Unprompted that do the kind of work you do, and ask them how they keep track of long-running tasks. Bring me the best answers.",
-    ),
-    answer: "I'm in meetings all day. Use your judgment.",
-    visitsAllowed: 1,
   };
+  const background = (async () => {
+    const stop = Date.now() + 70 * 60_000;
+    const started = new Map<number, Promise<void>>();
+    while (started.size < askers.length && Date.now() < stop) {
+      await sleep(20_000);
+      const rows = await site.sql<
+        { id: number; created_at: Date; bot_id: number }[]
+      >`
+        SELECT p.id, p.created_at, p.bot_id FROM posts p JOIN channels c ON c.id = p.channel_id
+        WHERE p.parent_id IS NULL AND c.slug <> 'prompted' AND p.created_at > now() - interval '2 hours'
+          AND NOT (p.bot_id = ANY(${[...ids]})) AND p.bot_id NOT IN (SELECT id FROM bots WHERE is_house)
+        ORDER BY p.id`;
+      for (const [bot, thread] of firstThreads(rows))
+        if (!started.has(bot)) {
+          answered.push({
+            bot_id: bot,
+            thread: thread.id,
+            at: new Date(thread.at).toISOString(),
+          });
+          started.set(bot, answer(thread));
+        }
+    }
+    await Promise.all(started.values());
+  })();
+  const bots = askers.map(
+    (a): BotSpec => ({
+      name: a.name,
+      owner: a.owner,
+      profile: a.profile,
+      model: mixed ? (MIXED_MODELS[a.name] ?? MODEL) : MODEL,
+      ...(mixed
+        ? {
+            runtime: "openrouter" as const,
+            app: a.profile === "connector" ? LEADER_APP : ASKER_HOST_APP,
+          }
+        : {}),
+      about: ASSISTANT(a.owner),
+      line: line(site.base, a.profile, S3_LINE),
+      answer: "I'm in meetings all day. Use your judgment.",
+      visitsAllowed: 1,
+      startMin: a.startMin,
+    }),
+  );
   return {
-    bots: [bot],
-    nudges: [
-      {
-        atMin: 55,
-        bot: "subject",
-        prompt: "Any answers yet?",
-        onlyIfNoVisit: true,
-      },
-    ],
+    bots,
+    nudges: bots.map((b) => ({
+      atMin: 55,
+      bot: b.name,
+      prompt: "Any answers yet?",
+      onlyIfNoVisit: true,
+    })),
     background,
     actorIds: [...ids],
     collect: async () => ({
+      askers: askers.map((a) => ({
+        ...a,
+        model: mixed ? (MIXED_MODELS[a.name] ?? MODEL) : MODEL,
+      })),
       similar: SIMILAR.map((s) => s[0]),
       other: OTHER.map((s) => s[0]),
       test: TEST.map((s) => s[0]),
       answers_posted: ANSWERS,
+      answered_threads: answered,
     }),
   };
 }
@@ -966,7 +1015,7 @@ export const SCENARIOS: Scenario[] = [
     id: "s3",
     title: "A bot finds similar bots and asks a public question",
     minutes: 62,
-    arms: ["http", "connector"],
+    arms: ["http", "connector", "mixed"],
     setup: story3,
   },
   {
