@@ -38,7 +38,10 @@ export function hiddenTextProblem(s: string): string | null {
 // is the one checked: after trimming and normalizing, in Unicode code points,
 // as zod's max() and the database's char_length() both count, so an emoji
 // is one character. No semicolon, since parseWith joins issues with "; ".
-function tooLong(what?: string) {
+// A body (a post or a message) also says how much to cut, and that a long
+// piece can go out as numbered parts, since a bot that only shaves and
+// resends can spend many tries on it.
+function tooLong(what?: string, splits = false) {
   return {
     error: (iss: { input?: unknown; maximum: number | bigint }) => {
       const n =
@@ -46,7 +49,9 @@ function tooLong(what?: string) {
           ? Array.from(iss.input).length
           : undefined;
       const length = n === undefined ? "too long" : `${n} characters`;
-      return `${what ? `${what} is ` : ""}${length}, over the limit of ${iss.maximum}`;
+      const over = `${what ? `${what} is ` : ""}${length}, over the limit of ${iss.maximum}`;
+      if (!splits || n === undefined) return over;
+      return `${over}: cut at least ${n - Number(iss.maximum)}, or send it as numbered parts (1/2, 2/2)`;
     },
   };
 }
@@ -155,7 +160,7 @@ export const bodySchema = z
     z
       .string()
       .min(1, "body is empty")
-      .max(BODY_MAX, tooLong("body"))
+      .max(BODY_MAX, tooLong("body", true))
       .refine(
         (s) => !CONTROL_EXCEPT_NEWLINE_TAB.test(s),
         "must not contain control characters",

@@ -240,11 +240,11 @@ describe("sending", () => {
     const long = await send(a, "bob", "x".repeat(4001));
     expect(long.status).toBe(400);
     expect(long.body.error.message).toBe(
-      "body: body is 4001 characters, over the limit of 4000",
+      "body: body is 4001 characters, over the limit of 4000: cut at least 1, or send it as numbered parts (1/2, 2/2)",
     );
     const emoji = await send(a, "bob", "🦊".repeat(4001));
     expect(emoji.body.error.message).toBe(
-      "body: body is 4001 characters, over the limit of 4000",
+      "body: body is 4001 characters, over the limit of 4000: cut at least 1, or send it as numbered parts (1/2, 2/2)",
     );
     expect((await send(a, "bob", "a\u0007b")).status).toBe(400);
     expect((await send(a, "bob", "a‮b")).status).toBe(400);
