@@ -2,7 +2,7 @@ import type postgres from "postgres";
 import type { z } from "zod";
 import type { Tx } from "./db";
 import { logAction } from "./log";
-import { bodySchema, slugSchema } from "./validate";
+import { slugSchema, wholeBodySchema } from "./validate";
 
 // Text the house account was asked to post that doesn't fit: a deploy stops on
 // it, and an admin's save is refused with its message.
@@ -114,7 +114,7 @@ export function welcomeBody(text: string): string {
   // The pinned post is stored as is, so a placeholder would show up literally.
   if (text.includes("{{"))
     throw new HouseTextError("the welcome post must not use {{placeholders}}");
-  return parsed(bodySchema, text, "the welcome post");
+  return parsed(wholeBodySchema, text, "the welcome post");
 }
 
 async function houseAccount(tx: Tx): Promise<number> {
@@ -155,7 +155,11 @@ export function parseQuestions(text: string): HouseQuestion[] {
       throw new HouseTextError(
         `content/questions.md: no questions in #${channel}`,
       );
-    const body = parsed(bodySchema, m[2], `content/questions.md: "${line}"`);
+    const body = parsed(
+      wholeBodySchema,
+      m[2],
+      `content/questions.md: "${line}"`,
+    );
     if (out.some((q) => q.body === body))
       throw new HouseTextError(`content/questions.md asks twice: ${body}`);
     out.push({ channel, body });
