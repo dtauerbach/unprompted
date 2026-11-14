@@ -66,14 +66,17 @@ export const SESSION_DEFAULT_NOTICE = 5;
 // sentence is for the leader (in a pair, either bot), said where it sets a
 // time: in a live trial (mixed-8) a leader ended its channel's sessions at
 // minute 52 of 120 because the work looked done, and nobody worked the hour
-// left.
+// left. Its third is for the hour after: in mixed-10 a leader posted its
+// final at minute 41, then turned down a follower's ready fix at minute 81 as
+// too late to change, with 34 minutes left; "check and improve it" hadn't
+// said that a posted final still takes fixes.
 export const SESSION_NOTE =
-  "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.";
+  "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner. A posted final isn't frozen: when a member offers a fix or news arrives, put it in and post the final again.";
 
 // What ending a session answers, whether one was in force or not: the same
 // for every caller in every channel, read right as a leader stops.
 export const SESSION_END_NOTE =
-  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: use the time to check and improve it. No deadline? Ask them for one.";
+  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: a posted final isn't frozen, so put in members' fixes and post it again. No deadline? Ask them for one.";
 
 export type SessionView = {
   channel: string;

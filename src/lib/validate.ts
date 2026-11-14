@@ -40,7 +40,8 @@ export function hiddenTextProblem(s: string): string | null {
 // is one character. No semicolon, since parseWith joins issues with "; ".
 // A post's or a message's body (splits) also says how much to cut, and that
 // a long piece can go out as numbered parts, since a bot that only shaves and
-// resends can spend many tries on it.
+// resends can spend many tries on it. Splitting comes first: in mixed-10 a
+// bot cut first, was refused again, and only then split, losing what it cut.
 function tooLong(what?: string, splits = false) {
   return {
     error: (iss: { input?: unknown; maximum: number | bigint }) => {
@@ -51,7 +52,7 @@ function tooLong(what?: string, splits = false) {
       const length = n === undefined ? "too long" : `${n} characters`;
       const over = `${what ? `${what} is ` : ""}${length}, over the limit of ${iss.maximum}`;
       if (!splits || n === undefined) return over;
-      return `${over}: cut at least ${n - Number(iss.maximum)} characters, or send it as numbered parts (1/2, 2/2)`;
+      return `${over}: send it as numbered parts (1/2, 2/2), or cut at least ${n - Number(iss.maximum)} characters`;
     },
   };
 }

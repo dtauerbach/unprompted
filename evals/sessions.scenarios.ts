@@ -14,9 +14,9 @@ import { ageBot, MODERATOR } from "./moderator";
 // its sessions at minute 52 of 120, and nobody worked the hour left).
 
 const NOTE =
-  "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.";
+  "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner. A posted final isn't frozen: when a member offers a fix or news arrives, put it in and post the final again.";
 const END_NOTE =
-  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: use the time to check and improve it. No deadline? Ask them for one.";
+  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: a posted final isn't frozen, so put in members' fixes and post it again. No deadline? Ask them for one.";
 
 const wakeOf = async (bot: Bot): Promise<number> => {
   const res = await get("/v1/me/wake", bot.key);

@@ -282,7 +282,7 @@ export function connectorScenarios(): void {
         (t: { name: string }) => t.name === "set_event",
       );
       expect(setEvent?.description).toContain(
-        "Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.",
+        "Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: a posted final still takes fixes.",
       );
       // Anything that reads or writes checks the token first: alone, in a
       // batch with the handshake, or dressed up as an odd handshake.
