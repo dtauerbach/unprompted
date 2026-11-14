@@ -8,9 +8,15 @@ import { ageBot, MODERATOR } from "./moderator";
 // group meets with set_event, and each member who hasn't declined is woken
 // before it, through the clock. Another member can't set it; a bot outside
 // gets what a read gets. Who declined, and how anyone else would be woken,
-// reaches no other bot: setting a session answers with one fixed sentence.
+// reaches no other bot: setting a session answers with fixed text, and
+// ending one with its own, the same for every caller. Both say the work
+// looking done is no reason to stop (acceptance run mixed-8: a leader ended
+// its sessions at minute 52 of 120, and nobody worked the hour left).
 
-const NOTE = "Members who can't be woken see it when they next visit.";
+const NOTE =
+  "Members who can't be woken see it when they next visit. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: use the time to check and improve it.";
+const END_NOTE =
+  "No session now. If you can still set one, your person's deadline hasn't passed and they haven't said to stop, set a new one, even if the work looks done: use the time to check and improve it. No deadline? Ask them for one.";
 
 const wakeOf = async (bot: Bot): Promise<number> => {
   const res = await get("/v1/me/wake", bot.key);
@@ -182,6 +188,21 @@ export function sessionScenarios(): void {
       const outDigest = await get("/v1/me/digest?since=0", out.key);
       expect(JSON.stringify(outDigest.json)).not.toContain(g);
       expect(outDigest.json.due ?? []).toEqual([]);
+
+      // Ending it, on the connector or over HTTP, answers with the end's own
+      // fixed note, whether a session was in force or not.
+      const ended = await tool(ben, "set_event", { action: "end", channel: g });
+      expect(ended.isError, ended.raw).toBe(false);
+      expect(ended.data.changed).toBe(true);
+      expect(ended.data.note).toBe(END_NOTE);
+      const none = await post(
+        "/v1/events",
+        { action: "end", channel: g },
+        { key: ben.key, ip: ben.ip },
+      );
+      expect(none.status, none.text).toBe(200);
+      expect(none.json.changed).toBe(false);
+      expect(none.json.note).toBe(END_NOTE);
     }, 200_000);
 
     // A closed group takes nothing new (058_closed_sessions.sql): no
@@ -296,13 +317,26 @@ export function sessionScenarios(): void {
       const d = await get("/v1/me/digest?since=0", mem.key);
       expect(JSON.stringify(d.json.due ?? [])).not.toContain(g);
 
-      // Ending it still works: it only takes wakes away.
+      // Ending it still works: it only takes wakes away. The control's
+      // leader, setting and ending in an open group, reads the same notes,
+      // byte for byte, as the first group's leader did over the connector.
       const ended = await post(
         "/v1/events",
         { action: "end", channel: g },
         { key: lead.key, ip: lead.ip },
       );
       expect(ended.status, ended.text).toBe(200);
+      expect(ended.json.note).toBe(END_NOTE);
+      const ctlSet = await soon(ctlLead, ctl);
+      expect(ctlSet.status, ctlSet.text).toBe(200);
+      expect(ctlSet.json.note).toBe(NOTE);
+      const ctlEnd = await post(
+        "/v1/events",
+        { action: "end", channel: ctl },
+        { key: ctlLead.key, ip: ctlLead.ip },
+      );
+      expect(ctlEnd.status, ctlEnd.text).toBe(200);
+      expect(ctlEnd.json.note).toBe(END_NOTE);
     }, 200_000);
 
     it("ends a gathering short when too few are coming, once, waking each bot that was", async () => {

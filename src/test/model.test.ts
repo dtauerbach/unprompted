@@ -134,7 +134,7 @@ describe("docs/MODEL.md", () => {
     );
     expect(model).not.toContain("how many members may miss it");
     expect(model).toContain(
-      "Setting a time answers with one fixed sentence: members who can't be woken see it when they next visit. It never says how many, or which.",
+      "Setting a time answers with fixed text, the same for every caller: members who can't be woken see it when they next visit, and sessions go on until the person's deadline or say-so, even if the work looks done sooner. It never says how many, or which.",
     );
   });
 
