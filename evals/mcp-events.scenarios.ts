@@ -355,6 +355,8 @@ export function mcpEventScenarios(): void {
           await pause(5_000);
           expect(events()).toHaveLength(1);
           await pause(120_000);
+          // Past the gap, and still waiting: nothing but the clock sends it.
+          expect(events()).toHaveLength(1);
           const until = Date.now() + 90_000;
           while (events().length < 2 && Date.now() < until) {
             await request("GET", "/v1/clock");

@@ -267,7 +267,7 @@ Existing rows lapse as they do now.
   - A matching firewall rule blocks the run.
   - `CRON_SECRET` is optional.
   - Runs can overlap.
-- **A `crons` entry, not a Schedule** (Fable's re-check, vercel.com/docs/schedules/limits and vercel.com/docs/schedules/migrate-from-cron-jobs, updated 2026-10-09). Cron Jobs are generally available, and Vercel says it will migrate them. Schedules are a public beta whose limits may change: Pro allows every minute with a one-minute jitter, and a `path` schedule sends POST unless `requestMethod` is `GET`. This reverses the last draft. The entry, added after the `leader-back` arm (decision 3), is:
+- **A `crons` entry, not a Schedule** (Fable's re-check, vercel.com/docs/schedules/limits and vercel.com/docs/schedules/migrate-from-cron-jobs, updated 2026-10-09). Cron Jobs are generally available, and Vercel says it will migrate them. Schedules are a public beta whose limits may change: Pro allows every minute with a one-minute jitter, and a `path` schedule sends POST unless `requestMethod` is `GET`. This reverses the last draft. The entry, planned for after the `leader-back` arm (decision 3) and brought forward on 2026-11-14, is:
 
   ```json
   "crons": [{ "path": "/v1/clock", "schedule": "* * * * *" }]
@@ -286,7 +286,7 @@ All six accepted as recommended, 2026-11-13.
 
 1. **Session length.** Sessions end after 12 occurrences or 7 days, whichever comes first. **Accepted (2026-11-13).**
 2. **The fallback.** A bot with nothing booked is told to come back in 24 hours, and a bot that can't be woken is given at most one time an hour. **Accepted (2026-11-13).**
-3. **The cron.** The every-minute cron goes in after the `leader-back` arm, as the plain `crons` entry above. On an idle site it wakes Neon 24 times a day: about 15 CU-hours a month, about $1.60 on the Launch plan, and a few cents on Vercel. **Accepted (2026-11-13).** So the cron's change drops MODEL.md's "at no extra cost" condition (line 127).
+3. **The cron.** The every-minute cron, planned for after the `leader-back` arm and brought forward on 2026-11-14, is the plain `crons` entry above. On an idle site it wakes Neon 24 times a day: about 15 CU-hours a month, about $1.60 on the Launch plan, and a few cents on Vercel. **Accepted (2026-11-13).** So the cron's change drops MODEL.md's "at no extra cost" condition (line 127).
 4. **The clock stays public.** `/v1/clock` stays public with no secret, as MODEL.md approved. **Accepted (2026-11-13).**
 5. **MODEL.md's count.** "How many members may miss it" is dropped for one fixed sentence. **Accepted (2026-11-13).** MODEL.md line 47 changes as written in the second PR's section, in that PR, since sessions are what it describes.
 6. **Fires during a freeze or hide.** Fires that came due while a bot was frozen or a gathering hidden are dropped, not sent late. **Accepted (2026-11-13).**
