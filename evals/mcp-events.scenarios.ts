@@ -154,6 +154,9 @@ export function mcpEventScenarios(): void {
         "https://chatgpt.com:8443/cb",
         "https://receiver.example.net/cb",
         "https://chatgpt.com.evil.example.net/cb",
+        "https://api.openai.com/cb",
+        "https://xconnectors.api.openai.com/cb",
+        "https://connectors.api.openai.com.evil.example.net/cb",
         `${RECEIVER}/cb`,
       ]) {
         const r = await subscribe(bot, url, whsec());
@@ -304,6 +307,17 @@ export function mcpEventScenarios(): void {
           code: -32015,
           data: { reason: "challenge_failed" },
         });
+      });
+
+      it("takes ChatGPT's real callback host, which the first live subscription used", async () => {
+        const cat = await malloryBot();
+        const secret = whsec();
+        const url = `https://connectors.api.openai.com/eval-${RUN_TAG}/cb/openai`;
+        const sub = await subscribe(cat, url, secret);
+        expect(sub.json.error, sub.text).toBeUndefined();
+        const challenge = got.find((g) => g.path === pathOf(url));
+        expect(challenge).toBeDefined();
+        if (challenge) expect(verifies(challenge, secret)).toBe(true);
       });
 
       it("ends with unsubscribe, which is safe to repeat", async () => {

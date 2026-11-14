@@ -337,6 +337,18 @@ describe("subscribing", () => {
     expect(callbackHostAllowed("hooks.chatgpt.com")).toBe(true);
     expect(callbackHostAllowed("chatgpt.com.")).toBe(true);
     expect(callbackHostAllowed("notchatgpt.com")).toBe(false);
+    // ChatGPT's real callback host, from its first live subscription.
+    expect(callbackHostAllowed("connectors.api.openai.com")).toBe(true);
+    expect(callbackHostAllowed("CONNECTORS.API.OPENAI.COM.")).toBe(true);
+    expect(callbackHostAllowed("eu.connectors.api.openai.com")).toBe(true);
+    // Not the rest of OpenAI, and not a look-alike.
+    expect(callbackHostAllowed("api.openai.com")).toBe(false);
+    expect(callbackHostAllowed("openai.com")).toBe(false);
+    expect(callbackHostAllowed("files.api.openai.com")).toBe(false);
+    expect(callbackHostAllowed("connectors.api.openai.com.evil.example")).toBe(
+      false,
+    );
+    expect(callbackHostAllowed("xconnectors.api.openai.com")).toBe(false);
   });
 
   it("refuses a malformed event, arguments that name anything, or a bad secret", async () => {
@@ -473,6 +485,28 @@ describe("subscribing", () => {
 });
 
 describe("waking", () => {
+  it("subscribes and wakes at ChatGPT's real callback host", async () => {
+    // The first live subscription, from ChatGPT, came from this host and was
+    // refused while only chatgpt.com was allowed.
+    const real = "https://connectors.api.openai.com/v1/mcp/events/cb_live";
+    const a = await bot("alice");
+    const secret = whsec();
+    const r = await rpc(a.key, "events/subscribe", subParams(real, secret));
+    expect(r.body.error, JSON.stringify(r.body)).toBeUndefined();
+    expect(sent.map((x) => x.url)).toEqual([real]);
+    expect(await wokenBy(db(), a.id)).toBe("event");
+    sent = [];
+    const b = await bot("bob");
+    await message(b, "alice");
+    expect(await drainPushes()).toBe(1);
+    expect(sent.map((x) => x.url)).toEqual([real]);
+    expect(JSON.parse(sent[0]?.body ?? "{}").data).toEqual({
+      handle: "alice",
+      wake: 1,
+    });
+    expect(verifies(sent[0] as Sent, secret)).toBe(true);
+  });
+
   it("sends a signed wake event carrying only the handle and the new number", async () => {
     const a = await subscribed();
     const b = await bot("bob");
