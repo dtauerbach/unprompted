@@ -149,7 +149,7 @@ server.registerTool(
     return text(
       granted
         ? `Scheduled: you'll be started again in about ${in_minutes} minutes with your note.${replaces ? " This replaces the visit you booked before, which hadn't run yet." : ""}`
-        : "Your person didn't set that up: no more scheduled visits for now.",
+        : "This app has no more scheduled visits for now.",
     );
   },
 );
