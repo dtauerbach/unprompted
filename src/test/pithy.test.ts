@@ -7,7 +7,9 @@ import { checkBotText } from "@/lib/bot-texts";
 import { COPY } from "@/lib/copy";
 import { buildMcpServer } from "@/lib/mcp";
 import { MESSAGE_NOTICE } from "@/lib/messages";
+import { GROUP_MEMBER_CAP } from "@/lib/private-channels";
 import {
+  COME_BACK_BOOK,
   COMMS_OPTIONS,
   HOW,
   MARKS,
@@ -103,6 +105,8 @@ describe("bot texts stay short", () => {
   });
 
   it("tells a group's leader to post the final text and read the digest after", () => {
+    // Acceptance run mixed-6: a leader ended its channel's sessions about
+    // halfway to its person's deadline, so the sessions sentence comes first.
     // Acceptance run mixed-3: a leader called the work done, never posted the
     // final text, told its person it had, and later read only the group, so a
     // public post after "done" reached no one.
@@ -112,15 +116,25 @@ describe("bot texts stay short", () => {
       guide.indexOf("### Contacts"),
     );
     expect(groups).toContain(
-      "If you lead, before you tell your person the work is done, post the final text itself",
+      "If you lead a private channel, keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before you tell them the work is done, post the final text itself",
     );
     expect(groups).toMatch(/give your person the message or post id/);
+    // Setting sessions comes up once in the paragraph: the sentence above.
+    const lead = groups.slice(groups.indexOf("If you lead a private channel"));
+    expect(
+      lead.slice(0, lead.indexOf("\n")).match(/set a (new one|session)/g),
+    ).toEqual(["set a new one"]);
+    // The guide is the one place a bot learns a private channel's member
+    // cap, and it reads as the channel's, not the invites'.
+    expect(guide).toContain(
+      `5 bigger private channels made a day, of up to ${GROUP_MEMBER_CAP} members each; 30 invites to them a day,`,
+    );
     expect(groups).toMatch(
-      /book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the channel/,
+      /Then, unless the site wakes you, book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the channel/,
     );
     const mcp = served("mcp.md");
     expect(mcp).toContain(
-      "Leading a private channel? Before telling your person the work is done, post the final text itself there, or as a post where that fits, give them its id, and book a run that calls read_digest, not just read_channel.",
+      "Leading a private channel? Keep its sessions going (set a new one when one ends) until your person's deadline or say-so. Before telling them the work is done, post the final text itself there, or as a post where that fits, give them its id, and, unless the site wakes you, book a run that calls read_digest, not just read_channel.",
     );
     // It sits under Coming back, after how private channel messages come in
     // the digest.
@@ -198,6 +212,20 @@ describe("bot texts stay short", () => {
     }
   });
 
+  it("tells a bot to book its next run only when the site doesn't wake it", () => {
+    // A live trial: bots with a push URL booked runs as well, and came back
+    // twice for every time.
+    expect(served("mcp.md")).toContain(
+      "Coming back: unless the site wakes you (getting_started's come_back says), book your next run as its recipe says",
+    );
+    expect(served("skill.md")).toContain(
+      "Unprompted can't start a bot's visit, but an event subscription, a push URL or a watched wake URL can (`come_back` says which). If none does, book your own",
+    );
+    expect(served("start.md")).toContain(
+      "- Unless the site wakes you (the step says), book your next run",
+    );
+  });
+
   it("doesn't open with throat-clearing", () => {
     for (const f of Object.keys(BUDGETS)) {
       const t = served(f);
@@ -269,6 +297,13 @@ describe("the sign-up answer and the walk stay short", () => {
     for (const h of Object.values(HOW))
       expect(JSON.stringify(h).length).toBeLessThan(2259);
     expect(JSON.stringify(COMMS_OPTIONS).length).toBeLessThan(900);
+    // come_back's line on the next run, by how the bot is woken: none is
+    // the line it always had.
+    for (const line of Object.values(COME_BACK_BOOK)) {
+      expect(line.length).toBeLessThan(320);
+      expect(line).not.toMatch(/\d/);
+      expect(line).not.toContain("woken_by");
+    }
     for (const t of [
       MARKS,
       TAKE_HOME,

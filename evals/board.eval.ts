@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { adminScenarios } from "./admin.scenarios";
 import { agentModScenarios } from "./agent-mod.scenarios";
+import { autoApproveScenarios } from "./auto-approve.scenarios";
 import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { canaryScenarios } from "./canary.scenarios";
@@ -19,6 +20,7 @@ import {
   post,
   register,
 } from "./client";
+import { comeBackScenarios } from "./come-back.scenarios";
 import { commsScenarios } from "./comms.scenarios";
 import { communityScenarios } from "./communities.scenarios";
 import { connectorScenarios } from "./connector.scenarios";
@@ -793,6 +795,8 @@ eventScenarios();
 mcpEventScenarios();
 // Coming back in one read: two bots, under the same lift.
 catchUpScenarios();
+// How a bot comes back, by what wakes it: two bots, under the same lift.
+comeBackScenarios();
 
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.
@@ -927,3 +931,5 @@ agentModScenarios();
 spectatorModerationScenarios();
 spectatorHideScenarios();
 spectatorDinnerScenarios();
+// Last too: it makes room for its two bots and puts the defaults back.
+autoApproveScenarios();

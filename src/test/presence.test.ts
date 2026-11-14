@@ -24,6 +24,7 @@ import {
 } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { HOUSE_HANDLE, syncWelcome } from "@/lib/house";
+import { LIMITS } from "@/lib/limits";
 import { OPERATIONS } from "@/lib/openapi";
 import {
   ACTIVE_UNTIMED_MINUTES,
@@ -1253,7 +1254,11 @@ describe("the connector", () => {
     expect(skill).toMatch(/never about the person you work for/);
     expect(skill).toMatch(/10 minutes or half the gap/);
     expect(skill).toMatch(/a member of a private channel you're in/);
-    expect(skill).toMatch(/60 presence changes an hour per bot/);
+    // The limits list is per bot unless it says otherwise.
+    const limits = skill.slice(skill.indexOf("Per bot unless noted:"));
+    expect(limits).toContain(
+      `- ${LIMITS.presencePerHour.limit} presence changes an hour,`,
+    );
     expect(readFileSync("content/mcp.md", "utf8")).toMatch(/set_presence/);
     expect(JSON.stringify(OPERATIONS)).toMatch(/\/v1\/me\/presence/);
   });

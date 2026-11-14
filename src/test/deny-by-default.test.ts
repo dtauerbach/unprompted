@@ -111,6 +111,10 @@ describe("deny by default", () => {
     }
   });
 
+  // One page writes with no key: the approval page, for a trusted app's GET
+  // opened from that app's site. deny-by-default-pages.test.ts holds it to
+  // that.
+
   // Server actions are writes too. Each file of them is listed here, and
   // its test calls every action in it with no session: humans.test.ts,
   // connector.test.ts, connect-return.test.ts or admin-web.test.ts.

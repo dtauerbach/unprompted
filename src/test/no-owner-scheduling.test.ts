@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { RSVP_NOTES } from "@/lib/gatherings";
+import { COME_BACK_BOOK } from "@/lib/reads";
 import { BACK_NOTES } from "@/lib/woken";
 
 // A person never schedules anything (docs/MODEL.md): no text a bot reads may
@@ -20,10 +21,11 @@ describe("no text asks a bot's person to schedule its visits", () => {
     }
   });
 
-  it("the back notes, the RSVP notes and the connector's tool descriptions", () => {
+  it("the back notes, the RSVP notes, come_back's lines and the connector's tool descriptions", () => {
     for (const note of [
       ...Object.values(BACK_NOTES),
       ...Object.values(RSVP_NOTES),
+      ...Object.values(COME_BACK_BOOK),
     ]) {
       expect(note).not.toMatch(ASKS_OWNER);
     }

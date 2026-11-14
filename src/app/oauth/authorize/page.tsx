@@ -1,13 +1,22 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { Words } from "@/components/words";
-import { AUTHORIZE_PARAMS, checkAuthorize } from "@/lib/connector";
+import {
+  AUTHORIZE_PARAMS,
+  autoApprove,
+  checkAuthorize,
+  isTrustedRedirect,
+  logTrustedPage,
+} from "@/lib/connector";
 import { db } from "@/lib/db";
+import { hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { countOwnedBots, findHuman, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { pageRequestOrigin } from "@/lib/page-origin";
+import { METHOD_HEADER } from "@/lib/request-method";
 import { isReadOnly } from "@/lib/settings";
 import { signInToConnect } from "./actions";
 import { ApproveForm } from "./forms";
@@ -22,7 +31,14 @@ export async function generateMetadata(): Promise<Metadata> {
 
 // Where an app that speaks MCP sends a person to let their agent join. The
 // app's name is whatever it registered with, so it's shown as quoted text
-// and next to the address it will send the person back to.
+// and next to the address it will send the person back to. A request from
+// one of the apps we trust (TRUSTED_REDIRECTS in src/lib/connector.ts), a GET
+// opened as a page with a Referer on that app's site (skipsPage), is
+// approved without the page: every check still runs. Either way a trusted
+// app's bot links to the person only through their owner code, so the page
+// doesn't say it will show up on their account or offer to sign in to link
+// it. Nor, for any app, does it say so to a signed-in person who already has
+// as many bots as they can link: the bot would join unlinked.
 export default async function AuthorizePage({
   searchParams,
 }: {
@@ -35,8 +51,32 @@ export default async function AuthorizePage({
     const v = raw[k];
     if (typeof v === "string") params[k] = v;
   }
+  const repeated = AUTHORIZE_PARAMS.some((k) => Array.isArray(raw[k]));
   const check = await checkAuthorize(params, await pageRequestOrigin());
   if (check.kind === "redirect") redirect(check.url);
+  const user = humanSignInEnabled() ? await sessionUser() : null;
+  let refused: string | undefined;
+  const trusted = check.kind === "ok" && isTrustedRedirect(check.redirectUri);
+  if (check.kind === "ok" && trusted) {
+    const h = await headers();
+    const auto = await autoApprove(
+      params,
+      {
+        method: h.get(METHOD_HEADER),
+        headers: h,
+        repeated,
+        authUserId: user?.id ?? null,
+        ipHash: hashIp(ipFromHeaders(h)),
+      },
+      await pageRequestOrigin(),
+    );
+    if (auto.kind === "approved") redirect(auto.url);
+    if (auto.refusal) {
+      logRefusal("PAGE", "autoApprove", auto.refusal);
+      refused = auto.refusal.message;
+    }
+    logTrustedPage(h, check.redirectUri);
+  }
   const t = await pageCopy();
   if (check.kind === "show")
     return (
@@ -49,12 +89,11 @@ export default async function AuthorizePage({
         </p>
       </div>
     );
-  const user = humanSignInEnabled() ? await sessionUser() : null;
-  const humanId = user ? await findHuman(db(), user.id) : undefined;
+  const backHost = new URL(check.redirectUri).host;
+  const humanId = user && !trusted ? await findHuman(db(), user.id) : undefined;
   const full =
     humanId !== undefined &&
     (await countOwnedBots(db(), humanId)) >= MAX_BOTS_PER_HUMAN;
-  const backHost = new URL(check.redirectUri).host;
   return (
     <div className="max-w-xl space-y-6">
       <h1 className="text-3xl font-bold tracking-tight">
@@ -80,12 +119,7 @@ export default async function AuthorizePage({
           />
         </p>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {user && full ? (
-            <Words
-              text={t["connect.full"]}
-              slots={{ max: MAX_BOTS_PER_HUMAN }}
-            />
-          ) : user ? (
+          {trusted || full ? null : user ? (
             t["connect.signed_in"]
           ) : humanSignInEnabled() ? (
             <Words
@@ -104,7 +138,7 @@ export default async function AuthorizePage({
             />
           ) : null}
         </p>
-        {!user && humanSignInEnabled() && (
+        {!trusted && !user && humanSignInEnabled() && (
           // Signing in comes back to this same request (src/lib/connect-return.ts).
           <form id={SIGN_IN_FORM} action={signInToConnect} hidden>
             {Object.entries(params).map(([k, v]) => (
@@ -119,6 +153,7 @@ export default async function AuthorizePage({
         ) : (
           <ApproveForm
             params={params}
+            error={refused}
             allowLabel={t["connect.allow"]}
             cancelLabel={t["connect.cancel"]}
           />

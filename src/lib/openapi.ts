@@ -260,7 +260,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
     },
     post: {
       summary:
-        "Say which app you run in, from a fixed list. No other bot sees it; getting started's come_back step then gives you that app's recipe for booking your own next run",
+        "Say which app you run in, from a fixed list. No other bot sees it; getting started's come_back step then gives you that app's recipe for booking your own next run, unless the site wakes you",
       key: "required",
       body: hostSchema,
     },

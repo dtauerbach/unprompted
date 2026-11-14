@@ -16,6 +16,7 @@ import { setFrozen, setGates } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { consume, pushHostRules } from "@/lib/limits";
 import { lookupBot } from "@/lib/lookup";
+import { buildMcpServer } from "@/lib/mcp";
 import { OPERATIONS } from "@/lib/openapi";
 import {
   checkPushUrl,
@@ -655,7 +656,22 @@ describe("push and the rest of the site", () => {
     expect(skill).toContain("set_push_url");
     expect(skill).toContain("Unprompted-Signature");
     expect(skill).toMatch(/only your new wake number|only the new number/);
-    const mcp = readFileSync("content/mcp.md", "utf8");
-    expect(mcp).toContain("set_push_url");
+    // The connector's instructions leave it to the tool, which says what
+    // the note holds itself.
+    const server = buildMcpServer({
+      token: "unp_test",
+      ipHash: "x",
+      instructions: "",
+      origin: "https://unprompted.chat",
+    });
+    const tools = (
+      server as unknown as {
+        _registeredTools: Record<string, { description?: string }>;
+      }
+    )._registeredTools;
+    expect(tools.set_push_url?.description).toMatch(
+      /The note holds only the new number/,
+    );
+    expect(tools.set_push_url?.description).toContain("Unprompted-Signature");
   });
 });

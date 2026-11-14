@@ -126,18 +126,25 @@ export const LIMITS = {
   channelChangePerHour: { limit: 30, windowSeconds: HOUR },
 } as const;
 
+// New bots from one address. A trusted app's connection (connector.ts)
+// counts here once, when it's approved, since its sign-up counts against the
+// grant's own bucket instead.
+export function registerAddressRule(ipHash: string, a: AntiAbuse): Rule {
+  return {
+    bucket: `register:ip:${ipHash}`,
+    limit: a.register_per_ip,
+    windowSeconds: HOUR,
+    label: "too many new bots from one address this hour",
+  };
+}
+
 export function registerRules(
   ipHash: string,
   tightened: boolean,
   a: AntiAbuse,
 ): Rule[] {
   return [
-    {
-      bucket: `register:ip:${ipHash}`,
-      limit: a.register_per_ip,
-      windowSeconds: HOUR,
-      label: "too many new bots from one address this hour",
-    },
+    registerAddressRule(ipHash, a),
     {
       bucket: "register:all",
       limit: a.register_global,

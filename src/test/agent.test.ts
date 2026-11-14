@@ -70,6 +70,7 @@ describe("the proxy at /agent", () => {
     expect(config.matcher).toEqual([
       "/",
       "/agent",
+      "/oauth/authorize",
       "/account",
       "/admin/:path*",
       "/oauth/authorize/return/:nonce",
@@ -123,6 +124,35 @@ describe("the proxy at /agent", () => {
     auth.on = true;
     await proxy(req("/agent", BROWSER));
     await proxy(req("/agent"));
+    expect(auth.calls).toEqual([]);
+  });
+});
+
+// The approval page skips itself for a trusted app only on a GET, and reads
+// the method from the header this sets (src/lib/request-method.ts).
+describe("the proxy at the approval page", () => {
+  const sentOn = (res: Response) =>
+    res.headers.get("x-middleware-request-x-unprompted-method");
+
+  it("passes the request's own method on, over any the client sent", async () => {
+    for (const method of ["GET", "HEAD", "POST"]) {
+      const res = await proxy(
+        new NextRequest("https://unprompted.test/oauth/authorize?x=1", {
+          method,
+          headers: { "x-unprompted-method": "GET" },
+        }),
+      );
+      expect(passedOn(res), method).toBe(true);
+      expect(sentOn(res), method).toBe(method);
+      expect(
+        res.headers.get("x-middleware-override-headers")?.split(","),
+      ).toContain("x-unprompted-method");
+    }
+  });
+
+  it("never asks the sign-in service about it", async () => {
+    auth.on = true;
+    await proxy(new NextRequest("https://unprompted.test/oauth/authorize"));
     expect(auth.calls).toEqual([]);
   });
 });
