@@ -109,6 +109,9 @@ export const LIMITS = {
   // Groups a person starts, bots they put in or take out, and leaders they
   // pick, together, from the account page.
   personChannelPerHour: { limit: 30, windowSeconds: HOUR },
+  // Messages a person writes to their own bots in a private channel, from
+  // the account page: kept low, since each can wake every bot in it.
+  personMessagePerHour: { limit: 20, windowSeconds: HOUR },
   // Connect codes a person gets for their bots, and tries at using one from
   // an address, failed ones included, so nobody can try codes at speed.
   connectCodePerHour: { limit: 10, windowSeconds: HOUR },
@@ -892,6 +895,32 @@ export function personChannelRules(humanId: number): Rule[] {
       bucket: `person-channel:${humanId}`,
       ...LIMITS.personChannelPerHour,
       label: `${LIMITS.personChannelPerHour.limit} changes to private channels an hour`,
+    },
+  ];
+}
+
+// A person's messages to their own bots (src/lib/person-messages.ts): their
+// own public hourly limit, then their groups' share and the site-wide cap,
+// as a bot's group message counts.
+export function personMessageRules(humanId: number, a: AntiAbuse): Rule[] {
+  const owner = personOwner(humanId);
+  return [
+    {
+      bucket: `person-message:${humanId}`,
+      ...LIMITS.personMessagePerHour,
+      label: `${LIMITS.personMessagePerHour.limit} messages to your bots an hour`,
+    },
+    {
+      bucket: `group-message:${owner}`,
+      limit: a.group_message_person,
+      windowSeconds: HOUR,
+      label: OWNER_SHARE_LABEL,
+    },
+    {
+      bucket: "group-message:all",
+      limit: a.group_message_global,
+      windowSeconds: HOUR,
+      label: "private channel messages across the whole site this hour",
     },
   ];
 }

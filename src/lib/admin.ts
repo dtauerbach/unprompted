@@ -348,6 +348,52 @@ export type PrivateChannelRead = {
 export const PRIVATE_READ_MESSAGES = 200;
 export const PRIVATE_READ_PLANS = 20;
 
+// Stops one person writing to their bots in private channels
+// (src/lib/person-messages.ts), or lets them again: a row in the append-only
+// person_post_stops (063), newest in force. What they wrote stays; hiding
+// the group is the lever for that.
+export async function setPersonPostsStopped(
+  sql: postgres.Sql,
+  humanId: number,
+  stopped: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [h] = await tx<{ id: string; stopped: boolean }[]>`
+      SELECT id, person_posts_stopped(id) AS stopped FROM humans WHERE id = ${humanId}`;
+    if (!h)
+      throw new ApiError(404, "not_found", `There is no human:${humanId}.`);
+    if (h.stopped === stopped)
+      return {
+        changed: false,
+        message: stopped
+          ? `human:${humanId} was already stopped from writing to their bots.`
+          : `human:${humanId} wasn't stopped.`,
+      };
+    await tx`
+      INSERT INTO person_post_stops (human_id, stopped)
+      VALUES (${humanId}, ${stopped})`;
+    await logAction(tx, {
+      action: stopped ? "admin.person_posts.stop" : "admin.person_posts.resume",
+      botId: null,
+      keyId: null,
+      ...who,
+      subject: `human:${humanId}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: stopped
+        ? `Stopped human:${humanId} writing to their bots.`
+        : `Let human:${humanId} write to their bots again.`,
+    };
+  });
+}
+
 // A moderator reads one private channel in full: who is in it and how they
 // came in, and its newest messages. Bots never see this. The read itself
 // is logged with its reason, so the record shows who looked and why.
@@ -414,8 +460,11 @@ export async function readPrivateChannel(
       }[]
     >`
       SELECT * FROM (
-        SELECT m.id, b.handle AS from, m.created_at AS at, m.body, m.plan_version
-        FROM channel_messages(${id}) m JOIN bots b ON b.id = m.bot_id
+        SELECT m.id,
+          -- A person's message (063) by their human id, as the record names them.
+          coalesce(b.handle, 'human:' || m.human_id) AS from,
+          m.created_at AS at, m.body, m.plan_version
+        FROM channel_messages(${id}) m LEFT JOIN bots b ON b.id = m.bot_id
         ORDER BY m.id DESC LIMIT ${PRIVATE_READ_MESSAGES}) x
       ORDER BY id`;
     const plans = await tx<
@@ -1514,8 +1563,9 @@ export type MessageReport = {
 };
 
 // Private messages their recipient, or a member of their group, reported (a
-// group message's `to` is its channel, private:<id>), until a moderator keeps the
-// message or freezes its sender. A report is what shows a message to the
+// group message's `to` is its channel, private:<id>; a person's message is
+// from human:<id>), until a moderator keeps the message or freezes its sender
+// (a person has no freeze: stop-person-posts ends their writing). A report is what shows a message to the
 // moderators, so this and a moderator's logged read of a whole group
 // (readPrivateChannel) are the only admin views that print one.
 export async function openMessageReports(
@@ -1525,14 +1575,14 @@ export async function openMessageReports(
   const rows = await sql<
     (Omit<MessageReport, "message_id"> & { message_id: string })[]
   >`
-    SELECT r.message_id, fb.handle AS from,
+    SELECT r.message_id, coalesce(fb.handle, 'human:' || m.human_id) AS from,
            coalesce(tb.handle, 'private:' || m.channel_id) AS to,
            array_agg(DISTINCT r.reason) AS reasons,
            coalesce(array_agg(r.note) FILTER (WHERE r.note IS NOT NULL), '{}') AS notes,
            max(r.created_at) AS last_at, m.body
     FROM message_reports r
       JOIN messages m ON m.id = r.message_id
-      JOIN bots fb ON fb.id = m.bot_id
+      LEFT JOIN bots fb ON fb.id = m.bot_id
       LEFT JOIN bots tb ON tb.id = m.to_bot_id
     WHERE fb.frozen_at IS NULL
       AND NOT EXISTS (
@@ -1540,7 +1590,7 @@ export async function openMessageReports(
         WHERE a.action = 'admin.message.keep' AND a.subject = 'message:' || r.message_id
           AND a.detail->'reports' @> to_jsonb(r.id)
       )
-    GROUP BY r.message_id, fb.handle, tb.handle, m.channel_id, m.body
+    GROUP BY r.message_id, fb.handle, m.human_id, tb.handle, m.channel_id, m.body
     ORDER BY last_at DESC
     LIMIT ${limit}`;
   return rows.map((r) => ({ ...r, message_id: Number(r.message_id) }));
@@ -1558,7 +1608,7 @@ export async function keepMessage(
   const d = detail(reason, actor);
   return sql.begin(async (tx) => {
     const who = await asActor(tx, actor);
-    const [m] = await tx<{ bot_id: string }[]>`
+    const [m] = await tx<{ bot_id: string | null }[]>`
       SELECT bot_id FROM messages WHERE id = ${messageId}`;
     if (!m)
       throw new ApiError(
@@ -1575,7 +1625,8 @@ export async function keepMessage(
       };
     await logAction(tx, {
       action: "admin.message.keep",
-      botId: Number(m.bot_id),
+      // A person's message has no bot (063_person_messages.sql).
+      botId: m.bot_id === null ? null : Number(m.bot_id),
       keyId: null,
       ...who,
       subject: `message:${messageId}`,

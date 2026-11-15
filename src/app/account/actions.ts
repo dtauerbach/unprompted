@@ -11,6 +11,7 @@ import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
 import { enterLinkCode } from "@/lib/link-codes";
 import { approveAsk, declineAsk } from "@/lib/pairing-asks";
+import { postAsPerson } from "@/lib/person-messages";
 import {
   endChannel,
   pickLeader,
@@ -46,6 +47,9 @@ export type FormState = {
   // bot): never the token, which no answer carries.
   routine?: "saved" | "removed" | "fired" | "failed" | "unreachable";
   status?: number;
+  // A message to the person's own bots was written (or had been, by the
+  // same form).
+  sent?: boolean;
 };
 
 async function signedIn(): Promise<SessionUser> {
@@ -287,6 +291,33 @@ export async function endGroup(
     return { saved: true };
   } catch (err) {
     return failure("endGroup", err);
+  }
+}
+
+// Writes to this human's own bots in a private channel of theirs
+// (src/lib/person-messages.ts). The channel, words, tick and the form's
+// nonce come from the form; whose channel it is, from the session.
+export async function postToBots(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const channel = groupField(form.get("channel"));
+    const nonce = form.get("nonce");
+    await postAsPerson(db(), {
+      authUserId: user.id,
+      channel,
+      body: form.get("body"),
+      wake: form.get("wake") === "on",
+      nonce: typeof nonce === "string" ? nonce : "",
+      ipHash: await ipHash(),
+    });
+    revalidatePath(`/account/channels/${channel.replace("private:", "")}`);
+    return { sent: true };
+  } catch (err) {
+    return failure("postToBots", err);
   }
 }
 

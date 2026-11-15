@@ -30,6 +30,7 @@ import {
 beforeEach(resetDb);
 afterEach(() => {
   delete process.env.UNPROMPTED_READ_ONLY;
+  delete process.env.UNPROMPTED_PERSON_POSTS;
 });
 
 async function code(authUserId = "google-1") {
@@ -562,6 +563,12 @@ describe("human actions", () => {
     form.set("token", `sk-ant-oat01-${"x".repeat(40)}`);
     for (const act of [a.setClaudeFire, a.removeClaudeFire, a.testClaudeFire])
       await expect(act({}, form)).rejects.toThrow("redirect /sign-in");
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    form.set("channel", "private:1");
+    form.set("body", "hello");
+    form.set("nonce", "abcdefghijklmnop");
+    await expect(a.postToBots({}, form)).rejects.toThrow("redirect /sign-in");
+    delete process.env.UNPROMPTED_PERSON_POSTS;
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
     const [n] = await db()<{ n: number }[]>`
@@ -572,6 +579,27 @@ describe("human actions", () => {
            + (SELECT count(*) FROM fire_secrets)::int
            + (SELECT count(*) FROM fire_attempts)::int AS n`;
     expect(f?.n).toBe(0);
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+  });
+
+  it("write nothing to a person's bots in read-only mode", async () => {
+    const a = await import("@/app/account/actions");
+    session.user = { id: "google-1" };
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const form = new FormData();
+    form.set("channel", "private:1");
+    form.set("body", "hello");
+    form.set("nonce", "abcdefghijklmnop");
+    const res = await a.postToBots({}, form);
+    expect(res.sent).toBeUndefined();
+    expect(res.error).toMatch(/read-only/);
+    delete process.env.UNPROMPTED_PERSON_POSTS;
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
   });
 
   it("give a connect code only for the signed-in human's own bot, and only while writable", async () => {
@@ -868,6 +896,59 @@ describe("group actions", () => {
     );
     await expect(a.endGroup({}, f.end)).rejects.toThrow("redirect /sign-in");
     expect(await groupCounts()).toEqual(before);
+  });
+
+  it("write to the signed-in person's own bots from the peek-in box, as the form says", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    const box = (body: string, nonce: string, wake: boolean) => {
+      const f = new FormData();
+      f.set("channel", started.group as string);
+      f.set("body", body);
+      f.set("nonce", nonce);
+      if (wake) f.set("wake", "on");
+      return f;
+    };
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    try {
+      // Before the day's wait on the links, the box is shut.
+      expect(
+        await a.postToBots({}, box("too soon", "nonce-000000000001", true)),
+      ).toMatchObject({ error: expect.any(String) });
+      await ageLink("alice");
+      await ageLink("bob");
+      expect(
+        await a.postToBots({}, box("Wake up.", "nonce-000000000002", true)),
+      ).toEqual({ sent: true });
+      // A box with the tick off writes a message that wakes nobody.
+      expect(
+        await a.postToBots({}, box("No rush.", "nonce-000000000003", false)),
+      ).toEqual({ sent: true });
+      const rows = await db()<{ body: string; wakes: boolean }[]>`
+        SELECT body, wakes FROM messages WHERE human_id IS NOT NULL ORDER BY id`;
+      expect(rows).toEqual([
+        { body: "Wake up.", wakes: true },
+        { body: "No rush.", wakes: false },
+      ]);
+      // Someone else signed in gets the one refusal for a channel not theirs.
+      session.user = { id: "google-2" };
+      expect(
+        await a.postToBots({}, box("mine now", "nonce-000000000004", true)),
+      ).toMatchObject({ error: expect.any(String) });
+      // And with the switch off, nothing is written for anyone.
+      session.user = { id: "google-1" };
+      delete process.env.UNPROMPTED_PERSON_POSTS;
+      expect(
+        await a.postToBots({}, box("off", "nonce-000000000005", true)),
+      ).toMatchObject({ error: expect.any(String) });
+      const [n] = await db()<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+      expect(n?.n).toBe(2);
+    } finally {
+      delete process.env.UNPROMPTED_PERSON_POSTS;
+    }
   });
 
   it("act only on the signed-in person's own bots and groups", async () => {

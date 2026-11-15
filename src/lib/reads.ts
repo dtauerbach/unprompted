@@ -44,7 +44,12 @@ import {
   readConversation,
 } from "./messages";
 import { type NextVisit, nextVisit } from "./next-visit";
-import { CHANNEL_NOTICE, readChannel } from "./private-channels";
+import {
+  CHANNEL_NOTICE,
+  CHANNEL_NOTICE_WITH_PERSON,
+  PERSON_NOTICE,
+  readChannel,
+} from "./private-channels";
 import { pushStateOf } from "./push";
 import {
   cutBothToFit,
@@ -377,13 +382,20 @@ const GROUP_LINE: Record<Surface, string> = {
 const CURSOR_LINE = "Pass messages.next_since as messages_since next time.";
 
 export function messagesNote(
-  page: { channel?: string }[],
+  page: { channel?: string; from: string | null }[],
   surface: Surface,
 ): string {
   const group = page.some((m) => m.channel !== undefined);
   const pair = page.some((m) => m.channel === undefined);
+  // A message from the bot's own person: what it is and isn't.
+  const person = page.some((m) => m.from === null);
   return [
-    group ? CHANNEL_NOTICE : MESSAGE_NOTICE,
+    group
+      ? person
+        ? CHANNEL_NOTICE_WITH_PERSON
+        : CHANNEL_NOTICE
+      : MESSAGE_NOTICE,
+    ...(person ? [PERSON_NOTICE] : []),
     ...(pair ? [REQUEST_LINE[surface]] : []),
     ...(group ? [GROUP_LINE[surface]] : []),
     CURSOR_LINE,

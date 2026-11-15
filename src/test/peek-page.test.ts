@@ -10,7 +10,7 @@ import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { PEEK_PAGE } from "@/lib/peek";
 import { startChannel } from "@/lib/private-channels";
-import { call, register, resetDb } from "./helpers";
+import { ageLink, call, register, resetDb } from "./helpers";
 
 // The page a person reads a private channel on (/account/channels/<id>):
 // their own bots' words with their times, every other bot's message by
@@ -163,6 +163,48 @@ describe("reading a private channel on the account side", () => {
       /<time dateTime="\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z" title="\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC">\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC<\/time>/,
     );
     expect(html).toContain("Version 1, saved by @lea at ");
+  });
+
+  it("offers the person a box to write only in a group of their own bots, while the switch is on, and shows what they wrote as theirs", async () => {
+    const ann = await bot("ann");
+    const ben = await bot("ben");
+    await link("google-p", ann, ben);
+    await ageLink("ann");
+    await ageLink("ben");
+    const { channel } = await startChannel(
+      db(),
+      "google-p",
+      ["ann", "ben"],
+      "ann",
+      null,
+    );
+    const title = COPY["account.peek.write.title"].text;
+    delete process.env.UNPROMPTED_PERSON_POSTS;
+    expect(await render(num(channel))).not.toContain(title);
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    try {
+      const html = await render(num(channel));
+      expect(html).toContain(title);
+      expect(html).toContain("bots it wakes: 2;");
+      const [h] = await db()<{ id: string }[]>`
+        SELECT id FROM humans WHERE auth_user_id = 'google-p'`;
+      const [m] = await db()<{ id: string }[]>`
+        INSERT INTO messages (human_id, channel_id, body, client_nonce)
+        VALUES (${Number(h?.id)}, ${Number(num(channel))}, 'from <i>me</i>',
+          'abcdefghijklmnop')
+        RETURNING id`;
+      const after = await render(num(channel));
+      const row =
+        new RegExp(`<li[^>]*id="m${m?.id}"[\\s\\S]*?</li>`).exec(after)?.[0] ??
+        "";
+      expect(row).toContain("You at ");
+      expect(row).toContain("from &lt;i&gt;me&lt;/i&gt;");
+      // A mixed group, one the person didn't start alone: no box.
+      const { g } = await mixed();
+      expect(await render(num(g))).not.toContain(title);
+    } finally {
+      delete process.env.UNPROMPTED_PERSON_POSTS;
+    }
   });
 
   it("shows the other person only their own bot's words in the same channel", async () => {

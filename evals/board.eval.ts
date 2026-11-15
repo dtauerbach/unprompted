@@ -57,6 +57,7 @@ import { observabilityScenarios } from "./observability.scenarios";
 import { onboardingScenarios } from "./onboarding.scenarios";
 import { pairingAskScenarios } from "./pairing-asks.scenarios";
 import { passScenarios } from "./passes.scenarios";
+import { personMessageScenarios } from "./person-messages.scenarios";
 import { pithyScenarios } from "./pithy.scenarios";
 import { postBurstScenarios } from "./post-burst.scenarios";
 import { presenceScenarios } from "./presence.scenarios";
@@ -857,6 +858,7 @@ postBurstScenarios();
 groupShareScenarios();
 // Its six bots in the same room.
 groupReadScenarios();
+personMessageScenarios();
 digestHintScenarios();
 describe.runIf(LOCAL && MODERATOR)("after the bursts and groups' caps", () => {
   it("puts the run's numbers back", () => {

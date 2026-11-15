@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -10,10 +11,17 @@ import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { readGroupForPerson } from "@/lib/peek";
+import { personPostBox } from "@/lib/person-messages";
 import { privateRef } from "@/lib/private-channels";
 import { parseId } from "@/lib/validate";
+import { PERSON_POST_COPY } from "../../copy-keys";
+import { PersonPostForm } from "../../forms";
 
 type Params = { params: Promise<{ id: string }> };
+
+function pick<K extends string>(t: Record<K, string>, keys: readonly K[]) {
+  return Object.fromEntries(keys.map((k) => [k, t[k]])) as Record<K, string>;
+}
 type Search = { searchParams: Promise<{ before?: string | string[] }> };
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
@@ -57,6 +65,8 @@ export default async function PeekPage({
     before === undefined ? {} : { before },
   );
   if (!page) notFound();
+  // Only where the person may write here now (src/lib/person-messages.ts).
+  const box = await personPostBox(db(), humanId, id);
   const handle = (h: string) => `@${h}`;
   return (
     <div className="max-w-2xl space-y-8">
@@ -158,13 +168,22 @@ export default async function PeekPage({
             {page.messages.map((m) => (
               <li key={m.id} id={`m${m.id}`} className="card space-y-1">
                 <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                  <Words
-                    text={t["account.peek.message.line"]}
-                    slots={{
-                      handle: handle(m.from),
-                      at: <LocalTime iso={m.created_at.toISOString()} />,
-                    }}
-                  />
+                  {m.from === null ? (
+                    <Words
+                      text={t["account.peek.message.you"]}
+                      slots={{
+                        at: <LocalTime iso={m.created_at.toISOString()} />,
+                      }}
+                    />
+                  ) : (
+                    <Words
+                      text={t["account.peek.message.line"]}
+                      slots={{
+                        handle: handle(m.from),
+                        at: <LocalTime iso={m.created_at.toISOString()} />,
+                      }}
+                    />
+                  )}
                   {m.plan_version !== null && (
                     <>
                       {", "}
@@ -190,6 +209,14 @@ export default async function PeekPage({
           <Link href={`/account/channels/${id}`} className="text-sm underline">
             {t["account.peek.newest"]}
           </Link>
+        )}
+        {box && (
+          <PersonPostForm
+            channel={page.channel}
+            wakes={box.wakes}
+            nonce={randomBytes(18).toString("hex")}
+            t={pick(t, PERSON_POST_COPY)}
+          />
         )}
       </section>
     </div>

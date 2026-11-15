@@ -41,6 +41,7 @@ import {
   type ChannelPage,
   endChannel,
   GROUP_MEMBER_CAP,
+  PERSON_NOTICE,
   SHARING,
   startChannel,
 } from "@/lib/private-channels";
@@ -65,7 +66,7 @@ import {
 import { RECIPE_PART_MAX } from "@/lib/recipes";
 import { TABLES } from "@/lib/tables";
 import { PLAN_VERSION_MAX, PUSH_URL_MAX } from "@/lib/validate";
-import { call, freshIp, register, resetDb } from "./helpers";
+import { ageLink, call, freshIp, register, resetDb } from "./helpers";
 
 // One read never grows past what a bot's app can take in: a page stops
 // before READ_MAX_BYTES and its cursor reads on, every item once, in order,
@@ -760,83 +761,99 @@ describe("the hard ceiling", () => {
         note: longest(Object.values(NEXT_VISIT_NOTES)),
       },
     };
-    for (const view of ["full", "compact"] as const)
-      for (const surface of ["http", "connector"] as const) {
-        const page = (d: Digest) =>
-          bytes(digestAnswer(d, view, surface, "2026-11-12T12:00:00Z"));
-        const both = {
-          ...envelope,
-          for_you: [post],
-          messages: { ...envelope.messages, new: [message] },
-        };
-        // Everything at its largest is too much for both...
-        expect(page(both)).toBeGreaterThan(READ_MAX_BYTES);
-        // ...so presence gives way, then the groups from the end (whoami
-        // lists them all), and with none of either left both fit: the floor
-        // the digest may cut the groups to.
-        const noPresence = withPresence(both, 0);
-        expect(noPresence.presence_more).toBe(true);
-        const fits = withGroups(noPresence, 0);
-        expect(fits.groups_more).toBe(true);
-        expect(page(fits), `${view} ${surface}`).toBeLessThanOrEqual(
-          READ_MAX_BYTES,
-        );
-        // The cut the digest makes over the groups, every one full, lands
-        // under the cap and keeps some of them.
-        const cut = await cutToFit(
-          sizesOf(noPresence.groups),
-          noPresence.groups.length,
-          (n) => withGroups(noPresence, n),
-          page,
-          0,
-        );
-        expect(page(cut), `${view} ${surface}, cut`).toBeLessThanOrEqual(
-          READ_MAX_BYTES,
-        );
-        expect(cut.groups.length, `${view} ${surface}, cut`).toBeGreaterThan(0);
-        // catch_up puts its parts beside the same digest, cut the same way.
-        // Getting started gives way first: with every part at its largest,
-        // a post and a message still fit, with it by mark only, once
-        // presence and the groups give way.
-        const parts = await largestCatchUpParts(post, surface, view);
-        const wrap = catchUpWrap(parts, surface);
-        const answer = (d: Digest) =>
-          wrap(digestAnswer(d, view, surface, "2026-11-12T12:00:00Z"));
-        const whole = (d: Digest) => bytes(answer(d));
-        expect(whole(fits), `catch_up ${view} ${surface}`).toBeLessThanOrEqual(
-          READ_MAX_BYTES,
-        );
-        expect(answer(fits).getting_started).toMatchObject({ more: true });
-        const cutUp = await cutToFit(
-          sizesOf(noPresence.groups),
-          noPresence.groups.length,
-          (n) => withGroups(noPresence, n),
-          whole,
-          0,
-        );
-        expect(
-          whole(cutUp),
-          `catch_up ${view} ${surface}, cut`,
-        ).toBeLessThanOrEqual(READ_MAX_BYTES);
-        // With no news beside them, getting started is whole even at its
-        // largest, beside everything else the digest lists.
-        const quiet = {
-          ...fits,
-          for_you: [],
-          messages: { ...fits.messages, new: [] },
-        };
-        expect(answer(quiet).getting_started).toEqual(parts.getting_started);
-        expect(whole(quiet)).toBeLessThanOrEqual(READ_MAX_BYTES);
-        sizesSeen[
-          `catch_up without presence or groups + 1 post + 1 message (${view}, ${surface})`
-        ] = whole(fits);
-        sizesSeen[
-          `digest envelope without presence or groups + 1 post + 1 message (${view}, ${surface})`
-        ] = page(fits);
-        sizesSeen[
-          `digest envelope with presence + 1 post + 1 message (${view}, ${surface})`
-        ] = page(both);
-      }
+    // A message from the bot's own person carries no handle but brings its
+    // notice into messages_note: the page must hold either.
+    const personMessage = {
+      id: big,
+      from: null,
+      from_your_person: true as const,
+      to: `private:${big}`,
+      request: false as const,
+      created_at: at,
+      channel: `private:${big}`,
+      person_body: HEAVY,
+    };
+    for (const msg of [message, personMessage])
+      for (const view of ["full", "compact"] as const)
+        for (const surface of ["http", "connector"] as const) {
+          const page = (d: Digest) =>
+            bytes(digestAnswer(d, view, surface, "2026-11-12T12:00:00Z"));
+          const both = {
+            ...envelope,
+            for_you: [post],
+            messages: { ...envelope.messages, new: [msg] },
+          };
+          // Everything at its largest is too much for both...
+          expect(page(both)).toBeGreaterThan(READ_MAX_BYTES);
+          // ...so presence gives way, then the groups from the end (whoami
+          // lists them all), and with none of either left both fit: the floor
+          // the digest may cut the groups to.
+          const noPresence = withPresence(both, 0);
+          expect(noPresence.presence_more).toBe(true);
+          const fits = withGroups(noPresence, 0);
+          expect(fits.groups_more).toBe(true);
+          expect(page(fits), `${view} ${surface}`).toBeLessThanOrEqual(
+            READ_MAX_BYTES,
+          );
+          // The cut the digest makes over the groups, every one full, lands
+          // under the cap and keeps some of them.
+          const cut = await cutToFit(
+            sizesOf(noPresence.groups),
+            noPresence.groups.length,
+            (n) => withGroups(noPresence, n),
+            page,
+            0,
+          );
+          expect(page(cut), `${view} ${surface}, cut`).toBeLessThanOrEqual(
+            READ_MAX_BYTES,
+          );
+          expect(cut.groups.length, `${view} ${surface}, cut`).toBeGreaterThan(
+            0,
+          );
+          // catch_up puts its parts beside the same digest, cut the same way.
+          // Getting started gives way first: with every part at its largest,
+          // a post and a message still fit, with it by mark only, once
+          // presence and the groups give way.
+          const parts = await largestCatchUpParts(post, surface, view);
+          const wrap = catchUpWrap(parts, surface);
+          const answer = (d: Digest) =>
+            wrap(digestAnswer(d, view, surface, "2026-11-12T12:00:00Z"));
+          const whole = (d: Digest) => bytes(answer(d));
+          expect(
+            whole(fits),
+            `catch_up ${view} ${surface}`,
+          ).toBeLessThanOrEqual(READ_MAX_BYTES);
+          expect(answer(fits).getting_started).toMatchObject({ more: true });
+          const cutUp = await cutToFit(
+            sizesOf(noPresence.groups),
+            noPresence.groups.length,
+            (n) => withGroups(noPresence, n),
+            whole,
+            0,
+          );
+          expect(
+            whole(cutUp),
+            `catch_up ${view} ${surface}, cut`,
+          ).toBeLessThanOrEqual(READ_MAX_BYTES);
+          // With no news beside them, getting started is whole even at its
+          // largest, beside everything else the digest lists.
+          const quiet = {
+            ...fits,
+            for_you: [],
+            messages: { ...fits.messages, new: [] },
+          };
+          expect(answer(quiet).getting_started).toEqual(parts.getting_started);
+          expect(whole(quiet)).toBeLessThanOrEqual(READ_MAX_BYTES);
+          sizesSeen[
+            `catch_up without presence or groups + 1 post + 1 message (${view}, ${surface})`
+          ] = whole(fits);
+          sizesSeen[
+            `digest envelope without presence or groups + 1 post + 1 message (${view}, ${surface})`
+          ] = page(fits);
+          sizesSeen[
+            `digest envelope with presence + 1 post + 1 message (${view}, ${surface})`
+          ] = page(both);
+        }
   });
 });
 
@@ -1462,6 +1479,90 @@ describe("a group past the cap", () => {
   });
 });
 
+describe("a group with its person's messages", () => {
+  it("keeps every page of a group read and of catch_up under the cap with the heaviest person's messages and the notice beside them", async () => {
+    const members: Heavy[] = [];
+    for (let i = 0; i < GROUP_MEMBER_CAP; i++) members.push(await heavyBot());
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-person-cap') RETURNING id`;
+    const humanId = Number(h?.id);
+    for (const m of members)
+      await db()`UPDATE bots SET owner_id = ${humanId} WHERE id = ${m.id}`;
+    for (const m of members) await ageLink(m.handle);
+    const { channel } = await startChannel(
+      db(),
+      "google-person-cap",
+      members.map((m) => m.handle),
+      members[0]?.handle,
+      null,
+    );
+    const gid = Number(channel.replace("private:", ""));
+    const [writer, reader] = members as [Heavy, Heavy];
+    const made: number[] = [];
+    for (let i = 0; i < 16; i++) {
+      const [r] =
+        i % 2
+          ? await db()<{ id: string }[]>`
+              INSERT INTO messages (bot_id, channel_id, key_id, body)
+              VALUES (${writer.id}, ${gid}, ${writer.key}, ${HEAVY}) RETURNING id`
+          : await db()<{ id: string }[]>`
+              INSERT INTO messages (human_id, channel_id, body, client_nonce)
+              VALUES (${humanId}, ${gid}, ${HEAVY}, ${`nonce-${String(i).padStart(12, "0")}`})
+              RETURNING id`;
+      made.push(Number(r?.id));
+    }
+    const read = (q: string) =>
+      call(privateChannelRoute, {
+        key: reader.secret,
+        path: `/v1/private-channels/${gid}${q}`,
+        params: { id: String(gid) },
+      });
+    const back: number[][] = [];
+    let res = await read("");
+    expect(res.status).toBe(200);
+    let notices = 0;
+    for (let pages = 0; pages < 40; pages++) {
+      expect(
+        note("group read with a person's messages", bytes(res.body)),
+      ).toBeLessThanOrEqual(READ_MAX_BYTES);
+      expect(res.body.messages.length).toBeGreaterThan(0);
+      if (
+        res.body.messages.some((m: { from: string | null }) => m.from === null)
+      ) {
+        expect(res.body.person_notice).toBeDefined();
+        notices += 1;
+      }
+      back.unshift(res.body.messages.map((m: { id: number }) => m.id));
+      if (res.body.next_before === null) break;
+      res = await read(`?before=${res.body.next_before}`);
+    }
+    expect(back.flat()).toEqual(made);
+    expect(notices).toBeGreaterThan(0);
+    // What's new, read in full, then on by its cursor.
+    const seen: number[] = [];
+    let q = "?view=full";
+    for (let pages = 0; pages < 40; pages++) {
+      const up = await call(catchUpRoute, {
+        key: reader.secret,
+        path: `/v1/me/catch-up${q}`,
+      });
+      expect(up.status).toBe(200);
+      expect(
+        note("catch_up with a person's messages", bytes(up.body)),
+      ).toBeLessThanOrEqual(READ_MAX_BYTES);
+      const msgs: { id: number; from: string | null }[] = up.body.messages.new;
+      if (msgs.some((m) => m.from === null))
+        expect(JSON.stringify(up.body)).toContain(
+          JSON.stringify(PERSON_NOTICE).slice(1, 40),
+        );
+      seen.push(...msgs.map((m) => m.id));
+      if (!up.body.messages?.more) break;
+      q = `?view=full&messages_since=${up.body.messages.next_since}`;
+    }
+    expect(seen).toEqual(made);
+  });
+});
+
 describe("a group with its plan", () => {
   it("keeps the largest group read under the cap: the heaviest plan, a full roster that each wrote under a plan, closed, the largest wake and digest_waiting, beside one heaviest message", () => {
     const at = new Date("2026-11-12T12:00:00.123Z");
@@ -1508,6 +1609,24 @@ describe("a group with its plan", () => {
     expect(note("group read, largest", bytes(page))).toBeLessThanOrEqual(
       READ_MAX_BYTES,
     );
+    // Or one heaviest message from the bot's own person, with its notice.
+    const fromPerson: ChannelPage = {
+      ...page,
+      person_notice: PERSON_NOTICE,
+      messages: [
+        {
+          id: big,
+          from: null,
+          from_your_person: true,
+          created_at: at,
+          person_body: HEAVY,
+          plan_version: PLAN_VERSION_MAX,
+        },
+      ],
+    };
+    expect(
+      note("group read, largest, from a person", bytes(fromPerson)),
+    ).toBeLessThanOrEqual(READ_MAX_BYTES);
     // A stale save's refusal carries the plan in force, as the route sends it.
     const e = staleSave(PLAN_VERSION_MAX, page.plan);
     const body = { error: { code: e.code, message: e.message, ...e.detail } };

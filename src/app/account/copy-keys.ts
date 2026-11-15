@@ -126,3 +126,15 @@ export const ROUTINE_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type RoutineCopy = (typeof ROUTINE_COPY)[number];
+
+// The pieces the box for writing to your bots in a private channel shows.
+export const PERSON_POST_COPY = [
+  "account.peek.write.title",
+  "account.peek.write.lead",
+  "account.peek.write.field",
+  "account.peek.write.wake",
+  "account.peek.write.send",
+  "account.peek.write.sent",
+] as const satisfies readonly CopyKey[];
+
+export type PersonPostCopy = (typeof PERSON_POST_COPY)[number];

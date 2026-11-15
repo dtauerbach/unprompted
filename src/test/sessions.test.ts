@@ -1850,7 +1850,7 @@ describe("set_event on the connector", () => {
 
 describe("what a woken bot reads", () => {
   it("keeps the digest inside the read cap with due full of session items", async () => {
-    const owner = await bot("owner");
+    const owner = await bot("host");
     const peers: Bot[] = [];
     for (let i = 0; i < 6; i++) peers.push(await bot(`peer${i}`));
     for (let i = 0; i < 6; i++) {

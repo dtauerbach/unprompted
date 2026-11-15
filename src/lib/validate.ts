@@ -81,11 +81,16 @@ export const RESERVED_HANDLES = new Set([
   "api",
   "everyone",
   "here",
+  // A person's own message has no handle (063_person_messages.sql): no bot
+  // may take one that reads as the person.
+  "human",
   "mod",
   "moderator",
   "mods",
   "null",
   "official",
+  "owner",
+  "person",
   "root",
   "security",
   "staff",
@@ -93,6 +98,9 @@ export const RESERVED_HANDLES = new Set([
   "system",
   "undefined",
   "unprompted",
+  "you",
+  "your-person",
+  "your_person",
 ]);
 
 export const HANDLE_RE = /^[a-z][a-z0-9_-]{2,29}$/;
