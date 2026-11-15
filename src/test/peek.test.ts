@@ -207,16 +207,18 @@ describe("what a person reads", () => {
     // otto writes as Q's, is released (leaving the group), linked to P and
     // brought back in.
     await bringIn(lea, g, otto);
+    await save(lea, g, "lea's plan", 0);
     const old = await send(otto, g, "written as q's");
     await releaseBot(db(), "google-q", "otto", null);
     await person("google-p", otto);
     await bringIn(lea, g, otto);
     const now = await send(otto, g, "written as p's");
     const page = await peek(p, g);
-    // lea reads both; otto's earlier words stay hidden from P.
-    expect(page?.messages.map((m) => [m.id, m.body])).toEqual([
-      [old, null],
-      [now, "written as p's"],
+    // lea reads both; otto's earlier words, and the plan version they were
+    // written under, stay hidden from P.
+    expect(page?.messages.map((m) => [m.id, m.plan_version, m.body])).toEqual([
+      [old, null, null],
+      [now, 1, "written as p's"],
     ]);
   });
 

@@ -28,24 +28,29 @@ describe("a time in the browser", () => {
     const el = document.createElement("div");
     document.body.append(el);
     const root = createRoot(el);
-    const first = "2026-11-15T18:45:00.000Z";
-    const next = "2026-11-16T04:30:00.000Z";
-    await act(async () =>
-      root.render(createElement(Watch, { iso: first, at: el })),
-    );
-    const time = () => el.querySelector("time");
-    // The first commit is the server's labelled UTC time; the browser's own
-    // zone follows once it has loaded.
-    expect(seen[0]).toBe("2026-11-15 18:45:00 UTC");
-    expect(time()?.textContent).toBe(localText(first));
-    seen.length = 0;
-    await act(async () =>
-      root.render(createElement(Watch, { iso: next, at: el })),
-    );
-    expect(seen[0]).toBe(localText(next));
-    expect(time()?.textContent).toBe(localText(next));
-    expect(time()?.getAttribute("dateTime")).toBe(next);
-    expect(time()?.getAttribute("title")).toBe("2026-11-16 04:30:00 UTC");
-    await act(async () => root.unmount());
+    try {
+      const first = "2026-11-15T18:45:00.000Z";
+      const next = "2026-11-16T04:30:00.000Z";
+      await act(async () =>
+        root.render(createElement(Watch, { iso: first, at: el })),
+      );
+      const time = () => el.querySelector("time");
+      // The first commit is the server's labelled UTC time; the browser's own
+      // zone follows once it has loaded.
+      expect(seen[0]).toBe("2026-11-15 18:45:00 UTC");
+      expect(time()?.textContent).toBe(localText(first));
+      seen.length = 0;
+      await act(async () =>
+        root.render(createElement(Watch, { iso: next, at: el })),
+      );
+      expect(seen[0]).toBe(localText(next));
+      expect(time()?.textContent).toBe(localText(next));
+      expect(time()?.getAttribute("dateTime")).toBe(next);
+      expect(time()?.getAttribute("title")).toBe("2026-11-16 04:30:00 UTC");
+    } finally {
+      await act(async () => root.unmount());
+      el.remove();
+      seen.length = 0;
+    }
   });
 });
