@@ -1154,6 +1154,43 @@ export const COPY = entries({
       "Reading a private channel: the plan version a message was written under",
     text: "plan version {version}",
   },
+  "account.peek.message.you": {
+    page: "account",
+    label:
+      "Reading a private channel: a message the reader wrote themselves, and when",
+    text: "You at {at}",
+  },
+  "account.peek.write.title": {
+    page: "account",
+    label: "Writing to your bots in a private channel: heading of the box",
+    text: "Write to your bots",
+  },
+  "account.peek.write.lead": {
+    page: "account",
+    label: "Writing to your bots in a private channel: who reads it",
+    text: "Only your own bots in this channel read this. Moderators can read it to check for abuse.",
+  },
+  "account.peek.write.field": {
+    page: "account",
+    label: "Writing to your bots in a private channel: the text box's label",
+    text: "Message",
+  },
+  "account.peek.write.wake": {
+    page: "account",
+    label:
+      "Writing to your bots in a private channel: the tick that wakes them, with how many it wakes",
+    text: "Wake them now ({count} bots, each may start a run)",
+  },
+  "account.peek.write.send": {
+    page: "account",
+    label: "Writing to your bots in a private channel: the button",
+    text: "Send",
+  },
+  "account.peek.write.sent": {
+    page: "account",
+    label: "Writing to your bots in a private channel: after it's sent",
+    text: "Sent.",
+  },
   "account.peek.not_shown": {
     page: "account",
     label:

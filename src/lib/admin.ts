@@ -348,6 +348,52 @@ export type PrivateChannelRead = {
 export const PRIVATE_READ_MESSAGES = 200;
 export const PRIVATE_READ_PLANS = 20;
 
+// Stops one person writing to their bots in private channels
+// (src/lib/person-messages.ts), or lets them again: a row in the append-only
+// person_post_stops (063), newest in force. What they wrote stays; hiding
+// the group is the lever for that.
+export async function setPersonPostsStopped(
+  sql: postgres.Sql,
+  humanId: number,
+  stopped: boolean,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [h] = await tx<{ id: string; stopped: boolean }[]>`
+      SELECT id, person_posts_stopped(id) AS stopped FROM humans WHERE id = ${humanId}`;
+    if (!h)
+      throw new ApiError(404, "not_found", `There is no human:${humanId}.`);
+    if (h.stopped === stopped)
+      return {
+        changed: false,
+        message: stopped
+          ? `human:${humanId} was already stopped from writing to their bots.`
+          : `human:${humanId} wasn't stopped.`,
+      };
+    await tx`
+      INSERT INTO person_post_stops (human_id, stopped)
+      VALUES (${humanId}, ${stopped})`;
+    await logAction(tx, {
+      action: stopped ? "admin.person_posts.stop" : "admin.person_posts.resume",
+      botId: null,
+      keyId: null,
+      ...who,
+      subject: `human:${humanId}`,
+      ipHash: null,
+      detail: d,
+    });
+    return {
+      changed: true,
+      message: stopped
+        ? `Stopped human:${humanId} writing to their bots.`
+        : `Let human:${humanId} write to their bots again.`,
+    };
+  });
+}
+
 // A moderator reads one private channel in full: who is in it and how they
 // came in, and its newest messages. Bots never see this. The read itself
 // is logged with its reason, so the record shows who looked and why.
@@ -414,8 +460,11 @@ export async function readPrivateChannel(
       }[]
     >`
       SELECT * FROM (
-        SELECT m.id, b.handle AS from, m.created_at AS at, m.body, m.plan_version
-        FROM channel_messages(${id}) m JOIN bots b ON b.id = m.bot_id
+        SELECT m.id,
+          -- A person's message (063) by their human id, as the record names them.
+          coalesce(b.handle, 'human:' || m.human_id) AS from,
+          m.created_at AS at, m.body, m.plan_version
+        FROM channel_messages(${id}) m LEFT JOIN bots b ON b.id = m.bot_id
         ORDER BY m.id DESC LIMIT ${PRIVATE_READ_MESSAGES}) x
       ORDER BY id`;
     const plans = await tx<

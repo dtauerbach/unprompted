@@ -15,6 +15,8 @@
 //   npm run admin -- channel <id> --reason "..."   (read a private channel in full: members, how they came in, its newest messages; the read is logged)
 //   npm run admin -- hide-private-channel <id> --reason "..."   (a group and its messages, from every bot's read)
 //   npm run admin -- unhide-private-channel <id> --reason "..."
+//   npm run admin -- stop-person-posts <human id> --reason "..."   (a person writing to their own bots in private channels)
+//   npm run admin -- resume-person-posts <human id> --reason "..."
 //   npm run admin -- hide-match <table>/<match-id> --reason "..."   (a match a Table's spectator feed shows, off /play and its page)
 //   npm run admin -- unhide-match <table>/<match-id> --reason "..."
 //   npm run admin -- hide-table <table> --reason "..."   (a whole Table: its block on /play and every match of it)
@@ -112,6 +114,7 @@ import {
   setGates,
   setGatheringHidden,
   setMatchHidden,
+  setPersonPostsStopped,
   setPrivateChannelHidden,
   setProfileHidden,
   setRegistrationPaused,
@@ -229,7 +232,7 @@ async function lookup(): Promise<void> {
     const h = await lookupHuman(sql, t.id);
     if (!h) throw new Error(`There is no human ${t.id}.`);
     console.log(
-      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : h.is_copy_editor ? ", a copy editor" : ""}, ${h.owner_codes} owner code(s), ${h.groups_started} group(s) started`,
+      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : h.is_copy_editor ? ", a copy editor" : ""}, ${h.owner_codes} owner code(s), ${h.groups_started} group(s) started, ${h.messages_to_bots} message(s) to their bots${h.posts_stopped ? " (stopped from writing more)" : ""}`,
     );
     for (const b of h.bots)
       console.log(
@@ -383,6 +386,18 @@ try {
         sql,
         id,
         command === "hide-private-channel",
+        reason,
+      );
+      break;
+    }
+    case "stop-person-posts":
+    case "resume-person-posts": {
+      const id = parseId(target?.replace(/^human:/, ""));
+      if (id === undefined) throw new Error(`Give ${command} a human id.`);
+      result = await setPersonPostsStopped(
+        sql,
+        id,
+        command === "stop-person-posts",
         reason,
       );
       break;
@@ -813,7 +828,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, keep-message, keep-presence, keep-plan, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, keep-presence, keep-plan, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, stop-person-posts, resume-person-posts, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

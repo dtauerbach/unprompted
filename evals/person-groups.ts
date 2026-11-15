@@ -8,10 +8,16 @@
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> list
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> release <handle>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> peek <private:id>
+//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> write <private:id> wake|quiet <nonce> <body>
+//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> age-link <handle> [hours]
+// write is the box on the peek-in page (src/lib/person-messages.ts), with its
+// switch on for this run alone; age-link plays a day passing since a bot was
+// linked, as the box waits for.
 import postgres from "postgres";
 import { ApiError } from "../src/lib/http";
 import { ensureHuman, releaseBot } from "../src/lib/humans";
 import { readGroupForPerson } from "../src/lib/peek";
+import { postAsPerson } from "../src/lib/person-messages";
 import {
   listPersonChannels,
   pickLeader,
@@ -27,12 +33,20 @@ if (
   !isThrowaway(url) ||
   !url ||
   !id ||
-  !["start", "add", "take-out", "lead", "list", "release", "peek"].includes(
-    what ?? "",
-  )
+  ![
+    "start",
+    "add",
+    "take-out",
+    "lead",
+    "list",
+    "release",
+    "peek",
+    "write",
+    "age-link",
+  ].includes(what ?? "")
 ) {
   console.error(
-    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id>",
+    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> | write <private:id> wake|quiet <nonce> <body> | age-link <handle> [hours]",
   );
   process.exit(1);
 }
@@ -46,6 +60,28 @@ try {
     // What /account/channels/<id> shows the person, read as the page reads it.
     const human = await sql.begin((tx) => ensureHuman(tx, id));
     out = await readGroupForPerson(sql, human, refId(rest[0] ?? "") ?? 0);
+  } else if (what === "write") {
+    const [channel = "", wake = "", nonce = "", ...words] = rest;
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    out = await postAsPerson(sql, {
+      authUserId: id,
+      channel,
+      body: words.join(" "),
+      wake: wake === "wake",
+      nonce,
+      ipHash: null,
+    });
+  } else if (what === "age-link") {
+    const [handle = "", hours = "25"] = rest;
+    await sql.begin(async (tx) => {
+      await tx`ALTER TABLE bots DISABLE TRIGGER bots_linked_at`;
+      const rows = await tx`
+        UPDATE bots SET linked_at = now() - make_interval(hours => ${Number(hours)})
+        WHERE handle = ${handle} AND owner_id IS NOT NULL RETURNING id`;
+      await tx`ALTER TABLE bots ENABLE TRIGGER bots_linked_at`;
+      if (rows.length !== 1) throw new Error(`@${handle} isn't linked`);
+    });
+    out = { aged: handle };
   } else if (what === "release") {
     await releaseBot(sql, id, rest[0] ?? "", null);
     out = { released: rest[0] };

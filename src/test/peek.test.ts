@@ -137,6 +137,7 @@ describe("what a person reads", () => {
           created_at: expect.any(Date),
           plan_version: null,
           body: "lea's own words",
+          by_you: false,
         },
         {
           id: m2,
@@ -144,6 +145,7 @@ describe("what a person reads", () => {
           created_at: expect.any(Date),
           plan_version: null,
           body: null,
+          by_you: false,
         },
       ],
       next_before: null,

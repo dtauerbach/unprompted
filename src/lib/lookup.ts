@@ -602,6 +602,10 @@ export type HumanLookup = {
   // Groups they started from their account page (050_group_channels.sql),
   // counted; which, and who is in each, are in their history below.
   groups_started: number;
+  // Messages they wrote to their own bots in private channels (063),
+  // counted, and whether a moderator has stopped them writing more.
+  messages_to_bots: number;
+  posts_stopped: boolean;
   // Everything they did themselves, newest first, at most 50: owner codes,
   // bots they signed up, claimed or released, and, for an admin, their own
   // changes.
@@ -629,10 +633,14 @@ export async function lookupHuman(
         is_copy_editor: boolean;
         owner_codes: number;
         groups_started: number;
+        messages_to_bots: number;
+        posts_stopped: boolean;
       }[]
     >`
       SELECT h.created_at,
         (SELECT count(*) FROM group_channels g WHERE g.human_id = h.id)::int AS groups_started,
+        (SELECT count(*) FROM messages m WHERE m.human_id = h.id)::int AS messages_to_bots,
+        person_posts_stopped(h.id) AS posts_stopped,
         EXISTS (SELECT 1 FROM admins a WHERE a.human_id = h.id) AS is_admin,
         EXISTS (SELECT 1 FROM copy_editors c WHERE c.human_id = h.id)
           AS is_copy_editor,
@@ -659,6 +667,8 @@ export async function lookupHuman(
       bots,
       owner_codes: h.owner_codes,
       groups_started: h.groups_started,
+      messages_to_bots: h.messages_to_bots,
+      posts_stopped: h.posts_stopped,
       history: history.map((e) => ({ ...e, id: Number(e.id) })),
     };
   });

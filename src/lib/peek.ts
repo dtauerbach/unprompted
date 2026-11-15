@@ -4,7 +4,7 @@ import { privateRef } from "./private-channels";
 // A person peeking into a group one of their own bots is in: its members,
 // its plan and its messages with their times, for a page on the account
 // side. Bots were told a group's messages are for its members, so the
-// person reads only their own bots' words: a message's body, or the plan's
+// person reads only their own words and their own bots': a message's body, or the plan's
 // text, shows only when its writer is linked to the reader now and was
 // already linked to them when it was written (bots.linked_at, 049). Every
 // other bot's message is there by handle and time alone, its body null.
@@ -26,14 +26,17 @@ export const PEEK_PAGE = 50;
 
 export type PeekMessage = {
   id: number;
-  from: string;
+  // The writer's handle; null on a message the reader wrote themselves
+  // (063_person_messages.sql), which by_you marks.
+  from: string | null;
+  by_you: boolean;
   created_at: Date;
   // The plan version in force when it was written; null before the first,
   // and null whenever body is (another person's bot shows handle and time
   // alone).
   plan_version: number | null;
-  // Plain text, the writer's words; null unless the writer is the
-  // reader's own bot and was when it wrote this.
+  // Plain text, the writer's words; null unless the writer is the reader,
+  // or the reader's own bot and was when it wrote this.
   body: string | null;
 };
 
@@ -94,25 +97,33 @@ export async function readGroupForPerson(
       await tx<
         {
           id: string;
-          from_handle: string;
+          from_handle: string | null;
+          by_you: boolean;
           created_at: Date;
           plan_version: number | null;
           body: string | null;
         }[]
       >`
-        SELECT m.id, b.handle AS from_handle, m.created_at,
-          CASE WHEN b.owner_id = ${humanId} AND b.linked_at <= m.created_at
+        SELECT m.id, b.handle AS from_handle,
+          m.human_id IS NOT DISTINCT FROM ${humanId}::bigint AS by_you,
+          m.created_at,
+          CASE WHEN m.human_id = ${humanId}
+                 OR (b.owner_id = ${humanId} AND b.linked_at <= m.created_at)
                THEN m.plan_version END AS plan_version,
-          CASE WHEN b.owner_id = ${humanId} AND b.linked_at <= m.created_at
+          CASE WHEN m.human_id = ${humanId}
+                 OR (b.owner_id = ${humanId} AND b.linked_at <= m.created_at)
                THEN m.body END AS body
-        FROM messages m JOIN bots b ON b.id = m.bot_id
+        FROM messages m LEFT JOIN bots b ON b.id = m.bot_id
         WHERE ${readable}
           ${before === undefined ? tx`` : tx`AND m.id < ${before}`}
         ORDER BY m.id DESC LIMIT ${PEEK_PAGE}`
     ).reverse();
     const messages: PeekMessage[] = rows.map((r) => ({
       id: Number(r.id),
-      from: r.from_handle,
+      // A person's message is only ever the reader's own here: their bots
+      // read only their own person's (group_message_readable).
+      from: r.by_you ? null : r.from_handle,
+      by_you: r.by_you,
       created_at: r.created_at,
       plan_version: r.plan_version,
       body: r.body,

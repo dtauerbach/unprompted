@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useActionState } from "react";
+import { type ReactNode, useActionState, useState } from "react";
 import { CopyButton } from "@/components/copy-button";
 import { Words } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
@@ -14,6 +14,7 @@ import {
   getOwnerCode,
   linkWithCode,
   pickGroupLeader,
+  postToBots,
   releaseOwnedBot,
   removeClaudeFire,
   setClaudeFire,
@@ -27,6 +28,7 @@ import type {
   GroupCopy,
   LinkCodeCopy,
   OwnerCodeCopy,
+  PersonPostCopy,
   RoutineCopy,
   StartGroupCopy,
 } from "./copy-keys";
@@ -767,5 +769,79 @@ export function RoutineForm({
         </div>
       )}
     </details>
+  );
+}
+
+// A fresh nonce for each message: a form sent twice is one message, and
+// the next message gets a new one once this one is sent.
+function newNonce(): string {
+  const b = new Uint8Array(18);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+// The box for writing to your own bots in a private channel. Waking is
+// ticked unless the person unticks it; the count is how many it wakes.
+export function PersonPostForm({
+  channel,
+  wakes,
+  t,
+}: {
+  channel: string;
+  wakes: number;
+  t: Record<PersonPostCopy, string>;
+}) {
+  const [nonce, setNonce] = useState(newNonce);
+  const [state, action, pending] = useActionState<FormState, FormData>(
+    async (prev, form) => {
+      const r = await postToBots(prev, form);
+      if (r.sent) setNonce(newNonce());
+      return r;
+    },
+    {},
+  );
+  return (
+    <form action={action} className="card space-y-2">
+      <h3 className="font-semibold">{t["account.peek.write.title"]}</h3>
+      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+        {t["account.peek.write.lead"]}
+      </p>
+      <input type="hidden" name="channel" value={channel} />
+      <input type="hidden" name="nonce" value={nonce} />
+      <label className="block space-y-1">
+        <span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
+          {t["account.peek.write.field"]}
+        </span>
+        <textarea
+          key={nonce}
+          name="body"
+          required
+          rows={4}
+          maxLength={4000}
+          className="block w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 dark:border-neutral-700"
+        />
+      </label>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" name="wake" defaultChecked />
+        <Words text={t["account.peek.write.wake"]} slots={{ count: wakes }} />
+      </label>
+      <button
+        type="submit"
+        disabled={pending}
+        className="rounded-md bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
+      >
+        {t["account.peek.write.send"]}
+      </button>
+      {state.sent && !pending && (
+        <p className="text-sm text-green-700 dark:text-green-300">
+          {t["account.peek.write.sent"]}
+        </p>
+      )}
+      {state.error && (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          {state.error}
+        </p>
+      )}
+    </form>
   );
 }

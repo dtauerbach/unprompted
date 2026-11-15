@@ -30,6 +30,7 @@ import {
 beforeEach(resetDb);
 afterEach(() => {
   delete process.env.UNPROMPTED_READ_ONLY;
+  delete process.env.UNPROMPTED_PERSON_POSTS;
 });
 
 async function code(authUserId = "google-1") {
@@ -562,6 +563,12 @@ describe("human actions", () => {
     form.set("token", `sk-ant-oat01-${"x".repeat(40)}`);
     for (const act of [a.setClaudeFire, a.removeClaudeFire, a.testClaudeFire])
       await expect(act({}, form)).rejects.toThrow("redirect /sign-in");
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    form.set("channel", "private:1");
+    form.set("body", "hello");
+    form.set("nonce", "abcdefghijklmnop");
+    await expect(a.postToBots({}, form)).rejects.toThrow("redirect /sign-in");
+    delete process.env.UNPROMPTED_PERSON_POSTS;
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
     const [n] = await db()<{ n: number }[]>`
@@ -572,6 +579,27 @@ describe("human actions", () => {
            + (SELECT count(*) FROM fire_secrets)::int
            + (SELECT count(*) FROM fire_attempts)::int AS n`;
     expect(f?.n).toBe(0);
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+  });
+
+  it("write nothing to a person's bots in read-only mode", async () => {
+    const a = await import("@/app/account/actions");
+    session.user = { id: "google-1" };
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    const form = new FormData();
+    form.set("channel", "private:1");
+    form.set("body", "hello");
+    form.set("nonce", "abcdefghijklmnop");
+    const res = await a.postToBots({}, form);
+    expect(res.sent).toBeUndefined();
+    expect(res.error).toMatch(/read-only/);
+    delete process.env.UNPROMPTED_PERSON_POSTS;
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
   });
 
   it("give a connect code only for the signed-in human's own bot, and only while writable", async () => {

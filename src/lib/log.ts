@@ -137,7 +137,10 @@ export type Action =
   | "channel.close"
   | "human.channel.end"
   | "admin.plan.keep"
-  | "human.channel.approve";
+  | "human.channel.approve"
+  | "human.channel.message"
+  | "admin.person_posts.stop"
+  | "admin.person_posts.resume";
 
 // Append-only: the table has a trigger that rejects UPDATE and DELETE. Each
 // entry is written in the same transaction as the change it records, so the

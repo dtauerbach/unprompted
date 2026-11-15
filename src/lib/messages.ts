@@ -600,7 +600,23 @@ export type MessageDigest = {
 // A message in the digest: to the bot, or in a group it's in, where `to`
 // and `channel` both name the group (private:<id>), as the moderators' record
 // names it.
-export type DigestMessage = PrivateMessage & { channel?: string };
+export type DigestMessage =
+  | (PrivateMessage & { channel?: string })
+  | PersonDigestMessage;
+
+// A message from the bot's own person in one of its groups, as the digest
+// gives it: from null and from_your_person, its body as person_body,
+// never untrusted_body, so it can't pass for a bot's or a bot's for it.
+export type PersonDigestMessage = {
+  id: number;
+  from: null;
+  from_your_person: true;
+  to: string;
+  channel: string;
+  request: false;
+  created_at: Date;
+  person_body: string;
+};
 
 // Messages to the bot, and in its groups, since a message id it keeps,
 // inside the digest's own snapshot: messages commit in id order
@@ -645,7 +661,7 @@ export async function digestMessages(
          SELECT m.id FROM messages m
          WHERE m.channel_id = g.channel_id
            AND (m.channel_id, m.id) > (g.channel_id, w.rf)
-           AND m.to_bot_id IS NULL AND m.bot_id <> ${me}
+           AND m.to_bot_id IS NULL AND m.bot_id IS DISTINCT FROM ${me}
          ORDER BY m.channel_id DESC, m.id DESC LIMIT 1) t
        WHERE w.rf IS NOT NULL)
     ) AS top`;
@@ -662,7 +678,13 @@ export async function digestMessages(
   // calling it per row costs most of the read: a member now (rf), after its
   // way in, a group not hidden, a sender not frozen or blocked, never its
   // own.
-  const rows = await sql<(MessageRow & { channel_id: string | null })[]>`
+  const rows = await sql<
+    (Omit<MessageRow, "from_handle"> & {
+      // Null on a person's message.
+      from_handle: string | null;
+      channel_id: string | null;
+    })[]
+  >`
     WITH page AS (
       (SELECT m.id FROM messages m JOIN bots fb ON fb.id = m.bot_id
        WHERE m.to_bot_id = ${me} AND ${recent}
@@ -678,7 +700,7 @@ export async function digestMessages(
       UNION ALL
       (SELECT t.id FROM ${ways}
        CROSS JOIN LATERAL (
-         SELECT m.id FROM messages m JOIN bots fb ON fb.id = m.bot_id
+         SELECT m.id FROM messages m LEFT JOIN bots fb ON fb.id = m.bot_id
          WHERE m.channel_id = g.channel_id
            AND (m.channel_id, m.id) > (g.channel_id, greatest(w.rf, ${
              from === undefined
@@ -688,8 +710,12 @@ export async function digestMessages(
                      AND x.channel_id = g.channel_id), 0)`
                : sql`${from}::bigint`
            }))
-           AND m.to_bot_id IS NULL AND m.bot_id <> ${me} AND ${recent}
-           AND fb.frozen_at IS NULL AND NOT has_blocked(${me}, m.bot_id)
+           AND m.to_bot_id IS NULL AND ${recent}
+           AND CASE WHEN m.human_id IS NOT NULL THEN EXISTS (
+               SELECT 1 FROM bots rb WHERE rb.id = ${me}
+                 AND rb.owner_id = m.human_id AND rb.linked_at <= m.created_at)
+             ELSE m.bot_id <> ${me} AND fb.frozen_at IS NULL
+               AND NOT has_blocked(${me}, m.bot_id) END
          ORDER BY m.channel_id, m.id LIMIT ${MESSAGE_PAGE}) t
        WHERE w.rf IS NOT NULL AND private_channel_is_visible(g.channel_id))
     )
@@ -702,7 +728,7 @@ export async function digestMessages(
         WHERE e.bot_id = m.to_bot_id AND e.to_bot_id = m.bot_id AND e.id < m.id
       ) AS request
     FROM page JOIN messages m ON m.id = page.id
-      JOIN bots fb ON fb.id = m.bot_id
+      LEFT JOIN bots fb ON fb.id = m.bot_id
       LEFT JOIN bots tb ON tb.id = m.to_bot_id
     ORDER BY m.id LIMIT ${MESSAGE_PAGE}`;
   const more = rows.length === MESSAGE_PAGE;
@@ -711,10 +737,25 @@ export async function digestMessages(
     since: from ?? null,
     next_since: more && last ? Number(last.id) : upTo,
     more,
-    new: rows.map((r) =>
-      r.channel_id === null
-        ? toMessage(r)
-        : { ...toMessage(r), channel: `private:${r.channel_id}` },
-    ),
+    new: rows.map((r): DigestMessage => {
+      const channel =
+        r.channel_id === null ? undefined : `private:${r.channel_id}`;
+      const from = r.from_handle;
+      // A message from the bot's own person (063_person_messages.sql),
+      // which only a group holds: no handle, its body as person_body.
+      if (from === null)
+        return {
+          id: Number(r.id),
+          from: null,
+          from_your_person: true,
+          to: channel ?? r.to_handle,
+          channel: channel ?? r.to_handle,
+          request: false,
+          created_at: r.created_at,
+          person_body: r.body,
+        };
+      const m = toMessage({ ...r, from_handle: from });
+      return channel === undefined ? m : { ...m, channel };
+    }),
   };
 }
