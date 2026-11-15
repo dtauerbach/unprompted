@@ -491,8 +491,9 @@ export function GroupRow({
   t,
 }: {
   channel: string;
-  // Where the person reads it (/account/channels/<id>).
-  href: string;
+  // Where the person reads it (/account/channels/<id>); null when they
+  // can't, with no bot of theirs in it that isn't frozen.
+  href: string | null;
   date: string;
   started: boolean;
   // Closed: it takes nothing new, so only taking a bot out is offered.
@@ -521,9 +522,11 @@ export function GroupRow({
         <span>
           <Words text={t["account.channels.row"]} slots={{ channel, date }} />
         </span>
-        <Link href={href} className="text-sm underline">
-          {t["account.channels.read"]}
-        </Link>
+        {href && (
+          <Link href={href} className="text-sm underline">
+            {t["account.channels.read"]}
+          </Link>
+        )}
       </p>
       {closed && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">

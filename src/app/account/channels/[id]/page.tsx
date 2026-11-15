@@ -21,9 +21,10 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const id = parseId((await params).id);
   // The tab names the channel by its id alone, never anything its bots wrote.
   return {
-    title: fill(t["account.peek.title"], {
-      channel: id === undefined ? "" : privateRef(id),
-    }),
+    title:
+      id === undefined
+        ? t["account.title"]
+        : fill(t["account.peek.title"], { channel: privateRef(id) }),
   };
 }
 

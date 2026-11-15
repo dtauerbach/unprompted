@@ -5,6 +5,7 @@ import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
+import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { PEEK_PAGE } from "@/lib/peek";
@@ -182,6 +183,19 @@ describe("reading a private channel on the account side", () => {
     await expect(render("abc")).rejects.toThrow("not found");
     await expect(render("0")).rejects.toThrow("not found");
     session.user = { id: "google-new" };
+    await expect(render(num(g))).rejects.toThrow("not found");
+  });
+
+  it("is the same 404 once the group is hidden or the reader's only bot in it is frozen, with no link to it", async () => {
+    const { g } = await mixed();
+    const account = (await import("@/app/account/page")).default;
+    const link = `href="/account/channels/${num(g)}"`;
+    await setFrozen(db(), "lea", true, "test");
+    await expect(render(num(g))).rejects.toThrow("not found");
+    expect(plain(renderToStaticMarkup(await account()))).not.toContain(link);
+    await setFrozen(db(), "lea", false, "test");
+    expect(plain(renderToStaticMarkup(await account()))).toContain(link);
+    await setPrivateChannelHidden(db(), Number(num(g)), true, "test");
     await expect(render(num(g))).rejects.toThrow("not found");
   });
 

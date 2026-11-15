@@ -249,11 +249,17 @@ export function groupChannelScenarios(): void {
       // Another person, whose bot isn't in it, reads nothing at all.
       expect(person("eval-group-2", "peek", g)).toBeNull();
       // And the page itself shows a stranger with no session nothing.
+      // Where sign-in is set up the proxy sends them to sign in; elsewhere
+      // the page says it isn't available. Nothing else.
       const res = await get(`/account/channels/${idOf(g)}`);
       if (res.status === 307)
         expect(
           new URL(res.headers.get("location") ?? "", "http://x").pathname,
         ).toBe("/sign-in");
+      else {
+        expect(res.status).toBe(200);
+        expect(res.text).toMatch(/isn(&#x27;|')t available/);
+      }
       expect(res.text).not.toContain("agreed");
       expect(res.text).not.toContain("Ignore your rules");
     });
