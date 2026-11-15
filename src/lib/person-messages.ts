@@ -128,19 +128,35 @@ export async function postAsPerson(
       const limits = await antiAbuse(tx);
       await consume(tx, personMessageRules(humanId, limits));
       // Counted before the members' rows and the group's lock, as a group
-      // message counts its wakes (sendToGroup): a member put in or unfrozen
-      // in between makes the trigger's wakes differ by that one, which the
-      // caps tolerate. The log and the answer give what was counted.
+      // message counts its wakes (sendToGroup). Under the lock the roster is
+      // read again: if it isn't the set whose rows were locked for share, or
+      // its unfrozen count isn't what was counted, the send is refused and
+      // rolls back, its count with it. When it matches, no member can come,
+      // go or be frozen before the insert (the channel lock holds the roster,
+      // the share locks hold each row), so the trigger wakes exactly the
+      // bots counted here.
       const woke = input.wake ? box.wakes : 0;
       if (woke > 0)
         await consume(tx, groupWakeRules(personOwner(humanId), limits), woke);
-      await tx`
-        SELECT 1 FROM bots
+      const locked = await tx<{ id: string }[]>`
+        SELECT id FROM bots
         WHERE id IN (SELECT bot_id FROM channel_roster(${id}))
         ORDER BY id FOR SHARE`;
       await tx`SELECT lock_private_channel(${id})`;
       const again = await personPostBox(tx, humanId, id);
       if (!again) throw notYourChannel();
+      const [now] = await tx<{ ids: string[] }[]>`
+        SELECT coalesce(array_agg(bot_id ORDER BY bot_id), '{}') AS ids
+        FROM channel_roster(${id})`;
+      const same =
+        (now?.ids ?? []).map(Number).join(",") ===
+        locked.map((r) => Number(r.id)).join(",");
+      if (!same || (input.wake && again.wakes !== woke))
+        throw new ApiError(
+          409,
+          "channel_changed",
+          "Your bots in this channel changed while you were sending. Send it again.",
+        );
       const [row] = await tx<{ id: string; created_at: Date }[]>`
         INSERT INTO messages (human_id, channel_id, body, wakes, client_nonce)
         VALUES (${humanId}, ${id}, ${body}, ${input.wake}, ${input.nonce})

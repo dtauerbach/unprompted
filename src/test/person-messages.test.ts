@@ -253,6 +253,39 @@ describe("a person writing to their own bots", () => {
     expect(await wakeOf(ben)).toBe(b0 + 1);
   });
 
+  it("refuses, writing nothing, when a member is frozen after its wakes were counted", async () => {
+    const { lea, ben, channel } = await own();
+    const l0 = await wakeOf(lea);
+    const b0 = await wakeOf(ben);
+    // A freeze that holds ben's row while the send counts two wakes, and
+    // commits once the send waits on that row: under the group's lock it
+    // finds one bot to wake, not the two it counted.
+    const holder = await db().reserve();
+    await holder`BEGIN`;
+    await holder`UPDATE bots SET frozen_at = now() WHERE id = ${ben.id}`;
+    const sending = post(channel, "Counted two.", {
+      nonce: "nonce-race-000000",
+    });
+    await new Promise((r) => setTimeout(r, 300));
+    await holder`COMMIT`;
+    holder.release();
+    await expect(sending).rejects.toMatchObject({
+      status: 409,
+      code: "channel_changed",
+    });
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+    expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0, b0]);
+    // Sent again with the same form, it goes through and wakes the one.
+    const again = await post(channel, "Counted two.", {
+      nonce: "nonce-race-000000",
+    });
+    expect(again.woke).toBe(1);
+    expect(await wakeOf(lea)).toBe(l0 + 1);
+    expect(await wakeOf(ben)).toBe(b0);
+  });
+
   it("is one message when the same form is sent twice", async () => {
     const { channel } = await own();
     const once = nonce();
