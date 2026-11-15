@@ -33,13 +33,16 @@ export function localText(
 
 export function LocalTime({ iso }: { iso: string }) {
   const utc = exactUtc(new Date(iso));
-  const [text, setText] = useState(utc);
+  // Only whether the browser has taken over is kept, never the words: they
+  // come from the current iso on every render, so a reused component never
+  // shows its last time for a moment after its iso changes.
+  const [local, setLocal] = useState(false);
   useEffect(() => {
-    setText(localText(iso));
-  }, [iso]);
+    setLocal(true);
+  }, []);
   return (
     <time dateTime={iso} title={utc}>
-      {text}
+      {local ? localText(iso) : utc}
     </time>
   );
 }

@@ -133,6 +133,7 @@ describe("reading a private channel on the account side", () => {
     });
     expect(plan.status).toBe(200);
     const m3 = await send(otto, g, "otto under the plan");
+    const m4 = await send(lea, g, "lea under the plan");
     const html = await render(num(g));
 
     expect(html).toContain(`Private channel ${g}`);
@@ -144,14 +145,18 @@ describe("reading a private channel on the account side", () => {
     expect(html).not.toContain("otto's private words");
     expect(html).not.toContain("otto under the plan");
     expect(html).toContain("lea's plan");
-    for (const id of [m1, m2, m3]) expect(html).toContain(`id="m${id}"`);
+    for (const id of [m1, m2, m3, m4]) expect(html).toContain(`id="m${id}"`);
     const row = (id: number) =>
       new RegExp(`<li[^>]*id="m${id}"[\\s\\S]*?</li>`).exec(html)?.[0] ?? "";
     expect(row(m1)).toContain("@lea at ");
     expect(row(m1)).not.toContain(NOT_SHOWN);
     expect(row(m2)).toContain("@otto at ");
     expect(row(m2)).toContain(NOT_SHOWN);
-    expect(row(m3)).toContain("plan version 1");
+    // Another person's bot's row is its handle, its time and "Not shown",
+    // nothing else, not even the plan version it wrote under.
+    expect(row(m3)).toContain(NOT_SHOWN);
+    expect(row(m3)).not.toContain("plan version");
+    expect(row(m4)).toContain("plan version 1");
     // Each time is a machine-readable instant, shown in UTC until the
     // reader's browser puts it in their own zone.
     expect(row(m1)).toMatch(

@@ -220,10 +220,11 @@ describe("what a person reads", () => {
     ]);
   });
 
-  it("stamps each message with its plan version, and shows the plan by the same rule", async () => {
+  it("stamps the reader's own messages with their plan version, never another person's, and shows the plan by the same rule", async () => {
     const { lea, otto, p, q, g } = await mixed();
     await save(lea, g, "lea's plan", 0);
     const m = await send(otto, g, "under the plan");
+    const mine = await send(lea, g, "mine under the plan");
     const page = await peek(p, g);
     expect(page?.plan).toEqual({
       version: 1,
@@ -232,7 +233,12 @@ describe("what a person reads", () => {
       body: "lea's plan",
     });
     expect(page?.messages).toEqual([
-      expect.objectContaining({ id: m, plan_version: 1, body: null }),
+      expect.objectContaining({ id: m, plan_version: null, body: null }),
+      expect.objectContaining({
+        id: mine,
+        plan_version: 1,
+        body: "mine under the plan",
+      }),
     ]);
     expect((await peek(q, g))?.plan).toEqual({
       version: 1,

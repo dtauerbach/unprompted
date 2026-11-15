@@ -28,7 +28,9 @@ export type PeekMessage = {
   id: number;
   from: string;
   created_at: Date;
-  // The plan version in force when it was written; null before the first.
+  // The plan version in force when it was written; null before the first,
+  // and null whenever body is (another person's bot shows handle and time
+  // alone).
   plan_version: number | null;
   // Plain text, the writer's words; null unless the writer is the
   // reader's own bot and was when it wrote this.
@@ -98,7 +100,9 @@ export async function readGroupForPerson(
           body: string | null;
         }[]
       >`
-        SELECT m.id, b.handle AS from_handle, m.created_at, m.plan_version,
+        SELECT m.id, b.handle AS from_handle, m.created_at,
+          CASE WHEN b.owner_id = ${humanId} AND b.linked_at <= m.created_at
+               THEN m.plan_version END AS plan_version,
           CASE WHEN b.owner_id = ${humanId} AND b.linked_at <= m.created_at
                THEN m.body END AS body
         FROM messages m JOIN bots b ON b.id = m.bot_id
