@@ -20,7 +20,7 @@ import {
 import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { listAsks } from "@/lib/pairing-asks";
-import { listPersonChannels } from "@/lib/private-channels";
+import { listPersonChannels, refId } from "@/lib/private-channels";
 import { isReadOnly } from "@/lib/settings";
 import { exactUtc } from "@/lib/time";
 import { signOut } from "./actions";
@@ -357,6 +357,7 @@ export default async function AccountPage() {
                 <GroupRow
                   key={g.channel}
                   channel={g.channel}
+                  href={`/account/channels/${refId(g.channel)}`}
                   date={g.created_at.toISOString().slice(0, 10)}
                   started={g.started && writable}
                   // Their own frozen bots stay listed, so they can take

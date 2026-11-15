@@ -72,6 +72,7 @@ describe("the proxy at /agent", () => {
       "/agent",
       "/oauth/authorize",
       "/account",
+      "/account/channels/:id",
       "/admin/:path*",
       "/oauth/authorize/return/:nonce",
     ]);

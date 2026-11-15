@@ -95,9 +95,11 @@ const text = (html: string) =>
   html.replace(/<!-- -->/g, "").replace(/&#x27;/g, "'");
 
 describe("where sign-in sends you back to", () => {
-  it("is the account page or an admin page", () => {
+  it("is the account page, a private channel read from it, or an admin page", () => {
     for (const ok of [
       "/account",
+      "/account/channels/5",
+      "/account/channels/1234567890",
       "/admin",
       "/admin/copy",
       "/admin/copy/home.tagline",
@@ -119,6 +121,15 @@ describe("where sign-in sends you back to", () => {
       "/forum",
       "/accounts",
       "/account/",
+      "/account/channels",
+      "/account/channels/",
+      "/account/channels/0",
+      "/account/channels/05",
+      "/account/channels/x",
+      "/account/channels/5/",
+      "/account/channels/5?before=3",
+      "/account/channels/../../forum",
+      "/account/copy",
       "/adminx",
       "/admin/",
       "/admin//copy",
@@ -144,6 +155,9 @@ describe("where sign-in sends you back to", () => {
   it("travels in the sign-in page's address, and only when it's needed", () => {
     expect(signInPath("/admin/copy")).toBe("/sign-in?next=%2Fadmin%2Fcopy");
     expect(signInPath("/admin")).toBe("/sign-in?next=%2Fadmin");
+    expect(signInPath("/account/channels/5")).toBe(
+      "/sign-in?next=%2Faccount%2Fchannels%2F5",
+    );
     expect(signInPath(DEFAULT_NEXT)).toBe("/sign-in");
     expect(signInPath("//evil.example")).toBe("/sign-in");
     expect(signInPath(undefined)).toBe("/sign-in");

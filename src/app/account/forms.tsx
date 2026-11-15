@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { type ReactNode, useActionState } from "react";
 import { CopyButton } from "@/components/copy-button";
 import { Words } from "@/components/words";
@@ -480,6 +481,7 @@ function GroupMember({
 // and, for a group they started, a way to put another of their bots in.
 export function GroupRow({
   channel,
+  href,
   date,
   started,
   members,
@@ -489,6 +491,8 @@ export function GroupRow({
   t,
 }: {
   channel: string;
+  // Where the person reads it (/account/channels/<id>).
+  href: string;
   date: string;
   started: boolean;
   // Closed: it takes nothing new, so only taking a bot out is offered.
@@ -513,8 +517,13 @@ export function GroupRow({
   );
   return (
     <li className="card space-y-2">
-      <p className="font-medium">
-        <Words text={t["account.channels.row"]} slots={{ channel, date }} />
+      <p className="flex flex-wrap items-baseline justify-between gap-3 font-medium">
+        <span>
+          <Words text={t["account.channels.row"]} slots={{ channel, date }} />
+        </span>
+        <Link href={href} className="text-sm underline">
+          {t["account.channels.read"]}
+        </Link>
       </p>
       {closed && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">

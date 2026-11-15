@@ -85,6 +85,7 @@ export const GROUP_COPY = [
   "account.channels.lead_first",
   "account.channels.end",
   "account.channels.closed",
+  "account.channels.read",
 ] as const satisfies readonly CopyKey[];
 
 export type GroupCopy = (typeof GROUP_COPY)[number];

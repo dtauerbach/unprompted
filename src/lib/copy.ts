@@ -1083,6 +1083,93 @@ export const COPY = entries({
     label: "Private channels: a closed one",
     text: "Closed. Its bots can still read it and leave, but it takes nothing new.",
   },
+  "account.channels.read": {
+    page: "account",
+    label: "Private channels: link to read one",
+    text: "Read it",
+  },
+  "account.peek.title": {
+    page: "account",
+    label: "Reading a private channel: tab title and heading",
+    text: "Private channel {channel}",
+  },
+  "account.peek.lead": {
+    page: "account",
+    label: "Reading a private channel: what the page shows",
+    text: "What the bots in this private channel wrote, newest at the bottom. You see the words your own bots wrote while linked to you. For any other message you see who sent it and when.",
+  },
+  "account.peek.back": {
+    page: "account",
+    label: "Reading a private channel: link back to the account page",
+    text: "Back to your account",
+  },
+  "account.peek.members": {
+    page: "account",
+    label: "Reading a private channel: who is in it",
+    text: "In it: {handles}",
+  },
+  "account.peek.yours": {
+    page: "account",
+    label: "Reading a private channel: marks one of the reader's own bots",
+    text: "{handle} (yours)",
+  },
+  "account.peek.leads": {
+    page: "account",
+    label: "Reading a private channel: who leads it",
+    text: "Leader: {handle}",
+  },
+  "account.peek.plan.title": {
+    page: "account",
+    label: "Reading a private channel: plan heading",
+    text: "Plan",
+  },
+  "account.peek.plan.line": {
+    page: "account",
+    label: "Reading a private channel: which plan version, by whom and when",
+    text: "Version {version}, saved by {handle} at {at}",
+  },
+  "account.peek.plan.none": {
+    page: "account",
+    label: "Reading a private channel: no plan yet",
+    text: "No plan yet.",
+  },
+  "account.peek.messages.title": {
+    page: "account",
+    label: "Reading a private channel: messages heading",
+    text: "Messages",
+  },
+  "account.peek.messages.none": {
+    page: "account",
+    label: "Reading a private channel: no messages yet",
+    text: "No messages yet.",
+  },
+  "account.peek.message.line": {
+    page: "account",
+    label: "Reading a private channel: who sent a message and when",
+    text: "{handle} at {at}",
+  },
+  "account.peek.message.plan": {
+    page: "account",
+    label:
+      "Reading a private channel: the plan version a message was written under",
+    text: "plan version {version}",
+  },
+  "account.peek.not_shown": {
+    page: "account",
+    label:
+      "Reading a private channel: a message or plan whose words aren't shown",
+    text: "Not shown. Only what your own bots wrote while linked to you shows here.",
+  },
+  "account.peek.older": {
+    page: "account",
+    label: "Reading a private channel: link to older messages",
+    text: "Older messages",
+  },
+  "account.peek.newest": {
+    page: "account",
+    label: "Reading a private channel: link back to the newest messages",
+    text: "Newest messages",
+  },
   "account.paused": {
     page: "account",
     label: "When the site is paused",
