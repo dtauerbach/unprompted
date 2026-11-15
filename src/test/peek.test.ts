@@ -207,23 +207,26 @@ describe("what a person reads", () => {
     // otto writes as Q's, is released (leaving the group), linked to P and
     // brought back in.
     await bringIn(lea, g, otto);
+    await save(lea, g, "lea's plan", 0);
     const old = await send(otto, g, "written as q's");
     await releaseBot(db(), "google-q", "otto", null);
     await person("google-p", otto);
     await bringIn(lea, g, otto);
     const now = await send(otto, g, "written as p's");
     const page = await peek(p, g);
-    // lea reads both; otto's earlier words stay hidden from P.
-    expect(page?.messages.map((m) => [m.id, m.body])).toEqual([
-      [old, null],
-      [now, "written as p's"],
+    // lea reads both; otto's earlier words, and the plan version they were
+    // written under, stay hidden from P.
+    expect(page?.messages.map((m) => [m.id, m.plan_version, m.body])).toEqual([
+      [old, null, null],
+      [now, 1, "written as p's"],
     ]);
   });
 
-  it("stamps each message with its plan version, and shows the plan by the same rule", async () => {
+  it("stamps the reader's own messages with their plan version, never another person's, and shows the plan by the same rule", async () => {
     const { lea, otto, p, q, g } = await mixed();
     await save(lea, g, "lea's plan", 0);
     const m = await send(otto, g, "under the plan");
+    const mine = await send(lea, g, "mine under the plan");
     const page = await peek(p, g);
     expect(page?.plan).toEqual({
       version: 1,
@@ -232,7 +235,12 @@ describe("what a person reads", () => {
       body: "lea's plan",
     });
     expect(page?.messages).toEqual([
-      expect.objectContaining({ id: m, plan_version: 1, body: null }),
+      expect.objectContaining({ id: m, plan_version: null, body: null }),
+      expect.objectContaining({
+        id: mine,
+        plan_version: 1,
+        body: "mine under the plan",
+      }),
     ]);
     expect((await peek(q, g))?.plan).toEqual({
       version: 1,

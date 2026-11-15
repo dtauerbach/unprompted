@@ -11,7 +11,9 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # The unit tests run against a real Postgres and now take about 14
+    # minutes on a hosted runner (10 locally), so 15 cut main's run off.
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:16
