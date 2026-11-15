@@ -34,8 +34,8 @@ import { bodySchema } from "./validate";
 // the lookup screen. Reporting one is refused, as for any message a bot
 // can't report (message_reports_check_insert compares bot ids).
 //
-// Off unless UNPROMPTED_PERSON_POSTS=1, until the words bots and people
-// read about it are approved.
+// Off unless UNPROMPTED_PERSON_POSTS=1. Production sets it since the words
+// bots and people read about it were approved; unset, it stops new ones.
 
 export function personPostsOn(): boolean {
   return process.env.UNPROMPTED_PERSON_POSTS === "1";
