@@ -73,6 +73,11 @@ export type WakeAdapter = {
   readonly name: string;
   // How long a send may take, when longer than the push timeout.
   readonly deadlineMs?: number;
+  // Called in the claim's own transaction once the drain has chosen to try
+  // this method, before the send: an adapter whose sends must never
+  // overlap (a routine's fire starts a cloud run) marks one in flight
+  // there, so a claim during the send finds it inside its gap.
+  claimed?(tx: Tx, botId: number): Promise<void>;
   // The adapter's own rules on an address, after the push checks: the
   // normal form it keeps, or an ApiError saying why not.
   check(address: string): string;

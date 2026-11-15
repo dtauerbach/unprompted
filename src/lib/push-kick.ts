@@ -10,9 +10,9 @@ let runningSince: number | null = null;
 let again = false;
 
 // How long one round may keep sending, both passes together, so a round
-// never outlives KICK_STALE_MS (the last push it starts can take up to the
-// push timeout past this).
-export const KICK_ROUND_MS = 45_000;
+// never outlives KICK_STALE_MS: the last send it starts can take up to the
+// longest adapter deadline past this (a routine's fire, FIRE_DEADLINE_MS).
+export const KICK_ROUND_MS = 40_000;
 
 // A round that started longer ago than this is taken as gone: the platform
 // can end a request's after() work before its finally runs, and a flag

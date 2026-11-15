@@ -1117,6 +1117,26 @@ describe("only the production site fires", () => {
     delete process.env.VERCEL_ENV;
     expect(firesAllowed()).toBe(true);
   });
+
+  it("fails closed for a production build that isn't the production site", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      // Hosted anywhere but Vercel's production, with nothing saying so.
+      expect(firesAllowed()).toBe(false);
+      process.env.VERCEL_ENV = "preview";
+      expect(firesAllowed()).toBe(false);
+      process.env.VERCEL_ENV = "production";
+      expect(firesAllowed()).toBe(true);
+      delete process.env.VERCEL_ENV;
+      // An eval's server, sending only to a receiver on this machine.
+      process.env.UNPROMPTED_LOCAL_FIRE_RECEIVER = "http://127.0.0.1:3096";
+      expect(firesAllowed()).toBe(true);
+      process.env.VERCEL = "1";
+      expect(firesAllowed()).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("a fresh link", () => {
@@ -1308,6 +1328,132 @@ describe("fires nobody answers", () => {
     const noted = await db()<{ detail: unknown }[]>`
       SELECT detail FROM action_log WHERE action = 'claude_fire.capped'`;
     expect(noted).toEqual([{ detail: { routine: ROUTINE } }]);
+  });
+
+  it("keeps the wake queued for when the cap lifts when the routine is the bot's only way to be woken", async () => {
+    await limits({ claude_fire_per_day: 1 });
+    const a = await routined();
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    await pass(a.id, GAP + 1);
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    // Not dropped: queued for a day after the fire that filled the cap.
+    const [f] = await db()<{ sent_at: Date }[]>`
+      SELECT sent_at FROM fire_attempts WHERE bot_id = ${a.id}`;
+    const p = await pending(a.id);
+    expect(p?.pending_since?.getTime()).toBe(
+      (f?.sent_at.getTime() ?? 0) + 86_400_000,
+    );
+    // Its time comes, and the cap lets it through (raised here, since the
+    // fire's evidence can't be moved back a day): it goes.
+    await limits({ claude_fire_per_day: 2 });
+    await db()`UPDATE push_state SET pending_since = now() WHERE bot_id = ${a.id}`;
+    await drainPushes();
+    expect(fires()).toHaveLength(2);
+    expect(JSON.parse(fires()[1]?.body ?? "{}").text).toContain(
+      "wake number 2",
+    );
+  });
+});
+
+describe("a fire in flight", () => {
+  // A fire held by the deliverer until released, as a slow API would: one
+  // that takes longer than the push gap (10 seconds), as a routine's may.
+  function holdFires(): { release: () => void; started: () => number } {
+    let release = () => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    answer = () =>
+      (async () => {
+        await held;
+        return { status: 200, body: FIRED };
+      })() as unknown as Delivery;
+    return { release: () => release(), started: () => fires().length };
+  }
+  const pushGapPasses = (id: number) =>
+    db()`UPDATE push_state SET last_sent_at = last_sent_at - interval '12 seconds'
+         WHERE bot_id = ${id}`;
+
+  it("sends no second fire while the first is still going out, and the arrival goes once the gap is over", async () => {
+    const a = await routined();
+    const hold = holdFires();
+    await bump(a.id);
+    const first = drainPushes();
+    await vi.waitFor(() => expect(hold.started()).toBe(1));
+    // Twelve seconds on, still in flight: the push gap is over, an arrival
+    // comes, and another drain claims the bot.
+    await pushGapPasses(a.id);
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    hold.release();
+    await first;
+    expect(fires()).toHaveLength(1);
+    expect(await attempts(a.id)).toMatchObject([
+      { wake: "1", attempt: 1, outcome: "delivered" },
+    ]);
+    // The fire went when its claim stamped it, by the database's clock.
+    const [s] = await db()<
+      { fired_at: Date; last_sent_at: Date; sent_at: Date }[]
+    >`
+      SELECT f.fired_at, f.last_sent_at, a.sent_at FROM fire_state f
+      JOIN fire_attempts a ON a.bot_id = f.bot_id WHERE f.bot_id = ${a.id}`;
+    expect(s?.fired_at.getTime()).toBe(s?.last_sent_at.getTime());
+    expect(s?.sent_at.getTime()).toBe(s?.last_sent_at.getTime());
+    // The arrival waits for the gap, then goes as its own fire.
+    expect((await pending(a.id))?.pending_since).not.toBeNull();
+    answer = () => ({ status: 200, body: FIRED });
+    await pass(a.id, GAP + 1);
+    await drainPushes();
+    expect(fires()).toHaveLength(2);
+    expect(JSON.parse(fires()[1]?.body ?? "{}").text).toContain(
+      "wake number 2",
+    );
+  });
+
+  it("sends one fire for two test clicks at once", async () => {
+    const a = await routined();
+    const out = await Promise.allSettled([
+      testClaudeFire(db(), a.person, "alice", null, deliver),
+      testClaudeFire(db(), a.person, "alice", null, deliver),
+    ]);
+    expect(out.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    const refused = out.find((o) => o.status === "rejected");
+    expect((refused as PromiseRejectedResult).reason).toMatchObject({
+      code: "rate_limited",
+    });
+    expect(fires()).toHaveLength(1);
+  });
+
+  it("refuses a test click while a drain's fire is going out", async () => {
+    const a = await routined();
+    const hold = holdFires();
+    await bump(a.id);
+    const first = drainPushes();
+    await vi.waitFor(() => expect(hold.started()).toBe(1));
+    await expect(
+      testClaudeFire(db(), a.person, "alice", null, deliver),
+    ).rejects.toMatchObject({ code: "rate_limited" });
+    hold.release();
+    await first;
+    expect(fires()).toHaveLength(1);
+  });
+
+  it("sends no drain's fire while a test fire is going out", async () => {
+    const a = await routined();
+    const hold = holdFires();
+    const test = testClaudeFire(db(), a.person, "alice", null, deliver);
+    await vi.waitFor(() => expect(hold.started()).toBe(1));
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    hold.release();
+    await test;
+    expect(fires()).toHaveLength(1);
   });
 });
 

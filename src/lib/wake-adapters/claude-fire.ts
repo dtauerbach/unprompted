@@ -67,9 +67,16 @@ export const FIRE_GONE_ANSWERS = 3;
 export const FIRE_GONE_HOURS = 1;
 
 // Whether this deploy may open a routine's token and fire it: the
-// production site, or anywhere off Vercel (a run on this machine, CI).
+// production site. Off Vercel, a production build fires only when told to
+// send to a receiver on this machine (an eval, CI); a dev server or a test
+// fires as before. Anything else, a preview or a production build with no
+// VERCEL_ENV of production, fires nothing.
 export function firesAllowed(): boolean {
-  return !process.env.VERCEL || process.env.VERCEL_ENV === "production";
+  if (process.env.VERCEL_ENV === "production") return true;
+  if (process.env.VERCEL) return false;
+  if (process.env.NODE_ENV === "production")
+    return localFireReceiver() !== null;
+  return true;
 }
 // The fire's answer is a little JSON; read no more than this of it.
 const ANSWER_MAX_BYTES = 16_384;
@@ -223,19 +230,22 @@ async function markUnanswered(
   return true;
 }
 
-// Whether the bot's routine has fired claude_fire_per_day times in the last
-// day, test fires included. Reads no more than that many rows.
-async function overDailyCap(
+// When the daily cap lifts, if the bot's routine has fired
+// claude_fire_per_day times in the last day, test fires included: the
+// oldest of those fires a day on. Null under the cap. Reads no more than
+// that many rows.
+async function dailyCapLifts(
   sql: postgres.Sql | Tx,
   botId: number,
   perDay: number,
-): Promise<boolean> {
-  const [r] = await sql<{ n: number }[]>`
-    SELECT count(*)::int AS n FROM (
+): Promise<Date | null> {
+  const [r] = await sql<{ n: number; lifts: Date | null }[]>`
+    SELECT count(*)::int AS n, min(sent_at) + interval '1 day' AS lifts
+    FROM (
       SELECT sent_at FROM fire_attempts WHERE bot_id = ${botId}
       ORDER BY id DESC LIMIT ${perDay}) x
     WHERE sent_at > now() - interval '1 day'`;
-  return (r?.n ?? 0) >= perDay;
+  return r && r.n >= perDay ? r.lifts : null;
 }
 
 // Noted for the moderators once a day while the cap holds a routine back.
@@ -407,6 +417,14 @@ export const claudeFireAdapter: WakeAdapter = {
   // everywhere. A fire whose retries all went unanswered, or one past the
   // daily cap, is null, and the drain goes on to the next method.
   async find(sql, botId) {
+    if (!(await readTrigger(sql, botId))) return null;
+    // The claim holds the bot's fire_state row from here to its commit, so
+    // a person's test fire can't stamp a send between this read and the
+    // claim's own stamp (claimed below); read again under the lock.
+    await sql`
+      INSERT INTO fire_state (bot_id) VALUES (${botId})
+      ON CONFLICT (bot_id) DO NOTHING`;
+    await sql`SELECT 1 FROM fire_state WHERE bot_id = ${botId} FOR UPDATE`;
     const t = await readTrigger(sql, botId);
     if (!t) return null;
     const a = await antiAbuse(sql);
@@ -429,11 +447,21 @@ export const claudeFireAdapter: WakeAdapter = {
       alarmed = await markUnanswered(sql, botId, a.claude_fire_alarm_after);
     const plan = planFire(t);
     if (!plan.send) return null;
-    if (await overDailyCap(sql, botId, a.claude_fire_per_day)) {
-      await noteCapped(sql, botId, t.routine);
-      return null;
-    }
     const gap = a.claude_fire_gap_seconds;
+    // Past the daily cap: not sent now, and not owed, so a method after it
+    // (a push URL) goes in its place; with none, the bot stays queued for
+    // when the cap lifts, and the routine fires then.
+    const lifts = await dailyCapLifts(sql, botId, a.claude_fire_per_day);
+    if (lifts) {
+      await noteCapped(sql, botId, t.routine);
+      return {
+        address: t.address,
+        secret: JSON.stringify(t.material),
+        failures: t.failures,
+        notBefore: later(lifts, plan.after),
+        owed: false,
+      };
+    }
     return {
       address: t.address,
       // Once a fire's answer is overdue, or the routine is marked, the
@@ -542,6 +570,14 @@ export const claudeFireAdapter: WakeAdapter = {
     return { key: "claude_fire", rules: claudeFireRules(await antiAbuse(tx)) };
   },
 
+  // The send starts now, by the database's clock: find()'s gap counts from
+  // here, so a claim while the fire is still in flight (it may take up to
+  // FIRE_DEADLINE_MS, longer than the push gap) finds it inside the gap and
+  // sends no second one. record() takes this stamp as when the fire went.
+  async claimed(tx, botId) {
+    await tx`UPDATE fire_state SET last_sent_at = now() WHERE bot_id = ${botId}`;
+  },
+
   deadlineMs: FIRE_DEADLINE_MS,
 };
 
@@ -578,25 +614,31 @@ export async function recordFire(
     outcome.ref !== undefined;
   const maybe = !outcome.delivered && outcome.maybe === true;
   const waits = (outcome.delivered || maybe) && note !== undefined && !test;
-  const sentAt = outcome.sentAt ?? new Date();
   await sql.begin(async (tx) => {
     if (gone)
       await tx`SELECT pg_advisory_xact_lock(hashtext(${`claude_fire:${botId}`}))`;
     await tx`SELECT 1 FROM push_state WHERE bot_id = ${botId} FOR NO KEY UPDATE`;
+    // When the fire went: the stamp its claim, or the test fire's first
+    // transaction, wrote by the database's clock before sending, which
+    // nothing moves while it's in flight (the gap outlasts the deadline).
+    const [stamp] = await tx<{ at: Date | null }[]>`
+      SELECT last_sent_at AS at FROM fire_state
+      WHERE bot_id = ${botId} FOR UPDATE`;
+    const sentAt = stamp?.at ?? outcome.sentAt ?? new Date();
     // An answer that isn't a 401 or a 404 breaks a run of them; no answer
     // leaves it as it stands.
     const [st] = await tx<{ gone_answers: number; gone_long: boolean }[]>`
       INSERT INTO fire_state
         (bot_id, last_sent_at, last_status, failures, delivered, failed,
          retry_at, gone_answers, gone_since)
-      VALUES (${botId}, now(), ${outcome.status},
+      VALUES (${botId}, ${sentAt}, ${outcome.status},
               ${outcome.delivered || maybe ? 0 : 1},
               ${outcome.delivered ? 1 : 0},
               ${outcome.delivered || maybe ? 0 : 1},
               now() + make_interval(secs => ${retryAfter}),
               ${gone ? 1 : 0}, ${gone ? sentAt : null})
       ON CONFLICT (bot_id) DO UPDATE
-        SET last_sent_at = now(), last_status = EXCLUDED.last_status,
+        SET last_sent_at = ${sentAt}, last_status = EXCLUDED.last_status,
             failures = CASE WHEN ${outcome.delivered} THEN 0
                             WHEN ${maybe} THEN fire_state.failures
                             ELSE fire_state.failures + 1 END,

@@ -84,11 +84,20 @@ describe("kickPushes", () => {
     const { kickPushes, KICK_ROUND_MS, KICK_STALE_MS } = await import(
       "@/lib/push-kick"
     );
-    // The last push a round starts can run up to its timeout past the
-    // deadline, and the round must still end inside the window.
+    // The last send a round starts can run up to the longest deadline of
+    // any method past the round's (a routine's fire), and the round must
+    // still end inside the window.
     const { PUSH_TIMEOUT_MS } =
       await vi.importActual<typeof import("@/lib/push")>("@/lib/push");
-    expect(KICK_ROUND_MS + PUSH_TIMEOUT_MS).toBeLessThan(KICK_STALE_MS);
+    const { wakeAdapters } = await vi.importActual<
+      typeof import("@/lib/wake-adapters")
+    >("@/lib/wake-adapters");
+    const longest = Math.max(
+      PUSH_TIMEOUT_MS,
+      ...wakeAdapters().map((a) => a.deadlineMs ?? 0),
+    );
+    expect(longest).toBeGreaterThanOrEqual(15_000);
+    expect(KICK_ROUND_MS + longest).toBeLessThan(KICK_STALE_MS);
     vi.useFakeTimers();
     try {
       drain.mockImplementationOnce(async () => {

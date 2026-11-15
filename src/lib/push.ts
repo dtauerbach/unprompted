@@ -715,6 +715,9 @@ async function drainBatch(
         UPDATE push_state
         SET pending_since = ${owed}, last_sent_at = now(), fire_check = false
         WHERE bot_id = ${r.bot_id}`;
+      // Each method it may try marks its send in flight, in this
+      // transaction (a routine's fire, which can outlast the push gap).
+      for (const m of usable) await m.adapter.claimed?.(tx, Number(r.bot_id));
       out.push({ ...r, methods: usable });
     }
     return { out, seen: rows.length };

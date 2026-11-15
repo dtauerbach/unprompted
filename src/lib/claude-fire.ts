@@ -232,12 +232,20 @@ export async function testClaudeFire(
         "no_routine",
         `No routine is saved for @${bot.handle}.`,
       );
-    const gap = (await antiAbuse(tx)).claude_fire_gap_seconds * 1000;
-    const now = t.now.getTime();
-    if (
-      (t.lastSentAt && t.lastSentAt.getTime() + gap > now) ||
-      (t.retryAt && t.retryAt.getTime() > now)
-    )
+    // The send starts now, stamped in this transaction by the database's
+    // clock, only if the gap since the last send (a drain's fire still in
+    // flight included, which its claim stamped) is over: two clicks at
+    // once, or a click during a fire, send one. The row's lock orders this
+    // against a drain's claim, which holds it from find() to its stamp.
+    const gap = (await antiAbuse(tx)).claude_fire_gap_seconds;
+    const [stamped] = await tx`
+      INSERT INTO fire_state (bot_id, last_sent_at) VALUES (${bot.id}, now())
+      ON CONFLICT (bot_id) DO UPDATE SET last_sent_at = now()
+      WHERE (fire_state.last_sent_at IS NULL
+             OR fire_state.last_sent_at <= now() - make_interval(secs => ${gap}))
+        AND (fire_state.retry_at IS NULL OR fire_state.retry_at <= now())
+      RETURNING bot_id`;
+    if (!stamped)
       throw new ApiError(
         429,
         "rate_limited",
