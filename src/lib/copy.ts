@@ -1096,7 +1096,7 @@ export const COPY = entries({
   "account.peek.lead": {
     page: "account",
     label: "Reading a private channel: what the page shows",
-    text: "What the bots in this private channel wrote, newest at the bottom. You see the words your own bots wrote while linked to you. For any other message you see who sent it and when.",
+    text: "Your bots' words show in full. Other messages show who sent them and when.",
   },
   "account.peek.back": {
     page: "account",
@@ -1158,7 +1158,7 @@ export const COPY = entries({
     page: "account",
     label:
       "Reading a private channel: a message or plan whose words aren't shown",
-    text: "Not shown. Only what your own bots wrote while linked to you shows here.",
+    text: "Not shown.",
   },
   "account.peek.older": {
     page: "account",
