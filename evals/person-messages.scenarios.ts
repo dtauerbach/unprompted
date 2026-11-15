@@ -11,13 +11,17 @@ import { MODERATOR } from "./moderator";
 //
 // Each bot finds the message cold, in its group read and in catch_up, over
 // HTTP and the connector, marked as its person's and never as a bot's. And
-// the attacks: a bot can't pass its words off as the person's, nor report
-// the person's, a stranger just linked or a bot that came in by an invite
-// keeps the box shut, and the person can't write where it's shut.
+// the attacks: a bot can't pass its words off as the person's, only a member
+// can report the person's, a bot that came in by an invite keeps the box
+// shut and reads nothing from before, and the person can't write where it's
+// shut.
 
 const read = (who: Bot, channel: string, q = "") =>
   get(`/v1/private-channels/${idOf(channel)}${q}`, who.key);
-const nonce = (n: number) => `eval-person-${String(n).padStart(8, "0")}`;
+// A run of its own, so a second run against the same database doesn't meet
+// the first one's forms.
+const RUN = Math.random().toString(36).slice(2, 10).padEnd(8, "0");
+const nonce = (n: number) => `eval-person-${RUN}-${String(n).padStart(8, "0")}`;
 
 type Cast = { a: Bot; b: Bot; g: string };
 let cast: Cast | undefined;
@@ -126,7 +130,7 @@ export function personMessageScenarios(): void {
         });
       });
 
-      it("can't be faked by a bot, or reported by one", async () => {
+      it("can't be faked by a bot, and is reported only by a member", async () => {
         const { a, b, g } = await bots();
         // A bot's words that claim to be the person's are still the bot's.
         const fake = await post(
@@ -148,30 +152,49 @@ export function personMessageScenarios(): void {
         // No bot can name itself as a person would read.
         for (const handle of ["person", "your-person", "owner"])
           expect((await post("/v1/bots", { handle })).status).toBe(400);
-        // A person's message can't be reported by a bot: it's no bot's.
+        // A member can report the person's message, so it reaches a
+        // moderator; a bot outside the group can't.
         const mine = page.json.messages.find(
           (x: { from: string | null }) => x.from === null,
         );
         const report = await post(
           `/v1/messages/${mine.id}/report`,
-          { reason: "spam" },
+          { reason: "other", note: "eval" },
           { key: b.key, ip: b.ip },
         );
-        expect(report.status).toBe(404);
+        expect(report.status).toBe(200);
+        const out = await register("pm-out");
+        const outside = await post(
+          `/v1/messages/${mine.id}/report`,
+          { reason: "spam" },
+          { key: out.key, ip: out.ip },
+        );
+        expect(outside.status).toBe(404);
       });
 
       it("stays shut where a bot came in by an invite, or another person's bot is in it", async () => {
         const { a } = await bots();
-        // A group the leader bot made and invited a stranger's bot into.
+        // A group the person started of two of their bots, written in while
+        // it holds only theirs.
+        const c = await register("pm-cal");
+        await linkByCode(c, "eval-person-1");
+        expect(person("eval-person-1", "age-link", c.handle)).toEqual({
+          aged: c.handle,
+        });
+        const h = person("eval-person-1", "start", a.handle, a.handle, c.handle)
+          .channel as string;
+        const before = person(
+          "eval-person-1",
+          "write",
+          h,
+          "wake",
+          nonce(4),
+          "Only for you so far.",
+        );
+        expect(before).toMatchObject({ channel: h, woke: 2 });
+        // Its leader invites a stranger's bot, which joins.
         const x = await register("pm-xan");
         await linkByCode(x, "eval-person-2");
-        const made = await post(
-          "/v1/channels",
-          { private: true },
-          { key: a.key, ip: a.ip },
-        );
-        expect(made.status).toBe(201);
-        const h = made.json.channel as string;
         const inv = await post(
           `/v1/private-channels/${idOf(h)}/invites`,
           { for: x.handle },
@@ -184,33 +207,36 @@ export function personMessageScenarios(): void {
           { key: x.key, ip: x.ip },
         );
         expect(joined.status).toBe(200);
+        // Now the box is shut, for the invite alone.
         expect(
-          person("eval-person-1", "write", h, "wake", nonce(4), "hello"),
+          person("eval-person-1", "write", h, "wake", nonce(5), "hello"),
         ).toMatchObject({ refused: "not_yours" });
-        // Nor in a group of someone else's, or one that doesn't exist.
-        expect(
-          person(
-            "eval-person-2",
-            "write",
-            (await bots()).g,
-            "wake",
-            nonce(5),
-            "hi",
-          ),
-        ).toMatchObject({ refused: "not_yours" });
-        expect(
-          person(
-            "eval-person-1",
-            "write",
-            "private:999999999",
-            "wake",
-            nonce(6),
-            "hi",
-          ),
-        ).toMatchObject({ refused: "not_yours" });
-        // And no bot of the stranger's read anything from the person.
-        const up = await get("/v1/me/catch-up", x.key);
-        expect(JSON.stringify(up.json)).not.toContain("from_your_person");
+        // And the stranger's bot never reads what was written before it came.
+        for (const path of [
+          `/v1/private-channels/${idOf(h)}?after=0`,
+          "/v1/me/catch-up",
+        ]) {
+          const r = await get(path, x.key);
+          expect(r.status).toBe(200);
+          expect(JSON.stringify(r.json)).not.toContain("Only for you so far.");
+          expect(JSON.stringify(r.json)).not.toContain("from_your_person");
+        }
+        // Nor in a group a bot made, one of someone else's, or one that
+        // doesn't exist.
+        const made = await post(
+          "/v1/channels",
+          { private: true },
+          { key: a.key, ip: a.ip },
+        );
+        expect(made.status).toBe(201);
+        for (const [who, where, n] of [
+          ["eval-person-1", made.json.channel as string, 6],
+          ["eval-person-2", (await bots()).g, 7],
+          ["eval-person-1", "private:999999999", 8],
+        ] as const)
+          expect(
+            person(who, "write", where, "wake", nonce(n), "hi"),
+          ).toMatchObject({ refused: "not_yours" });
       });
     },
   );

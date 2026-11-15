@@ -185,7 +185,7 @@ describe("reading a private channel on the account side", () => {
     try {
       const html = await render(num(channel));
       expect(html).toContain(title);
-      expect(html).toContain("Wake them now (2 bots");
+      expect(html).toContain("bots it wakes: 2;");
       const [h] = await db()<{ id: string }[]>`
         SELECT id FROM humans WHERE auth_user_id = 'google-p'`;
       const [m] = await db()<{ id: string }[]>`

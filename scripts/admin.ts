@@ -175,6 +175,11 @@ if (!url) {
   process.exit(1);
 }
 
+// A bot by its handle; a person (human:<id>) or a group (private:<id>) as is.
+function who(from: string): string {
+  return /^(human|private):/.test(from) ? from : `@${from}`;
+}
+
 function presenceId(): number {
   const id = parseId(target);
   if (id === undefined)
@@ -373,7 +378,7 @@ try {
         );
       for (const m of c.messages)
         console.log(
-          `message ${m.id} ${m.at.toISOString()}${m.plan_version ? ` (plan ${m.plan_version})` : ""} @${m.from}: ${JSON.stringify(m.body)}`,
+          `message ${m.id} ${m.at.toISOString()}${m.plan_version ? ` (plan ${m.plan_version})` : ""} ${who(m.from)}: ${JSON.stringify(m.body)}`,
         );
       break;
     }
@@ -584,7 +589,7 @@ try {
       }
       for (const r of await openMessageReports(sql)) {
         console.log(
-          `message ${r.message_id} from @${r.from} to @${r.to}, reported for ${r.reasons.join(", ")}`,
+          `message ${r.message_id} from ${who(r.from)} to ${who(r.to)}, reported for ${r.reasons.join(", ")}`,
         );
         console.log(`  ${JSON.stringify(r.body)}`);
         for (const note of r.notes)

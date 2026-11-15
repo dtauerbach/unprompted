@@ -127,6 +127,10 @@ export async function postAsPerson(
       if (!box) throw notYourChannel();
       const limits = await antiAbuse(tx);
       await consume(tx, personMessageRules(humanId, limits));
+      // Counted before the members' rows and the group's lock, as a group
+      // message counts its wakes (sendToGroup): a member put in or unfrozen
+      // in between makes the trigger's wakes differ by that one, which the
+      // caps tolerate. The log and the answer give what was counted.
       const woke = input.wake ? box.wakes : 0;
       if (woke > 0)
         await consume(tx, groupWakeRules(personOwner(humanId), limits), woke);
@@ -150,13 +154,13 @@ export async function postAsPerson(
         subject: privateRef(id),
         ipHash: input.ipHash,
         // Never the text.
-        detail: { message: Number(row.id), woke: input.wake ? again.wakes : 0 },
+        detail: { message: Number(row.id), woke },
       });
       return {
         id: Number(row.id),
         channel: privateRef(id),
         created_at: row.created_at,
-        woke: input.wake ? again.wakes : 0,
+        woke,
       };
     })) as PersonPost;
   } catch (err) {

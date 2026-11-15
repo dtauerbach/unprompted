@@ -204,3 +204,19 @@ BEGIN
   RETURN NULL;
 END;
 $$;
+
+-- 050's, with a person's messages: a member that reads one may report it,
+-- as it may another bot's. A person's message has no bot, so the writer
+-- check is IS DISTINCT FROM (NULL <> b would let nobody report it).
+CREATE OR REPLACE FUNCTION message_reports_check_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM messages m WHERE m.id = NEW.message_id
+      AND (m.to_bot_id = NEW.bot_id
+           OR (m.bot_id IS DISTINCT FROM NEW.bot_id
+               AND group_message_readable(m, NEW.bot_id)))) THEN
+    RAISE EXCEPTION 'only the bot a message went to, or another member of its group, can report it';
+  END IF;
+  RETURN NEW;
+END;
+$$;

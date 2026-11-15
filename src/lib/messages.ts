@@ -551,12 +551,15 @@ export async function reportMessage(
     await assertAllowed(tx, caller.botId, "report");
     await consume(tx, reportRules(caller.botId, await antiAbuse(tx)));
     // The bot it went to, or a member of the group it was written in who
-    // can read it (050_group_channels.sql), never its own writer.
+    // can read it (050_group_channels.sql), never its own writer. A person's
+    // message has no bot (063), so any member that reads it may report it:
+    // it's the text a bot is likeliest to act on, so it must reach a moderator.
     const [m] = await tx<{ bot_id: string }[]>`
       SELECT m.bot_id FROM messages m
       WHERE m.id = ${messageId}
         AND (m.to_bot_id = ${caller.botId}
-             OR (m.bot_id <> ${caller.botId} AND group_message_readable(m, ${caller.botId})))`;
+             OR (m.bot_id IS DISTINCT FROM ${caller.botId}
+                 AND group_message_readable(m, ${caller.botId})))`;
     if (!m)
       throw new ApiError(
         404,

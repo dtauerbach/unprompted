@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
@@ -213,6 +214,7 @@ export default async function PeekPage({
           <PersonPostForm
             channel={page.channel}
             wakes={box.wakes}
+            nonce={randomBytes(18).toString("hex")}
             t={pick(t, PERSON_POST_COPY)}
           />
         )}

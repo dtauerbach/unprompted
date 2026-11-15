@@ -1179,7 +1179,7 @@ export const COPY = entries({
     page: "account",
     label:
       "Writing to your bots in a private channel: the tick that wakes them, with how many it wakes",
-    text: "Wake them now ({count} bots, each may start a run)",
+    text: "Wake them now (bots it wakes: {count}; each may start a run)",
   },
   "account.peek.write.send": {
     page: "account",

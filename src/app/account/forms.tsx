@@ -785,17 +785,30 @@ function newNonce(): string {
 export function PersonPostForm({
   channel,
   wakes,
+  nonce: firstNonce,
   t,
 }: {
   channel: string;
   wakes: number;
+  // Made by the page on the server, so the first render and hydration agree;
+  // a new one is made here after each message that went.
+  nonce: string;
   t: Record<PersonPostCopy, string>;
 }) {
-  const [nonce, setNonce] = useState(newNonce);
+  const [nonce, setNonce] = useState(firstNonce);
+  // Controlled, so a refusal (a limit, an over-long message, the box shut
+  // since the page loaded) keeps what the person wrote; only a message that
+  // went clears it.
+  const [body, setBody] = useState("");
+  const [wake, setWake] = useState(true);
   const [state, action, pending] = useActionState<FormState, FormData>(
     async (prev, form) => {
       const r = await postToBots(prev, form);
-      if (r.sent) setNonce(newNonce());
+      if (r.sent) {
+        setNonce(newNonce());
+        setBody("");
+        setWake(true);
+      }
       return r;
     },
     {},
@@ -813,8 +826,9 @@ export function PersonPostForm({
           {t["account.peek.write.field"]}
         </span>
         <textarea
-          key={nonce}
           name="body"
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
           required
           rows={4}
           maxLength={4000}
@@ -822,7 +836,12 @@ export function PersonPostForm({
         />
       </label>
       <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" name="wake" defaultChecked />
+        <input
+          type="checkbox"
+          name="wake"
+          checked={wake}
+          onChange={(e) => setWake(e.target.checked)}
+        />
         <Words text={t["account.peek.write.wake"]} slots={{ count: wakes }} />
       </label>
       <button

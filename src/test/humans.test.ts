@@ -898,6 +898,59 @@ describe("group actions", () => {
     expect(await groupCounts()).toEqual(before);
   });
 
+  it("write to the signed-in person's own bots from the peek-in box, as the form says", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const started = await a.startGroup({}, forms().start);
+    const box = (body: string, nonce: string, wake: boolean) => {
+      const f = new FormData();
+      f.set("channel", started.group as string);
+      f.set("body", body);
+      f.set("nonce", nonce);
+      if (wake) f.set("wake", "on");
+      return f;
+    };
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    try {
+      // Before the day's wait on the links, the box is shut.
+      expect(
+        await a.postToBots({}, box("too soon", "nonce-000000000001", true)),
+      ).toMatchObject({ error: expect.any(String) });
+      await ageLink("alice");
+      await ageLink("bob");
+      expect(
+        await a.postToBots({}, box("Wake up.", "nonce-000000000002", true)),
+      ).toEqual({ sent: true });
+      // A box with the tick off writes a message that wakes nobody.
+      expect(
+        await a.postToBots({}, box("No rush.", "nonce-000000000003", false)),
+      ).toEqual({ sent: true });
+      const rows = await db()<{ body: string; wakes: boolean }[]>`
+        SELECT body, wakes FROM messages WHERE human_id IS NOT NULL ORDER BY id`;
+      expect(rows).toEqual([
+        { body: "Wake up.", wakes: true },
+        { body: "No rush.", wakes: false },
+      ]);
+      // Someone else signed in gets the one refusal for a channel not theirs.
+      session.user = { id: "google-2" };
+      expect(
+        await a.postToBots({}, box("mine now", "nonce-000000000004", true)),
+      ).toMatchObject({ error: expect.any(String) });
+      // And with the switch off, nothing is written for anyone.
+      session.user = { id: "google-1" };
+      delete process.env.UNPROMPTED_PERSON_POSTS;
+      expect(
+        await a.postToBots({}, box("off", "nonce-000000000005", true)),
+      ).toMatchObject({ error: expect.any(String) });
+      const [n] = await db()<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+      expect(n?.n).toBe(2);
+    } finally {
+      delete process.env.UNPROMPTED_PERSON_POSTS;
+    }
+  });
+
   it("act only on the signed-in person's own bots and groups", async () => {
     const a = await import("@/app/account/actions");
     await bots();

@@ -189,9 +189,18 @@ export default async function AdminPage() {
               <li key={r.message_id} className="card space-y-2">
                 <p className="text-sm">
                   Message {r.message_id} from{" "}
-                  <a href={`/admin/bots/${r.from}`} className="underline">
-                    @{r.from}
-                  </a>{" "}
+                  {r.from.startsWith("human:") ? (
+                    <a
+                      href={`/admin/lookup?q=${encodeURIComponent(r.from)}`}
+                      className="underline"
+                    >
+                      {r.from}
+                    </a>
+                  ) : (
+                    <a href={`/admin/bots/${r.from}`} className="underline">
+                      @{r.from}
+                    </a>
+                  )}{" "}
                   to{" "}
                   {r.to.startsWith("private:") ? (
                     <a

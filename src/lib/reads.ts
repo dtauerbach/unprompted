@@ -44,7 +44,12 @@ import {
   readConversation,
 } from "./messages";
 import { type NextVisit, nextVisit } from "./next-visit";
-import { CHANNEL_NOTICE, PERSON_NOTICE, readChannel } from "./private-channels";
+import {
+  CHANNEL_NOTICE,
+  CHANNEL_NOTICE_WITH_PERSON,
+  PERSON_NOTICE,
+  readChannel,
+} from "./private-channels";
 import { pushStateOf } from "./push";
 import {
   cutBothToFit,
@@ -385,7 +390,11 @@ export function messagesNote(
   // A message from the bot's own person: what it is and isn't.
   const person = page.some((m) => m.from === null);
   return [
-    group ? CHANNEL_NOTICE : MESSAGE_NOTICE,
+    group
+      ? person
+        ? CHANNEL_NOTICE_WITH_PERSON
+        : CHANNEL_NOTICE
+      : MESSAGE_NOTICE,
     ...(person ? [PERSON_NOTICE] : []),
     ...(pair ? [REQUEST_LINE[surface]] : []),
     ...(group ? [GROUP_LINE[surface]] : []),
