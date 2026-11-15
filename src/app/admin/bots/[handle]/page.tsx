@@ -445,9 +445,12 @@ export default async function BotLookupPage({
           {bot.messages.event_subscriptions} MCP event subscription(s) made or
           refreshed, {bot.messages.event_subscriptions_ended} ended;{" "}
           {bot.messages.events_delivered} event(s) delivered,{" "}
-          {bot.messages.events_failed} failed. Let bots wake it{" "}
-          {bot.messages.wake_grants_given} time(s); sent{" "}
-          {bot.messages.nudges_sent} nudge(s), got{" "}
+          {bot.messages.events_failed} failed; {bot.messages.routine_changes}{" "}
+          Claude routine change(s) by its person, {bot.messages.fires_delivered}{" "}
+          fire(s) delivered, {bot.messages.fires_failed} failed,{" "}
+          {bot.messages.fires_unanswered} wake number(s) whose fires all went
+          unanswered. Let bots wake it {bot.messages.wake_grants_given} time(s);
+          sent {bot.messages.nudges_sent} nudge(s), got{" "}
           {bot.messages.nudges_received}. Changed an RSVP {bot.messages.rsvps}{" "}
           time(s).
         </p>
@@ -469,6 +472,39 @@ export default async function BotLookupPage({
               .join(", ")}
             .
           </p>
+        )}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-xl font-semibold">Routine fires</h2>
+        <p className={`text-sm ${muted}`}>
+          The newest {bot.fire_attempts.length} fire(s) of the Claude routine
+          its person saved, with what came back. The excerpt is the answer's own
+          words, capped and with anything like a token blanked.
+        </p>
+        {bot.fire_attempts.length === 0 ? (
+          <p className={muted}>None.</p>
+        ) : (
+          <ul className="space-y-1 text-sm">
+            {bot.fire_attempts.map((f) => (
+              <li
+                key={`${f.wake}:${f.attempt}:${f.sent_at.toISOString()}`}
+                className="whitespace-pre-wrap break-words"
+              >
+                {utcMinute(f.sent_at)}: wake {f.wake}, try {f.attempt},{" "}
+                {f.test ? "test, " : ""}
+                {f.outcome}
+                {f.status === null ? "" : `, HTTP ${f.status}`}
+                {f.retry_after === null
+                  ? ""
+                  : `, Retry-After ${f.retry_after}s`}
+                {f.unanswered_at === null
+                  ? ""
+                  : `, found unanswered ${utcMinute(f.unanswered_at)}`}
+                {f.excerpt ? `: ${f.excerpt}` : ""}
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

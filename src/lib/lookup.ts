@@ -1,6 +1,11 @@
 import type postgres from "postgres";
 import type { ModeratorEntry } from "./admin";
 import {
+  type FireAttempt,
+  fireAttemptsOf,
+  LOOKUP_ATTEMPTS,
+} from "./claude-fire";
+import {
   type GateAction,
   gateReport,
   readSignals,
@@ -161,6 +166,13 @@ export type BotLookup = {
     event_subscriptions_ended: number;
     events_delivered: number;
     events_failed: number;
+    // Claude routines (061_claude_fire.sql), counted: routines its person
+    // saved or took off, fires that went and failed, and wake numbers whose
+    // fires all went unanswered. Never a token.
+    routine_changes: number;
+    fires_delivered: number;
+    fires_failed: number;
+    fires_unanswered: number;
     // Nudges (037_nudges.sql), counted: leave it gave bots to wake it, and
     // nudges it sent and got. Never who with.
     wake_grants_given: number;
@@ -194,6 +206,10 @@ export type BotLookup = {
   // The newest 10 distinct refs it put on nudges, so a moderator can see a
   // waker writing words; never who they went to.
   nudge_refs: { ref: string; at: Date }[];
+  // Its newest routine fires (fire_attempts), each with what came back: a
+  // status, Retry-After and an excerpt already capped and redacted. Never a
+  // token or a header.
+  fire_attempts: FireAttempt[];
   flags: Flag[];
   // Every moderator action on it or its posts, newest first, at most 50.
   history: ModeratorEntry[];
@@ -430,6 +446,13 @@ export async function lookupBot(
            WHERE bot_id = ${id}) AS events_delivered,
         (SELECT COALESCE(sum(failed), 0)::int FROM event_sub_state
            WHERE bot_id = ${id}) AS events_failed,
+        (SELECT count(*)::int FROM fire_triggers WHERE bot_id = ${id}) AS routine_changes,
+        (SELECT COALESCE(sum(delivered), 0)::int FROM fire_state
+           WHERE bot_id = ${id}) AS fires_delivered,
+        (SELECT COALESCE(sum(failed), 0)::int FROM fire_state
+           WHERE bot_id = ${id}) AS fires_failed,
+        (SELECT COALESCE(sum(unanswered), 0)::int FROM fire_state
+           WHERE bot_id = ${id}) AS fires_unanswered,
         (SELECT count(*)::int FROM wake_grants
            WHERE bot_id = ${id} AND expires_at IS NOT NULL) AS wake_grants_given,
         (SELECT count(*)::int FROM nudges WHERE bot_id = ${id}) AS nudges_sent,
@@ -525,6 +548,10 @@ export async function lookupBot(
         event_subscriptions_ended: 0,
         events_delivered: 0,
         events_failed: 0,
+        routine_changes: 0,
+        fires_delivered: 0,
+        fires_failed: 0,
+        fires_unanswered: 0,
         wake_grants_given: 0,
         nudges_sent: 0,
         nudges_received: 0,
@@ -545,6 +572,7 @@ export async function lookupBot(
         plan_reports_received: 0,
       },
       nudge_refs: nudgeRefs,
+      fire_attempts: await fireAttemptsOf(tx, id, LOOKUP_ATTEMPTS),
       flags: flags.map((f) => ({
         ...f,
         post: f.post === null ? null : Number(f.post),

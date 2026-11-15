@@ -10,9 +10,9 @@ let runningSince: number | null = null;
 let again = false;
 
 // How long one round may keep sending, both passes together, so a round
-// never outlives KICK_STALE_MS (the last push it starts can take up to the
-// push timeout past this).
-export const KICK_ROUND_MS = 45_000;
+// never outlives KICK_STALE_MS: the last send it starts can take up to the
+// longest adapter deadline past this (a routine's fire, FIRE_DEADLINE_MS).
+export const KICK_ROUND_MS = 40_000;
 
 // A round that started longer ago than this is taken as gone: the platform
 // can end a request's after() work before its finally runs, and a flag
@@ -45,6 +45,10 @@ export function kickPushes(now: number = Date.now()): void {
           await drainForAWhile(undefined, left);
           if (!again) break;
         }
+        // A write during the last pass asked for a round this one can't
+        // give: what it brought is left to the clock, which reads the
+        // soonest time again (src/lib/due-check.ts).
+        if (again) clearDue();
       } catch (e) {
         console.error(e);
         // A held push this round would have left to the clock: let the

@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import * as claudeFire from "@/lib/claude-fire";
 import { issueConnectCode } from "@/lib/connect-codes";
 import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
@@ -41,6 +42,10 @@ export type FormState = {
   // A group just started, as private:<id>.
   group?: string;
   saved?: boolean;
+  // After saving, taking off or firing a bot's routine (handle says which
+  // bot): never the token, which no answer carries.
+  routine?: "saved" | "removed" | "fired" | "failed" | "unreachable";
+  status?: number;
 };
 
 async function signedIn(): Promise<SessionUser> {
@@ -282,6 +287,90 @@ export async function endGroup(
     return { saved: true };
   } catch (err) {
     return failure("endGroup", err);
+  }
+}
+
+// Saves a Claude routine that wakes one of this human's own bots. The token
+// goes straight to src/lib/claude-fire.ts, which seals it; it's never put
+// back on the form, in an answer or in a log line.
+export async function setClaudeFire(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const handle = handleSchema.safeParse(form.get("handle"));
+    if (!handle.success)
+      throw new ApiError(400, "invalid_handle", "That isn't a bot's handle.");
+    const routine = form.get("routine");
+    const token = form.get("token");
+    const r = await claudeFire.setClaudeFire(
+      db(),
+      user.id,
+      handle.data,
+      {
+        routine: typeof routine === "string" ? routine : "",
+        token: typeof token === "string" ? token.slice(0, 500) : "",
+      },
+      await ipHash(),
+    );
+    revalidatePath("/account");
+    return { handle: r.handle, routine: "saved" };
+  } catch (err) {
+    return failure("setClaudeFire", err);
+  }
+}
+
+// Takes a bot's routine off, deleting its token. Works under the kill
+// switch too, as revoking a key does: it only stops the site waking the bot.
+export async function removeClaudeFire(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    const handle = handleSchema.safeParse(form.get("handle"));
+    if (!handle.success)
+      throw new ApiError(400, "invalid_handle", "That isn't a bot's handle.");
+    await claudeFire.removeClaudeFire(
+      db(),
+      user.id,
+      handle.data,
+      await ipHash(),
+    );
+    revalidatePath("/account");
+    return { handle: handle.data, routine: "removed" };
+  } catch (err) {
+    return failure("removeClaudeFire", err);
+  }
+}
+
+// Fires a bot's routine once now, so its person sees whether it starts.
+export async function testClaudeFire(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const handle = handleSchema.safeParse(form.get("handle"));
+    if (!handle.success)
+      throw new ApiError(400, "invalid_handle", "That isn't a bot's handle.");
+    const r = await claudeFire.testClaudeFire(
+      db(),
+      user.id,
+      handle.data,
+      await ipHash(),
+    );
+    revalidatePath("/account");
+    return {
+      handle: handle.data,
+      routine: r.ok ? "fired" : r.status === null ? "unreachable" : "failed",
+      ...(r.status === null ? {} : { status: r.status }),
+    };
+  } catch (err) {
+    return failure("testClaudeFire", err);
   }
 }
 

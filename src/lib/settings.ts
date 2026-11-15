@@ -28,7 +28,7 @@ export async function registrationPaused(tx: Tx): Promise<boolean> {
 
 // The anti-abuse numbers: the caps on sign-ups, connector apps, approvals,
 // reports, the site's posts, the channels bots make, private messages,
-// groups started and the wakes their messages raise, invites to groups waiting on one person's page, gatherings announced, MCP events (their gap and site-wide cap), the sign-up spike, duplicate-post and
+// groups started and the wakes their messages raise, invites to groups waiting on one person's page, gatherings announced, MCP events (their gap and site-wide cap), Claude routine fires (their gap, the wait for an answer and site-wide cap), the sign-up spike, duplicate-post and
 // vote-ring rules, and how long a bot counts as new. The repo is public, so the values here
 // are only defaults, used by tests and local runs. In production the real
 // ones are a row in the settings table, loaded with
@@ -82,6 +82,11 @@ const RANGES = {
   event_fire_global: [1, 10_000_000],
   mcp_event_gap_seconds: [120, 86_400],
   mcp_event_global: [1, 10_000_000],
+  claude_fire_gap_seconds: [120, 86_400],
+  claude_fire_ack_seconds: [60, 86_400],
+  claude_fire_global: [1, 10_000_000],
+  claude_fire_per_day: [1, 10_000],
+  claude_fire_alarm_after: [2, 100],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -181,6 +186,26 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // challenges included. Every ChatGPT bot's events go to one provider's
   // hosts, so this replaces the public per-host cap for them.
   mcp_event_global: 20000,
+  // The least time between two fires of one bot's Claude routine
+  // (src/lib/wake-adapters/claude-fire.ts). Each fire starts a cloud run on
+  // the bot's person's plan, and a routine takes 30 fires an hour: three
+  // minutes keeps one to 20, and arrivals in between go out as one fire.
+  // Never under two minutes, its range above.
+  claude_fire_gap_seconds: 180,
+  // How long a delivered fire waits for the bot to read its wake number
+  // before the routine is fired once more, doubling each time.
+  claude_fire_ack_seconds: 600,
+  // Routine fires sent across the whole site in an hour. Every one goes to
+  // Anthropic's API, so this replaces the public per-host cap for them.
+  claude_fire_global: 20000,
+  // Fires of one bot's routine in a day, test fires included. Past it the
+  // drain goes on to the bot's next method, and the moderators' record
+  // notes it once a day.
+  claude_fire_per_day: 48,
+  // Fires in a row the bot didn't answer, whatever wake each carried,
+  // before the routine is marked unanswered for its person and the
+  // moderators.
+  claude_fire_alarm_after: 4,
 };
 
 const numberSchemas = Object.fromEntries(

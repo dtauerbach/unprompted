@@ -224,11 +224,12 @@ export async function makePushUrl(
       INSERT INTO push_urls (bot_id, key_id, url, salt)
       VALUES (${caller.botId}, ${caller.keyId}, ${url}, ${salt})`;
     // A fresh URL starts with a clean record, and nothing waiting, unless
-    // an event subscription still has a wake to send.
+    // an event subscription or a routine still has a wake to send.
     await tx`
       INSERT INTO push_state (bot_id) VALUES (${caller.botId})
       ON CONFLICT (bot_id) DO UPDATE
         SET pending_since = CASE WHEN event_sub_live(${caller.botId})
+                                      OR fire_trigger_live(${caller.botId})
                                  THEN push_state.pending_since END,
             last_sent_at = NULL, last_status = NULL, failures = 0`;
     // The host only: the rest of the URL is the bot's business.
@@ -262,7 +263,8 @@ export async function removePushUrl(
       INSERT INTO push_urls (bot_id, key_id) VALUES (${caller.botId}, ${caller.keyId})`;
     await tx`
       UPDATE push_state SET pending_since = NULL
-      WHERE bot_id = ${caller.botId} AND NOT event_sub_live(${caller.botId})`;
+      WHERE bot_id = ${caller.botId} AND NOT event_sub_live(${caller.botId})
+        AND NOT fire_trigger_live(${caller.botId})`;
     await logAction(tx, {
       action: "push.url.remove",
       botId: caller.botId,
@@ -275,16 +277,40 @@ export async function removePushUrl(
   });
 }
 
-export type Delivery = { status: number | null; error?: string; body?: string };
+export type Delivery = {
+  status: number | null;
+  error?: string;
+  body?: string;
+  // Seconds the answer's Retry-After asked to wait, when it said.
+  retryAfter?: number;
+  // With no status: the whole request had gone out before the send was cut
+  // off (a timeout or a reset), so the other end may have acted on it.
+  written?: boolean;
+};
+
+// A Retry-After header as seconds: a whole number of them, or an HTTP date.
+// Undefined when there's none or it doesn't parse.
+export function retryAfterSeconds(
+  h: string | string[] | undefined,
+): number | undefined {
+  const v = (Array.isArray(h) ? h[0] : h)?.trim();
+  if (!v) return undefined;
+  if (/^\d{1,9}$/.test(v)) return Number(v);
+  const at = Date.parse(v);
+  if (Number.isNaN(at)) return undefined;
+  return Math.max(Math.ceil((at - Date.now()) / 1000), 0);
+}
 
 // readBody: read up to that many bytes of the answer, within the same
 // deadline, for a send that must check what came back (an MCP events
-// challenge). Otherwise nothing of the answer is read.
+// challenge). Otherwise nothing of the answer is read. timeoutMs: the
+// deadline, for an adapter with a longer one of its own (a Claude
+// routine's fire); PUSH_TIMEOUT_MS otherwise.
 export type Deliver = (
   url: string,
   body: string,
   headers: Record<string, string>,
-  opts?: { readBody?: number },
+  opts?: { readBody?: number; timeoutMs?: number },
 ) => Promise<Delivery>;
 
 // Resolves the host and connects only to a public address: checked at
@@ -320,6 +346,12 @@ export const httpsDeliver: Deliver = (url, body, headers, opts) =>
   new Promise((resolve) => {
     let done = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = opts?.timeoutMs ?? PUSH_TIMEOUT_MS;
+    // Whether the whole request went out before it failed: a send cut off
+    // after that may still have been acted on.
+    let written = false;
+    const cut = (error: string) =>
+      finish({ status: null, error, ...(written ? { written } : {}) });
     const finish = (d: Delivery) => {
       if (!done) {
         done = true;
@@ -340,38 +372,42 @@ export const httpsDeliver: Deliver = (url, body, headers, opts) =>
           method: "POST",
           headers: { ...headers, "content-length": Buffer.byteLength(body) },
           lookup: publicLookup,
-          timeout: PUSH_TIMEOUT_MS,
+          timeout: deadline,
         },
         (res) => {
           const status = res.statusCode ?? null;
+          const wait = retryAfterSeconds(res.headers["retry-after"]);
+          const after = wait === undefined ? {} : { retryAfter: wait };
           const max = opts?.readBody ?? 0;
           if (max <= 0) {
-            finish({ status });
+            finish({ status, ...after });
             res.destroy();
             return;
           }
           readCapped(res, max, (text) => {
-            finish({ status, ...(text === undefined ? {} : { body: text }) });
+            finish({
+              status,
+              ...after,
+              ...(text === undefined ? {} : { body: text }),
+            });
             res.destroy();
           });
         },
       );
       req.on("timeout", () => {
-        finish({ status: null, error: "timeout" });
+        cut("timeout");
         req.destroy();
       });
       // The timeout above is for a quiet connection; a host that trickles
       // bytes is cut off here.
       timer = setTimeout(() => {
-        finish({ status: null, error: "timeout" });
+        cut("timeout");
         req.destroy();
-      }, PUSH_TIMEOUT_MS);
-      req.on("error", (e) =>
-        finish({
-          status: null,
-          error: (e as { code?: string }).code ?? "error",
-        }),
-      );
+      }, deadline);
+      req.on("finish", () => {
+        written = true;
+      });
+      req.on("error", (e) => cut((e as { code?: string }).code ?? "error"));
       req.end(body);
     } catch {
       finish({ status: null, error: "error" });
@@ -417,8 +453,10 @@ export function currentDeliver(): Deliver {
   return deliverer;
 }
 
-// A send that takes longer than the push timeout counts as failed, whatever
-// the adapter does: the drain's deadline, above every adapter.
+// A send that takes longer than the push timeout, or the adapter's own
+// longer deadline, counts as failed, whatever the adapter does: the drain's
+// deadline, above every adapter. Cut off here, it may still have gone out,
+// so it's marked maybe, for an adapter that minds (a routine's fire).
 async function sendWithin(
   adapter: WakeAdapter,
   registration: WakeRegistration,
@@ -426,14 +464,21 @@ async function sendWithin(
   deliver: Deliver,
 ): Promise<WakeOutcome> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const sentAt = new Date();
   const late = new Promise<WakeOutcome>((resolve) => {
     timer = setTimeout(
-      () => resolve({ delivered: false, status: null, error: "timeout" }),
-      PUSH_TIMEOUT_MS,
+      () =>
+        resolve({
+          delivered: false,
+          status: null,
+          error: "timeout",
+          maybe: true,
+        }),
+      adapter.deadlineMs ?? PUSH_TIMEOUT_MS,
     );
   });
   try {
-    return await Promise.race([
+    const outcome = await Promise.race([
       adapter.send(registration, note, deliver).catch(
         (): WakeOutcome => ({
           delivered: false,
@@ -443,6 +488,7 @@ async function sendWithin(
       ),
       late,
     ]);
+    return { ...outcome, sentAt };
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -450,8 +496,10 @@ async function sendWithin(
 
 // One method's send, held to the site's rules: an address the push checks
 // or the adapter's own refuse (an MCP events callback off the provider's
-// hosts) is never sent to and counts as a failure.
-async function sendOne(
+// hosts) is never sent to and counts as a failure. Exported for a person's
+// test fire of a Claude routine (src/lib/claude-fire.ts), which keeps to
+// the same rules.
+export async function sendOne(
   adapter: WakeAdapter,
   registration: WakeRegistration,
   note: WakeNote,
@@ -468,8 +516,8 @@ async function sendOne(
 const paused = (r: WakeRegistration) => r.failures >= PUSH_MAX_FAILURES;
 
 // The bot's methods, in its order, that aren't paused and are due; whether
-// it has any at all; and, for those waiting out their own gap, when the
-// first is due.
+// it has any at all; for those waiting out their own gap, when the first is
+// due; and when the first of those that still owe this wake (owed) is.
 async function methodsFor(
   tx: Tx,
   botId: number,
@@ -478,9 +526,11 @@ async function methodsFor(
   any: boolean;
   usable: { adapter: WakeAdapter; registration: WakeRegistration }[];
   due: Date | null;
+  owed: Date | null;
 }> {
   let any = false;
   let due: Date | null = null;
+  let owed: Date | null = null;
   const usable = [];
   for (const adapter of wakeAdapters()) {
     const registration = await adapter.find(tx, botId);
@@ -490,11 +540,12 @@ async function methodsFor(
     const at = registration.notBefore;
     if (at && at.getTime() > now) {
       if (!due || at < due) due = at;
+      if (registration.owed && (!owed || at < owed)) owed = at;
       continue;
     }
     usable.push({ adapter, registration });
   }
-  return { any, usable, due };
+  return { any, usable, due, owed };
 }
 
 function hostOf(address: string): string | null {
@@ -543,11 +594,13 @@ type Claimed = {
 
 // Which bots may be claimed: one whose live push URL isn't paused, or whose
 // event subscription could wake it (event_sub_usable(), 057_mcp_events.sql),
+// or whose routine could (fire_trigger_usable(), 061_claude_fire.sql),
 // asked bot by bot in the claim and in nextDue below. A bot paused on every
 // method it has (push_state.failures counts only the push URL's, so a bot
-// with no push URL must have a usable subscription) waits, unclaimed, for a
-// test push or a fresh subscription that works, rather than being claimed
-// and put off again every few seconds for good.
+// with no push URL must have a usable subscription or routine) waits,
+// unclaimed, for a test push, a fresh subscription or a test fire that
+// works, rather than being claimed and put off again every few seconds for
+// good.
 
 // Sends what's waiting: claims a few bots marked pending, at most one push
 // per bot every PUSH_GAP_SECONDS and a bounded number per host a minute,
@@ -578,6 +631,7 @@ async function drainBatch(
         AND s.pending_since <= now()
         AND ((s.failures < ${PUSH_MAX_FAILURES} AND push_url_live(s.bot_id))
              OR event_sub_usable(s.bot_id, ${PUSH_MAX_FAILURES})
+             OR fire_trigger_usable(s.bot_id, ${PUSH_MAX_FAILURES})
              OR ${standIns()})
         AND (s.last_sent_at IS NULL
              OR s.last_sent_at < now() - make_interval(secs => ${PUSH_GAP_SECONDS}))
@@ -603,21 +657,24 @@ async function drainBatch(
         console.error(e);
         await tx`
           UPDATE push_state
-          SET pending_since = now() + make_interval(secs => ${PUSH_GAP_SECONDS})
+          SET pending_since = now() + make_interval(secs => ${PUSH_GAP_SECONDS}),
+              fire_check = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
-      const { any, usable, due } = methods;
+      const { any, usable, due, owed } = methods;
       // Nothing to wake it by any more: nothing waits.
       if (!any) {
-        await tx`UPDATE push_state SET pending_since = NULL WHERE bot_id = ${r.bot_id}`;
+        await tx`
+          UPDATE push_state SET pending_since = NULL, fire_check = false
+          WHERE bot_id = ${r.bot_id}`;
         continue;
       }
       // Nothing due yet, but a method whose own gap ends soon: it stays
       // pending until then, so arrivals in between go out as one.
       if (!usable[0] && due) {
         await tx`
-          UPDATE push_state SET pending_since = ${due}
+          UPDATE push_state SET pending_since = ${due}, fire_check = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
@@ -627,7 +684,8 @@ async function drainBatch(
       if (!first) {
         await tx`
           UPDATE push_state
-          SET pending_since = now() + make_interval(secs => ${PUSH_GAP_SECONDS})
+          SET pending_since = now() + make_interval(secs => ${PUSH_GAP_SECONDS}),
+              fire_check = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
@@ -644,13 +702,22 @@ async function drainBatch(
       if (wait !== undefined) {
         await tx`
           UPDATE push_state
-          SET pending_since = now() + make_interval(secs => ${wait})
+          SET pending_since = now() + make_interval(secs => ${wait}),
+              fire_check = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
+      // Sent now; a method still waiting out its gap that owes this wake
+      // (a routine's fire) keeps the bot queued for then, so a push that
+      // goes meanwhile doesn't stand in for it. Reading the number clears
+      // it (src/lib/fire-ack.ts).
       await tx`
-        UPDATE push_state SET pending_since = NULL, last_sent_at = now()
+        UPDATE push_state
+        SET pending_since = ${owed}, last_sent_at = now(), fire_check = false
         WHERE bot_id = ${r.bot_id}`;
+      // Each method it may try marks its send in flight, in this
+      // transaction (a routine's fire, which can outlast the push gap).
+      for (const m of usable) await m.adapter.claimed?.(tx, Number(r.bot_id));
       out.push({ ...r, methods: usable });
     }
     return { out, seen: rows.length };
@@ -681,10 +748,12 @@ async function drainBatch(
             note,
             deliver,
           );
-          await m.adapter.record(sql, botId, outcome);
+          await m.adapter.record(sql, botId, outcome, note);
           if (outcome.delivered) {
             delivered = true;
-            break;
+            // Unless the adapter isn't sure its wake reaches the bot.
+            if (!outcome.alsoNext) break;
+            continue;
           }
           const at = m.adapter.retryAt
             ? await m.adapter.retryAt(sql, botId, outcome)
@@ -692,13 +761,17 @@ async function drainBatch(
           if (at && (!retry || at < retry)) retry = at;
         }
         // Nothing delivered, and a method that retries a failure (MCP
-        // events, which the provider asks to be retried): the bot is queued
-        // again for then, unless an arrival already queued it. The method's
-        // own pause, after PUSH_MAX_FAILURES in a row, ends the retries.
+        // events, which the provider asks to be retried, and routines): the
+        // bot is queued again for then, unless an arrival already queued it
+        // sooner. A check on a fire's answer stands. The method's own pause,
+        // after PUSH_MAX_FAILURES in a row, ends the retries.
         if (!delivered && retry)
           await sql`
-            UPDATE push_state SET pending_since = ${retry}
-            WHERE bot_id = ${botId} AND pending_since IS NULL`;
+            UPDATE push_state
+            SET pending_since = LEAST(COALESCE(pending_since, ${retry}), ${retry}),
+                fire_check = false
+            WHERE bot_id = ${botId}
+              AND (pending_since IS NULL OR NOT fire_check)`;
       } catch (e) {
         console.error(e);
       }
@@ -776,6 +849,7 @@ export async function nextDue(): Promise<Date | null> {
     WHERE pending_since IS NOT NULL
       AND ((failures < ${PUSH_MAX_FAILURES} AND push_url_live(bot_id))
            OR event_sub_usable(bot_id, ${PUSH_MAX_FAILURES})
+           OR fire_trigger_usable(bot_id, ${PUSH_MAX_FAILURES})
            OR ${standIns()})`;
   return r?.due ?? null;
 }

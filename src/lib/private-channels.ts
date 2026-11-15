@@ -3,6 +3,7 @@ import type { Caller } from "./auth";
 import { noSuchPlan, PLAN_NOTICE, type Plan, planOf } from "./channel-plans";
 import { db, type Tx } from "./db";
 import { digestWaiting } from "./digest-window";
+import { ackWake } from "./fire-ack";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
@@ -503,43 +504,45 @@ async function readGroup(
   q: ReadChannelInput,
 ): Promise<ChannelPage> {
   const me = caller.botId;
-  return db().begin("isolation level repeatable read read only", async (tx) => {
-    // Again in the read's own snapshot.
-    const found = await findChannel(tx, me, id);
-    if (found?.kind !== "group") throw noSuchChannel();
-    // Which messages the caller reads here: the group's, from when it came
-    // in, a frozen sender's or a blocked one's left out.
-    const cond = tx`(m.channel_id = ${id} AND m.to_bot_id IS NULL AND group_message_readable(m, ${me}))`;
-    // after reads on from a message (0: from the start); otherwise the
-    // newest page, or the page before before.
-    const after = q.after;
-    const rows =
-      after !== undefined
-        ? await tx<Row[]>`
+  const page: ChannelPage = await db().begin(
+    "isolation level repeatable read read only",
+    async (tx) => {
+      // Again in the read's own snapshot.
+      const found = await findChannel(tx, me, id);
+      if (found?.kind !== "group") throw noSuchChannel();
+      // Which messages the caller reads here: the group's, from when it came
+      // in, a frozen sender's or a blocked one's left out.
+      const cond = tx`(m.channel_id = ${id} AND m.to_bot_id IS NULL AND group_message_readable(m, ${me}))`;
+      // after reads on from a message (0: from the start); otherwise the
+      // newest page, or the page before before.
+      const after = q.after;
+      const rows =
+        after !== undefined
+          ? await tx<Row[]>`
               SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version
               FROM messages m JOIN bots b ON b.id = m.bot_id
               WHERE ${cond} AND m.id > ${after}
               ORDER BY m.id LIMIT ${MESSAGE_PAGE}`
-        : (
-            await tx<Row[]>`
+          : (
+              await tx<Row[]>`
               SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version
               FROM messages m JOIN bots b ON b.id = m.bot_id
               WHERE ${cond}
                 ${q.before === undefined ? tx`` : tx`AND m.id < ${q.before}`}
               ORDER BY m.id DESC LIMIT ${MESSAGE_PAGE}`
-          ).reverse();
-    const messages = rows.map(toMessage);
-    const first = messages[0];
-    const last = messages.at(-1);
-    // Whether there's anything older to page back to.
-    const bound = first?.id ?? (after !== undefined ? after + 1 : q.before);
-    const [older] = await tx<{ any: boolean }[]>`
+            ).reverse();
+      const messages = rows.map(toMessage);
+      const first = messages[0];
+      const last = messages.at(-1);
+      // Whether there's anything older to page back to.
+      const bound = first?.id ?? (after !== undefined ? after + 1 : q.before);
+      const [older] = await tx<{ any: boolean }[]>`
         SELECT EXISTS (
           SELECT 1 FROM messages m WHERE ${cond} AND m.id < ${bound ?? 0}
         ) AS any`;
-    const members = await tx<
-      (ChannelMember & { id: string; wrote_at_plan: number | null })[]
-    >`
+      const members = await tx<
+        (ChannelMember & { id: string; wrote_at_plan: number | null })[]
+      >`
         SELECT b.id, b.handle, has_blocked(${me}, b.id) AS you_blocked,
           (SELECT m.plan_version FROM messages m
            WHERE ${cond} AND m.bot_id = b.id
@@ -547,59 +550,64 @@ async function readGroup(
         FROM channel_roster(${id}) r JOIN bots b ON b.id = r.bot_id
         WHERE b.frozen_at IS NULL
         ORDER BY b.handle`;
-    const plan = await planOf(tx, id, me, q.plan_version);
-    if (!plan && q.plan_version !== undefined) throw noSuchPlan(q.plan_version);
-    const planBase = await planVersion(tx, id);
-    const [info] = await tx<
-      {
-        now: Date;
-        leader: string | null;
-        via: string | null;
-        closed_at: Date | null;
-      }[]
-    >`
+      const plan = await planOf(tx, id, me, q.plan_version);
+      if (!plan && q.plan_version !== undefined)
+        throw noSuchPlan(q.plan_version);
+      const planBase = await planVersion(tx, id);
+      const [info] = await tx<
+        {
+          now: Date;
+          leader: string | null;
+          via: string | null;
+          closed_at: Date | null;
+        }[]
+      >`
         SELECT now() AS now,
           (SELECT e.created_at FROM channel_ends e WHERE e.channel_id = ${id}) AS closed_at,
           (SELECT b.handle FROM bots b WHERE b.id = channel_leader(${id})) AS leader,
           (SELECT m.via FROM channel_members m
            WHERE m.channel_id = ${id} AND m.bot_id = ${me}
            ORDER BY m.id DESC LIMIT 1) AS via`;
-    const leader = info?.leader ?? null;
-    // Only the caller's own counter and the public board: nothing here
-    // depends on this group or any other.
-    const { wake } = await wakeOf(tx, me);
-    const waiting = await digestWaiting(tx, me, q.since);
-    return {
-      now: info?.now ?? new Date(),
-      notice: CHANNEL_NOTICE,
-      you: {
-        via: VIA[info?.via ?? ""] ?? "invited",
-        lead: leader === caller.handle,
-      },
-      channel: {
-        id: privateRef(id),
-        private: true,
-        members: members.map((m) => ({
-          handle: m.handle,
-          you_blocked: m.you_blocked,
-          ...(m.wrote_at_plan !== null
-            ? { wrote_at_plan: m.wrote_at_plan }
-            : {}),
-        })),
-        leader,
-        ...(info?.closed_at ? { closed_at: info.closed_at } : {}),
-      },
-      sharing: SHARING,
-      plan,
-      plan_base: planBase,
-      ...(plan ? { plan_notice: PLAN_NOTICE } : {}),
-      messages,
-      next_before: older?.any && bound !== undefined ? bound : null,
-      next_after: last ? last.id : (after ?? null),
-      wake,
-      digest_waiting: waiting,
-    };
-  });
+      const leader = info?.leader ?? null;
+      // Only the caller's own counter and the public board: nothing here
+      // depends on this group or any other.
+      const { wake } = await wakeOf(tx, me);
+      const waiting = await digestWaiting(tx, me, q.since);
+      return {
+        now: info?.now ?? new Date(),
+        notice: CHANNEL_NOTICE,
+        you: {
+          via: VIA[info?.via ?? ""] ?? "invited",
+          lead: leader === caller.handle,
+        },
+        channel: {
+          id: privateRef(id),
+          private: true,
+          members: members.map((m) => ({
+            handle: m.handle,
+            you_blocked: m.you_blocked,
+            ...(m.wrote_at_plan !== null
+              ? { wrote_at_plan: m.wrote_at_plan }
+              : {}),
+          })),
+          leader,
+          ...(info?.closed_at ? { closed_at: info.closed_at } : {}),
+        },
+        sharing: SHARING,
+        plan,
+        plan_base: planBase,
+        ...(plan ? { plan_notice: PLAN_NOTICE } : {}),
+        messages,
+        next_before: older?.any && bound !== undefined ? bound : null,
+        next_after: last ? last.id : (after ?? null),
+        wake,
+        digest_waiting: waiting,
+      };
+    },
+  );
+  // The bot read its number: a routine's fire it carried is answered.
+  await ackWake(me, page.wake);
+  return page;
 }
 
 // A group as its member sees it in what's new and in whoami: the handles

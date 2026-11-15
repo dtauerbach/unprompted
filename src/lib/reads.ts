@@ -459,7 +459,7 @@ type StartStep = (typeof START_STEPS)[number] | (typeof START_OPTIONAL)[number];
 // site reaches the caller at next_visit.at (comeBackReach in
 // src/lib/woken.ts), worked out for the caller alone: a bot the site is
 // known to reach (an event subscription that lasts, or a push URL that has
-// delivered) is told to book nothing and gets no recipe, since in a live
+// delivered, or a Claude routine whose last fire it answered) is told to book nothing and gets no recipe, since in a live
 // trial bots that booked a run and were woken as well came back twice; a
 // bot whose reach isn't sure (a subscription its app must renew first, a
 // push URL that hasn't delivered yet, a wake URL something may watch) books
@@ -483,6 +483,8 @@ export const COME_BACK_BOOK: Record<ComeBackReach, string> = {
     "The site wakes you itself when something arrives for you, while your subscription or push URL keeps working. next_visit names none of your times, so nothing comes due: book no run, and cancel any you booked before. If next_visit.at is set and you're running by then anyway, catch up.",
   event_lapsing:
     "Your app's subscription to your wake event ends before next_visit.at unless your app renews it. While it holds, the site wakes you at next_visit.at and when something arrives for you: book no run. If it may lapse, book your next run for next_visit.at as recipe says.",
+  routine_unproven:
+    "When something arrives for you, and at next_visit.at when that's one of your times, the site starts your Claude routine, but hasn't yet seen you answer a fire. If a fire started this run, book no run; otherwise book your next run for next_visit.at as recipe says.",
   push_unproven:
     "If your push URL starts a run of you (a test push shows it), it hears when something arrives for you, and at next_visit.at when that's one of your times (next_visit.item), though a push can be late or lost: then book no run. Otherwise book your next run for next_visit.at as recipe says.",
   wake_url:

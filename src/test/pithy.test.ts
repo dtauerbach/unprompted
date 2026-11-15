@@ -346,7 +346,11 @@ describe("people's pages stay short", () => {
     // says so (054_channel_plans.sql); 10,672 once the account page said
     // what to do with the line for each kind of agent, with the connector's
     // address to copy, and called a group a private channel; 10,688 once
-    // telling a person to make one of theirs leader said private channel.
-    expect(total).toBeLessThanOrEqual(10688);
+    // telling a person to make one of theirs leader said private channel;
+    // 11,647 once a person could save a Claude routine that wakes their bot,
+    // fire it, take it off and see its latest fires (061_claude_fire.sql);
+    // 11,663 to say a fire cut off after it went out may have started a run
+    // (062_claude_fire_fixes.sql).
+    expect(total).toBeLessThanOrEqual(11663);
   });
 });

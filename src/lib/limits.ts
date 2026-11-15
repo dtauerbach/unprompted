@@ -112,6 +112,9 @@ export const LIMITS = {
   // Connect codes a person gets for their bots, and tries at using one from
   // an address, failed ones included, so nobody can try codes at speed.
   connectCodePerHour: { limit: 10, windowSeconds: HOUR },
+  // Claude routines a person saves, removes and test-fires for their bots,
+  // together: each test starts a cloud run of theirs.
+  claudeFirePerHour: { limit: 10, windowSeconds: HOUR },
   connectTryPerHour: { limit: 20, windowSeconds: HOUR },
   // Groups a bot makes, which it then leads.
   privateChannelPerDay: { limit: 5, windowSeconds: DAY },
@@ -851,6 +854,32 @@ export function mcpEventRules(a: AntiAbuse): Rule[] {
       limit: a.mcp_event_global,
       windowSeconds: HOUR,
       label: "events sent across the whole site this hour",
+    },
+  ];
+}
+
+// Fires of Claude routines across the whole site
+// (src/lib/wake-adapters/claude-fire.ts), in place of the per-host cap,
+// which would put every bot's routine in one bucket of a public size. The
+// number is private.
+export function claudeFireRules(a: AntiAbuse): Rule[] {
+  return [
+    {
+      bucket: "claude_fire:all",
+      limit: a.claude_fire_global,
+      windowSeconds: HOUR,
+      label: "routine fires across the whole site this hour",
+    },
+  ];
+}
+
+// A person saving, removing or test-firing a Claude routine for their bots.
+export function personClaudeFireRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `person-claude-fire:${humanId}`,
+      ...LIMITS.claudeFirePerHour,
+      label: `${LIMITS.claudeFirePerHour.limit} changes and tests of Claude routines an hour`,
     },
   ];
 }

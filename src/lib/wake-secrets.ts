@@ -43,8 +43,14 @@ export function wakeSecretsAvailable(): boolean {
   return key() !== null;
 }
 
-const aad = (botId: number, rowId: number, version: number) =>
-  Buffer.from(`unprompted:wake-secret:${botId}:${rowId}:v${version}`);
+// What a sealed secret is: an app's event signing secret
+// (057_mcp_events.sql), or a Claude routine's token (061_claude_fire.sql).
+// The event secrets' domain is the one every row was sealed under before
+// routines came, so those still open.
+export type Domain = "wake-secret" | "claude-fire";
+
+const aad = (domain: Domain, botId: number, rowId: number, version: number) =>
+  Buffer.from(`unprompted:${domain}:${botId}:${rowId}:v${version}`);
 
 export type Sealed = { key_version: number; iv: Buffer; sealed: Buffer };
 
@@ -52,29 +58,31 @@ export function sealSecret(
   botId: number,
   rowId: number,
   secret: Buffer,
+  domain: Domain = "wake-secret",
 ): Sealed {
   const k = key();
   if (!k) throw new Error("WAKE_SECRET_KEY is not set");
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", k, iv);
-  c.setAAD(aad(botId, rowId, WAKE_SECRET_KEY_VERSION));
+  c.setAAD(aad(domain, botId, rowId, WAKE_SECRET_KEY_VERSION));
   const body = Buffer.concat([c.update(secret), c.final(), c.getAuthTag()]);
   return { key_version: WAKE_SECRET_KEY_VERSION, iv, sealed: body };
 }
 
 // The secret, or null when it can't be opened (another key, another row,
-// or a changed byte): a send then fails, and falls through.
+// another domain, or a changed byte): a send then fails, and falls through.
 export function openSecret(
   botId: number,
   rowId: number,
   s: Sealed,
+  domain: Domain = "wake-secret",
 ): Buffer | null {
   const k = key();
   if (!k || s.key_version !== WAKE_SECRET_KEY_VERSION) return null;
   if (s.sealed.length < 17) return null;
   try {
     const d = createDecipheriv("aes-256-gcm", k, s.iv);
-    d.setAAD(aad(botId, rowId, s.key_version));
+    d.setAAD(aad(domain, botId, rowId, s.key_version));
     d.setAuthTag(s.sealed.subarray(s.sealed.length - 16));
     return Buffer.concat([
       d.update(s.sealed.subarray(0, s.sealed.length - 16)),

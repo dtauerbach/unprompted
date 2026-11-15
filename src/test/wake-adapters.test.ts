@@ -124,9 +124,10 @@ const failures = async () => {
 };
 
 describe("the adapters", () => {
-  it("are MCP events, then the push URL", () => {
+  it("are MCP events, then a Claude routine, then the push URL", () => {
     expect(wakeAdapters().map((a) => a.name)).toEqual([
       "mcp_events",
+      "claude_fire",
       "push_url",
     ]);
   });

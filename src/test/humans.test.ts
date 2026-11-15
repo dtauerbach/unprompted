@@ -558,11 +558,20 @@ describe("human actions", () => {
     form.set("ask", "1");
     form.set("answer", "approve");
     await expect(a.answerAsk({}, form)).rejects.toThrow("redirect /sign-in");
+    form.set("routine", "trig_abcdefgh12345678");
+    form.set("token", `sk-ant-oat01-${"x".repeat(40)}`);
+    for (const act of [a.setClaudeFire, a.removeClaudeFire, a.testClaudeFire])
+      await expect(act({}, form)).rejects.toThrow("redirect /sign-in");
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
     const [n] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM connect_codes`;
     expect(n?.n).toBe(0);
+    const [f] = await db()<{ n: number }[]>`
+      SELECT (SELECT count(*) FROM fire_triggers)::int
+           + (SELECT count(*) FROM fire_secrets)::int
+           + (SELECT count(*) FROM fire_attempts)::int AS n`;
+    expect(f?.n).toBe(0);
   });
 
   it("give a connect code only for the signed-in human's own bot, and only while writable", async () => {
