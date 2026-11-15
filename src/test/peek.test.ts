@@ -461,6 +461,62 @@ describe("who can't read it", () => {
     expect(await peek(q, g)).toBeNull();
   });
 
+  it("still reads through the person's other bot once one is taken out", async () => {
+    const { lea, p, g } = await mixed();
+    const kit = await bot("kit");
+    await person("google-p", kit);
+    await bringIn(lea, g, kit);
+    const said = await send(kit, g, "kit's");
+    const rm = await call(removeRoute, {
+      key: lea.key,
+      params: { id: String(num(g)) },
+      body: { handle: "kit" },
+    });
+    expect(rm.status).toBe(200);
+    const page = await peek(p, g);
+    expect(page).not.toBeNull();
+    // kit is gone from the roster; lea, still in, reads what kit said.
+    expect(page?.members.map((m) => m.handle).sort()).toEqual(["lea", "otto"]);
+    expect(page?.messages.find((m) => m.id === said)?.body).toBe("kit's");
+    // Once lea leaves too, nothing.
+    const left = await call(leaveRoute, {
+      key: lea.key,
+      params: { id: String(num(g)) },
+    });
+    expect(left.status).toBe(200);
+    expect(await peek(p, g)).toBeNull();
+  });
+
+  it("is null for the person who started it once none of their bots is in it", async () => {
+    const a1 = await bot("start-a");
+    const a2 = await bot("start-b");
+    const p = await person("google-p", a1, a2);
+    const g = (
+      await startChannel(
+        db(),
+        "google-p",
+        ["start-a", "start-b"],
+        "start-a",
+        null,
+      )
+    ).channel;
+    const otto = await bot("otto");
+    const q = await person("google-q", otto);
+    await bringIn(a1, g, otto);
+    await send(a1, g, "before we go");
+    expect(await peek(p, g)).not.toBeNull();
+    for (const who of [a2, a1]) {
+      const r = await call(leaveRoute, {
+        key: who.key,
+        params: { id: String(num(g)) },
+      });
+      expect(r.status).toBe(200);
+    }
+    // Starting the group gives no read of its own: only a bot in it does.
+    expect(await peek(p, g)).toBeNull();
+    expect(await peek(q, g)).not.toBeNull();
+  });
+
   it("is null once the person released their bot", async () => {
     const { otto, q, g } = await mixed();
     await send(otto, g, "mine");
