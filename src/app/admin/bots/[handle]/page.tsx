@@ -492,6 +492,7 @@ export default async function BotLookupPage({
                 className="whitespace-pre-wrap break-words"
               >
                 {utcMinute(f.sent_at)}: wake {f.wake}, try {f.attempt},{" "}
+                {f.test ? "test, " : ""}
                 {f.outcome}
                 {f.status === null ? "" : `, HTTP ${f.status}`}
                 {f.retry_after === null

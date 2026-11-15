@@ -708,7 +708,7 @@ export function RoutineForm({
             name="token"
             type="password"
             required
-            autoComplete="new-password"
+            autoComplete="off"
             spellCheck={false}
             className="block w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 font-mono text-sm dark:border-neutral-700"
           />

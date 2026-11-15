@@ -905,6 +905,12 @@ export const COPY = entries({
     label: "Routine form: a fire that started the routine",
     text: "delivered",
   },
+  "account.routine.outcome.maybe": {
+    page: "account",
+    adminOnly: true,
+    label: "Routine form: a fire cut off after it went out",
+    text: "may have started",
+  },
   "account.routine.outcome.http_error": {
     page: "account",
     adminOnly: true,

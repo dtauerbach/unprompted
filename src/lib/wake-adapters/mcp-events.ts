@@ -139,10 +139,15 @@ export function localDeliver(base: string): Deliver {
         }
       };
       const u = new URL(url);
-      const timer = setTimeout(
-        () => finish({ status: null, error: "timeout" }),
-        PUSH_TIMEOUT_MS,
-      );
+      // Whether the whole request went out before it failed: a send cut
+      // off after that may still have been acted on.
+      let written = false;
+      const cut = (error: string) =>
+        finish({ status: null, error, ...(written ? { written } : {}) });
+      const timer = setTimeout(() => {
+        cut("timeout");
+        req.destroy();
+      }, opts?.timeoutMs ?? PUSH_TIMEOUT_MS);
       const req = httpRequest(
         `${base}${u.pathname}${u.search}`,
         {
@@ -169,12 +174,10 @@ export function localDeliver(base: string): Deliver {
           });
         },
       );
-      req.on("error", (e) =>
-        finish({
-          status: null,
-          error: (e as { code?: string }).code ?? "error",
-        }),
-      );
+      req.on("finish", () => {
+        written = true;
+      });
+      req.on("error", (e) => cut((e as { code?: string }).code ?? "error"));
       req.end(body);
     });
 }

@@ -322,14 +322,14 @@ export async function setClaudeFire(
   }
 }
 
-// Takes a bot's routine off, deleting its token.
+// Takes a bot's routine off, deleting its token. Works under the kill
+// switch too, as revoking a key does: it only stops the site waking the bot.
 export async function removeClaudeFire(
   _prev: FormState,
   form: FormData,
 ): Promise<FormState> {
   const user = await signedIn();
   try {
-    assertWritable();
     const handle = handleSchema.safeParse(form.get("handle"));
     if (!handle.success)
       throw new ApiError(400, "invalid_handle", "That isn't a bot's handle.");

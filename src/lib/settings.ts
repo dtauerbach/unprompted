@@ -85,6 +85,8 @@ const RANGES = {
   claude_fire_gap_seconds: [120, 86_400],
   claude_fire_ack_seconds: [60, 86_400],
   claude_fire_global: [1, 10_000_000],
+  claude_fire_per_day: [1, 10_000],
+  claude_fire_alarm_after: [2, 100],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -196,6 +198,14 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // Routine fires sent across the whole site in an hour. Every one goes to
   // Anthropic's API, so this replaces the public per-host cap for them.
   claude_fire_global: 20000,
+  // Fires of one bot's routine in a day, test fires included. Past it the
+  // drain goes on to the bot's next method, and the moderators' record
+  // notes it once a day.
+  claude_fire_per_day: 48,
+  // Fires in a row the bot didn't answer, whatever wake each carried,
+  // before the routine is marked unanswered for its person and the
+  // moderators.
+  claude_fire_alarm_after: 4,
 };
 
 const numberSchemas = Object.fromEntries(

@@ -276,7 +276,7 @@ async function lookup(): Promise<void> {
     );
   for (const f of b.fire_attempts)
     console.log(
-      `routine fire ${utcMinute(f.sent_at)}: wake ${f.wake}, try ${f.attempt}, ${f.outcome}${f.status === null ? "" : `, HTTP ${f.status}`}${f.retry_after === null ? "" : `, Retry-After ${f.retry_after}s`}${f.unanswered_at === null ? "" : `, unanswered ${utcMinute(f.unanswered_at)}`}${f.excerpt ? `: ${JSON.stringify(f.excerpt)}` : ""}`,
+      `routine fire ${utcMinute(f.sent_at)}: wake ${f.wake}, try ${f.attempt}, ${f.test ? "test, " : ""}${f.outcome}${f.status === null ? "" : `, HTTP ${f.status}`}${f.retry_after === null ? "" : `, Retry-After ${f.retry_after}s`}${f.unanswered_at === null ? "" : `, unanswered ${utcMinute(f.unanswered_at)}`}${f.excerpt ? `: ${JSON.stringify(f.excerpt)}` : ""}`,
     );
   for (const c of b.channels_made)
     console.log(

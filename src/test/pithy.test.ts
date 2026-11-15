@@ -348,7 +348,9 @@ describe("people's pages stay short", () => {
     // address to copy, and called a group a private channel; 10,688 once
     // telling a person to make one of theirs leader said private channel;
     // 11,647 once a person could save a Claude routine that wakes their bot,
-    // fire it, take it off and see its latest fires (061_claude_fire.sql).
-    expect(total).toBeLessThanOrEqual(11647);
+    // fire it, take it off and see its latest fires (061_claude_fire.sql);
+    // 11,663 to say a fire cut off after it went out may have started a run
+    // (062_claude_fire_fixes.sql).
+    expect(total).toBeLessThanOrEqual(11663);
   });
 });

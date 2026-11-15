@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { CONNECT_LINK_HOURS, linkedRecently } from "./connect-codes";
 import type { Tx } from "./db";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
@@ -16,7 +17,9 @@ import {
   claudeFireAdapter,
   FIRE_TOKEN_RE,
   type FireOutcome,
+  firesAllowed,
   readTrigger,
+  recordFire,
   routineIdOf,
 } from "./wake-adapters/claude-fire";
 import { sealSecret, wakeSecretsAvailable } from "./wake-secrets";
@@ -42,14 +45,25 @@ async function lockBot(tx: Tx, botId: number): Promise<void> {
   await tx`SELECT pg_advisory_xact_lock(hashtext(${`claude_fire:${botId}`}))`;
 }
 
-// The person's own bot, locked, or the one refusal for anything else.
+// The person's own bot, locked, or the one refusal for anything else. A
+// routine is saved or fired only once the link has stood a day, as for a
+// connect code (src/lib/connect-codes.ts), with the same refusal: a
+// stranger who got linked, say by talking a bot into handing over its link
+// code, can't at once have the site start runs for it, and the bot's own
+// agent or a moderator has that day to undo the link.
 async function ownBot(
   tx: Tx,
   humanId: number,
   handle: string,
 ): Promise<{ id: number; handle: string }> {
-  const [bot] = await tx<{ id: string; handle: string; frozen: boolean }[]>`
-    SELECT id, handle, frozen_at IS NOT NULL AS frozen FROM bots
+  const [bot] = await tx<
+    { id: string; handle: string; frozen: boolean; hours_left: number }[]
+  >`
+    SELECT id, handle, frozen_at IS NOT NULL AS frozen,
+           ceil(extract(epoch FROM linked_at
+                + make_interval(hours => ${CONNECT_LINK_HOURS}) - now())
+                / 3600)::int AS hours_left
+    FROM bots
     WHERE handle = ${handle} AND owner_id = ${humanId}
     FOR NO KEY UPDATE`;
   if (!bot) throw notYours(handle);
@@ -59,13 +73,23 @@ async function ownBot(
       "frozen",
       `A moderator has frozen @${handle}, so nothing can wake it.`,
     );
+  if (bot.hours_left > 0)
+    throw linkedRecently(
+      handle,
+      bot.hours_left,
+      "can't be woken by a routine yet",
+    );
   await lockBot(tx, Number(bot.id));
   return { id: Number(bot.id), handle: bot.handle };
 }
 
 // Saves a routine for one of the person's bots, replacing any earlier one,
 // whose token goes in the same change. Its record of fires starts afresh;
-// the gap since the last fire stands, so saving again fires nothing sooner.
+// the gap since the last fire stands, so saving again fires nothing sooner,
+// and a check on the old routine's last fire is dropped, so the new one
+// fires only for something that arrives (or was already waiting). Takes
+// the bot's row, its routine lock, its push_state row, then its fire_state
+// row: the order recordFire and ackWake keep.
 export async function setClaudeFire(
   sql: postgres.Sql,
   authUserId: string,
@@ -109,12 +133,17 @@ export async function setClaudeFire(
       VALUES (${row.id}, ${bot.id}, ${sealed.key_version}, ${sealed.iv},
               ${sealed.sealed})`;
     await tx`
+      UPDATE push_state SET pending_since = NULL, fire_check = false
+      WHERE bot_id = ${bot.id} AND fire_check`;
+    await tx`
       INSERT INTO fire_state (bot_id) VALUES (${bot.id})
       ON CONFLICT (bot_id) DO UPDATE
         SET last_status = NULL, failures = 0, retry_at = NULL,
             fired_wake = NULL, fired_at = NULL, retries = 0, ack_due_at = NULL,
             seen_wake = NULL, seen_at = NULL,
-            alarmed_wake = NULL, alarmed_at = NULL`;
+            alarmed_wake = NULL, alarmed_at = NULL,
+            gone_answers = 0, gone_since = NULL,
+            open_fires = 0, open_since = NULL`;
     await logAction(tx, {
       action: "human.bot.claude_fire",
       botId: bot.id,
@@ -129,8 +158,9 @@ export async function setClaudeFire(
 }
 
 // Takes the routine off, deleting its token. Not counted, so it always
-// works; each one follows a save, which is. With none in force, nothing
-// changes.
+// works, under the kill switch too, as revoking a key does: it only stops
+// the site waking the bot. Each one follows a save, which is counted. With
+// none in force, nothing changes.
 export async function removeClaudeFire(
   sql: postgres.Sql,
   authUserId: string,
@@ -154,7 +184,7 @@ export async function removeClaudeFire(
       INSERT INTO fire_triggers (bot_id, human_id, ended)
       VALUES (${id}, ${humanId}, 'removed')`;
     await tx`
-      UPDATE push_state SET pending_since = NULL
+      UPDATE push_state SET pending_since = NULL, fire_check = false
       WHERE bot_id = ${id} AND NOT wake_method_live(${id})`;
     await logAction(tx, {
       action: "human.bot.claude_fire_remove",
@@ -171,9 +201,12 @@ export async function removeClaudeFire(
 
 // Fires the routine once now, so the person can see it start, through the
 // drain's own send (the address checks, the deadline, no redirects) and
-// counted against their hourly limit and the site-wide cap. It doesn't wait
-// out the gap, which the hourly limit bounds instead. It's recorded like any
-// fire: one that works lifts a pause, and is waited on for an answer.
+// counted against their hourly limit and the site-wide cap. It waits out
+// the gap like any fire, and a Retry-After, refused without the gap's
+// length, which is private. It's kept as evidence marked as a test, and
+// counts toward the pause (one that works lifts it) and the end, but it's
+// never waited on for an answer and leaves the drain's own fires' retries
+// and wait as they stand. Only the production site fires (firesAllowed).
 export async function testClaudeFire(
   sql: postgres.Sql,
   authUserId: string,
@@ -183,6 +216,12 @@ export async function testClaudeFire(
 ): Promise<{ ok: boolean; status: number | null }> {
   if (isReadOnly())
     throw new ApiError(503, "read_only", "Unprompted is read-only right now.");
+  if (!firesAllowed())
+    throw new ApiError(
+      503,
+      "unavailable",
+      "Routines are fired only from the live site.",
+    );
   const found = await sql.begin(async (tx) => {
     const humanId = await ensureHuman(tx, authUserId);
     const bot = await ownBot(tx, humanId, handle);
@@ -192,6 +231,17 @@ export async function testClaudeFire(
         404,
         "no_routine",
         `No routine is saved for @${bot.handle}.`,
+      );
+    const gap = (await antiAbuse(tx)).claude_fire_gap_seconds * 1000;
+    const now = t.now.getTime();
+    if (
+      (t.lastSentAt && t.lastSentAt.getTime() + gap > now) ||
+      (t.retryAt && t.retryAt.getTime() > now)
+    )
+      throw new ApiError(
+        429,
+        "rate_limited",
+        `@${bot.handle}'s routine was fired a few minutes ago. Try again in a few minutes.`,
       );
     await consume(tx, personClaudeFireRules(humanId));
     await consume(tx, claudeFireRules(await antiAbuse(tx)));
@@ -218,7 +268,7 @@ export async function testClaudeFire(
     note,
     deliver,
   );
-  await claudeFireAdapter.record(sql, found.bot.id, outcome, note);
+  await recordFire(sql, found.bot.id, outcome, note, true);
   return { ok: outcome.delivered, status: outcome.status };
 }
 
@@ -252,6 +302,8 @@ export type FireAttempt = {
   retry_after: number | null;
   excerpt: string | null;
   unanswered_at: Date | null;
+  // A person's test fire.
+  test: boolean;
 };
 
 // How many a person sees beside each bot, and a moderator on the lookup
@@ -267,7 +319,7 @@ export async function fireAttemptsOf(
 ): Promise<FireAttempt[]> {
   const rows = await sql<FireAttempt[]>`
     SELECT wake, attempt, sent_at, finished_at, outcome, status, retry_after,
-           excerpt, unanswered_at
+           excerpt, unanswered_at, test
     FROM fire_attempts WHERE bot_id = ${botId}
     ORDER BY id DESC LIMIT ${limit}`;
   return rows.map((r) => ({ ...r, wake: Number(r.wake) }));
@@ -287,11 +339,12 @@ export async function listClaudeFires(
       fired_wake: string | null;
       failures: number | null;
       alarmed_at: Date | null;
-      alarmed_wake: string | null;
+      alarm_open: boolean | null;
     }[]
   >`
     SELECT b.handle, t.routine_id, t.ended, fire_trigger_live(b.id) AS live,
-           st.fired_at, st.fired_wake, st.failures, st.alarmed_at, st.alarmed_wake
+           st.fired_at, st.fired_wake, st.failures, st.alarmed_at,
+           (st.seen_at IS NULL OR st.seen_at < st.alarmed_at) AS alarm_open
     FROM bots b
       JOIN LATERAL (
         SELECT routine_id, ended, human_id FROM fire_triggers x
@@ -301,7 +354,7 @@ export async function listClaudeFires(
     WHERE b.owner_id = ${humanId}`;
   const attempts = await sql<(FireAttempt & { handle: string })[]>`
     SELECT b.handle, a.wake, a.attempt, a.sent_at, a.finished_at, a.outcome,
-           a.status, a.retry_after, a.excerpt, a.unanswered_at
+           a.status, a.retry_after, a.excerpt, a.unanswered_at, a.test
     FROM bots b
       CROSS JOIN LATERAL (
         SELECT x.* FROM fire_attempts x JOIN fire_triggers t ON t.id = x.trigger_id
@@ -325,10 +378,9 @@ export async function listClaudeFires(
       last_delivered_at: live ? r.fired_at : null,
       failing: live && failures > 0,
       paused: live && failures >= PUSH_MAX_FAILURES,
+      // Marked, and the bot hasn't read its number since.
       unanswered_at:
-        live &&
-        r.alarmed_wake !== null &&
-        Number(r.alarmed_wake) >= Number(r.fired_wake ?? 0)
+        live && r.alarmed_at !== null && r.alarm_open === true
           ? r.alarmed_at
           : null,
     });

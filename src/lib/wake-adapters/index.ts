@@ -39,6 +39,15 @@ export type WakeOutcome = {
   // A short, cleaned excerpt of the answer, for an adapter that keeps one
   // (./claude-fire.ts).
   excerpt?: string;
+  // Not delivered as far as anyone knows, but the request went out before
+  // the send was cut off, so it may have been acted on: an adapter whose
+  // sends cost something (./claude-fire.ts) waits on it rather than send
+  // it again.
+  maybe?: boolean;
+  // Delivered, but the drain goes on to the bot's next method as well: the
+  // adapter isn't sure its wake reaches the bot (a routine fired again
+  // after its last fire went unanswered).
+  alsoNext?: boolean;
 };
 
 // One bot's registration with one adapter, as the adapter finds it.
@@ -53,11 +62,17 @@ export type WakeRegistration = {
   // only methods are waiting until the first is due, so arrivals in
   // between go out as one.
   notBefore?: Date | null;
+  // Waiting out notBefore, the method still owes the bot this wake: if a
+  // later method delivers meanwhile, the bot stays queued for notBefore so
+  // this one goes then, unless the bot has read its number by then.
+  owed?: boolean;
 };
 
 export type WakeAdapter = {
   // Short and stable, for the log and the tests.
   readonly name: string;
+  // How long a send may take, when longer than the push timeout.
+  readonly deadlineMs?: number;
   // The adapter's own rules on an address, after the push checks: the
   // normal form it keeps, or an ApiError saying why not.
   check(address: string): string;

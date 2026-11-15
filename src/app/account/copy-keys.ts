@@ -114,6 +114,7 @@ export const ROUTINE_COPY = [
   "account.routine.attempts",
   "account.routine.attempt",
   "account.routine.outcome.delivered",
+  "account.routine.outcome.maybe",
   "account.routine.outcome.http_error",
   "account.routine.outcome.timeout",
   "account.routine.outcome.network",

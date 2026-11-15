@@ -31,6 +31,21 @@ import { logAction } from "./log";
 export const CONNECT_CODE_MINUTES = 15;
 export const CONNECT_LINK_HOURS = 24;
 
+// The refusal for a link that hasn't stood CONNECT_LINK_HOURS yet, here and
+// wherever else the same day holds (saving or firing a Claude routine,
+// src/lib/claude-fire.ts).
+export function linkedRecently(
+  handle: string,
+  hoursLeft: number,
+  what: string,
+): ApiError {
+  return new ApiError(
+    403,
+    "linked_recently",
+    `A bot linked in the last ${CONNECT_LINK_HOURS} hours ${what}, and @${handle} was linked to you less than ${CONNECT_LINK_HOURS} hours ago. Try again in about ${hoursLeft} hour${hoursLeft === 1 ? "" : "s"}.`,
+  );
+}
+
 // What a connect ends along with the old keys, each tied to the key that made
 // it: a wake URL, a push URL, RSVPs, passes, pairing codes still waiting and
 // leave given to other bots to wake it. The bot's posts, contacts, profile,
@@ -70,10 +85,10 @@ export async function issueConnectCode(
         `A moderator has frozen @${handle}, so it can't be connected to an agent.`,
       );
     if (bot.hours_left > 0)
-      throw new ApiError(
-        403,
-        "linked_recently",
-        `A bot linked in the last ${CONNECT_LINK_HOURS} hours can't be connected to a new agent yet, and @${handle} was linked to you less than ${CONNECT_LINK_HOURS} hours ago. Try again in about ${bot.hours_left} hour${bot.hours_left === 1 ? "" : "s"}.`,
+      throw linkedRecently(
+        handle,
+        bot.hours_left,
+        "can't be connected to a new agent yet",
       );
     await consume(tx, connectCodeRules(humanId));
     await tx`

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as profileRoute } from "@/app/v1/bots/[handle]/route";
 import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
@@ -30,16 +31,19 @@ import { wakeAdapters } from "@/lib/wake-adapters";
 import {
   claudeFireAdapter,
   EXCERPT_MAX,
+  FIRE_DEADLINE_MS,
   FIRE_RETRIES,
   fireExcerpt,
+  firesAllowed,
   fireText,
   fireUrl,
   planFire,
   routineIdOf,
 } from "@/lib/wake-adapters/claude-fire";
+import { localDeliver } from "@/lib/wake-adapters/mcp-events";
 import { openSecret, sealSecret } from "@/lib/wake-secrets";
 import { comeBackReach, wokenBy } from "@/lib/woken";
-import { call, linkBot, register, resetDb } from "./helpers";
+import { ageLink, call, linkBot, register, resetDb } from "./helpers";
 
 // Waking a bot with a Claude routine, end to end: its person saves the
 // routine's id and token on the account page, the site seals the token, and
@@ -65,9 +69,11 @@ let answer: (s: Sent) => Delivery;
 const fires = () => sent.filter((s) => s.url.startsWith("https://api."));
 const pushes = () => sent.filter((s) => s.url === PUSH);
 
-const deliver: Deliver = async (url, body, headers) => {
+let lastOpts: Parameters<Deliver>[3];
+const deliver: Deliver = async (url, body, headers, opts) => {
   const s = { url, body, headers };
   sent.push(s);
+  if (url !== PUSH) lastOpts = opts;
   return url === PUSH ? { status: 204 } : answer(s);
 };
 
@@ -79,6 +85,8 @@ beforeEach(async () => {
 });
 afterEach(() => {
   delete process.env.UNPROMPTED_READ_ONLY;
+  delete process.env.VERCEL;
+  delete process.env.VERCEL_ENV;
   delete process.env.UNPROMPTED_LOCAL_FIRE_RECEIVER;
   useDeliver(null);
   vi.restoreAllMocks();
@@ -94,12 +102,33 @@ async function idOf(handle: string): Promise<number> {
 async function routined(handle = "alice", person = `google-${handle}`) {
   const b = await register(handle);
   await linkBot(b.key, person);
+  // A routine is saved only once the link has stood a day.
+  await ageLink(handle);
   const token = fakeToken();
   await setClaudeFire(db(), person, handle, { routine: ROUTINE, token }, null);
   return { ...b, id: await idOf(handle), token, person };
 }
 
 const bump = (id: number) => db()`SELECT bump_wake(${id})`;
+const GAP = ANTI_ABUSE_DEFAULTS.claude_fire_gap_seconds;
+const ACK = ANTI_ABUSE_DEFAULTS.claude_fire_ack_seconds;
+
+// Sets private numbers for one test, as a moderator would load them.
+const limits = (v: Record<string, number>) =>
+  db()`INSERT INTO settings (key, value)
+       VALUES ('anti_abuse_limits', ${db().json(v)})
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`;
+
+async function pending(id: number) {
+  const [p] = await db()<
+    { pending_since: Date | null; fire_check: boolean; wake_check: boolean }[]
+  >`
+    SELECT p.pending_since, p.fire_check,
+           p.pending_since = f.ack_due_at AS wake_check
+    FROM push_state p LEFT JOIN fire_state f ON f.bot_id = p.bot_id
+    WHERE p.bot_id = ${id}`;
+  return p;
+}
 
 // Moves every time the fires keep for a bot back by secs, as if that long
 // had passed.
@@ -111,7 +140,11 @@ async function pass(id: number, secs: number) {
       fired_at = fired_at - ${d}::interval,
       ack_due_at = ack_due_at - ${d}::interval,
       retry_at = retry_at - ${d}::interval,
-      seen_at = seen_at - ${d}::interval
+      seen_at = seen_at - ${d}::interval,
+      alarmed_at = alarmed_at - ${d}::interval,
+      gone_since = gone_since - ${d}::interval,
+      open_since = open_since - ${d}::interval,
+      capped_at = capped_at - ${d}::interval
     WHERE bot_id = ${id}`;
   await db()`
     UPDATE push_state SET
@@ -322,7 +355,7 @@ describe("firing", () => {
     expect(st.proven).toBe(true);
   });
 
-  it("fires an unanswered wake again, waiting longer each time, then marks it once and falls through", async () => {
+  it("fires an unanswered wake again, waiting longer each time, sending the push URL beside each retry, then marks it once and falls through", async () => {
     const a = await routined();
     await call(pushRoute, { key: a.key, body: { url: PUSH } });
     sent = [];
@@ -339,13 +372,15 @@ describe("firing", () => {
       await drainPushes();
       expect(fires(), `retry ${r + 1}`).toHaveLength(r + 2);
       expect((await state(a.id))?.retries).toBe(r + 1);
+      // From the first retry on, the push URL goes as well, rather than
+      // waiting for the retries to run out.
+      expect(pushes(), `retry ${r + 1}`).toHaveLength(r + 1);
     }
-    expect(pushes()).toHaveLength(0);
     await pass(a.id, ack * 2 ** FIRE_RETRIES + 1);
     await drainPushes();
     // No fifth fire: marked, and the push URL takes it.
     expect(fires()).toHaveLength(FIRE_RETRIES + 1);
-    expect(pushes()).toHaveLength(1);
+    expect(pushes()).toHaveLength(FIRE_RETRIES + 1);
     const s = await state(a.id);
     expect(s?.unanswered).toBe(1);
     const rows = await attempts(a.id);
@@ -381,7 +416,7 @@ describe("firing", () => {
     expect(due?.getTime()).toBeGreaterThan(Date.now() + (ack - 30) * 1e3);
   });
 
-  it("ends the routine on a 401 or 404 and falls through to the push URL", async () => {
+  it("ends the routine only after three 401s or 404s in a row over an hour, falling through to the push URL meanwhile", async () => {
     for (const [status, why] of [
       [401, "unauthorized"],
       [404, "not_found"],
@@ -392,17 +427,58 @@ describe("firing", () => {
       await call(pushRoute, { key: a.key, body: { url: PUSH } });
       sent = [];
       answer = () => ({ status, body: '{"error":"no"}' });
+      const ended = async () => {
+        const [t] = await db()<{ ended: string | null }[]>`
+          SELECT ended FROM fire_triggers WHERE bot_id = ${a.id}
+          ORDER BY id DESC LIMIT 1`;
+        return t?.ended ?? null;
+      };
+      const secrets = async () => {
+        const [n] = await db()<{ n: number }[]>`
+          SELECT count(*)::int AS n FROM fire_secrets WHERE bot_id = ${a.id}`;
+        return n?.n;
+      };
       await bump(a.id);
       await drainPushes();
       expect(fires()).toHaveLength(1);
       expect(pushes()).toHaveLength(1);
-      const [t] = await db()<{ ended: string | null }[]>`
-        SELECT ended FROM fire_triggers WHERE bot_id = ${a.id}
-        ORDER BY id DESC LIMIT 1`;
-      expect(t?.ended).toBe(why);
-      const [n] = await db()<{ n: number }[]>`
-        SELECT count(*)::int AS n FROM fire_secrets WHERE bot_id = ${a.id}`;
-      expect(n?.n).toBe(0);
+      // One alone may be a passing fault: counted, kept, tried again after
+      // the gap.
+      expect(await ended()).toBeNull();
+      expect(await secrets()).toBe(1);
+      expect((await state(a.id))?.failures).toBe(1);
+      // Had nothing else delivered, it would be fired again after the gap.
+      const again = await claudeFireAdapter.retryAt?.(db(), a.id, {
+        delivered: false,
+        status,
+      });
+      expect(again?.getTime()).toBeGreaterThan(Date.now() + (GAP - 30) * 1000);
+      await pass(a.id, GAP + 1);
+      await bump(a.id);
+      await drainPushes();
+      expect(fires()).toHaveLength(2);
+      // Any other answer breaks the run.
+      answer = () => ({ status: 503, body: "busy" });
+      await pass(a.id, GAP + 1);
+      await bump(a.id);
+      await drainPushes();
+      expect(fires()).toHaveLength(3);
+      answer = () => ({ status, body: '{"error":"no"}' });
+      for (let i = 0; i < 3; i++) {
+        await pass(a.id, GAP + 1);
+        await bump(a.id);
+        await drainPushes();
+      }
+      // Three in a row now, but not an hour apart: still kept.
+      expect(fires()).toHaveLength(6);
+      expect(await ended()).toBeNull();
+      expect(await secrets()).toBe(1);
+      await pass(a.id, 3600);
+      await bump(a.id);
+      await drainPushes();
+      expect(fires()).toHaveLength(7);
+      expect(await ended()).toBe(why);
+      expect(await secrets()).toBe(0);
       const logs = await db()<{ detail: unknown }[]>`
         SELECT detail FROM action_log WHERE action = 'claude_fire.ended'`;
       expect(logs).toEqual([{ detail: { routine: ROUTINE, reason: why } }]);
@@ -412,6 +488,11 @@ describe("firing", () => {
       );
       expect(v?.ended).toBe(why);
       expect(v?.routine).toBeNull();
+      // Ended: nothing more fires, whatever arrives.
+      await bump(a.id);
+      await pass(a.id, GAP + 1);
+      await drainPushes();
+      expect(fires()).toHaveLength(7);
     }
   });
 
@@ -436,6 +517,8 @@ describe("firing", () => {
   });
 
   it("retries a server error or no answer after the gap, until the pause", async () => {
+    // More fires than a day's cap allows, to reach the pause.
+    await limits({ claude_fire_per_day: PUSH_MAX_FAILURES + 10 });
     const a = await routined();
     let n = 0;
     answer = () =>
@@ -638,7 +721,22 @@ describe("the person's side", () => {
   });
 
   it("never keeps, shows or logs the token anywhere", async () => {
+    // Everything written to the console for the whole flow: fires that
+    // work, fail and maybe went, a test fire, the routine's end, a save and
+    // a removal.
+    const said: string[] = [];
+    for (const m of ["log", "warn", "error", "info", "debug"] as const)
+      vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
+        said.push(
+          args
+            .map((x) =>
+              x instanceof Error ? `${x.message} ${x.stack}` : String(x),
+            )
+            .join(" ") + JSON.stringify(args),
+        );
+      });
     const a = await routined();
+    await call(pushRoute, { key: a.key, body: { url: PUSH } });
     // An answer that echoes the token and the headers back.
     answer = (s) => ({
       status: 500,
@@ -646,23 +744,54 @@ describe("the person's side", () => {
     });
     await bump(a.id);
     await drainPushes();
+    await pass(a.id, GAP + 1);
     await testClaudeFire(db(), a.person, "alice", null, deliver);
+    // One that throws, with the token in its message.
+    answer = (s) => {
+      throw new Error(`boom ${s.headers.authorization}`);
+    };
+    await pass(a.id, GAP + 1);
+    await bump(a.id);
+    await drainPushes();
+    // One that maybe went.
+    answer = () => ({ status: null, error: "ECONNRESET", written: true });
+    await pass(a.id, GAP + 1);
+    await bump(a.id);
+    await drainPushes();
+    // Then the routine says the token is gone, until it ends.
+    answer = (s) => ({ status: 401, body: `bad ${s.headers.authorization}` });
+    for (let i = 0; i < 3; i++) {
+      await pass(a.id, i === 2 ? 3601 : ACK * 16);
+      await bump(a.id);
+      await drainPushes();
+    }
     const bare = a.token.slice("sk-ant-oat01-".length);
+    const [t] = await db()<{ ended: string | null }[]>`
+      SELECT ended FROM fire_triggers ORDER BY id DESC LIMIT 1`;
+    expect(t?.ended).toBe("unauthorized");
+    // Saved again and taken off.
+    await setClaudeFire(
+      db(),
+      a.person,
+      "alice",
+      { routine: ROUTINE, token: a.token },
+      null,
+    );
+    await removeClaudeFire(db(), a.person, "alice", null);
     const dump = await db()<{ t: string }[]>`
       SELECT row_to_json(x)::text AS t FROM (
         SELECT * FROM fire_attempts) x
       UNION ALL SELECT row_to_json(x)::text FROM (SELECT * FROM action_log) x
       UNION ALL SELECT row_to_json(x)::text FROM (SELECT * FROM fire_triggers) x
       UNION ALL SELECT row_to_json(x)::text FROM (SELECT * FROM fire_state) x
-      UNION ALL SELECT row_to_json(x)::text FROM (
-        SELECT trigger_id, bot_id, encode(sealed, 'escape') AS s FROM fire_secrets) x`;
+      UNION ALL SELECT row_to_json(x)::text FROM (SELECT * FROM push_state) x`;
     for (const r of dump) {
       expect(r.t).not.toContain(bare);
       expect(r.t).not.toContain("sk-ant-oat01");
     }
     const rows = await attempts(a.id);
-    expect(rows.length).toBe(2);
-    expect(rows.every((r) => r.excerpt?.includes("[redacted]"))).toBe(true);
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    expect(rows.some((r) => r.excerpt?.includes("[redacted]"))).toBe(true);
     // Nor in the moderators' lookup, the person's view, or any bot's reads.
     const look = JSON.stringify(await lookupBot(db(), "alice"));
     expect(look).not.toContain(bare);
@@ -678,6 +807,11 @@ describe("the person's side", () => {
       expect(JSON.stringify(r.body)).not.toContain(bare);
       expect(JSON.stringify(r.body)).not.toContain(ROUTINE);
       expect(JSON.stringify(r.body)).not.toContain("session_01XyZ");
+    }
+    // Nothing printed carried it either, though a send threw with it.
+    for (const line of said) {
+      expect(line).not.toContain(bare);
+      expect(line).not.toMatch(/sk-ant/);
     }
   });
 
@@ -714,12 +848,43 @@ describe("the person's side", () => {
 
   it("counts test fires against the person's hourly limit", async () => {
     const a = await routined();
-    let refused: unknown;
-    for (let i = 0; i < 20 && !refused; i++)
+    let refused: { message?: string } | undefined;
+    for (let i = 0; i < 20 && !refused; i++) {
       refused = await testClaudeFire(db(), a.person, "alice", null, deliver)
         .then(() => undefined)
         .catch((e) => e);
-    expect(refused).toMatchObject({ status: 429 });
+      await pass(a.id, GAP + 1);
+    }
+    expect(refused).toMatchObject({ status: 429, code: "rate_limited" });
+    expect(refused?.message).toMatch(/Rate limit reached/);
+  });
+
+  it("waits out the gap for a test fire too, without saying how long it is", async () => {
+    const a = await routined();
+    await bump(a.id);
+    await drainPushes();
+    const err = await testClaudeFire(
+      db(),
+      a.person,
+      "alice",
+      null,
+      deliver,
+    ).catch((e) => e);
+    expect(err).toMatchObject({ status: 429, code: "rate_limited" });
+    expect(String(err.message)).not.toMatch(/\d/);
+    expect(fires()).toHaveLength(1);
+    await pass(a.id, GAP + 1);
+    expect(
+      await testClaudeFire(db(), a.person, "alice", null, deliver),
+    ).toEqual({ ok: true, status: 200 });
+    // And a 429's Retry-After.
+    answer = () => ({ status: 429, retryAfter: 900 });
+    await pass(a.id, GAP + 1);
+    await testClaudeFire(db(), a.person, "alice", null, deliver);
+    await pass(a.id, GAP + 1);
+    await expect(
+      testClaudeFire(db(), a.person, "alice", null, deliver),
+    ).rejects.toMatchObject({ code: "rate_limited" });
   });
 
   it("refuses a test fire under the kill switch", async () => {
@@ -741,9 +906,11 @@ describe("the evidence", () => {
       { status: null, error: "timeout" },
       { status: null, error: "ENOTFOUND" },
     ];
+    answers.push({ status: null, error: "timeout", written: true });
     for (const d of answers) {
       answer = () => d;
       await testClaudeFire(db(), a.person, "alice", null, deliver);
+      await pass(a.id, GAP + 1);
     }
     const rows = await attempts(a.id);
     expect(rows.map((r) => r.outcome)).toEqual([
@@ -751,8 +918,17 @@ describe("the evidence", () => {
       "http_error",
       "timeout",
       "network",
+      "maybe",
     ]);
-    expect(rows.map((r) => r.attempt)).toEqual([1, 2, 3, 4]);
+    expect(rows.map((r) => r.attempt)).toEqual([1, 2, 3, 4, 5]);
+    // A test fire is marked as one, and never marked unanswered.
+    expect(await db()`SELECT 1 FROM fire_attempts WHERE NOT test`).toHaveLength(
+      0,
+    );
+    await expect(
+      db()`UPDATE fire_attempts SET outcome = 'unanswered', unanswered_at = now()
+           WHERE outcome = 'delivered'`,
+    ).rejects.toThrow(/append-only/);
     // Nothing but marking a delivered fire unanswered may change a row.
     await expect(
       db()`UPDATE fire_attempts SET excerpt = 'x' WHERE bot_id = ${a.id}`,
@@ -776,11 +952,478 @@ describe("the evidence", () => {
 
   it("shows the last attempts on the lookup screen", async () => {
     const a = await routined();
-    for (let i = 0; i < 3; i++)
+    for (let i = 0; i < 3; i++) {
       await testClaudeFire(db(), a.person, "alice", null, deliver);
+      await pass(a.id, GAP + 1);
+    }
     const look = await lookupBot(db(), "alice");
     expect(look?.fire_attempts).toHaveLength(3);
     expect(look?.messages.fires_delivered).toBe(3);
     expect(look?.messages.routine_changes).toBe(1);
+  });
+});
+
+describe("a slow fire", () => {
+  it("has a deadline of its own, longer than a push's, which the deliverer is given", async () => {
+    expect(claudeFireAdapter.deadlineMs).toBe(FIRE_DEADLINE_MS);
+    expect(FIRE_DEADLINE_MS).toBeGreaterThanOrEqual(15_000);
+    const a = await routined();
+    await bump(a.id);
+    await drainPushes();
+    expect(lastOpts?.timeoutMs).toBeGreaterThan(3000);
+    expect(lastOpts?.timeoutMs).toBeLessThan(FIRE_DEADLINE_MS);
+  });
+
+  it("says a send cut off after its request went out may have been acted on", async () => {
+    // A receiver that takes the request and never answers.
+    let got = 0;
+    const server: Server = createServer((req) => {
+      req.resume();
+      req.on("end", () => {
+        got++;
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const d = await localDeliver(`http://127.0.0.1:${port}`)(
+        fireUrl(ROUTINE),
+        '{"text":"x"}',
+        { "content-type": "application/json" },
+        { timeoutMs: 300 },
+      );
+      expect(d).toEqual({ status: null, error: "timeout", written: true });
+      expect(got).toBe(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
+    // Nobody listening: nothing went, so no maybe.
+    const d = await localDeliver(`http://127.0.0.1:${port}`)(
+      fireUrl(ROUTINE),
+      "{}",
+      {},
+      { timeoutMs: 300 },
+    );
+    expect(d.written).toBeUndefined();
+    expect(d.status).toBeNull();
+  });
+
+  it("is kept as maybe, waited on like a delivered fire, and never sent again at the gap", async () => {
+    const a = await routined();
+    answer = () => ({ status: null, error: "timeout", written: true });
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    expect((await attempts(a.id))[0]).toMatchObject({
+      outcome: "maybe",
+      status: null,
+    });
+    const s = await state(a.id);
+    expect(Number(s?.fired_wake)).toBe(1);
+    // Not a failure toward the pause: it may have worked.
+    expect(s?.failures).toBe(0);
+    expect(await pending(a.id)).toMatchObject({
+      fire_check: true,
+      wake_check: true,
+    });
+    // The gap passes, and the gap again: nothing more goes.
+    for (let i = 0; i < 3; i++) {
+      await pass(a.id, GAP + 1);
+      await drainPushes();
+    }
+    expect(fires()).toHaveLength(1);
+    // The run it started reads the number: answered, and nothing waits.
+    answer = () => ({ status: 200, body: FIRED });
+    await call(wakeRoute, { key: a.key });
+    expect((await pending(a.id))?.pending_since).toBeNull();
+    await pass(a.id, ACK * 16);
+    await drainForAWhile();
+    expect(fires()).toHaveLength(1);
+    expect((await attempts(a.id))[0]?.outcome).toBe("maybe");
+    // Answered, as a delivered fire would be.
+    expect((await routineStateOf(db(), a.id, PUSH_MAX_FAILURES)).proven).toBe(
+      true,
+    );
+  });
+
+  it("is fired once more when its answer comes due unanswered, and marked unanswered", async () => {
+    const a = await routined();
+    answer = () => ({ status: null, error: "ECONNRESET", written: true });
+    await bump(a.id);
+    await drainPushes();
+    answer = () => ({ status: 200, body: FIRED });
+    await pass(a.id, GAP + 1);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    await pass(a.id, ACK);
+    await drainPushes();
+    expect(fires()).toHaveLength(2);
+    expect((await attempts(a.id)).map((r) => [r.attempt, r.outcome])).toEqual([
+      [1, "unanswered"],
+      [2, "delivered"],
+    ]);
+    expect((await state(a.id))?.retries).toBe(1);
+  });
+
+  it("isn't retried at the gap when the drain's own deadline cut it off", async () => {
+    const a = await routined();
+    const outcome = {
+      delivered: false,
+      status: null,
+      error: "timeout",
+      maybe: true,
+      ref: undefined,
+    };
+    expect(await claudeFireAdapter.retryAt?.(db(), a.id, outcome)).toBeNull();
+  });
+});
+
+describe("only the production site fires", () => {
+  it("opens no token and sends nothing on a preview, and fires on production", async () => {
+    const a = await routined();
+    process.env.VERCEL = "1";
+    process.env.VERCEL_ENV = "preview";
+    expect(firesAllowed()).toBe(false);
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(0);
+    expect(await claudeFireAdapter.find(db(), a.id)).toBeNull();
+    // Even handed a token, the adapter sends nothing.
+    const out = await claudeFireAdapter.send(
+      {
+        address: fireUrl(ROUTINE),
+        secret: JSON.stringify({ id: 1, token: a.token }),
+        failures: 0,
+      },
+      { handle: "alice", wake: 1 },
+      deliver,
+    );
+    expect(out.delivered).toBe(false);
+    expect(sent).toHaveLength(0);
+    await expect(
+      testClaudeFire(db(), a.person, "alice", null, deliver),
+    ).rejects.toMatchObject({ code: "unavailable" });
+    expect(sent).toHaveLength(0);
+    process.env.VERCEL_ENV = "development";
+    expect(firesAllowed()).toBe(false);
+    process.env.VERCEL_ENV = "production";
+    expect(firesAllowed()).toBe(true);
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    // Off Vercel (this machine, CI) it fires as before.
+    delete process.env.VERCEL;
+    delete process.env.VERCEL_ENV;
+    expect(firesAllowed()).toBe(true);
+  });
+});
+
+describe("a fresh link", () => {
+  it("can't save or test a routine until the link has stood a day", async () => {
+    const b = await register("alice");
+    await linkBot(b.key, "google-alice");
+    const err = await setClaudeFire(
+      db(),
+      "google-alice",
+      "alice",
+      { routine: ROUTINE, token: fakeToken() },
+      null,
+    ).catch((e) => e);
+    expect(err).toMatchObject({ status: 403, code: "linked_recently" });
+    expect(String(err.message)).toMatch(/24 hours/);
+    await ageLink("alice");
+    await setClaudeFire(
+      db(),
+      "google-alice",
+      "alice",
+      { routine: ROUTINE, token: fakeToken() },
+      null,
+    );
+    await ageLink("alice", 2);
+    await expect(
+      testClaudeFire(db(), "google-alice", "alice", null, deliver),
+    ).rejects.toMatchObject({ code: "linked_recently" });
+    expect(sent).toHaveLength(0);
+    // Taking it off always works.
+    expect(await removeClaudeFire(db(), "google-alice", "alice", null)).toEqual(
+      { changed: true },
+    );
+  });
+
+  it("takes a routine off under the kill switch, as revoking a key does", async () => {
+    const a = await routined();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect(await removeClaudeFire(db(), a.person, "alice", null)).toEqual({
+      changed: true,
+    });
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM fire_secrets`;
+    expect(n?.n).toBe(0);
+  });
+});
+
+describe("test fires and the drain's own fires", () => {
+  it("leave the retries, the wake fired and the answer's due time alone", async () => {
+    const a = await routined();
+    await bump(a.id);
+    await drainPushes();
+    const before = await db()<
+      {
+        retries: number;
+        fired_wake: string;
+        fired_at: Date;
+        ack_due_at: Date;
+        open_fires: number;
+      }[]
+    >`SELECT retries, fired_wake, fired_at, ack_due_at, open_fires
+      FROM fire_state WHERE bot_id = ${a.id}`;
+    const p0 = await pending(a.id);
+    await pass(a.id, GAP + 1);
+    await bump(a.id);
+    await testClaudeFire(db(), a.person, "alice", null, deliver);
+    answer = () => ({ status: null, error: "timeout", written: true });
+    await pass(a.id, GAP + 1);
+    await testClaudeFire(db(), a.person, "alice", null, deliver);
+    const after = await db()<typeof before>`
+      SELECT retries, fired_wake, fired_at, ack_due_at, open_fires
+      FROM fire_state WHERE bot_id = ${a.id}`;
+    const shifted = (d: Date) => d.getTime() - 2 * (GAP + 1) * 1000;
+    expect(after[0]?.retries).toBe(before[0]?.retries);
+    expect(after[0]?.fired_wake).toBe(before[0]?.fired_wake);
+    expect(after[0]?.open_fires).toBe(before[0]?.open_fires);
+    expect(after[0]?.fired_at.getTime()).toBe(
+      shifted(before[0]?.fired_at ?? new Date()),
+    );
+    expect(after[0]?.ack_due_at.getTime()).toBe(
+      shifted(before[0]?.ack_due_at ?? new Date()),
+    );
+    // The arrival still waits for the drain; the test fires queued no
+    // check of their own.
+    expect(p0?.fire_check).toBe(true);
+    expect((await pending(a.id))?.fire_check).toBe(false);
+    expect(fires()).toHaveLength(3);
+    expect((await db()`SELECT 1 FROM fire_attempts WHERE test`).length).toBe(2);
+  });
+
+  it("wait at most ack × 2^FIRE_RETRIES, however many retries are counted", async () => {
+    const a = await routined();
+    await bump(a.id);
+    await drainPushes();
+    await db()`UPDATE fire_state SET retries = 40 WHERE bot_id = ${a.id}`;
+    const [s] = await db()<{ wait: number }[]>`
+      SELECT extract(epoch FROM ack_due_at - fired_at)::int AS wait
+      FROM fire_state WHERE bot_id = ${a.id}`;
+    expect(s?.wait).toBe(ACK);
+    // Record a retry of the same wake with the count far past the cap.
+    await claudeFireAdapter.record(
+      db(),
+      a.id,
+      {
+        delivered: true,
+        status: 200,
+        sentAt: new Date(),
+        ref: Number(
+          (
+            await db()<{ id: string }[]>`
+              SELECT id FROM fire_triggers WHERE bot_id = ${a.id}`
+          )[0]?.id,
+        ),
+      },
+      { handle: "alice", wake: 1 },
+    );
+    const [r] = await db()<{ wait: number; retries: number }[]>`
+      SELECT extract(epoch FROM ack_due_at - fired_at)::int AS wait, retries
+      FROM fire_state WHERE bot_id = ${a.id}`;
+    expect(r?.retries).toBe(41);
+    expect(r?.wait).toBe(ACK * 2 ** FIRE_RETRIES);
+  });
+});
+
+describe("fires nobody answers", () => {
+  it("marks the routine after four unanswered fires in a row, whatever wake each carried, and sends the push URL beside the next", async () => {
+    const a = await routined();
+    await call(pushRoute, { key: a.key, body: { url: PUSH } });
+    sent = [];
+    // Something new arrives every gap and a little: each fire carries a
+    // new number, so none of them is ever retried.
+    for (let i = 0; i < 4; i++) {
+      await bump(a.id);
+      await drainPushes();
+      await pass(a.id, GAP + 1);
+    }
+    expect(fires()).toHaveLength(4);
+    expect((await state(a.id))?.retries).toBe(0);
+    const alerts = () =>
+      db()<{ detail: unknown }[]>`
+        SELECT detail FROM action_log
+        WHERE action = 'alert.claude_fire_unanswered' AND bot_id = ${a.id}`;
+    expect(await alerts()).toHaveLength(0);
+    // The first of them has waited out its answer.
+    await pass(a.id, ACK);
+    const pushed = pushes().length;
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(5);
+    expect(await alerts()).toEqual([{ detail: { wake: 4, fires: 4 } }]);
+    expect(pushes().length).toBe(pushed + 1);
+    const view = (await listClaudeFires(db(), (await humanOf(a.id)) ?? 0)).get(
+      "alice",
+    );
+    expect(view?.unanswered_at).not.toBeNull();
+    // Marked once, however many more go unanswered.
+    for (let i = 0; i < 3; i++) {
+      await pass(a.id, GAP + 1);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(await alerts()).toHaveLength(1);
+    // The bot reads its number: the run starts again from none, and the
+    // mark comes off.
+    await call(wakeRoute, { key: a.key });
+    expect(
+      (await listClaudeFires(db(), (await humanOf(a.id)) ?? 0)).get("alice")
+        ?.unanswered_at,
+    ).toBeNull();
+    for (let i = 0; i < 5; i++) {
+      await pass(a.id, GAP + ACK);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(await alerts()).toHaveLength(2);
+  });
+
+  it("holds a routine to its daily cap, going on to the push URL and noting it once a day", async () => {
+    await limits({ claude_fire_per_day: 2 });
+    const a = await routined();
+    await call(pushRoute, { key: a.key, body: { url: PUSH } });
+    sent = [];
+    for (let i = 0; i < 4; i++) {
+      await bump(a.id);
+      await drainPushes();
+      await pass(a.id, GAP + 1);
+    }
+    expect(fires()).toHaveLength(2);
+    expect(pushes()).toHaveLength(2);
+    const noted = await db()<{ detail: unknown }[]>`
+      SELECT detail FROM action_log WHERE action = 'claude_fire.capped'`;
+    expect(noted).toEqual([{ detail: { routine: ROUTINE } }]);
+  });
+});
+
+describe("the queue", () => {
+  it("brings a check on a fire's answer forward on an arrival, by its flag, not by comparing times", async () => {
+    const a = await routined();
+    await bump(a.id);
+    await drainPushes();
+    expect(await pending(a.id)).toMatchObject({ fire_check: true });
+    // Moved off ack_due_at by a fraction of a millisecond: still the check.
+    await db()`
+      UPDATE push_state SET pending_since = pending_since + interval '300 microseconds'
+      WHERE bot_id = ${a.id}`;
+    expect((await pending(a.id))?.wake_check).toBe(false);
+    await bump(a.id);
+    const p = await pending(a.id);
+    expect(p?.fire_check).toBe(false);
+    expect(p?.pending_since?.getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+    // Any other time stands: a cap's or a gap's.
+    const later = new Date(Date.now() + 3_600_000);
+    await db()`
+      UPDATE push_state SET pending_since = ${later}, fire_check = false
+      WHERE bot_id = ${a.id}`;
+    await bump(a.id);
+    expect((await pending(a.id))?.pending_since?.getTime()).toBe(
+      later.getTime(),
+    );
+  });
+
+  it("counts a read that lands while the fire is still being recorded", async () => {
+    const a = await routined();
+    // The run starts and reads its number before the fire's answer is
+    // back at the site.
+    answer = () => {
+      return (async () => {
+        await call(wakeRoute, { key: a.key });
+        return { status: 200, body: FIRED };
+      })() as unknown as Delivery;
+    };
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    expect((await routineStateOf(db(), a.id, PUSH_MAX_FAILURES)).proven).toBe(
+      true,
+    );
+    expect((await pending(a.id))?.pending_since ?? null).toBeNull();
+    const [s] = await db()<{ fired_at: Date; sent_at: Date }[]>`
+      SELECT f.fired_at, a.sent_at FROM fire_state f
+      JOIN fire_attempts a ON a.bot_id = f.bot_id WHERE f.bot_id = ${a.id}`;
+    expect(s?.fired_at.getTime()).toBe(s?.sent_at.getTime());
+    await pass(a.id, ACK * 16);
+    await drainForAWhile();
+    expect(fires()).toHaveLength(1);
+  });
+
+  it("sends the push URL during the routine's gap, then the routine once the gap is over, unless the bot read its number", async () => {
+    for (const reads of [false, true]) {
+      await resetDb();
+      sent = [];
+      const a = await routined();
+      await call(pushRoute, { key: a.key, body: { url: PUSH } });
+      sent = [];
+      await bump(a.id);
+      await drainPushes();
+      expect(fires()).toHaveLength(1);
+      expect(pushes()).toHaveLength(0);
+      await call(wakeRoute, { key: a.key });
+      // Something new, inside the gap: the push goes at once.
+      await pass(a.id, 30);
+      await bump(a.id);
+      await drainPushes();
+      expect(pushes()).toHaveLength(1);
+      expect(fires()).toHaveLength(1);
+      // The wake the routine still owes keeps the bot queued for the end
+      // of its gap.
+      const p = await pending(a.id);
+      expect(p?.pending_since).not.toBeNull();
+      expect(p?.fire_check).toBe(false);
+      if (reads) await call(wakeRoute, { key: a.key });
+      await pass(a.id, GAP);
+      await drainPushes();
+      expect(fires(), `reads: ${reads}`).toHaveLength(reads ? 1 : 2);
+      expect(pushes()).toHaveLength(1);
+    }
+  });
+
+  it("drops a check on the old routine's last fire when the routine is saved again", async () => {
+    const a = await routined();
+    await bump(a.id);
+    await drainPushes();
+    expect(await pending(a.id)).toMatchObject({ fire_check: true });
+    await setClaudeFire(
+      db(),
+      a.person,
+      "alice",
+      { routine: ROUTINE, token: fakeToken() },
+      null,
+    );
+    expect((await pending(a.id))?.pending_since).toBeNull();
+    await pass(a.id, ACK * 16);
+    await drainForAWhile();
+    expect(fires()).toHaveLength(1);
+    // Something that arrives fires the new one.
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(2);
+    // An arrival already waiting isn't dropped by a save.
+    await pass(a.id, 5);
+    await bump(a.id);
+    await setClaudeFire(
+      db(),
+      a.person,
+      "alice",
+      { routine: ROUTINE, token: fakeToken() },
+      null,
+    );
+    expect((await pending(a.id))?.pending_since).not.toBeNull();
   });
 });

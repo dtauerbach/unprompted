@@ -45,6 +45,10 @@ export function kickPushes(now: number = Date.now()): void {
           await drainForAWhile(undefined, left);
           if (!again) break;
         }
+        // A write during the last pass asked for a round this one can't
+        // give: what it brought is left to the clock, which reads the
+        // soonest time again (src/lib/due-check.ts).
+        if (again) clearDue();
       } catch (e) {
         console.error(e);
         // A held push this round would have left to the clock: let the

@@ -51,14 +51,41 @@ function person(signInId: string, token: string, ...args: string[]): any {
   return JSON.parse(run.stdout);
 }
 
+// A routine is saved only once the bot's link has stood a day, which a run
+// can't wait out: the connect-code script moves the link back 25 hours.
+function ageLink(handle: string): void {
+  const run = spawnSync(
+    "npx",
+    [
+      "tsx",
+      "--conditions=react-server",
+      "evals/connect-code.ts",
+      "--age",
+      handle,
+    ],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0 || run.stdout.trim() !== "aged")
+    throw new Error(`connect-code --age: ${run.stderr}${run.stdout}`);
+}
+
 const firesFor = (routine: string) =>
   got.filter((g) => g.path === `/v1/claude_code/routines/${routine}/fire`);
 
-// A write's drain round can be sleeping toward a push held for later, so
-// allow it most of a round.
-async function arrival(routine: string, n: number, ms = 40_000) {
+// A write's drain round can be sleeping toward a push held for later, or
+// leave one to the clock (a write in its last pass), which the site's cron
+// calls every minute: the eval calls it while it waits, as the cron would,
+// for a little over a minute.
+async function arrival(routine: string, n: number, ms = 75_000) {
   const until = Date.now() + ms;
-  while (firesFor(routine).length < n && Date.now() < until) await pause(250);
+  let clock = Date.now() + 5_000;
+  while (firesFor(routine).length < n && Date.now() < until) {
+    if (Date.now() >= clock) {
+      await request("GET", "/v1/clock");
+      clock = Date.now() + 5_000;
+    }
+    await pause(250);
+  }
   return firesFor(routine);
 }
 
@@ -105,6 +132,9 @@ export function claudeFireScenarios(): void {
               headers: req.headers as Record<string, string>,
               body: Buffer.concat(chunks).toString("utf8"),
             });
+            // A routine whose name says slow takes the fire and never
+            // answers, as a run that starts but whose answer is lost.
+            if (path.includes("slow")) return;
             const session = `session_eval${got.length}`;
             res.writeHead(200, { "content-type": "application/json" });
             res.end(
@@ -136,7 +166,16 @@ export function claudeFireScenarios(): void {
       });
       afterAll(async () => {
         setLimits(LATE_LIMITS, "Eval: the lift it runs under, back.");
+        server?.closeAllConnections();
         await new Promise<void>((r) => server?.close(() => r()));
+      });
+
+      it("refuses a bot linked less than a day ago, as a connect code does", () => {
+        expect(
+          person(ADA, fakeToken(), "set", ada.handle, routineId("fresh")),
+        ).toEqual({ refused: "linked_recently" });
+        ageLink(ada.handle);
+        ageLink(cy.handle);
       });
 
       it("refuses another person's bot, another host and a token that isn't one, writing nothing", () => {
@@ -209,7 +248,7 @@ export function claudeFireScenarios(): void {
         });
         expect(shown.attempts[0].excerpt).toContain("session_eval");
         expect(JSON.stringify(shown)).not.toContain(adaToken.slice(13));
-      });
+      }, 180_000);
 
       // Cy's run never reads its number. With no other request than the
       // clock, its fire goes again once its answer is due; ada's, answered,
@@ -237,6 +276,40 @@ export function claudeFireScenarios(): void {
           [1, "unanswered"],
         ]);
       }, 300_000);
+
+      // A fire whose request went out but whose answer never came may have
+      // started a run: kept as maybe, waited on, and not sent again at the
+      // gap; the bot's read answers it.
+      it("waits on a fire cut off after it went out, rather than firing it again", async () => {
+        const slow = routineId("slow");
+        expect(person(ADA, fakeToken(), "set", ada.handle, slow)).toEqual({
+          handle: ada.handle,
+          routine: slow,
+        });
+        // The bot's earlier fires are listed too: wait for one newer.
+        const before = person(ADA, "", "show", ada.handle).attempts[0]?.sent_at;
+        await message(bob, ada);
+        expect(await arrival(slow, 1)).toHaveLength(1);
+        const until = Date.now() + 30_000;
+        let shown = person(ADA, "", "show", ada.handle);
+        while (shown.attempts[0]?.sent_at === before && Date.now() < until) {
+          await pause(1_000);
+          shown = person(ADA, "", "show", ada.handle);
+        }
+        expect(shown.attempts[0]).toMatchObject({
+          outcome: "maybe",
+          status: null,
+          attempt: 1,
+        });
+        const caught = await get("/v1/me/catch-up", ada.key);
+        expect(caught.status, caught.text).toBe(200);
+        await request("GET", "/v1/clock");
+        await pause(3_000);
+        expect(firesFor(slow)).toHaveLength(1);
+        expect(person(ADA, "", "show", ada.handle).attempts[0].outcome).toBe(
+          "maybe",
+        );
+      }, 120_000);
 
       it("takes it off, and nothing more is fired", async () => {
         expect(person(ADA, "", "remove", ada.handle)).toEqual({

@@ -9,29 +9,46 @@ import { isReadOnly } from "./read-only";
 // read it, outside their own read-only snapshot. Kept apart from
 // src/lib/claude-fire.ts so those reads load nothing else of it.
 //
-// The bot read its wake number: a fire it carried, or less, is answered.
-// Written only for a bot whose routine is live and has fired, so ordinary
-// reads write nothing; at most once a fire, and once more each time the
-// number has risen since. When it has read the newest number there is,
-// nothing waits to be sent either, so a fire queued for it, or a check on a
-// fire's answer, is dropped. Right after the read, and never failing it:
-// a missed answer costs at most one fire more.
+// The bot read its wake number: a fire it carried, or less, is answered,
+// and the run of fires it hadn't answered starts again from none. Written
+// only for a bot whose routine is live, after a cheap look, so ordinary
+// reads write nothing: at most once each time the number has risen, and
+// once more after each fire. It's kept even before the first fire is
+// recorded, so a read that lands while a fire's record is still being
+// written counts (recordFire compares it with when the send started).
+// When it has read the newest number there is, nothing waits to be sent
+// either, so a fire queued for it, or a check on a fire's answer, is
+// dropped. Takes push_state before fire_state, as everywhere. Right after
+// the read, and never failing it: a missed answer costs at most one fire
+// more.
 export async function ackWake(botId: number, wake: number): Promise<void> {
   if (isReadOnly()) return;
   try {
-    await db()`
-      WITH ack AS (
+    const sql = db();
+    const [need] = await sql<{ need: boolean }[]>`
+      SELECT true AS need FROM fire_state
+      WHERE bot_id = ${botId}
+        AND (seen_at IS NULL OR seen_wake < ${wake} OR seen_at < fired_at)
+        AND fire_trigger_live(${botId})`;
+    if (!need) return;
+    await sql.begin(async (tx) => {
+      await tx`SELECT 1 FROM push_state WHERE bot_id = ${botId} FOR NO KEY UPDATE`;
+      const [ack] = await tx<{ bot_id: string }[]>`
         UPDATE fire_state
-        SET seen_wake = GREATEST(COALESCE(seen_wake, 0), ${wake}), seen_at = now()
-        WHERE bot_id = ${botId} AND fired_at IS NOT NULL
-          AND (seen_at IS NULL OR seen_at < fired_at OR seen_wake < ${wake})
+        SET seen_wake = GREATEST(COALESCE(seen_wake, 0), ${wake}), seen_at = now(),
+            open_fires = CASE WHEN fired_wake <= ${wake} THEN 0 ELSE open_fires END,
+            open_since = CASE WHEN fired_wake <= ${wake} THEN NULL ELSE open_since END
+        WHERE bot_id = ${botId}
+          AND (seen_at IS NULL OR seen_wake < ${wake} OR seen_at < fired_at)
           AND fire_trigger_live(${botId})
-        RETURNING bot_id)
-      UPDATE push_state p SET pending_since = NULL
-      FROM ack
-      WHERE p.bot_id = ack.bot_id AND p.pending_since IS NOT NULL
-        AND ${wake} >= COALESCE(
-          (SELECT count FROM wake_counters WHERE bot_id = ${botId}), 0)`;
+        RETURNING bot_id`;
+      if (!ack) return;
+      await tx`
+        UPDATE push_state SET pending_since = NULL, fire_check = false
+        WHERE bot_id = ${botId} AND pending_since IS NOT NULL
+          AND ${wake} >= COALESCE(
+            (SELECT count FROM wake_counters WHERE bot_id = ${botId}), 0)`;
+    });
   } catch (e) {
     console.error(e);
   }

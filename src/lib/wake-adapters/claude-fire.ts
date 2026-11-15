@@ -30,10 +30,23 @@ import { localDeliver } from "./mcp-events";
 // then reads its wake number at or past the number fired (ackWake in
 // src/lib/fire-ack.ts). One that isn't answered in claude_fire_ack_seconds
 // is fired once more, the wait doubling each time, FIRE_RETRIES times at
-// most, never sooner than the gap; then it's marked once
+// most, never sooner than the gap, and from the first of those on the
+// drain goes on to the bot's next method too. A fire may take
+// FIRE_DEADLINE_MS, longer than a push; one cut off after its request went
+// out may have started a run, so it's kept as maybe and waited on like a
+// delivered fire, never sent again at the gap. Once
+// claude_fire_alarm_after fires in a row, whatever wake each carried, go
+// unanswered past the wait, the routine is marked once
 // (alert.claude_fire_unanswered) for the moderators and shown to the bot's
-// person, and the drain goes on to the next method. The clock drives the
-// retries: a delivered fire queues the bot for when its answer is due.
+// person. A bot's routine fires at most claude_fire_per_day times a day;
+// past that the drain goes on to the next method, noted once a day
+// (claude_fire.capped). The clock drives the retries: a delivered fire
+// queues the bot for when its answer is due (push_state.fire_check).
+//
+// Only the production site fires: on any other Vercel deploy (a preview,
+// whose database is a branch of production's, tokens and all) no token is
+// opened and nothing is sent, as tables.ts reads no hosted Table there. A
+// run on this machine and CI fire only at a stand-in or a local receiver.
 
 export const FIRE_HOST = "api.anthropic.com";
 export const ROUTINE_ID_RE = /^trig_[A-Za-z0-9]{8,64}$/;
@@ -41,6 +54,23 @@ export const FIRE_TOKEN_RE = /^sk-ant-oat01-[A-Za-z0-9_-]{20,400}$/;
 const FIRE_URL_RE =
   /^https:\/\/api\.anthropic\.com\/v1\/claude_code\/routines\/(trig_[A-Za-z0-9]{8,64})\/fire$/;
 export const FIRE_RETRIES = 3;
+// How long a fire may take, start to finish: the API starts a cloud run
+// before it answers, which can take longer than a push's few seconds.
+export const FIRE_DEADLINE_MS = 15_000;
+// The deliverer's own deadline, a little inside the drain's, so it's the
+// one that cuts a slow fire off and says whether the request went out.
+const DELIVER_TIMEOUT_MS = FIRE_DEADLINE_MS - 1_000;
+// A 401 or a 404 ends the routine only after this many in a row, the first
+// at least FIRE_GONE_HOURS before the last: one alone may be a passing
+// fault at the API.
+export const FIRE_GONE_ANSWERS = 3;
+export const FIRE_GONE_HOURS = 1;
+
+// Whether this deploy may open a routine's token and fire it: the
+// production site, or anywhere off Vercel (a run on this machine, CI).
+export function firesAllowed(): boolean {
+  return !process.env.VERCEL || process.env.VERCEL_ENV === "production";
+}
 // The fire's answer is a little JSON; read no more than this of it.
 const ANSWER_MAX_BYTES = 16_384;
 // The longest a 429's Retry-After holds fires back.
@@ -76,6 +106,7 @@ export function fireExcerpt(body: string | undefined): string | null {
 // The class a send's outcome is kept under.
 export type FireOutcome =
   | "delivered"
+  | "maybe"
   | "http_error"
   | "timeout"
   | "network"
@@ -83,6 +114,7 @@ export type FireOutcome =
 
 export function outcomeClass(o: WakeOutcome): FireOutcome {
   if (o.delivered) return "delivered";
+  if (o.maybe) return "maybe";
   if (o.status !== null) return "http_error";
   return o.error === "timeout" ? "timeout" : "network";
 }
@@ -109,9 +141,10 @@ function transport(deliver: Deliver): Deliver {
 }
 
 // What the registration carries to send(): the trigger's row, so record()
-// ends that one and not one saved since, and the token. Never leaves the
-// drain.
-type Material = { id: number; token: string | null };
+// ends that one and not one saved since, the token, and whether the drain
+// should go on to the next method even if this fire is delivered (again).
+// Never leaves the drain.
+type Material = { id: number; token: string | null; again?: boolean };
 
 // Where a bot's fires stand, as find() reads them.
 export type FireState = {
@@ -145,8 +178,9 @@ const later = (...ds: (Date | null | undefined)[]): Date | null => {
   return out;
 };
 
-// A delivered fire whose answer came due without the bot reading its
-// number: its attempt is marked unanswered, a failure of its own, once.
+// A delivered fire, or one that maybe went, whose answer came due without
+// the bot reading its number: its attempt is marked unanswered, a failure
+// of its own, once. Never a test fire's.
 async function markAttemptUnanswered(
   sql: postgres.Sql | Tx,
   botId: number,
@@ -155,34 +189,75 @@ async function markAttemptUnanswered(
   await sql`
     UPDATE fire_attempts SET outcome = 'unanswered', unanswered_at = now()
     WHERE id = (SELECT id FROM fire_attempts
-                WHERE bot_id = ${botId} AND wake = ${wake}
+                WHERE bot_id = ${botId} AND wake = ${wake} AND NOT test
                 ORDER BY id DESC LIMIT 1)
-      AND outcome = 'delivered'`;
+      AND outcome IN ('delivered', 'maybe')`;
 }
 
-// The wake number whose fires all went unanswered, marked once: counted,
-// shown to the bot's person, and logged for the moderators.
+// Enough fires in a row went unanswered, whatever wake each carried: marked
+// once, until the bot next reads its number, counted, shown to the bot's
+// person, and logged for the moderators. Whether it's marked now.
 async function markUnanswered(
   sql: postgres.Sql | Tx,
   botId: number,
-  wake: number,
-): Promise<void> {
-  const [r] = await sql<{ handle: string }[]>`
+  atLeast: number,
+): Promise<boolean> {
+  const [r] = await sql<{ handle: string; wake: string; fires: number }[]>`
     UPDATE fire_state f
     SET alarmed_wake = f.fired_wake, alarmed_at = now(),
-        unanswered = f.unanswered + 1, ack_due_at = NULL
+        unanswered = f.unanswered + 1
     FROM bots b
-    WHERE f.bot_id = ${botId} AND b.id = f.bot_id AND f.fired_wake = ${wake}
-      AND (f.alarmed_wake IS NULL OR f.alarmed_wake < f.fired_wake)
-    RETURNING b.handle`;
-  if (!r) return;
+    WHERE f.bot_id = ${botId} AND b.id = f.bot_id
+      AND f.open_fires >= ${atLeast} AND f.fired_wake IS NOT NULL
+      AND (f.alarmed_at IS NULL OR f.alarmed_at < f.seen_at)
+    RETURNING b.handle, f.fired_wake AS wake, f.open_fires AS fires`;
+  if (!r) return false;
   await logAction(sql as Tx, {
     action: "alert.claude_fire_unanswered",
     botId,
     keyId: null,
     subject: `bot:${r.handle}`,
     ipHash: null,
-    detail: { wake, fires: FIRE_RETRIES + 1 },
+    detail: { wake: Number(r.wake), fires: r.fires },
+  });
+  return true;
+}
+
+// Whether the bot's routine has fired claude_fire_per_day times in the last
+// day, test fires included. Reads no more than that many rows.
+async function overDailyCap(
+  sql: postgres.Sql | Tx,
+  botId: number,
+  perDay: number,
+): Promise<boolean> {
+  const [r] = await sql<{ n: number }[]>`
+    SELECT count(*)::int AS n FROM (
+      SELECT sent_at FROM fire_attempts WHERE bot_id = ${botId}
+      ORDER BY id DESC LIMIT ${perDay}) x
+    WHERE sent_at > now() - interval '1 day'`;
+  return (r?.n ?? 0) >= perDay;
+}
+
+// Noted for the moderators once a day while the cap holds a routine back.
+async function noteCapped(
+  sql: postgres.Sql | Tx,
+  botId: number,
+  routine: string,
+): Promise<void> {
+  const [r] = await sql<{ handle: string }[]>`
+    UPDATE fire_state f SET capped_at = now()
+    FROM bots b
+    WHERE f.bot_id = ${botId} AND b.id = f.bot_id
+      AND (f.capped_at IS NULL OR f.capped_at <= now() - interval '1 day')
+    RETURNING b.handle`;
+  if (!r) return;
+  await logAction(sql as Tx, {
+    action: "claude_fire.capped",
+    botId,
+    keyId: null,
+    subject: `bot:${r.handle}`,
+    ipHash: null,
+    detail: { routine },
   });
 }
 
@@ -230,14 +305,21 @@ export async function readTrigger(
 ): Promise<
   | (FireState & {
       material: Material;
+      routine: string;
       address: string;
       failures: number;
       lastSentAt: Date | null;
       retryAt: Date | null;
+      openFires: number;
+      openSince: Date | null;
+      // Marked unanswered, and the bot hasn't read its number since.
+      alarmed: boolean;
       now: Date;
     })
   | null
 > {
+  // Off the production site, no token is opened (firesAllowed).
+  if (!firesAllowed()) return null;
   const [r] = await sql<
     {
       id: string;
@@ -253,6 +335,9 @@ export async function readTrigger(
       answered: boolean | null;
       retries: number | null;
       ack_due_at: Date | null;
+      open_fires: number | null;
+      open_since: Date | null;
+      alarmed: boolean | null;
       wake: string | null;
       now: Date;
     }[]
@@ -261,7 +346,9 @@ export async function readTrigger(
            s.key_version, s.iv, s.sealed,
            st.failures, st.last_sent_at, st.retry_at, st.fired_wake,
            (st.seen_at >= st.fired_at AND st.seen_wake >= st.fired_wake) AS answered,
-           st.retries, st.ack_due_at,
+           st.retries, st.ack_due_at, st.open_fires, st.open_since,
+           (st.alarmed_at IS NOT NULL
+            AND (st.seen_at IS NULL OR st.seen_at < st.alarmed_at)) AS alarmed,
            (SELECT count FROM wake_counters WHERE bot_id = ${botId}) AS wake,
            now() AS now
     FROM fire_triggers t
@@ -281,6 +368,7 @@ export async function readTrigger(
       : null;
   return {
     material: { id, token: token ? token.toString("utf8") : null },
+    routine: r.routine_id,
     address: fireUrl(r.routine_id),
     failures: r.failures ?? 0,
     lastSentAt: r.last_sent_at,
@@ -290,6 +378,9 @@ export async function readTrigger(
     answered: r.answered === true,
     retries: r.retries ?? 0,
     ackDueAt: r.ack_due_at,
+    openFires: r.open_fires ?? 0,
+    openSince: r.open_since,
+    alarmed: r.alarmed === true,
     now: r.now,
   };
 }
@@ -309,37 +400,54 @@ export const claudeFireAdapter: WakeAdapter = {
   },
 
   // The registration when the bot needs a fire: something new since the
-  // last fire, or a fire nobody answered whose wait is over. A fire whose
-  // retries all went unanswered is marked here, once, in the claim's own
-  // transaction, and the drain goes on to the next method.
+  // last fire, or a fire nobody answered whose wait is over. An attempt
+  // whose answer is overdue, and a run of unanswered fires long enough to
+  // mark, are marked here, once, in the claim's own transaction, which
+  // holds the bot's push_state row: push_state before fire_state, as
+  // everywhere. A fire whose retries all went unanswered, or one past the
+  // daily cap, is null, and the drain goes on to the next method.
   async find(sql, botId) {
     const t = await readTrigger(sql, botId);
     if (!t) return null;
-    const plan = planFire(t);
-    // The last fire's answer is due and didn't come: its attempt failed.
-    if (
+    const a = await antiAbuse(sql);
+    const overdue =
       !t.answered &&
       t.firedWake !== null &&
-      t.wake <= t.firedWake &&
       t.ackDueAt !== null &&
-      t.ackDueAt <= t.now
-    )
+      t.ackDueAt <= t.now;
+    if (overdue && t.firedWake !== null)
       await markAttemptUnanswered(sql, botId, t.firedWake);
-    if (!plan.send) {
-      if (plan.exhausted && t.firedWake !== null)
-        await markUnanswered(sql, botId, t.firedWake);
+    let alarmed = t.alarmed;
+    if (
+      !t.answered &&
+      !alarmed &&
+      t.openFires >= a.claude_fire_alarm_after &&
+      t.openSince !== null &&
+      t.openSince.getTime() + a.claude_fire_ack_seconds * 1000 <=
+        t.now.getTime()
+    )
+      alarmed = await markUnanswered(sql, botId, a.claude_fire_alarm_after);
+    const plan = planFire(t);
+    if (!plan.send) return null;
+    if (await overDailyCap(sql, botId, a.claude_fire_per_day)) {
+      await noteCapped(sql, botId, t.routine);
       return null;
     }
-    const gap = (await antiAbuse(sql)).claude_fire_gap_seconds;
+    const gap = a.claude_fire_gap_seconds;
     return {
       address: t.address,
-      secret: JSON.stringify(t.material),
+      // Once a fire's answer is overdue, or the routine is marked, the
+      // bot's next method goes too, whether or not this one is delivered.
+      secret: JSON.stringify({ ...t.material, again: overdue || alarmed }),
       failures: t.failures,
       notBefore: later(
         t.lastSentAt ? new Date(t.lastSentAt.getTime() + gap * 1000) : null,
         t.retryAt,
         plan.after,
       ),
+      // A wake not yet fired is owed: a push that goes during the gap
+      // doesn't stand in for it.
+      owed: plan.after === null,
     };
   },
 
@@ -351,6 +459,9 @@ export const claudeFireAdapter: WakeAdapter = {
       return { delivered: false, status: null, error: "secret" };
     }
     if (!m.token) return { delivered: false, status: null, error: "secret" };
+    // Off the production site nothing goes, whatever a caller passes in.
+    if (!firesAllowed())
+      return { delivered: false, status: null, error: "not_production" };
     const body = JSON.stringify({ text: fireText(note) });
     const d = await transport(deliver)(
       registration.address,
@@ -362,7 +473,7 @@ export const claudeFireAdapter: WakeAdapter = {
         "content-type": "application/json",
         "user-agent": "Unprompted-Fire/1",
       },
-      { readBody: ANSWER_MAX_BYTES },
+      { readBody: ANSWER_MAX_BYTES, timeoutMs: DELIVER_TIMEOUT_MS },
     );
     // Only the answer's type decides. Its session's id and address stay in
     // the excerpt kept on fire_attempts, as evidence a run began, and go
@@ -375,114 +486,36 @@ export const claudeFireAdapter: WakeAdapter = {
           "routine_fire";
       } catch {}
     const excerpt = fireExcerpt(d.body);
+    // Cut off with no answer after the whole request went out: it may have
+    // started a run.
+    const maybe = d.status === null && d.written === true;
     return {
       delivered: fired,
       status: d.status,
       ref: m.id,
+      ...(maybe ? { maybe } : {}),
+      ...(fired && m.again ? { alsoNext: true } : {}),
       ...(excerpt ? { excerpt } : {}),
       ...(d.error ? { error: d.error } : {}),
       ...(d.retryAfter !== undefined ? { retryAfter: d.retryAfter } : {}),
     };
   },
 
-  // Every try starts the gap again. A delivered fire is waited on: the bot
-  // is queued for when its answer is due, so the clock fires it once more
-  // if nobody read the number by then. A 401 or a 404 says the token or the
-  // routine is gone: the registration ends here, and the drain goes on to
-  // the next method.
-  async record(sql, botId, outcome, note) {
-    const a = await antiAbuse(sql);
-    const retryAfter =
-      outcome.status === 429
-        ? Math.min(
-            Math.max(outcome.retryAfter ?? a.claude_fire_gap_seconds, 1),
-            RETRY_AFTER_MAX_SECONDS,
-          )
-        : null;
-    const ends =
-      (outcome.status === 401 || outcome.status === 404) &&
-      outcome.ref !== undefined;
-    await sql.begin(async (tx) => {
-      // Ending takes the bot's lock: taken first, in the order saving takes
-      // it, before this row's.
-      if (ends)
-        await tx`SELECT pg_advisory_xact_lock(hashtext(${`claude_fire:${botId}`}))`;
-      await tx`
-        INSERT INTO fire_state
-          (bot_id, last_sent_at, last_status, failures, delivered, failed, retry_at)
-        VALUES (${botId}, now(), ${outcome.status}, ${outcome.delivered ? 0 : 1},
-                ${outcome.delivered ? 1 : 0}, ${outcome.delivered ? 0 : 1},
-                now() + make_interval(secs => ${retryAfter}))
-        ON CONFLICT (bot_id) DO UPDATE
-          SET last_sent_at = now(), last_status = EXCLUDED.last_status,
-              failures = CASE WHEN ${outcome.delivered} THEN 0
-                              ELSE fire_state.failures + 1 END,
-              delivered = fire_state.delivered + EXCLUDED.delivered,
-              failed = fire_state.failed + EXCLUDED.failed,
-              retry_at = EXCLUDED.retry_at`;
-      if (outcome.delivered && note) {
-        // A fire of the same number that went unanswered is a retry; any
-        // other starts the count afresh. Its answer is due after the wait,
-        // doubled for each retry, and never sooner than the gap.
-        const [due] = await tx<{ at: Date }[]>`
-          WITH cur AS (
-            SELECT CASE WHEN fired_wake = ${note.wake}
-                         AND NOT COALESCE(seen_at >= fired_at AND seen_wake >= fired_wake, false)
-                        THEN retries + 1 ELSE 0 END AS r
-            FROM fire_state WHERE bot_id = ${botId})
-          UPDATE fire_state f
-          SET retries = cur.r, fired_wake = ${note.wake}, fired_at = now(),
-              ack_due_at = now() + make_interval(secs => GREATEST(
-                ${a.claude_fire_ack_seconds} * power(2, cur.r),
-                ${a.claude_fire_gap_seconds}))
-          FROM cur WHERE f.bot_id = ${botId}
-          RETURNING f.ack_due_at AS at`;
-        // Read from the row, not passed back through a Date, so it stays
-        // equal to ack_due_at to the microsecond: bump_wake (061) brings
-        // exactly that time forward when something new arrives.
-        if (due)
-          await tx`
-            UPDATE push_state p SET pending_since = f.ack_due_at
-            FROM fire_state f
-            WHERE p.bot_id = ${botId} AND f.bot_id = ${botId}
-              AND p.pending_since IS NULL`;
-      }
-      // The evidence: one row a send, never the token or the headers.
-      if (note)
-        await tx`
-          INSERT INTO fire_attempts
-            (bot_id, trigger_id, wake, attempt, sent_at, outcome, status,
-             retry_after, excerpt)
-          SELECT ${botId}, t.id, ${note.wake},
-                 (SELECT count(*)::int + 1 FROM fire_attempts a
-                  WHERE a.bot_id = ${botId} AND a.trigger_id = t.id
-                    AND a.wake = ${note.wake}),
-                 ${outcome.sentAt ?? new Date()}, ${outcomeClass(outcome)},
-                 ${outcome.status},
-                 ${outcome.retryAfter === undefined ? null : Math.min(outcome.retryAfter, 2_000_000_000)},
-                 ${fireExcerpt(outcome.excerpt)}
-          FROM fire_triggers t
-          WHERE t.id = COALESCE(${outcome.ref ?? null}::bigint,
-            (SELECT max(id) FROM fire_triggers
-             WHERE bot_id = ${botId} AND routine_id IS NOT NULL))`;
-      if (ends && outcome.ref !== undefined)
-        await endTrigger(
-          tx as unknown as Tx,
-          botId,
-          outcome.ref,
-          outcome.status === 401 ? "unauthorized" : "not_found",
-        );
-    });
+  record(sql, botId, outcome, note) {
+    return recordFire(sql, botId, outcome, note, false);
   },
 
-  // A 429 waits as its Retry-After says; a server error or no answer is
-  // fired again once the gap is over, until the pause. A 400 (a malformed
-  // fire, or the routine paused) and a 403 count but aren't retried, nor is
-  // a 401 or a 404, which ended it.
+  // A 429 waits as its Retry-After says; a server error, no answer, or a
+  // 401 or 404 that hasn't ended the routine yet is fired again once the
+  // gap is over, until the pause or the end. A 400 (a malformed fire, or
+  // the routine paused) and a 403 count but aren't retried. A fire that
+  // maybe went isn't either: its answer is waited on.
   async retryAt(sql, botId, outcome) {
-    if (outcome.delivered) return null;
+    // A fire that maybe went is waited on, never sent again at the gap.
+    if (outcome.delivered || outcome.maybe) return null;
     const s = outcome.status;
-    if (s !== null && s !== 429 && s < 500) return null;
+    if (s !== null && s !== 429 && s !== 401 && s !== 404 && s < 500)
+      return null;
     const gap = (await antiAbuse(sql)).claude_fire_gap_seconds;
     const [r] = await sql<{ at: Date | null }[]>`
       SELECT GREATEST(st.last_sent_at + make_interval(secs => ${gap}),
@@ -508,4 +541,143 @@ export const claudeFireAdapter: WakeAdapter = {
   async cap(tx) {
     return { key: "claude_fire", rules: claudeFireRules(await antiAbuse(tx)) };
   },
+
+  deadlineMs: FIRE_DEADLINE_MS,
 };
+
+// Keeps how a fire went. Every try starts the gap again. A delivered fire,
+// or one that maybe went, is waited on: the bot is queued for when its
+// answer is due (push_state.fire_check), so the clock fires it once more if
+// nobody read the number by then. A person's test fire (test) is kept as
+// evidence and counts toward the pause, the gap and the end, but is never
+// waited on and leaves the wait on the drain's own fires as it stands. A
+// 401 or a 404 says the token or the routine is gone; FIRE_GONE_ANSWERS of
+// them in a row, over FIRE_GONE_HOURS at least, end the registration, and
+// the drain goes on to the next method.
+//
+// Lock order: the bot's routine lock (when it may end), then its
+// push_state row, then its fire_state row, as saving and ackWake take them
+// and as the drain's claim holds push_state while find() writes fire_state.
+export async function recordFire(
+  sql: postgres.Sql,
+  botId: number,
+  outcome: WakeOutcome,
+  note: WakeNote | undefined,
+  test: boolean,
+): Promise<void> {
+  const a = await antiAbuse(sql);
+  const retryAfter =
+    outcome.status === 429
+      ? Math.min(
+          Math.max(outcome.retryAfter ?? a.claude_fire_gap_seconds, 1),
+          RETRY_AFTER_MAX_SECONDS,
+        )
+      : null;
+  const gone =
+    (outcome.status === 401 || outcome.status === 404) &&
+    outcome.ref !== undefined;
+  const maybe = !outcome.delivered && outcome.maybe === true;
+  const waits = (outcome.delivered || maybe) && note !== undefined && !test;
+  const sentAt = outcome.sentAt ?? new Date();
+  await sql.begin(async (tx) => {
+    if (gone)
+      await tx`SELECT pg_advisory_xact_lock(hashtext(${`claude_fire:${botId}`}))`;
+    await tx`SELECT 1 FROM push_state WHERE bot_id = ${botId} FOR NO KEY UPDATE`;
+    // An answer that isn't a 401 or a 404 breaks a run of them; no answer
+    // leaves it as it stands.
+    const [st] = await tx<{ gone_answers: number; gone_long: boolean }[]>`
+      INSERT INTO fire_state
+        (bot_id, last_sent_at, last_status, failures, delivered, failed,
+         retry_at, gone_answers, gone_since)
+      VALUES (${botId}, now(), ${outcome.status},
+              ${outcome.delivered || maybe ? 0 : 1},
+              ${outcome.delivered ? 1 : 0},
+              ${outcome.delivered || maybe ? 0 : 1},
+              now() + make_interval(secs => ${retryAfter}),
+              ${gone ? 1 : 0}, ${gone ? sentAt : null})
+      ON CONFLICT (bot_id) DO UPDATE
+        SET last_sent_at = now(), last_status = EXCLUDED.last_status,
+            failures = CASE WHEN ${outcome.delivered} THEN 0
+                            WHEN ${maybe} THEN fire_state.failures
+                            ELSE fire_state.failures + 1 END,
+            delivered = fire_state.delivered + EXCLUDED.delivered,
+            failed = fire_state.failed + EXCLUDED.failed,
+            retry_at = EXCLUDED.retry_at,
+            gone_answers = CASE WHEN ${gone} THEN fire_state.gone_answers + 1
+                                WHEN ${outcome.status}::int IS NOT NULL THEN 0
+                                ELSE fire_state.gone_answers END,
+            gone_since = CASE WHEN ${gone}
+                                THEN COALESCE(fire_state.gone_since, ${sentAt})
+                              WHEN ${outcome.status}::int IS NOT NULL THEN NULL
+                              ELSE fire_state.gone_since END
+      RETURNING gone_answers,
+        COALESCE(gone_since <= now() - make_interval(hours => ${FIRE_GONE_HOURS}),
+                 false) AS gone_long`;
+    if (waits && note) {
+      // A fire of the same number that went unanswered is a retry; any
+      // other starts the count afresh. Its answer is due after the wait,
+      // doubled for each retry, and never sooner than the gap, counted from
+      // when the send started, as fired_at is: a read of the number after
+      // that answers it, even one that came before this row was written.
+      const [w] = await tx<{ waiting: boolean }[]>`
+        WITH cur AS (
+          SELECT CASE WHEN fired_wake = ${note.wake}
+                       AND NOT COALESCE(seen_at >= fired_at AND seen_wake >= fired_wake, false)
+                      THEN retries + 1 ELSE 0 END AS r,
+                 COALESCE(seen_at >= ${sentAt} AND seen_wake >= ${note.wake},
+                          false) AS seen
+          FROM fire_state WHERE bot_id = ${botId})
+        UPDATE fire_state f
+        SET retries = cur.r, fired_wake = ${note.wake}, fired_at = ${sentAt},
+            ack_due_at = ${sentAt}::timestamptz + make_interval(secs => GREATEST(
+              ${a.claude_fire_ack_seconds} * power(2, LEAST(cur.r, ${FIRE_RETRIES})),
+              ${a.claude_fire_gap_seconds})),
+            open_fires = CASE WHEN cur.seen THEN 0 ELSE f.open_fires + 1 END,
+            open_since = CASE WHEN cur.seen THEN NULL
+                              ELSE COALESCE(f.open_since, ${sentAt}) END
+        FROM cur WHERE f.bot_id = ${botId}
+        RETURNING NOT cur.seen AS waiting`;
+      // Queued for the answer's check, marked as only that, so an arrival
+      // brings it forward (bump_wake, 062_claude_fire_fixes.sql). Not when
+      // an arrival already queued it, nor when the bot already answered.
+      if (w?.waiting)
+        await tx`
+          UPDATE push_state p
+          SET pending_since = f.ack_due_at, fire_check = true
+          FROM fire_state f
+          WHERE p.bot_id = ${botId} AND f.bot_id = ${botId}
+            AND p.pending_since IS NULL`;
+    }
+    // The evidence: one row a send, never the token or the headers.
+    if (note)
+      await tx`
+        INSERT INTO fire_attempts
+          (bot_id, trigger_id, wake, attempt, sent_at, outcome, status,
+           retry_after, excerpt, test)
+        SELECT ${botId}, t.id, ${note.wake},
+               (SELECT count(*)::int + 1 FROM fire_attempts a
+                WHERE a.bot_id = ${botId} AND a.trigger_id = t.id
+                  AND a.wake = ${note.wake}),
+               ${sentAt}, ${outcomeClass(outcome)},
+               ${outcome.status},
+               ${outcome.retryAfter === undefined ? null : Math.min(outcome.retryAfter, 2_000_000_000)},
+               ${fireExcerpt(outcome.excerpt)}, ${test}
+        FROM fire_triggers t
+        WHERE t.id = COALESCE(${outcome.ref ?? null}::bigint,
+          (SELECT max(id) FROM fire_triggers
+           WHERE bot_id = ${botId} AND routine_id IS NOT NULL))`;
+    if (
+      gone &&
+      outcome.ref !== undefined &&
+      st &&
+      st.gone_answers >= FIRE_GONE_ANSWERS &&
+      st.gone_long
+    )
+      await endTrigger(
+        tx as unknown as Tx,
+        botId,
+        outcome.ref,
+        outcome.status === 401 ? "unauthorized" : "not_found",
+      );
+  });
+}

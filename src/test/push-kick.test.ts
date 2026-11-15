@@ -15,9 +15,13 @@ vi.mock("@/lib/push", () => ({
   drainForAWhile: (deliver?: unknown, forMs?: number) => drain(deliver, forMs),
 }));
 
+const cleared = vi.fn();
+vi.mock("@/lib/due-kick", () => ({ clearDue: () => cleared() }));
+
 beforeEach(() => {
   scheduled.length = 0;
   drain.mockClear();
+  cleared.mockClear();
   delete process.env.UNPROMPTED_READ_ONLY;
 });
 
@@ -44,6 +48,23 @@ describe("kickPushes", () => {
     expect(scheduled).toHaveLength(3);
     await scheduled[2]?.();
     expect(drain).toHaveBeenCalledTimes(4);
+  });
+
+  it("leaves a write during its last pass to the clock", async () => {
+    const { kickPushes } = await import("@/lib/push-kick");
+    // A write in the second pass: no third, and the clock reads again.
+    drain
+      .mockImplementationOnce(async () => kickPushes())
+      .mockImplementationOnce(async () => kickPushes());
+    kickPushes();
+    await scheduled[0]?.();
+    expect(drain).toHaveBeenCalledTimes(2);
+    expect(cleared).toHaveBeenCalledTimes(1);
+    // A round nobody wrote during leaves the clock's time alone.
+    kickPushes();
+    await scheduled[1]?.();
+    expect(drain).toHaveBeenCalledTimes(3);
+    expect(cleared).toHaveBeenCalledTimes(1);
   });
 
   it("lets a failed round go, and starts again on the next write", async () => {

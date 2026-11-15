@@ -49,8 +49,9 @@ const NEAR = 5 * 60;
 export const DUE_NEAR_MS = 90 * 60 * 1000;
 // One deadline for a check that works: its run and the pushes it raised, so
 // it ends inside the minute, and inside a route's own time limit. The last
-// push it starts can take up to the push timeout past it.
-export const DUE_ROUND_MS = 45_000;
+// send it starts can take up to its deadline past it: a push's few
+// seconds, or a Claude routine's fire's longer one (FIRE_DEADLINE_MS).
+export const DUE_ROUND_MS = 40_000;
 
 // next: the soonest item on the due-list; push: the soonest push held back
 // past a drain's round (src/lib/push.ts clears the tag when it leaves one).

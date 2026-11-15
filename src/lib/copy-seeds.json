@@ -160,6 +160,7 @@
   "account.routine.attempts": "2578474b3a72d7c1",
   "account.routine.attempt": "2c52b36add932562",
   "account.routine.outcome.delivered": "373e0712c83cffe1",
+  "account.routine.outcome.maybe": "034a9f005df6c15f",
   "account.routine.outcome.http_error": "83c874d33e8bff73",
   "account.routine.outcome.timeout": "3dcd80f1b15f796e",
   "account.routine.outcome.network": "2d553b5d62133f7b",

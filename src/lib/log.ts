@@ -39,6 +39,7 @@ export type Action =
   | "event.unsubscribe"
   | "event.gone"
   | "claude_fire.ended"
+  | "claude_fire.capped"
   | "post.appeal"
   | "post.vote"
   | "post.unvote"
