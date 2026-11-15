@@ -20,7 +20,7 @@ import {
 import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { listAsks } from "@/lib/pairing-asks";
-import { listPersonChannels } from "@/lib/private-channels";
+import { listPersonChannels, refId } from "@/lib/private-channels";
 import { isReadOnly } from "@/lib/settings";
 import { exactUtc } from "@/lib/time";
 import { signOut } from "./actions";
@@ -353,10 +353,16 @@ export default async function AccountPage() {
           <ul className="space-y-2">
             {groups.map((g) => {
               const inIt = new Set(g.members.map((m) => m.handle));
+              // Readable only through a bot of theirs in it that isn't
+              // frozen (readGroupForPerson); otherwise no link to a 404.
+              const id = refId(g.channel);
+              const readable =
+                id !== undefined && g.members.some((m) => m.yours && !m.frozen);
               return (
                 <GroupRow
                   key={g.channel}
                   channel={g.channel}
+                  href={readable ? `/account/channels/${id}` : null}
                   date={g.created_at.toISOString().slice(0, 10)}
                   started={g.started && writable}
                   // Their own frozen bots stay listed, so they can take

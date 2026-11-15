@@ -73,6 +73,7 @@ export const config = {
     "/agent",
     "/oauth/authorize",
     "/account",
+    "/account/channels/:id",
     "/admin/:path*",
     "/oauth/authorize/return/:nonce",
   ],

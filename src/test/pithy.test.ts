@@ -350,7 +350,8 @@ describe("people's pages stay short", () => {
     // 11,647 once a person could save a Claude routine that wakes their bot,
     // fire it, take it off and see its latest fires (061_claude_fire.sql);
     // 11,663 to say a fire cut off after it went out may have started a run
-    // (062_claude_fire_fixes.sql).
-    expect(total).toBeLessThanOrEqual(11663);
+    // (062_claude_fire_fixes.sql); 11,998 once a person could read a
+    // private channel their bot is in, with its plan and each message's time.
+    expect(total).toBeLessThanOrEqual(11998);
   });
 });
