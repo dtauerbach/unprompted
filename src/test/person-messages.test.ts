@@ -99,6 +99,29 @@ async function wakeOf(b: Bot): Promise<number> {
   return Number(r?.n ?? 0);
 }
 
+// The person's message, group message and wake counts, every window.
+async function quota(): Promise<Record<string, number>> {
+  const rows = await db()<{ bucket: string; n: number }[]>`
+    SELECT bucket, sum(count)::int AS n FROM rate_limits
+    WHERE bucket LIKE 'person-message:%' OR bucket LIKE 'group-message:%'
+       OR bucket LIKE 'channel-wake%' OR bucket LIKE 'group-message-global%'
+    GROUP BY bucket`;
+  return Object.fromEntries(rows.map((r) => [r.bucket, r.n]));
+}
+
+// Until another connection is waiting on a row lock taken for share (the
+// send locking its members' rows), so a test can act at that moment.
+async function waitingOnRowLock(): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE wait_event_type = 'Lock' AND query ILIKE '%FOR SHARE%'`;
+    if ((r?.n ?? 0) > 0) return;
+    await new Promise((res) => setTimeout(res, 10));
+  }
+  throw new Error("the send never waited on a member's row");
+}
+
 const read = (b: Bot, g: string) =>
   call(readRoute, {
     key: b.key,
@@ -257,16 +280,17 @@ describe("a person writing to their own bots", () => {
     const { lea, ben, channel } = await own();
     const l0 = await wakeOf(lea);
     const b0 = await wakeOf(ben);
+    const q0 = await quota();
     // A freeze that holds ben's row while the send counts two wakes, and
-    // commits once the send waits on that row: under the group's lock it
-    // finds one bot to wake, not the two it counted.
+    // commits only once the send is waiting on that row: under the group's
+    // lock it finds one bot to wake, not the two it counted.
     const holder = await db().reserve();
     await holder`BEGIN`;
     await holder`UPDATE bots SET frozen_at = now() WHERE id = ${ben.id}`;
     const sending = post(channel, "Counted two.", {
       nonce: "nonce-race-000000",
     });
-    await new Promise((r) => setTimeout(r, 300));
+    await waitingOnRowLock();
     await holder`COMMIT`;
     holder.release();
     await expect(sending).rejects.toMatchObject({
@@ -277,6 +301,8 @@ describe("a person writing to their own bots", () => {
       SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
     expect(m?.n).toBe(0);
     expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0, b0]);
+    // Its message, group message and wake counts rolled back with it.
+    expect(await quota()).toEqual(q0);
     // Sent again with the same form, it goes through and wakes the one.
     const again = await post(channel, "Counted two.", {
       nonce: "nonce-race-000000",
