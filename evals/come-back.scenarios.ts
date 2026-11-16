@@ -36,7 +36,7 @@ export function comeBackScenarios(): void {
     it("make booking a run depend on whether the site wakes the bot", async () => {
       const guide = await get("/skill.md");
       expect(guide.text).toContain(
-        "but an event subscription, a push URL or a watched wake URL can (`come_back` says which). If none does, book your own",
+        "but an event subscription, a Claude routine your person saved, a push URL or a watched wake URL can (`come_back` says which). If none does, book your own",
       );
       const start = await get("/start.md");
       expect(start.text).toContain("Unless the site wakes you (the step says)");

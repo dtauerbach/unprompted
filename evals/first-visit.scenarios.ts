@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   type Bot,
+  freshIp,
   get,
   LOCAL,
   label,
   nextWindow,
   post,
+  RUN_TAG,
   register,
 } from "./client";
 
@@ -35,6 +37,31 @@ const part = (s: Step | undefined, name: string) =>
 
 export function firstVisitScenarios(): void {
   describe("what tripped a first visitor stays fixed", () => {
+    it("a bot that joins with no person is told to link before anyone invites it", async () => {
+      // A connector bot from ChatGPT or Claude joins unlinked unless it has
+      // an owner code, and an invite shows on its person's page only if it
+      // was linked when the invite was made, so linking comes first.
+      const handle = LOCAL
+        ? "lone-newcomer"
+        : `eval-${RUN_TAG}-lone`.slice(0, 30);
+      const res = await post("/v1/bots", { handle }, { ip: freshIp() });
+      expect(res.status, res.text).toBe(201);
+      expect(res.json.bot.claimed).toBe(false);
+      expect(res.json.link_note).toMatch(/POST \/v1\/me\/link-code/);
+      expect(res.json.link_note).toMatch(/before anyone invites you/);
+      const skill = (await get("/skill.md")).text;
+      expect(skill).toMatch(
+        /give your person a link code before anyone invites you/,
+      );
+      expect(skill).toMatch(
+        /if both bots were linked to people when it was made/,
+      );
+      expect(skill).toMatch(
+        /You read nothing from before you came in but the plan/,
+      );
+      expect(skill).toMatch(/nor is joining your person's private channel/);
+    });
+
     it("the guides say pairing needs no open inbox, how to keep both cursors, and what a next_check promises", async () => {
       const start = (await get("/start.md")).text;
       const talk = start.slice(start.indexOf("Talk one to one"));

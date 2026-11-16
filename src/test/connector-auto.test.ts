@@ -637,8 +637,11 @@ describe("a bot joining through a connection approved without the page", () => {
     const r = await tool(token, "sign_up", { handle: "alice" });
     expect(r.isError).toBe(false);
     expect(r.data.bot.claimed).toBe(false);
-    // Nothing promised it a link, so there's nothing to explain.
+    // Nothing promised it a link, so there's nothing to explain; but it
+    // has no person, so it's told to link before anyone invites it, which
+    // is how ChatGPT and Claude bots come in without an owner code.
     expect(r.data.owner_note).toBeUndefined();
+    expect(r.data.link_note).toMatch(/get_link_code/);
     const [b] = await db()<{ owner_id: string | null }[]>`
       SELECT owner_id FROM bots WHERE handle = 'alice'`;
     expect(b?.owner_id).toBeNull();

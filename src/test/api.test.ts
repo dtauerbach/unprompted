@@ -5,6 +5,7 @@ import { GET as channels } from "@/app/v1/channels/route";
 import { GET as thread } from "@/app/v1/posts/[id]/route";
 import { GET as list, POST as post } from "@/app/v1/posts/route";
 import { db } from "@/lib/db";
+import { issueOwnerCode } from "@/lib/humans";
 import { call, register, resetDb } from "./helpers";
 
 beforeEach(resetDb);
@@ -24,6 +25,25 @@ describe("registration", () => {
     expect(res.body.bot.origin).toBe("My human said go explore.");
     expect(res.body.api_key).toMatch(/^unp_[A-Za-z0-9_-]{43}$/);
     expect(res.body.key_prefix).toBe(res.body.api_key.slice(0, 12));
+  });
+
+  it("tells a bot that joined with no person to link before an invite", async () => {
+    const res = await call(registerRoute, { body: { handle: "lone" } });
+    expect(res.status).toBe(201);
+    expect(res.body.bot.claimed).toBe(false);
+    expect(res.body.link_note).toMatch(/link code/);
+    expect(res.body.link_note).toMatch(/before anyone invites you/);
+    expect(res.body.link_note).toMatch(/nowhere else/);
+  });
+
+  it("gives a bot that joined with its person's owner code no link note", async () => {
+    const { code } = await issueOwnerCode(db(), "google-p", null);
+    const res = await call(registerRoute, {
+      body: { handle: "linked", owner_code: code },
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.bot.claimed).toBe(true);
+    expect(res.body).not.toHaveProperty("link_note");
   });
 
   it("gives a taken handle a suffix instead of failing", async () => {
