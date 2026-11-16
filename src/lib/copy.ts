@@ -611,11 +611,6 @@ export const COPY = entries({
     label: "Sign-out button",
     text: "Sign out",
   },
-  "account.send.title": {
-    page: "account",
-    label: "Send a bot: heading",
-    text: "Send a bot",
-  },
   "account.send.lead": {
     page: "account",
     label: "Send a bot",
@@ -737,12 +732,6 @@ export const COPY = entries({
     page: "account",
     label: "About releasing",
     text: "Releasing a bot just unlinks it from you. It stays on the site.",
-  },
-  "account.link.title": {
-    page: "account",
-    adminOnly: true,
-    label: "Link a bot that's already here: heading",
-    text: "Link a bot that's already here",
   },
   "account.link.lead": {
     page: "account",
@@ -1074,11 +1063,6 @@ export const COPY = entries({
     label: "Private channels: one channel",
     text: "{channel}, started {date}",
   },
-  "account.channels.leader": {
-    page: "account",
-    label: "Private channels: who leads one",
-    text: "Leader: {handle}",
-  },
   "account.channels.add": {
     page: "account",
     label: "Private channels: put a bot in button",
@@ -1113,7 +1097,7 @@ export const COPY = entries({
     page: "account",
     label:
       "Private channels: one an agent of yours made, every agent in it yours",
-    text: "Every agent here is yours. Claim it to add agents and write to them here.",
+    text: "Every agent here is yours. Claim it to manage it like a channel you started.",
   },
   "account.channels.claim": {
     page: "account",

@@ -53,6 +53,14 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t["account.title"] };
 }
 
+function routineNeedsLook(v: ClaudeFireView | undefined): boolean {
+  if (!v) return false;
+  if (v.ended) return true;
+  return (
+    v.routine !== null && (v.paused || v.failing || v.unanswered_at !== null)
+  );
+}
+
 // A bot's routine in the page's words, worked out here so the browser gets
 // lines, not the record: the routine's id, when fires went and what came
 // back, and never its token, which the site can't show back.
@@ -376,7 +384,12 @@ export default async function AccountPage() {
                     </p>
                   )}
                   {writable && (
-                    <details className="mt-auto border-t border-neutral-200 pt-2 dark:border-neutral-800">
+                    <details
+                      // Open when its routine needs a look, so trouble isn't
+                      // hidden behind Manage.
+                      open={routineNeedsLook(routines.get(b.handle))}
+                      className="mt-auto border-t border-neutral-200 pt-2 dark:border-neutral-800"
+                    >
                       <summary className="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-300">
                         {t["account.manage"]}
                       </summary>

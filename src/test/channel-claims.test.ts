@@ -193,9 +193,25 @@ describe("claiming a group a bot made", () => {
         await db()<{ n: number }[]>`
           SELECT count(*)::int AS n FROM action_log WHERE action = 'human.channel.claim'`
       )[0]?.n;
+    const counted = async () =>
+      (
+        await db()<{ n: number }[]>`
+          SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+          WHERE bucket LIKE 'person-channel:%'`
+      )[0]?.n;
+    const before = await counted();
     expect(await claim(g)).toEqual({ channel: g, changed: false });
     expect(await claims()).toBe(1);
     expect(await logs()).toBe(1);
+    expect(await counted()).toBe(before);
+  });
+
+  it("claims once when two claims race, and both say it's theirs", async () => {
+    const { g } = await team();
+    const both = await Promise.all([claim(g), claim(g)]);
+    expect(both.map((r) => r.channel)).toEqual([g, g]);
+    expect(both.filter((r) => r.changed)).toHaveLength(1);
+    expect(await claims()).toBe(1);
   });
 
   it("refuses alike, writing nothing, unless every bot in it is theirs and linked a day", async () => {

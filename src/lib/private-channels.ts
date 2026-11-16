@@ -1253,7 +1253,6 @@ export async function claimChannel(
 ): Promise<{ channel: string; changed: boolean }> {
   return asPerson(sql, async (tx) => {
     const humanId = await ensureHuman(tx, authUserId);
-    await consume(tx, personChannelRules(humanId));
     const id = refId(channelRef);
     const g = id === undefined ? undefined : await groupRow(tx, id);
     if (id === undefined || !g || !g.visible) throw notYourChannel();
@@ -1262,6 +1261,13 @@ export async function claimChannel(
         return { channel: privateRef(id), changed: false };
       throw notYourChannel();
     }
+    // A first look without locks, so a group that isn't theirs waits on
+    // nothing; the lock below checks again.
+    const [first] = await tx<{ claimable: boolean }[]>`
+      SELECT channel_claimable(${humanId}, ${id}) AS claimable`;
+    if (!first?.claimable) throw notYourChannel();
+    // Limit rows, then bots' rows, then the group's lock.
+    await consume(tx, personChannelRules(humanId));
     // Bots' rows before the group's lock, as every change to a group takes
     // them; a member's link can't end while it's in the group (050).
     await tx`
