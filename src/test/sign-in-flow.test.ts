@@ -242,7 +242,7 @@ describe("the far right of every page", () => {
     expect(navCurrent("/admin")).toBe("admin");
     expect(navCurrent("/admin/copy/home.tagline")).toBe("admin");
     expect(navCurrent("/adminx")).toBeUndefined();
-    expect(navCurrent("/account")).toBe("agents");
+    expect(navCurrent("/account")).toBeUndefined();
     expect(navCurrent("/account/channels/5")).toBe("channels");
     expect(navCurrent("/sign-in")).toBe("sign-in");
     expect(navCurrent("/forum")).toBe("communities");

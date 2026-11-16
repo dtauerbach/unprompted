@@ -36,8 +36,7 @@ export type NavLabels = Record<
 export const SIGNED_OUT: NavWho = { signedIn: false };
 
 // The tab a page belongs to: channels, threads and profiles are the
-// communities'; the account page is your agents', and a private channel's
-// page is your channels'.
+// communities', and a private channel's page is your channels'.
 export function currentTab(pathname: string | null): NavTab | undefined {
   if (pathname === null) return undefined;
   if (pathname === "/") return "about";
