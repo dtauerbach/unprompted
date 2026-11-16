@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { type Bot, get, LOCAL, register } from "./client";
-import { person, tool } from "./group-channels.scenarios";
+import { type Bot, get, LOCAL, post, register } from "./client";
+import { idOf, person, tool } from "./group-channels.scenarios";
 import { linkByCode } from "./humans.scenarios";
 import { MODERATOR } from "./moderator";
 
@@ -10,7 +10,10 @@ import { MODERATOR } from "./moderator";
 // plays the signed-in person. Adversarially: a stranger can't claim it, nor
 // can the person before their bots have been linked a day, and a claim twice
 // writes nothing. A bot its person put to work there is sent to it first,
-// and finds how members work together at /roles.md.
+// and finds how members work together at /roles.md. On its first visit a
+// new member reads the plan but nothing said before it came, adds itself
+// and claims the starter over the version it read, leaving every other
+// READY task alone; a save over an older version writes nothing.
 
 type Cast = { lea: Bot; mia: Bot; g: string };
 let cast: Cast | undefined;
@@ -107,6 +110,98 @@ export function channelClaimScenarios(): void {
         expect(start.json.private_channels).toEqual([g]);
         expect(start.json.private_first).toMatch(/start there, not here/);
         expect(start.json.private_first).toContain("/roles.md");
+      });
+
+      it("reads the plan, not what came before, and claims only the starter", async () => {
+        const lead = await register("fv-lead");
+        const worker = await register("fv-work");
+        await linkByCode(lead, "eval-claim-3");
+        const made = await tool(lead, "make_channel", { private: true });
+        expect(made.isError).toBe(false);
+        const g: string = made.data.channel;
+        const plan = [
+          "MEMBERS",
+          `- @${lead.handle}: Leader.`,
+          "",
+          "BACKLOG (id | what | state | holder)",
+          "- S1 (starter) | Read /roles.md and this plan, add yourself to MEMBERS | READY | -",
+          "- D1 | Write the release notes | READY | -",
+        ].join("\n");
+        const saved = await tool(lead, "update_channel", {
+          channel: g,
+          plan,
+          base_version: 0,
+        });
+        expect(saved.data.plan.version).toBe(1);
+        const said = await tool(lead, "post", {
+          channel: g,
+          body: "Before anyone joins: D1 is mine.",
+        });
+        expect(said.isError).toBe(false);
+        const invite = await tool(lead, "invite", {
+          to: worker.handle,
+          channel: g,
+        });
+        const joined = await tool(worker, "join", {
+          code: invite.data.invite.code,
+        });
+        expect(joined.isError).toBe(false);
+
+        // The worker follows the getting started answer to its channel.
+        const start = await get("/v1/me/start", worker.key);
+        expect(start.json.private_channels).toEqual([g]);
+        expect(start.json.private_first).toContain("GET /v1/private-channels/");
+        expect((await get("/roles.md")).text).toMatch(/## Worker/);
+        const read = await get(`/v1/private-channels/${idOf(g)}`, worker.key);
+        expect(read.status).toBe(200);
+        expect(read.json.plan.untrusted_plan).toBe(plan);
+        expect(read.json.plan_base).toBe(1);
+        expect(JSON.stringify(read.json.messages)).not.toContain("D1 is mine");
+
+        // One save over the version it read: it adds itself, claims S1.
+        const mine = plan
+          .replace(
+            "- @" + lead.handle + ": Leader.",
+            `- @${lead.handle}: Leader.\n- @${worker.handle}: Worker.`,
+          )
+          .replace(
+            "add yourself to MEMBERS | READY | -",
+            `add yourself to MEMBERS | CLAIMED | ${worker.handle}`,
+          );
+        const claim = await post(
+          `/v1/private-channels/${idOf(g)}/plan`,
+          { body: mine, base_version: read.json.plan_base },
+          { key: worker.key, ip: worker.ip },
+        );
+        expect(claim.status).toBe(200);
+        expect(claim.json.plan).toMatchObject({
+          version: 2,
+          by: worker.handle,
+        });
+
+        // A second save over the version it first read writes nothing.
+        const again = await post(
+          `/v1/private-channels/${idOf(g)}/plan`,
+          {
+            body: `${mine}\n- D1 | CLAIMED | ${worker.handle}`,
+            base_version: 1,
+          },
+          { key: worker.key, ip: worker.ip },
+        );
+        expect(again.status).toBe(409);
+        expect(again.json.error.code).toBe("stale_plan");
+
+        // The leader reads back: the worker holds the starter and nothing else.
+        const back = await tool(lead, "read_channel", { channel: g });
+        expect(back.data.plan.version).toBe(2);
+        const text: string = back.data.plan.untrusted_plan;
+        expect(text).toContain(`- @${worker.handle}: Worker.`);
+        const held = text
+          .split("\n")
+          .filter((l) => l.includes(`| ${worker.handle}`));
+        expect(held).toHaveLength(1);
+        expect(held[0]).toMatch(/^- S1 \(starter\)/);
+        expect(text).toContain("- D1 | Write the release notes | READY | -");
       });
     },
   );
