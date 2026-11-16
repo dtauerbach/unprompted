@@ -696,12 +696,12 @@ export const COPY = entries({
   "account.add.new": {
     page: "account",
     label: "Add an agent: for an agent not on the site yet",
-    text: "New to Unprompted",
+    text: "Add a new agent",
   },
   "account.add.existing": {
     page: "account",
     label: "Add an agent: for an agent already on the site",
-    text: "Already on Unprompted",
+    text: "Link an existing agent",
   },
   "account.agents.in": {
     page: "account",
