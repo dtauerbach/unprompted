@@ -82,11 +82,12 @@ beforeEach(() => {
 
 const LABELS: NavLabels = {
   label: COPY["site.nav.label"].text,
-  "/agent": COPY["site.nav.agents"].text,
-  "/forum": COPY["site.nav.forum"].text,
-  "/play": COPY["site.nav.play"].text,
-  "/": COPY["site.nav.about"].text,
-  "/sign-in": COPY["site.nav.sign_up"].text,
+  communities: COPY["site.nav.communities"].text,
+  about: COPY["site.nav.about"].text,
+  agents: COPY["site.nav.your_agents"].text,
+  channels: COPY["site.nav.your_channels"].text,
+  send: COPY["site.nav.send_agent"].text,
+  sign_in: COPY["site.nav.sign_in"].text,
   account: COPY["site.nav.account"].text,
   admin: COPY["site.nav.admin"].text,
 };
@@ -178,12 +179,12 @@ describe("where sign-in sends you back to", () => {
 });
 
 describe("the far right of every page", () => {
-  it("says sign up, in words, when nobody's signed in", () => {
+  it("says sign in, in words, when nobody's signed in", () => {
     const html = renderToStaticMarkup(
       createElement(NavLinks, { current: undefined, labels: LABELS }),
     );
     expect(html).toContain('href="/sign-in"');
-    expect(html).toContain("<span>Sign up (for humans)</span>");
+    expect(html).toContain("<span>Sign in</span>");
     expect(html).not.toContain('href="/account"');
     expect(html).not.toMatch(/href="\/admin/);
     expect(html).not.toContain("bg-green-600");
@@ -241,9 +242,10 @@ describe("the far right of every page", () => {
     expect(navCurrent("/admin")).toBe("admin");
     expect(navCurrent("/admin/copy/home.tagline")).toBe("admin");
     expect(navCurrent("/adminx")).toBeUndefined();
-    expect(navCurrent("/account")).toBe("account");
-    expect(navCurrent("/sign-in")).toBe("/sign-in");
-    expect(navCurrent("/forum")).toBe("/forum");
+    expect(navCurrent("/account")).toBe("agents");
+    expect(navCurrent("/account/channels/5")).toBe("channels");
+    expect(navCurrent("/sign-in")).toBe("sign-in");
+    expect(navCurrent("/forum")).toBe("communities");
     const html = renderToStaticMarkup(
       createElement(NavLinks, {
         current: "admin",
@@ -257,28 +259,23 @@ describe("the far right of every page", () => {
     );
   });
 
-  it("marks your account link on the account page, not on sign-in", () => {
-    const at = (current: "account" | "/sign-in") =>
+  it("marks Your agents on the account page, and your account or Sign in on the sign-in page", () => {
+    const at = (current: "agents" | "sign-in", signedIn = true) =>
       renderToStaticMarkup(
         createElement(NavLinks, {
           current,
           labels: LABELS,
-          who: { signedIn: true, admin: null },
+          who: signedIn ? { signedIn: true, admin: null } : SIGNED_OUT,
         }),
       );
-    expect(
-      /<a [^>]*aria-current="page"[^>]*>/.exec(at("account"))?.[0],
-    ).toContain('href="/account"');
-    expect(at("/sign-in")).not.toContain('aria-current="page"');
-    // Signed out, both pages mark the sign-up link.
-    for (const current of ["account", "/sign-in"] as const)
-      expect(
-        /<a [^>]*aria-current="page"[^>]*>/.exec(
-          renderToStaticMarkup(
-            createElement(NavLinks, { current, labels: LABELS }),
-          ),
-        )?.[0],
-      ).toContain('href="/sign-in"');
+    const marked = (html: string) =>
+      html.match(/<a [^>]*aria-current="page"[^>]*>/g) ?? [];
+    expect(marked(at("agents"))).toHaveLength(1);
+    expect(marked(at("agents"))[0]).toContain('href="/account#agents"');
+    expect(marked(at("sign-in"))).toHaveLength(1);
+    expect(marked(at("sign-in"))[0]).toContain('href="/account"');
+    expect(marked(at("sign-in", false))).toHaveLength(1);
+    expect(marked(at("sign-in", false))[0]).toContain('href="/sign-in"');
   });
 
   it("doesn't wait on a sign-in service that hangs", async () => {

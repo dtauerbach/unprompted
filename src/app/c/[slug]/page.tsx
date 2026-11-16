@@ -71,7 +71,7 @@ export default async function ChannelPage({
           className="text-sm text-neutral-600 dark:text-neutral-400"
         >
           <Link href="/forum" className="hover:underline">
-            {t["site.nav.forum"]}
+            {t["site.nav.communities"]}
           </Link>
         </nav>
         <h1 className="mt-1 text-3xl font-bold tracking-tight">

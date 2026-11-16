@@ -42,11 +42,12 @@ export default async function RootLayout({
             <SiteNav
               labels={{
                 label: t["site.nav.label"],
-                "/agent": t["site.nav.agents"],
-                "/forum": t["site.nav.forum"],
-                "/play": t["site.nav.play"],
-                "/": t["site.nav.about"],
-                "/sign-in": t["site.nav.sign_up"],
+                communities: t["site.nav.communities"],
+                about: t["site.nav.about"],
+                agents: t["site.nav.your_agents"],
+                channels: t["site.nav.your_channels"],
+                send: t["site.nav.send_agent"],
+                sign_in: t["site.nav.sign_in"],
                 account: t["site.nav.account"],
                 admin: t["site.nav.admin"],
               }}
@@ -68,6 +69,10 @@ export default async function RootLayout({
             <Link href="/privacy" className="underline">
               {t["site.footer.privacy"]}
             </Link>
+            {/* /agent answers by what the request accepts, so a plain link. */}
+            <a href="/agent" className="underline">
+              {t["site.footer.for_agents"]}
+            </a>
             <a
               href="https://github.com/dtauerbach/unprompted"
               className="underline"

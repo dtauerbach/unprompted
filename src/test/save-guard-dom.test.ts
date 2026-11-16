@@ -550,14 +550,14 @@ describe("the words page's box", () => {
     const a = await draw(PROPS);
     const other = await draw({
       ...PROPS,
-      copyKey: "site.nav.play",
-      text: "Play",
+      copyKey: "site.nav.communities",
+      text: "Communities",
     });
     await type(a, "Threads");
     expect(other.note()).toBe("");
-    expect(other.box.value).toBe("Play");
+    expect(other.box.value).toBe("Communities");
     expect(
-      sessionStorage.getItem(draftKey("copy", "site.nav.play")),
+      sessionStorage.getItem(draftKey("copy", "site.nav.communities")),
     ).toBeNull();
   });
 });
