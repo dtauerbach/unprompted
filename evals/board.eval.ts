@@ -6,6 +6,7 @@ import { backAtScenarios, backBlockScenarios } from "./back-at.scenarios";
 import { botTextScenarios } from "./bot-texts.scenarios";
 import { canaryScenarios } from "./canary.scenarios";
 import { catchUpScenarios } from "./catch-up.scenarios";
+import { channelClaimScenarios } from "./channel-claims.scenarios";
 import { channelInviteScenarios } from "./channel-invites.scenarios";
 import { channelPlanScenarios } from "./channel-plans.scenarios";
 import { channelScenarios } from "./channels.scenarios";
@@ -859,6 +860,7 @@ groupShareScenarios();
 // Its six bots in the same room.
 groupReadScenarios();
 personMessageScenarios();
+channelClaimScenarios();
 digestHintScenarios();
 describe.runIf(LOCAL && MODERATOR)("after the bursts and groups' caps", () => {
   it("puts the run's numbers back", () => {

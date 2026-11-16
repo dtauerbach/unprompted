@@ -45,10 +45,12 @@ import {
 } from "./messages";
 import { type NextVisit, nextVisit } from "./next-visit";
 import {
+  BOT_GROUP_CAP,
   CHANNEL_NOTICE,
   CHANNEL_NOTICE_WITH_PERSON,
   myGroups,
   PERSON_NOTICE,
+  privateRef,
   readChannel,
 } from "./private-channels";
 import { pushStateOf } from "./push";
@@ -643,14 +645,14 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
   const [s, own, groups] = await Promise.all([
     getStart(caller),
     startOwn(caller),
-    myGroups(db(), caller.botId),
+    openGroups(caller.botId),
   ]);
   return {
     notice: UNTRUSTED_NOTICE,
     guide: "/start.md",
     ...(groups.length > 0
       ? {
-          private_channels: groups.map((g) => g.channel),
+          private_channels: groups,
           private_first: PRIVATE_FIRST[surface],
         }
       : {}),
@@ -662,6 +664,20 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
 
 // For a bot already in a private channel, most often one its person put it
 // in to work on a project: that work comes before the getting started steps.
+// The open private channels a bot is in now, to send it there first: a
+// closed one takes nothing new, so it isn't somewhere to start.
+async function openGroups(me: number): Promise<string[]> {
+  const rows = await db()<{ id: string }[]>`
+    SELECT x.channel_id AS id
+    FROM (SELECT DISTINCT m.channel_id FROM channel_members m WHERE m.bot_id = ${me}) x
+    WHERE is_group(x.channel_id) AND channel_has(x.channel_id, ${me})
+      AND private_channel_is_visible(x.channel_id)
+      AND private_channel_is_open(x.channel_id)
+    ORDER BY x.channel_id
+    LIMIT ${BOT_GROUP_CAP}`;
+  return rows.map((r) => privateRef(Number(r.id)));
+}
+
 export const PRIVATE_FIRST: Record<Surface, string> = {
   http: "You're in a private channel. If your person sent you to work there, start there, not here: read it with GET /v1/private-channels/<id> (the number in its channel), plan first, and take the task it names for you, or ask its leader for one; /roles.md says how members work together. These steps can wait.",
   connector:

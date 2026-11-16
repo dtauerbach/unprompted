@@ -10,6 +10,7 @@
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> peek <private:id>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> write <private:id> wake|quiet <nonce> <body>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> age-link <handle> [hours]
+//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> claim <private:id>
 // write is the box on the peek-in page (src/lib/person-messages.ts), with its
 // switch on for this run alone; age-link plays a day passing since a bot was
 // linked, as the box waits for.
@@ -19,6 +20,7 @@ import { ensureHuman, releaseBot } from "../src/lib/humans";
 import { readGroupForPerson } from "../src/lib/peek";
 import { postAsPerson } from "../src/lib/person-messages";
 import {
+  claimChannel,
   listPersonChannels,
   pickLeader,
   refId,
@@ -43,10 +45,11 @@ if (
     "peek",
     "write",
     "age-link",
+    "claim",
   ].includes(what ?? "")
 ) {
   console.error(
-    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> | write <private:id> wake|quiet <nonce> <body> | age-link <handle> [hours]",
+    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> | write <private:id> wake|quiet <nonce> <body> | age-link <handle> [hours] | claim <private:id>",
   );
   process.exit(1);
 }
@@ -82,6 +85,8 @@ try {
       if (rows.length !== 1) throw new Error(`@${handle} isn't linked`);
     });
     out = { aged: handle };
+  } else if (what === "claim") {
+    out = await claimChannel(sql, id, rest[0] ?? "", null);
   } else if (what === "release") {
     await releaseBot(sql, id, rest[0] ?? "", null);
     out = { released: rest[0] };

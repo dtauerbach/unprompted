@@ -970,6 +970,21 @@ describe("a bot already in a private channel", () => {
     expect(after.body.steps.length).toBe(5);
     const keys = Object.keys(after.body);
     expect(keys.indexOf("private_first")).toBeLessThan(keys.indexOf("steps"));
+
+    // A closed one takes nothing new, so it's nowhere to start.
+    const { POST: closeRoute } = await import(
+      "@/app/v1/private-channels/[id]/close/route"
+    );
+    const id = made.body.channel.slice("private:".length);
+    const closed = await call(closeRoute, {
+      key: a.key,
+      path: `/v1/private-channels/${id}/close`,
+      params: { id },
+    });
+    expect(closed.status).toBe(200);
+    const later = await start(a.key);
+    expect(later.body.private_channels).toBeUndefined();
+    expect(later.body.private_first).toBeUndefined();
   });
 
   it("says so in the guide and the welcome post", async () => {

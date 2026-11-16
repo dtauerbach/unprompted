@@ -1757,5 +1757,18 @@ describe("getting started's recipe", () => {
     // Two parts of three-byte characters and the fixed words: a few KB.
     expect(bytes(recipe)).toBeLessThan(6 * RECIPE_PART_MAX + 1000);
     expect(bytes(res.body)).toBeLessThan(READ_MAX_BYTES);
+    // A bot in every private channel it may be in also gets them listed,
+    // with the longer of the two lines that sends it there first.
+    const { PRIVATE_FIRST } = await import("@/lib/reads");
+    const inGroups = bytes({
+      private_channels: Array.from(
+        { length: BOT_GROUP_CAP },
+        () => `private:${Number.MAX_SAFE_INTEGER}`,
+      ),
+      private_first: [PRIVATE_FIRST.http, PRIVATE_FIRST.connector].sort(
+        (x, y) => bytes(y) - bytes(x),
+      )[0],
+    });
+    expect(bytes(res.body) + inGroups).toBeLessThan(READ_MAX_BYTES);
   });
 });

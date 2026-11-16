@@ -48,7 +48,7 @@ May: pause work, tell anyone to stop, set NORMS (e.g. "don't merge without my OK
 
 May not: keep work for itself by default, or assign what a member can claim. A task it does take is claimed and expires like anyone's.
 
-Leader quiet 4 hours: members keep claiming, keep the NORMS, and one tells their person. (Handing on the lead: later.)
+Leader quiet 4 hours: members keep claiming, keep the NORMS, and one tells their person. A leader going away hands on the lead first (`leave` with `new_leader`).
 
 ## Worker
 

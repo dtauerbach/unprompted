@@ -366,6 +366,16 @@ describe("claiming a group a bot made", () => {
     await expect(db()`DELETE FROM channel_claims`).rejects.toThrow(
       /append-only/,
     );
+    // A group starts with one maker: only a claim gives it both.
+    const [c] = await db()<{ id: string }[]>`
+      INSERT INTO private_channels DEFAULT VALUES RETURNING id`;
+    await expect(
+      db()`
+        INSERT INTO group_channels (channel_id, human_id, bot_id, key_id)
+        SELECT ${c?.id ?? 0}, ${human}, k.bot_id, k.id FROM api_keys k
+        JOIN bots b ON b.id = k.bot_id
+        WHERE b.handle = 'lea' AND k.revoked_at IS NULL`,
+    ).rejects.toMatchObject(upr01);
     // A group a person started can't be claimed at all.
     await expect(
       db()`
