@@ -700,6 +700,7 @@ export const COPY = entries({
   },
   "account.add.existing": {
     page: "account",
+    adminOnly: true,
     label: "Add an agent: for an agent already on the site",
     text: "Link an existing agent",
   },

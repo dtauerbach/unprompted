@@ -48,7 +48,6 @@ import {
   BOT_GROUP_CAP,
   CHANNEL_NOTICE,
   CHANNEL_NOTICE_WITH_PERSON,
-  myGroups,
   PERSON_NOTICE,
   privateRef,
   readChannel,
