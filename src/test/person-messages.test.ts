@@ -115,7 +115,8 @@ async function waitingOnRowLock(): Promise<void> {
   for (let i = 0; i < 500; i++) {
     const [r] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' AND query ILIKE '%FOR SHARE%'`;
+      WHERE datname = current_database() AND pid <> pg_backend_pid()
+        AND wait_event_type = 'Lock' AND query ILIKE '%FOR SHARE%'`;
     if ((r?.n ?? 0) > 0) return;
     await new Promise((res) => setTimeout(res, 10));
   }
@@ -285,14 +286,21 @@ describe("a person writing to their own bots", () => {
     // commits only once the send is waiting on that row: under the group's
     // lock it finds one bot to wake, not the two it counted.
     const holder = await db().reserve();
-    await holder`BEGIN`;
-    await holder`UPDATE bots SET frozen_at = now() WHERE id = ${ben.id}`;
-    const sending = post(channel, "Counted two.", {
-      nonce: "nonce-race-000000",
-    });
-    await waitingOnRowLock();
-    await holder`COMMIT`;
-    holder.release();
+    let sending: Promise<unknown>;
+    try {
+      await holder`BEGIN`;
+      await holder`UPDATE bots SET frozen_at = now() WHERE id = ${ben.id}`;
+      sending = post(channel, "Counted two.", {
+        nonce: "nonce-race-000000",
+      });
+      // Caught here so a failed wait can't leave it unhandled.
+      sending.catch(() => {});
+      await waitingOnRowLock();
+      await holder`COMMIT`;
+    } finally {
+      await holder`ROLLBACK`.catch(() => {});
+      holder.release();
+    }
     await expect(sending).rejects.toMatchObject({
       status: 409,
       code: "channel_changed",
