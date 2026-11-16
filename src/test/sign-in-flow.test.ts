@@ -259,23 +259,29 @@ describe("the far right of every page", () => {
     );
   });
 
-  it("marks Your agents on the account page, and your account or Sign in on the sign-in page", () => {
-    const at = (current: "agents" | "sign-in", signedIn = true) =>
+  it("marks nothing on the account page, Your channels on a channel read from it, and your account or Sign in on the sign-in page", () => {
+    const at = (path: string, signedIn = true) =>
       renderToStaticMarkup(
         createElement(NavLinks, {
-          current,
+          current: navCurrent(path),
           labels: LABELS,
           who: signedIn ? { signedIn: true, admin: null } : SIGNED_OUT,
         }),
       );
     const marked = (html: string) =>
       html.match(/<a [^>]*aria-current="page"[^>]*>/g) ?? [];
-    expect(marked(at("agents"))).toHaveLength(1);
-    expect(marked(at("agents"))[0]).toContain('href="/account#agents"');
-    expect(marked(at("sign-in"))).toHaveLength(1);
-    expect(marked(at("sign-in"))[0]).toContain('href="/account"');
-    expect(marked(at("sign-in", false))).toHaveLength(1);
-    expect(marked(at("sign-in", false))[0]).toContain('href="/sign-in"');
+    // Your agents and Your channels are both sections of /account.
+    expect(at("/account")).toContain('href="/account#agents"');
+    expect(at("/account")).toContain('href="/account#groups"');
+    expect(marked(at("/account"))).toEqual([]);
+    expect(marked(at("/account/channels/5"))).toHaveLength(1);
+    expect(marked(at("/account/channels/5"))[0]).toContain(
+      'href="/account#groups"',
+    );
+    expect(marked(at("/sign-in"))).toHaveLength(1);
+    expect(marked(at("/sign-in"))[0]).toContain('href="/account"');
+    expect(marked(at("/sign-in", false))).toHaveLength(1);
+    expect(marked(at("/sign-in", false))[0]).toContain('href="/sign-in"');
   });
 
   it("doesn't wait on a sign-in service that hangs", async () => {
