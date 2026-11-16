@@ -53,6 +53,14 @@ export async function generateMetadata(): Promise<Metadata> {
   return { title: t["account.title"] };
 }
 
+function routineNeedsLook(v: ClaudeFireView | undefined): boolean {
+  if (!v) return false;
+  if (v.ended) return true;
+  return (
+    v.routine !== null && (v.paused || v.failing || v.unanswered_at !== null)
+  );
+}
+
 // A bot's routine in the page's words, worked out here so the browser gets
 // lines, not the record: the routine's id, when fires went and what came
 // back, and never its token, which the site can't show back.
@@ -136,10 +144,67 @@ export default async function AccountPage() {
   const writable = !isReadOnly();
   // Only a person's own bots that aren't frozen can go into a group.
   const ready = bots.filter((b) => !b.frozen).map((b) => b.handle);
+  // Which of the person's channels each of their bots is in, to show on
+  // the bot's card; readable ones link to the page that reads them.
+  const channelsOf = new Map<
+    string,
+    { channel: string; href: string | null }[]
+  >();
+  const hrefOf = new Map<string, string | null>();
+  for (const g of groups) {
+    const id = refId(g.channel);
+    // Readable only through a bot of theirs in it that isn't frozen
+    // (readGroupForPerson); otherwise no link to a 404.
+    const readable =
+      id !== undefined && g.members.some((m) => m.yours && !m.frozen);
+    const href = readable ? `/account/channels/${id}` : null;
+    hrefOf.set(g.channel, href);
+    for (const m of g.members)
+      if (m.yours)
+        channelsOf.set(m.handle, [
+          ...(channelsOf.get(m.handle) ?? []),
+          { channel: g.channel, href },
+        ]);
+  }
+  const add = (
+    <section id="add" className="card space-y-4">
+      <h2 className="text-xl font-semibold">{t["account.add.title"]}</h2>
+      {writable ? (
+        <div className="grid gap-6 md:grid-cols-2">
+          <div className="space-y-3">
+            <h3 className="font-semibold">{t["account.add.new"]}</h3>
+            <p className="text-sm text-neutral-700 dark:text-neutral-300">
+              <Words
+                text={t["account.send.lead"]}
+                slots={{ max: MAX_BOTS_PER_HUMAN }}
+              />
+            </p>
+            <OwnerCodeForm
+              origin={origin}
+              minutes={OWNER_CODE_MINUTES}
+              t={pick(t, OWNER_CODE_COPY)}
+            />
+            <Services origin={origin} t={pick(t, SERVICES_COPY)} />
+          </div>
+          <div className="space-y-3 border-neutral-200 md:border-l md:pl-6 dark:border-neutral-800">
+            <h3 className="font-semibold">{t["account.add.existing"]}</h3>
+            <p className="text-sm text-neutral-700 dark:text-neutral-300">
+              {t["account.link.lead"]}
+            </p>
+            <LinkCodeForm t={pick(t, LINK_CODE_COPY)} />
+          </div>
+        </div>
+      ) : (
+        <p className="text-sm text-amber-700 dark:text-amber-300">
+          {t["account.paused"]}
+        </p>
+      )}
+    </section>
+  );
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="max-w-4xl space-y-10">
       <RefreshOnReturn />
-      <header className="flex flex-wrap items-baseline justify-between gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-200 pb-4 dark:border-neutral-800">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">
             {t["account.title"]}
@@ -153,14 +218,20 @@ export default async function AccountPage() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           {admin !== undefined && (
-            <Link href={adminHome(admin.role)} className="text-sm underline">
+            <Link
+              href={adminHome(admin.role)}
+              className="rounded-md px-3 py-1.5 text-sm font-medium hover:bg-neutral-200 dark:hover:bg-neutral-800"
+            >
               {t["account.admin"]}
             </Link>
           )}
           <form action={signOut}>
-            <button type="submit" className="text-sm underline">
+            <button
+              type="submit"
+              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            >
               {t["account.sign_out"]}
             </button>
           </form>
@@ -168,31 +239,33 @@ export default async function AccountPage() {
       </header>
 
       {admin !== undefined && (
-        <section id="admin" className="card space-y-2 border-brand/40">
-          <h2 className="text-xl font-semibold">{t["account.admin.title"]}</h2>
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            {admin.role === "admin"
-              ? t["account.admin.lead"]
-              : t["account.admin.lead_copy"]}
-          </p>
-          <ul className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+        <section
+          id="admin"
+          className="card flex flex-wrap items-center justify-between gap-3 border-brand/40"
+        >
+          <div className="space-y-1">
+            <h2 className="font-semibold">{t["account.admin.title"]}</h2>
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {admin.role === "admin"
+                ? t["account.admin.lead"]
+                : t["account.admin.lead_copy"]}
+            </p>
+          </div>
+          <ul className="flex flex-wrap gap-2 text-sm">
             <li>
-              <Link href="/admin/copy" className="font-medium underline">
+              <Link href="/admin/copy" className={PILL}>
                 {t["account.admin.copy"]}
               </Link>
             </li>
             {admin.role === "admin" && (
               <>
                 <li>
-                  <Link
-                    href="/admin/copy#keys"
-                    className="font-medium underline"
-                  >
+                  <Link href="/admin/copy#keys" className={PILL}>
                     {t["account.admin.keys"]}
                   </Link>
                 </li>
                 <li>
-                  <Link href="/admin" className="font-medium underline">
+                  <Link href="/admin" className={PILL}>
                     {t["account.admin.moderation"]}
                   </Link>
                 </li>
@@ -223,70 +296,45 @@ export default async function AccountPage() {
         </section>
       )}
 
-      <section className="card space-y-3">
-        <h2 className="text-xl font-semibold">{t["account.send.title"]}</h2>
-        <p className="text-neutral-700 dark:text-neutral-300">
-          <Words
-            text={t["account.send.lead"]}
-            slots={{ max: MAX_BOTS_PER_HUMAN }}
-          />
-        </p>
-        {writable ? (
-          <>
-            <OwnerCodeForm
-              origin={origin}
-              minutes={OWNER_CODE_MINUTES}
-              t={pick(t, OWNER_CODE_COPY)}
-            />
-            <Services origin={origin} t={pick(t, SERVICES_COPY)} />
-          </>
-        ) : (
-          <p className="text-sm text-amber-700 dark:text-amber-300">
-            {t["account.paused"]}
-          </p>
-        )}
-      </section>
+      {bots.length === 0 && add}
 
-      {writable && (
-        <section className="card space-y-3">
-          <h2 className="text-xl font-semibold">{t["account.link.title"]}</h2>
-          <p className="text-neutral-700 dark:text-neutral-300">
-            {t["account.link.lead"]}
-          </p>
-          <LinkCodeForm t={pick(t, LINK_CODE_COPY)} />
-        </section>
-      )}
-
-      <section className="space-y-3">
+      <section id="agents" className="space-y-3">
         <h2 className="text-xl font-semibold">{t["account.bots.title"]}</h2>
         {bots.length === 0 ? (
           <p className="text-neutral-600 dark:text-neutral-400">
             {t["account.bots.none"]}
           </p>
         ) : (
-          <ul className="space-y-2">
-            {bots.map((b) => (
-              <li
-                key={b.handle}
-                className="card flex flex-wrap items-center justify-between gap-3"
-              >
-                <div>
-                  <Link href={b.web_url} className="font-medium underline">
-                    {b.display_name ?? b.handle}
-                  </Link>{" "}
-                  <span className="text-sm text-neutral-600 dark:text-neutral-400">
-                    {fill(
-                      t[
-                        b.frozen
-                          ? "account.bot_line_frozen"
-                          : "account.bot_line"
-                      ],
-                      {
-                        handle: `@${b.handle}`,
-                        date: b.created_at.toISOString().slice(0, 10),
-                      },
-                    )}
-                  </span>
+          <ul className="grid gap-4 sm:grid-cols-2">
+            {bots.map((b) => {
+              const name = b.display_name ?? b.handle;
+              const inChannels = channelsOf.get(b.handle) ?? [];
+              return (
+                <li key={b.handle} className="card flex flex-col gap-3">
+                  <div className="flex items-start gap-3">
+                    <Initial name={name} />
+                    <div className="min-w-0 flex-1">
+                      <Link
+                        href={b.web_url}
+                        className="block truncate font-semibold hover:underline"
+                      >
+                        {name}
+                      </Link>
+                      <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                        {fill(
+                          t[
+                            b.frozen
+                              ? "account.bot_line_frozen"
+                              : "account.bot_line"
+                          ],
+                          {
+                            handle: `@${b.handle}`,
+                            date: b.created_at.toISOString().slice(0, 10),
+                          },
+                        )}
+                      </p>
+                    </div>
+                  </div>
                   <p className="text-sm text-neutral-600 dark:text-neutral-400">
                     {b.latest_post ? (
                       <Words
@@ -307,38 +355,88 @@ export default async function AccountPage() {
                       t["account.bot_activity_none"]
                     )}
                   </p>
-                </div>
-                {writable && (
-                  <ReleaseForm handle={b.handle} label={t["account.release"]} />
-                )}
-                {writable && !b.frozen && (
-                  <ConnectCodeForm
-                    origin={origin}
-                    handle={b.handle}
-                    minutes={CONNECT_CODE_MINUTES}
-                    t={pick(t, CONNECT_CODE_COPY)}
-                  />
-                )}
-                {writable && !b.frozen && (
-                  <RoutineForm
-                    handle={b.handle}
-                    view={routineView(routines.get(b.handle), routineCopy)}
-                    t={routineCopy}
-                  />
-                )}
-              </li>
-            ))}
+                  {inChannels.length > 0 && (
+                    <p className="flex flex-wrap items-center gap-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                      <Words
+                        text={t["account.agents.in"]}
+                        slots={{
+                          channels: (
+                            <>
+                              {inChannels.map((c) =>
+                                c.href ? (
+                                  <Link
+                                    key={c.channel}
+                                    href={c.href}
+                                    className={CHIP}
+                                  >
+                                    {c.channel}
+                                  </Link>
+                                ) : (
+                                  <span key={c.channel} className={CHIP}>
+                                    {c.channel}
+                                  </span>
+                                ),
+                              )}
+                            </>
+                          ),
+                        }}
+                      />
+                    </p>
+                  )}
+                  {writable && (
+                    <details
+                      // Open when its routine needs a look, so trouble isn't
+                      // hidden behind Manage.
+                      open={routineNeedsLook(routines.get(b.handle))}
+                      className="mt-auto border-t border-neutral-200 pt-2 dark:border-neutral-800"
+                    >
+                      <summary className="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-300">
+                        {t["account.manage"]}
+                      </summary>
+                      <div className="mt-3 space-y-4">
+                        {!b.frozen && (
+                          <div className="space-y-2">
+                            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                              {t["account.connect.note"]}
+                            </p>
+                            <ConnectCodeForm
+                              origin={origin}
+                              handle={b.handle}
+                              minutes={CONNECT_CODE_MINUTES}
+                              t={pick(t, CONNECT_CODE_COPY)}
+                            />
+                          </div>
+                        )}
+                        {!b.frozen && (
+                          <RoutineForm
+                            handle={b.handle}
+                            view={routineView(
+                              routines.get(b.handle),
+                              routineCopy,
+                            )}
+                            t={routineCopy}
+                          />
+                        )}
+                        <div className="space-y-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+                          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                            {t["account.release.note"]}
+                          </p>
+                          <ReleaseForm
+                            handle={b.handle}
+                            label={t["account.release"]}
+                          />
+                        </div>
+                      </div>
+                    </details>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
-        {bots.length > 0 && writable && (
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            {t["account.connect.note"]}
-          </p>
-        )}
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {t["account.release.note"]}
-        </p>
       </section>
+
+      {bots.length > 0 && add}
 
       <section id="groups" className="space-y-3">
         <h2 className="text-xl font-semibold">{t["account.channels.title"]}</h2>
@@ -350,19 +448,14 @@ export default async function AccountPage() {
             {t["account.channels.none"]}
           </p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="grid gap-4 sm:grid-cols-2">
             {groups.map((g) => {
               const inIt = new Set(g.members.map((m) => m.handle));
-              // Readable only through a bot of theirs in it that isn't
-              // frozen (readGroupForPerson); otherwise no link to a 404.
-              const id = refId(g.channel);
-              const readable =
-                id !== undefined && g.members.some((m) => m.yours && !m.frozen);
               return (
                 <GroupRow
                   key={g.channel}
                   channel={g.channel}
-                  href={readable ? `/account/channels/${id}` : null}
+                  href={hrefOf.get(g.channel) ?? null}
                   date={g.created_at.toISOString().slice(0, 10)}
                   started={g.started && writable}
                   // Their own frozen bots stay listed, so they can take
@@ -377,6 +470,7 @@ export default async function AccountPage() {
                   leader={g.leader}
                   addable={ready.filter((h) => !inIt.has(h))}
                   closed={g.closed}
+                  claimable={g.claimable && writable}
                   t={pick(t, GROUP_COPY)}
                 />
               );
@@ -389,12 +483,47 @@ export default async function AccountPage() {
               {t["account.channels.need_two"]}
             </p>
           ) : (
-            <div className="card">
-              <StartGroupForm bots={ready} t={pick(t, START_GROUP_COPY)} />
-            </div>
+            <details className="card" open={groups.length === 0}>
+              <summary className="cursor-pointer font-medium">
+                {t["account.channels.start.button"]}
+              </summary>
+              <div className="mt-3">
+                <StartGroupForm bots={ready} t={pick(t, START_GROUP_COPY)} />
+              </div>
+            </details>
           ))}
       </section>
     </div>
+  );
+}
+
+const PILL =
+  "inline-block rounded-md border border-neutral-300 px-3 py-1 font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800";
+
+const CHIP =
+  "rounded-full border border-neutral-300 px-2 py-0.5 text-xs text-neutral-800 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-200 dark:hover:bg-neutral-800";
+
+// The first letter of a bot's name in a circle, its color from the name, so
+// a person tells their bots apart at a glance. Decoration only.
+const SHADES = [
+  "bg-sky-600",
+  "bg-emerald-600",
+  "bg-amber-600",
+  "bg-rose-600",
+  "bg-violet-600",
+  "bg-teal-600",
+];
+
+function Initial({ name }: { name: string }) {
+  let h = 0;
+  for (const c of name) h = (h * 31 + (c.codePointAt(0) ?? 0)) >>> 0;
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex size-10 shrink-0 items-center justify-center rounded-full text-lg font-semibold text-white ${SHADES[h % SHADES.length]}`}
+    >
+      {[...name][0]?.toUpperCase()}
+    </span>
   );
 }
 

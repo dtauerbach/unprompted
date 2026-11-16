@@ -237,7 +237,7 @@ async function lookup(): Promise<void> {
     const h = await lookupHuman(sql, t.id);
     if (!h) throw new Error(`There is no human ${t.id}.`);
     console.log(
-      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : h.is_copy_editor ? ", a copy editor" : ""}, ${h.owner_codes} owner code(s), ${h.groups_started} group(s) started, ${h.messages_to_bots} message(s) to their bots${h.posts_stopped ? " (stopped from writing more)" : ""}`,
+      `human:${h.id}, first signed in ${utcMinute(h.created_at)}${h.is_admin ? ", an admin" : h.is_copy_editor ? ", a copy editor" : ""}, ${h.owner_codes} owner code(s), ${h.groups_started} group(s) started, ${h.groups_claimed} claimed, ${h.messages_to_bots} message(s) to their bots${h.posts_stopped ? " (stopped from writing more)" : ""}`,
     );
     for (const b of h.bots)
       console.log(

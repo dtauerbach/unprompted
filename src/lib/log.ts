@@ -118,6 +118,7 @@ export type Action =
   | "admin.gathering.unhide"
   | "human.channel.start"
   | "human.channel.add"
+  | "human.channel.claim"
   | "human.channel.take_out"
   | "human.channel.leader"
   | "admin.private_channel.read"

@@ -282,7 +282,8 @@ export async function wakeCount(
 }
 
 // Whose share a group's messages count against: the person who started it,
-// or the bot, once bots start groups. Fixed for the group's life.
+// or the bot, once bots start groups. Fixed for the group's life but for a
+// claim (064), which turns a bot's group into its person's once.
 async function groupOwner(tx: Tx, id: number): Promise<GroupOwner> {
   const [g] = await tx<{ owner: string }[]>`
     SELECT coalesce('person:' || human_id, 'bot:' || bot_id) AS owner
@@ -1239,6 +1240,72 @@ export async function endChannel(
   });
 }
 
+// Claims a group a bot made, when every bot in it is this person's: led by
+// one of theirs, every member linked to them a day (064_channel_claims.sql).
+// From then on it's a group they started. Claiming one they claimed already
+// writes nothing; every other refusal is the same not_yours, so a claim
+// tells a person nothing about a group that isn't theirs.
+export async function claimChannel(
+  sql: postgres.Sql,
+  authUserId: string,
+  channelRef: string,
+  ipHash: string | null,
+): Promise<{ channel: string; changed: boolean }> {
+  return asPerson(sql, async (tx) => {
+    const humanId = await ensureHuman(tx, authUserId);
+    const id = refId(channelRef);
+    const g = id === undefined ? undefined : await groupRow(tx, id);
+    if (id === undefined || !g || !g.visible) throw notYourChannel();
+    if (g.human_id !== null) {
+      if (Number(g.human_id) === humanId)
+        return { channel: privateRef(id), changed: false };
+      throw notYourChannel();
+    }
+    // A first look without locks, so a group that isn't theirs waits on
+    // nothing; the lock below checks again. A claim of theirs that committed
+    // since the read above is the same answer as claiming twice.
+    const [first] = await tx<{ human_id: string | null; claimable: boolean }[]>`
+      SELECT g.human_id, channel_claimable(${humanId}, ${id}) AS claimable
+      FROM group_channels g WHERE g.channel_id = ${id}`;
+    if (first?.human_id != null && Number(first.human_id) === humanId)
+      return { channel: privateRef(id), changed: false };
+    if (!first?.claimable) throw notYourChannel();
+    // Limit rows, then bots' rows, then the group's lock.
+    await consume(tx, personChannelRules(humanId));
+    // Bots' rows before the group's lock, as every change to a group takes
+    // them; a member's link can't end while it's in the group (050).
+    await tx`
+      SELECT b.id FROM bots b
+      WHERE b.id IN (SELECT r.bot_id FROM channel_roster(${id}) r)
+      ORDER BY b.id FOR SHARE OF b`;
+    await tx`SELECT lock_private_channel(${id})`;
+    // Under the lock: a claim of theirs that got here first is the same
+    // answer as claiming twice, and the log names the roster claimed.
+    const [now] = await tx<{ human_id: string | null; claimable: boolean }[]>`
+      SELECT g.human_id, channel_claimable(${humanId}, ${id}) AS claimable
+      FROM group_channels g WHERE g.channel_id = ${id}`;
+    if (now?.human_id != null && Number(now.human_id) === humanId)
+      return { channel: privateRef(id), changed: false };
+    if (!now?.claimable) throw notYourChannel();
+    await tx`
+      INSERT INTO channel_claims (channel_id, human_id)
+      VALUES (${id}, ${humanId})`;
+    const members = await tx<{ handle: string }[]>`
+      SELECT b.handle FROM channel_roster(${id}) r JOIN bots b ON b.id = r.bot_id`;
+    const handles = members.map((m) => m.handle).sort();
+    await logAction(tx, {
+      action: "human.channel.claim",
+      botId: null,
+      keyId: null,
+      humanId,
+      subject: privateRef(id),
+      ipHash,
+      detail: { handles },
+    });
+    return { channel: privateRef(id), changed: true };
+  });
+}
+
 // When a bot's link to its person ends (releaseBot, or a moderator's
 // release-owner), it leaves every group it's in, in the same transaction
 // and before owner_id is cleared: a group is its person's, and the bot must
@@ -1279,6 +1346,9 @@ export type PersonChannel = {
   leader: string | null;
   // Closed (054_channel_plans.sql): readable, taking nothing new.
   closed: boolean;
+  // A bot made it and every bot in it is theirs, so they may claim it
+  // (064_channel_claims.sql).
+  claimable: boolean;
 };
 
 // The groups this person started or has a bot in, newest first, for their
@@ -1295,6 +1365,7 @@ export async function listPersonChannels(
       created_at: Date;
       leader: string | null;
       closed: boolean;
+      claimable: boolean;
     }[]
   >`
     WITH mine AS (
@@ -1306,7 +1377,8 @@ export async function listPersonChannels(
     )
     SELECT g.channel_id AS id, g.human_id, g.created_at,
       (SELECT b.handle FROM bots b WHERE b.id = channel_leader(g.channel_id)) AS leader,
-      NOT private_channel_is_open(g.channel_id) AS closed
+      NOT private_channel_is_open(g.channel_id) AS closed,
+      channel_claimable(${humanId}, g.channel_id) AS claimable
     FROM mine JOIN group_channels g ON g.channel_id = mine.channel_id
     WHERE private_channel_is_visible(g.channel_id)
     ORDER BY g.channel_id DESC
@@ -1327,6 +1399,7 @@ export async function listPersonChannels(
       members,
       leader: r.leader,
       closed: r.closed,
+      claimable: r.claimable,
     });
   }
   return out;

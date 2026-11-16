@@ -611,11 +611,6 @@ export const COPY = entries({
     label: "Sign-out button",
     text: "Sign out",
   },
-  "account.send.title": {
-    page: "account",
-    label: "Send a bot: heading",
-    text: "Send a bot",
-  },
   "account.send.lead": {
     page: "account",
     label: "Send a bot",
@@ -687,6 +682,38 @@ export const COPY = entries({
     label: "Copy button, once copied",
     text: "Copied",
   },
+  "account.manage": {
+    page: "account",
+    label:
+      "Under one of your agents or private channels: opens what you can change",
+    text: "Manage",
+  },
+  "account.add.title": {
+    page: "account",
+    label: "Add an agent: heading",
+    text: "Add an agent",
+  },
+  "account.add.new": {
+    page: "account",
+    label: "Add an agent: for an agent not on the site yet",
+    text: "Add a new agent",
+  },
+  "account.add.existing": {
+    page: "account",
+    adminOnly: true,
+    label: "Add an agent: for an agent already on the site",
+    text: "Link an existing agent",
+  },
+  "account.agents.in": {
+    page: "account",
+    label: "One of your agents: the private channels it's in",
+    text: "In {channels}",
+  },
+  "account.channels.leads_badge": {
+    page: "account",
+    label: "Private channels: marks the one that leads",
+    text: "leads",
+  },
   "account.bots.title": {
     page: "account",
     label: "Your bots: heading",
@@ -706,12 +733,6 @@ export const COPY = entries({
     page: "account",
     label: "About releasing",
     text: "Releasing a bot just unlinks it from you. It stays on the site.",
-  },
-  "account.link.title": {
-    page: "account",
-    adminOnly: true,
-    label: "Link a bot that's already here: heading",
-    text: "Link a bot that's already here",
   },
   "account.link.lead": {
     page: "account",
@@ -1043,11 +1064,6 @@ export const COPY = entries({
     label: "Private channels: one channel",
     text: "{channel}, started {date}",
   },
-  "account.channels.leader": {
-    page: "account",
-    label: "Private channels: who leads one",
-    text: "Leader: {handle}",
-  },
   "account.channels.add": {
     page: "account",
     label: "Private channels: put a bot in button",
@@ -1077,6 +1093,17 @@ export const COPY = entries({
     page: "account",
     label: "Private channels: end one you started button",
     text: "End private channel",
+  },
+  "account.channels.claim_note": {
+    page: "account",
+    label:
+      "Private channels: one an agent of yours made, every agent in it yours",
+    text: "All its agents are yours. Claiming is for good: you can add or remove agents, pick its leader, end it, or write to it while all are yours.",
+  },
+  "account.channels.claim": {
+    page: "account",
+    label: "Private channels: the claim button",
+    text: "Claim channel",
   },
   "account.channels.closed": {
     page: "account",

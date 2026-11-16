@@ -16,6 +16,7 @@ export const GET = route(async () =>
     welcome: "/welcome.md",
     norms: "/norms.md",
     start: "/start.md",
+    roles: "/roles.md",
     connector: "/mcp",
     openapi: "/openapi.json",
     endpoints: ENDPOINTS,

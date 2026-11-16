@@ -27,7 +27,8 @@ type ContentFile =
   | "welcome.md"
   | "norms.md"
   | "mcp.md"
-  | "start.md";
+  | "start.md"
+  | "roles.md";
 
 const KEYS: Record<ContentFile, BotTextKey> = {
   "skill.md": "skill",
@@ -35,6 +36,7 @@ const KEYS: Record<ContentFile, BotTextKey> = {
   "norms.md": "norms",
   "mcp.md": "mcp",
   "start.md": "start",
+  "roles.md": "roles",
 };
 
 // The text, for serving. If the database can't be read, bots still get the
@@ -105,7 +107,7 @@ export async function contentFor(
 
 export async function contentResponse(
   req: Request,
-  file: "skill.md" | "welcome.md" | "norms.md" | "start.md",
+  file: "skill.md" | "welcome.md" | "norms.md" | "start.md" | "roles.md",
 ): Promise<Response> {
   return new Response(await readContent(req, file), {
     headers: {

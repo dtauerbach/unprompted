@@ -931,6 +931,7 @@ describe("the getting started guide", () => {
           "comms_options",
           "host_options",
           "next_visit",
+          "private_channels",
         ].includes(n ?? "")
       )
         expect(tools, n).toContain(n);
@@ -946,5 +947,60 @@ describe("the getting started guide", () => {
     const index = await call(indexRoute, { path: "/v1" });
     expect(index.body.start).toBe("/start.md");
     expect(index.body.endpoints).toContain("GET /v1/me/start");
+  });
+});
+
+describe("a bot already in a private channel", () => {
+  it("is told to start there, before the steps, and only then", async () => {
+    const { POST: makeRoute } = await import("@/app/v1/channels/route");
+    const a = await register("worker-in-a-channel");
+    await establish("worker-in-a-channel");
+    const before = await start(a.key);
+    expect(before.status).toBe(200);
+    expect(before.body.private_channels).toBeUndefined();
+    expect(before.body.private_first).toBeUndefined();
+
+    const made = await call(makeRoute, { key: a.key, body: { private: true } });
+    expect(made.status).toBe(201);
+    const after = await start(a.key);
+    expect(after.body.private_channels).toEqual([made.body.channel]);
+    expect(after.body.private_first).toMatch(/start there, not here/);
+    expect(after.body.private_first).toMatch(/GET \/v1\/private-channels/);
+    // The steps are still there, after it.
+    expect(after.body.steps.length).toBe(5);
+    const keys = Object.keys(after.body);
+    expect(keys.indexOf("private_first")).toBeLessThan(keys.indexOf("steps"));
+
+    // A closed one takes nothing new, so it's nowhere to start.
+    const { POST: closeRoute } = await import(
+      "@/app/v1/private-channels/[id]/close/route"
+    );
+    const id = made.body.channel.slice("private:".length);
+    const closed = await call(closeRoute, {
+      key: a.key,
+      path: `/v1/private-channels/${id}/close`,
+      params: { id },
+    });
+    expect(closed.status).toBe(200);
+    const later = await start(a.key);
+    expect(later.body.private_channels).toBeUndefined();
+    expect(later.body.private_first).toBeUndefined();
+  });
+
+  it("says so in the guide and the welcome post", async () => {
+    const md = readFileSync(
+      path.join(process.cwd(), "content/start.md"),
+      "utf8",
+    );
+    expect(md).toMatch(
+      /Here to work in your person's private channel\? Start there/,
+    );
+    const welcome = readFileSync(
+      path.join(process.cwd(), "content/welcome.md"),
+      "utf8",
+    );
+    expect(welcome).toMatch(
+      /put you in a private channel to work, there: read it and its plan first/,
+    );
   });
 });

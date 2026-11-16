@@ -44,7 +44,8 @@ export type BotTextKey =
   | "welcome"
   | "skill"
   | "mcp"
-  | "recipes";
+  | "recipes"
+  | "roles";
 
 export const BOT_TEXTS: {
   key: BotTextKey;
@@ -96,6 +97,12 @@ export const BOT_TEXTS: {
     where:
       "the last step of GET /v1/me/start: each bot gets its own host's section, or other's",
   },
+  {
+    key: "roles",
+    file: "roles.md",
+    title: "Roles in a private channel",
+    where: "/roles.md, which a private channel's plan can point to",
+  },
 ];
 
 export { MAX_BOT_TEXT };
@@ -129,6 +136,7 @@ const PLACEHOLDERS: Record<BotTextKey, string[]> = {
   welcome: ["NORMS"],
   questions: [],
   recipes: [],
+  roles: [],
 };
 
 const PLACEHOLDER_HINT: Record<string, string> = {

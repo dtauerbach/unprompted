@@ -8,6 +8,7 @@ import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
   answerAsk,
   changeGroupBots,
+  claimGroup,
   endGroup,
   type FormState,
   getConnectCode,
@@ -425,19 +426,17 @@ export function StartGroupForm({
   );
 }
 
-// One bot in a group, with what this person may do to it: take their own
-// bot out, or make it the leader of a group they started.
+// One of this person's own bots in a group, with what they may do to it:
+// take it out, or make it the leader of a group they started.
 function GroupMember({
   channel,
   handle,
-  yours,
   leads,
   canLead,
   t,
 }: {
   channel: string;
   handle: string;
-  yours: boolean;
   leads: boolean;
   // A frozen bot can't lead, but its person can still take it out.
   canLead: boolean;
@@ -453,8 +452,8 @@ function GroupMember({
   );
   return (
     <li className="flex flex-wrap items-center gap-2 text-sm">
-      <span>{`@${handle}`}</span>
-      {yours && canLead && !leads && (
+      <span className="min-w-32 font-medium">{`@${handle}`}</span>
+      {canLead && !leads && (
         <form action={lead}>
           <input type="hidden" name="channel" value={channel} />
           <input type="hidden" name="handle" value={handle} />
@@ -463,24 +462,53 @@ function GroupMember({
           </button>
         </form>
       )}
-      {yours && (
-        <form action={takeOut}>
-          <input type="hidden" name="channel" value={channel} />
-          <input type="hidden" name="handle" value={handle} />
-          <input type="hidden" name="op" value={TAKE_OUT} />
-          <button type="submit" disabled={outPending} className={SMALL_BUTTON}>
-            {t["account.channels.take_out"]}
-          </button>
-        </form>
-      )}
+      <form action={takeOut}>
+        <input type="hidden" name="channel" value={channel} />
+        <input type="hidden" name="handle" value={handle} />
+        <input type="hidden" name="op" value={TAKE_OUT} />
+        <button type="submit" disabled={outPending} className={SMALL_BUTTON}>
+          {t["account.channels.take_out"]}
+        </button>
+      </form>
       <Refusal state={out} />
       <Refusal state={led} />
     </li>
   );
 }
 
-// One group this person started or has a bot in: who is in it, who leads,
-// and, for a group they started, a way to put another of their bots in.
+// A bot's handle as a chip, the leader's marked.
+export function MemberChip({
+  handle,
+  leads,
+  frozen,
+  t,
+}: {
+  handle: string;
+  leads: boolean;
+  frozen: boolean;
+  t: Record<"account.channels.leads_badge", string>;
+}) {
+  return (
+    <li
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-sm ${
+        leads
+          ? "border-brand/50 bg-brand/10"
+          : "border-neutral-300 dark:border-neutral-700"
+      } ${frozen ? "opacity-60" : ""}`}
+    >
+      {`@${handle}`}
+      {leads && (
+        <span className="rounded-full bg-brand px-1.5 text-xs font-medium text-white">
+          {t["account.channels.leads_badge"]}
+        </span>
+      )}
+    </li>
+  );
+}
+
+// One group this person started or has a bot in: who is in it and who
+// leads at a glance, a way in to read it, and behind Manage what they may
+// change: their own bots out or leading, more of theirs in, or the end.
 export function GroupRow({
   channel,
   href,
@@ -490,6 +518,7 @@ export function GroupRow({
   leader,
   addable,
   closed,
+  claimable,
   t,
 }: {
   channel: string;
@@ -503,8 +532,14 @@ export function GroupRow({
   members: { handle: string; yours: boolean; frozen: boolean }[];
   leader: string | null;
   addable: string[];
+  // A bot made it and every bot in it is the person's, so they may claim it.
+  claimable: boolean;
   t: Record<GroupCopy, string>;
 }) {
+  const [claimed, claim, claimPending] = useActionState<FormState, FormData>(
+    claimGroup,
+    {},
+  );
   const [added, add, pending] = useActionState<FormState, FormData>(
     changeGroupBots,
     {},
@@ -518,90 +553,142 @@ export function GroupRow({
     endGroup,
     {},
   );
+  const mine = members.filter((m) => m.yours);
+  const open = started && !closed;
+  const manage = mine.length > 0 || open;
   return (
-    <li className="card space-y-2">
-      <p className="flex flex-wrap items-baseline justify-between gap-3 font-medium">
-        <span>
+    <li className="card space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="font-semibold">
           <Words text={t["account.channels.row"]} slots={{ channel, date }} />
-        </span>
+        </p>
         {href && (
-          <Link href={href} className="text-sm underline">
+          <Link
+            href={href}
+            className="rounded-md bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90"
+          >
             {t["account.channels.read"]}
           </Link>
         )}
-      </p>
+      </div>
       {closed && (
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {t["account.channels.closed"]}
         </p>
       )}
-      {leader && (
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          <Words
-            text={t["account.channels.leader"]}
-            slots={{ handle: `@${leader}` }}
-          />
-        </p>
+      {claimable && !started && !closed && (
+        <form
+          action={claim}
+          className="flex flex-wrap items-center gap-3 rounded-md bg-neutral-100 p-3 text-sm dark:bg-neutral-900"
+        >
+          <input type="hidden" name="channel" value={channel} />
+          <p className="flex-1 text-neutral-700 dark:text-neutral-300">
+            {t["account.channels.claim_note"]}
+          </p>
+          <button
+            type="submit"
+            disabled={claimPending}
+            className={SMALL_BUTTON}
+          >
+            {t["account.channels.claim"]}
+          </button>
+          {claimed.error && (
+            <p className="w-full text-amber-700 dark:text-amber-300">
+              {claimed.error}
+            </p>
+          )}
+        </form>
       )}
-      <ul className="space-y-1">
+      <ul className="flex flex-wrap gap-2">
         {members.map((m) => (
-          <GroupMember
+          <MemberChip
             key={m.handle}
-            channel={channel}
             handle={m.handle}
-            yours={m.yours}
             leads={m.handle === leader}
-            canLead={started && !closed && !m.frozen}
+            frozen={m.frozen}
             t={t}
           />
         ))}
       </ul>
-      {started && !closed && (
-        <form action={end}>
-          <input type="hidden" name="channel" value={channel} />
-          <button type="submit" disabled={endPending} className={SMALL_BUTTON}>
-            {t["account.channels.end"]}
-          </button>
-          <Refusal state={ended} />
-        </form>
-      )}
-      {started && !closed && addable.length > 0 && leadsOutside && (
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {t["account.channels.lead_first"]}
-        </p>
-      )}
-      {/* Each of the person's bots not in it yet, a click from going in:
-          one just linked shows here as soon as the page comes back. */}
-      {started && !closed && addable.length > 0 && !leadsOutside && (
-        <ul className="space-y-1 border-t border-neutral-200 pt-2 dark:border-neutral-800">
-          {addable.map((h) => (
-            <li key={h} className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-neutral-600 dark:text-neutral-400">{`@${h}`}</span>
-              <form action={add}>
+      {manage && (
+        <details className="border-t border-neutral-200 pt-2 dark:border-neutral-800">
+          <summary className="cursor-pointer text-sm font-medium text-neutral-700 dark:text-neutral-300">
+            {t["account.manage"]}
+          </summary>
+          <div className="mt-3 space-y-3">
+            {mine.length > 0 && (
+              <ul className="space-y-2">
+                {mine.map((m) => (
+                  <GroupMember
+                    key={m.handle}
+                    channel={channel}
+                    handle={m.handle}
+                    leads={m.handle === leader}
+                    canLead={open && !m.frozen}
+                    t={t}
+                  />
+                ))}
+              </ul>
+            )}
+            {open && addable.length > 0 && leadsOutside && (
+              <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                {t["account.channels.lead_first"]}
+              </p>
+            )}
+            {/* Each of the person's bots not in it yet, a click from going
+                in: one just linked shows here as soon as the page comes back. */}
+            {open && addable.length > 0 && !leadsOutside && (
+              <ul className="space-y-2 border-t border-neutral-200 pt-3 dark:border-neutral-800">
+                {addable.map((h) => (
+                  <li
+                    key={h}
+                    className="flex flex-wrap items-center gap-2 text-sm"
+                  >
+                    <span className="min-w-32 text-neutral-600 dark:text-neutral-400">{`@${h}`}</span>
+                    <form action={add}>
+                      <input type="hidden" name="channel" value={channel} />
+                      <input type="hidden" name="handle" value={h} />
+                      <input type="hidden" name="op" value={ADD} />
+                      <button
+                        type="submit"
+                        disabled={pending}
+                        className={SMALL_BUTTON}
+                      >
+                        {t["account.channels.add"]}
+                      </button>
+                    </form>
+                  </li>
+                ))}
+                {added.saved && (
+                  <li className="text-sm text-green-700 dark:text-green-300">
+                    {t["account.channels.saved"]}
+                  </li>
+                )}
+                {added.error && (
+                  <li>
+                    <Refusal state={added} />
+                  </li>
+                )}
+              </ul>
+            )}
+            {open && (
+              <form
+                action={end}
+                className="border-t border-neutral-200 pt-3 dark:border-neutral-800"
+              >
                 <input type="hidden" name="channel" value={channel} />
-                <input type="hidden" name="handle" value={h} />
-                <input type="hidden" name="op" value={ADD} />
                 <button
                   type="submit"
-                  disabled={pending}
-                  className={SMALL_BUTTON}
+                  disabled={endPending}
+                  className="rounded-md border border-red-300 px-2 py-0.5 text-xs text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
                 >
-                  {t["account.channels.add"]}
-                </button>
+                  {t["account.channels.end"]}
+                </button>{" "}
+                <Refusal state={ended} />
               </form>
-            </li>
-          ))}
-          {added.saved && (
-            <li className="text-sm text-green-700 dark:text-green-300">
-              {t["account.channels.saved"]}
-            </li>
-          )}
-          {added.error && (
-            <li>
-              <Refusal state={added} />
-            </li>
-          )}
-        </ul>
+            )}
+          </div>
+        </details>
       )}
     </li>
   );

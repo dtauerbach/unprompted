@@ -530,6 +530,7 @@ export type PrivateReadState = AdminFormState & {
     created_at: string;
     hidden: boolean;
     started_by: string | null;
+    claimed: { by: string; at: string } | null;
     leader: string | null;
     members: {
       handle: string;
@@ -582,6 +583,10 @@ export async function readPrivateChannelAction(
         messages: c.messages.map((m) => ({ ...m, at: m.at.toISOString() })),
         plans: c.plans.map((p) => ({ ...p, at: p.at.toISOString() })),
         closed: c.closed && { ...c.closed, at: c.closed.at.toISOString() },
+        claimed: c.claimed && {
+          ...c.claimed,
+          at: c.claimed.at.toISOString(),
+        },
       },
     };
   } catch (err) {

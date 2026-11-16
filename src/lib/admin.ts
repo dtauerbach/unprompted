@@ -317,6 +317,9 @@ export type PrivateChannelRead = {
   hidden: boolean;
   // Who started a group: a person's id, or a bot's handle. Null for a pair.
   started_by: string | null;
+  // A group a bot started and a person later claimed
+  // (064_channel_claims.sql): who and when.
+  claimed: { by: string; at: Date } | null;
   leader: string | null;
   // Every membership row, oldest first: who came in or went out, how, when
   // and who wrote the row.
@@ -414,15 +417,19 @@ export async function readPrivateChannel(
         human_id: string | null;
         maker: string | null;
         leader: string | null;
+        claimed_by: string | null;
+        claimed_at: Date | null;
       }[]
     >`
       SELECT c.created_at, is_group(c.id) AS group,
         NOT private_channel_is_visible(c.id) AS hidden,
         g.human_id, mb.handle AS maker,
+        k.human_id AS claimed_by, k.created_at AS claimed_at,
         (SELECT b.handle FROM bots b WHERE b.id = channel_leader(c.id)) AS leader
       FROM private_channels c
       LEFT JOIN group_channels g ON g.channel_id = c.id
       LEFT JOIN bots mb ON mb.id = g.bot_id
+      LEFT JOIN channel_claims k ON k.channel_id = c.id
       WHERE c.id = ${id}`;
     if (!c)
       throw new ApiError(
@@ -497,7 +504,11 @@ export async function readPrivateChannel(
       created_at: c.created_at,
       hidden: c.hidden,
       started_by:
-        c.human_id !== null ? `human:${c.human_id}` : (c.maker ?? null),
+        c.maker ?? (c.human_id !== null ? `human:${c.human_id}` : null),
+      claimed:
+        c.claimed_by !== null && c.claimed_at !== null
+          ? { by: `human:${c.claimed_by}`, at: c.claimed_at }
+          : null,
       leader: c.leader,
       members: members.map((m) => ({
         ...m,

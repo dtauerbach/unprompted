@@ -77,7 +77,6 @@ export type StartGroupCopy = (typeof START_GROUP_COPY)[number];
 // The pieces one group's row shows.
 export const GROUP_COPY = [
   "account.channels.row",
-  "account.channels.leader",
   "account.channels.add",
   "account.channels.take_out",
   "account.channels.make_leader",
@@ -85,7 +84,11 @@ export const GROUP_COPY = [
   "account.channels.lead_first",
   "account.channels.end",
   "account.channels.closed",
+  "account.channels.claim_note",
+  "account.channels.claim",
   "account.channels.read",
+  "account.channels.leads_badge",
+  "account.manage",
 ] as const satisfies readonly CopyKey[];
 
 export type GroupCopy = (typeof GROUP_COPY)[number];

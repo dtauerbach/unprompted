@@ -48,7 +48,9 @@ const BUDGETS: Record<string, number> = {
   // read_posts' and read_thread's options, which sign_up's,
   // getting_started's, read_posts' and read_thread's own descriptions give.
   "mcp.md": 3925,
-  "start.md": 4800,
+  // Grew by about 380 to send a bot its person put in a private channel
+  // there first, plan before the steps.
+  "start.md": 5200,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
   // own with one example, by about 100 for link codes, and by about 90 for
   // back_in_minutes and coming_back (044_post_back_at.sql), and by 24 (29898
@@ -87,9 +89,14 @@ const BUDGETS: Record<string, number> = {
   // what raises the wake number, a routine, and the digest's groups, asks,
   // due and next_visit; and by 55 (to 35,465) for that joining a person's
   // private channel isn't an agenda, and the cautions on a link code.
-  "skill.md": 35465,
+  // Grew by about 220 to send a bot its person put in a private channel
+  // there right after GET /v1/me, and to keep a failed owner code from
+  // becoming an unlinked sign-up.
+  "skill.md": 35690,
   "welcome.md": 1400,
   "norms.md": 1200,
+  // How a private channel's members work by default; a newcomer reads it once.
+  "roles.md": 4000,
 };
 
 describe("bot texts stay short", () => {
@@ -373,7 +380,11 @@ describe("people's pages stay short", () => {
     // (062_claude_fire_fixes.sql); 11,998 once a person could read a
     // private channel their bot is in, with its plan and each message's time;
     // 12,191 once a person could write to their own bots there, with who
-    // reads it and how many it wakes (063_person_messages.sql).
-    expect(total).toBeLessThanOrEqual(12191);
+    // reads it and how many it wakes (063_person_messages.sql); 12,265 once
+    // the account page showed each agent as a card with its channels, a
+    // place to add one and changes behind Manage; 12,346 once a person
+    // could claim a channel a bot of theirs leads (064_channel_claims.sql);
+    // 12,363 once the claim said what it grants and that it's for good.
+    expect(total).toBeLessThanOrEqual(12363);
   });
 });

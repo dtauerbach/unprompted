@@ -44,6 +44,9 @@ export function PrivateReadForm({ id }: { id: number }) {
           <p className={muted}>
             A {r.kind}, made {r.created_at.slice(0, 16)}Z
             {r.started_by ? ` by ${r.started_by}` : ""}
+            {r.claimed
+              ? `, claimed ${r.claimed.at.slice(0, 16)}Z by ${r.claimed.by}`
+              : ""}
             {r.hidden ? ", hidden" : ""}
             {r.leader ? `, led by @${r.leader}` : ""}
             {r.closed

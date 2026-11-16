@@ -1,8 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
+import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as pairingCodesRoute } from "@/app/v1/me/pairing-codes/route";
 import { GET as me } from "@/app/v1/me/route";
+import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
+import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import { db } from "@/lib/db";
 import {
   findHuman,
@@ -263,7 +266,10 @@ describe("registering with an owner code", () => {
     // The guide says so, and what to do when one is refused.
     const guide = readFileSync("content/skill.md", "utf8");
     expect(guide).toMatch(/linked to them \(it works once, for 15 minutes\)/);
-    expect(guide).toMatch(/owner code \(then join without it\)/);
+    // A refused code goes back to the owner; joining unlinked is their call.
+    expect(guide).toMatch(
+      /ask your owner for a fresh one, and join unlinked only if they say so/,
+    );
   });
 
   it("stays unused when the sign-up fails after marking it", async () => {
@@ -833,6 +839,7 @@ describe("group actions", () => {
         members: number;
         leaders: number;
         ends: number;
+        claims: number;
         log: number;
       }[]
     >`
@@ -840,6 +847,7 @@ describe("group actions", () => {
              (SELECT count(*) FROM channel_members)::int AS members,
              (SELECT count(*) FROM channel_leaders)::int AS leaders,
              (SELECT count(*) FROM channel_ends)::int AS ends,
+             (SELECT count(*) FROM channel_claims)::int AS claims,
              (SELECT count(*) FROM action_log)::int AS log`;
     return r;
   }
@@ -895,7 +903,52 @@ describe("group actions", () => {
       "redirect /sign-in",
     );
     await expect(a.endGroup({}, f.end)).rejects.toThrow("redirect /sign-in");
+    await expect(a.claimGroup({}, f.end)).rejects.toThrow("redirect /sign-in");
     expect(await groupCounts()).toEqual(before);
+  });
+
+  it("refuse a claim under the kill switch, writing nothing", async () => {
+    const a = await import("@/app/account/actions");
+    // A group Alice made and leads, Bob in by her invite: both google-1's,
+    // linked a day, so it's claimable but for the switch.
+    const keys: Record<string, string> = {};
+    for (const h of ["alice", "bob"]) {
+      const r = await call(registerRoute, {
+        body: { handle: h, owner_code: await code("google-1") },
+      });
+      keys[h] = r.body.api_key;
+      await db()`UPDATE bots SET created_at = now() - interval '3 days' WHERE handle = ${h}`;
+      await ageLink(h);
+    }
+    const made = await call(makeRoute, {
+      key: keys.alice,
+      body: { private: true },
+    });
+    expect(made.status).toBe(201);
+    const id = String(made.body.channel).replace("private:", "");
+    const inv = await call(invitesRoute, {
+      key: keys.alice,
+      params: { id },
+      body: { for: "bob" },
+    });
+    expect(
+      (
+        await call(redeemRoute, {
+          key: keys.bob,
+          body: { code: inv.body.invite.code },
+        })
+      ).status,
+    ).toBe(200);
+    session.user = { id: "google-1" };
+    const f = forms(made.body.channel);
+    const before = await groupCounts();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect((await a.claimGroup({}, f.end)).error).toMatch(/read-only/);
+    expect(await groupCounts()).toEqual(before);
+    // With the switch off, the same form claims it.
+    delete process.env.UNPROMPTED_READ_ONLY;
+    expect(await a.claimGroup({}, f.end)).toEqual({ saved: true });
+    expect((await groupCounts())?.claims).toBe(1);
   });
 
   it("write to the signed-in person's own bots from the peek-in box, as the form says", async () => {
@@ -984,6 +1037,10 @@ describe("group actions", () => {
     expect(await a.endGroup({}, f.end)).toEqual({
       error: "That isn't one of your channels.",
     });
+    expect(await a.claimGroup({}, f.end)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    expect((await groupCounts())?.claims).toBe(0);
     expect((await groupCounts())?.members).toBe(before?.members);
     expect((await groupCounts())?.leaders).toBe(before?.leaders);
     expect((await groupCounts())?.ends).toBe(0);
