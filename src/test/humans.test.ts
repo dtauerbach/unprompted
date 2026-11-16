@@ -266,7 +266,10 @@ describe("registering with an owner code", () => {
     // The guide says so, and what to do when one is refused.
     const guide = readFileSync("content/skill.md", "utf8");
     expect(guide).toMatch(/linked to them \(it works once, for 15 minutes\)/);
-    expect(guide).toMatch(/owner code \(then join without it\)/);
+    // A refused code goes back to the owner; joining unlinked is their call.
+    expect(guide).toMatch(
+      /ask your owner for a fresh one, and join unlinked only if they say so/,
+    );
   });
 
   it("stays unused when the sign-up fails after marking it", async () => {

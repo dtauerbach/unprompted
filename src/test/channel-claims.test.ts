@@ -4,11 +4,13 @@ import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
+import { POST as leaderRoute } from "@/app/v1/private-channels/[id]/leader/route";
 import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
 import { readPrivateChannel, setPrivateChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { lookupHuman } from "@/lib/lookup";
+import { readGroupForPerson } from "@/lib/peek";
 import { personPostBox, postAsPerson } from "@/lib/person-messages";
 import {
   claimChannel,
@@ -383,6 +385,93 @@ describe("claiming a group a bot made", () => {
         SELECT channel_id, human_id FROM group_channels WHERE channel_id = ${id}`,
     ).rejects.toThrow();
     void g;
+  });
+});
+
+describe("what a claim doesn't change", () => {
+  const say = async (who: Bot, g: string, body: string) => {
+    const r = await call(sendRoute, {
+      key: who.key,
+      body: { channel: g, body },
+    });
+    expect(r.status).toBe(201);
+  };
+
+  it("keeps what came before it as it was: in the person's view, and for a bot they put in after", async () => {
+    const { lea, dot, human, g, id } = await team();
+    // A stranger's bot came in, wrote, and left before the claim.
+    const xena = await bot("xena");
+    await link("google-x", [xena]);
+    await bringIn(lea, g, xena);
+    await say(xena, g, "a stranger's words");
+    await say(lea, g, "lea's words");
+    const out = await call(leaveRoute, {
+      key: xena.key,
+      params: { id: num(g) },
+      body: {},
+    });
+    expect(out.status).toBe(200);
+    const peek = async () =>
+      (await readGroupForPerson(db(), human, id))?.messages.map((m) => [
+        m.from,
+        m.body,
+      ]);
+    const before = await peek();
+    expect(before).toEqual([
+      ["xena", null],
+      ["lea", "lea's words"],
+    ]);
+
+    expect(await claim(g)).toEqual({ channel: g, changed: true });
+    // The claim grants no transcript: the stranger's words stay hidden.
+    expect(await peek()).toEqual(before);
+
+    // A bot of theirs they put in after reads nothing from before it came.
+    const fern = await bot("fern");
+    await link("google-p", [fern]);
+    await setOwnBots(db(), "google-p", g, ["fern"], [], null);
+    const read = await call(readRoute, {
+      key: fern.key,
+      path: `/v1/private-channels/${num(g)}?after=0`,
+      params: { id: num(g) },
+    });
+    expect(read.status).toBe(200);
+    expect(read.body.messages).toEqual([]);
+    void dot;
+  });
+
+  it("goes by who leads now, not which bot made it", async () => {
+    // A stranger's bot made it, brought in two of P's bots, handed the lead
+    // to one and left: P controls the leader, so P may claim it.
+    const xena = await bot("xena");
+    await link("google-x", [xena]);
+    const lea = await bot("lea");
+    const dot = await bot("dot");
+    const human = await link("google-p", [lea, dot]);
+    const g = await make(xena);
+    await bringIn(xena, g, lea);
+    await bringIn(xena, g, dot);
+    // While the stranger's bot is in it, it isn't P's to claim.
+    await expect(claim(g)).rejects.toMatchObject({ code: "not_yours" });
+    const handed = await call(leaderRoute, {
+      key: xena.key,
+      params: { id: num(g) },
+      body: { handle: "lea" },
+    });
+    expect(handed.status).toBe(200);
+    await expect(claim(g)).rejects.toMatchObject({ code: "not_yours" });
+    const out = await call(leaveRoute, {
+      key: xena.key,
+      params: { id: num(g) },
+      body: {},
+    });
+    expect(out.status).toBe(200);
+    expect(await claim(g)).toEqual({ channel: g, changed: true });
+    expect((await listPersonChannels(db(), human))[0]).toMatchObject({
+      channel: g,
+      started: true,
+      leader: "lea",
+    });
   });
 });
 

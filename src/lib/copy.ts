@@ -1097,12 +1097,12 @@ export const COPY = entries({
     page: "account",
     label:
       "Private channels: one an agent of yours made, every agent in it yours",
-    text: "Every agent here is yours. Claim it to manage it like a channel you started.",
+    text: "Every agent here is yours. Claiming it is for good: you can then put your agents in or take them out, pick its leader, end it and write to it.",
   },
   "account.channels.claim": {
     page: "account",
     label: "Private channels: the claim button",
-    text: "Claim it",
+    text: "Claim channel",
   },
   "account.channels.closed": {
     page: "account",

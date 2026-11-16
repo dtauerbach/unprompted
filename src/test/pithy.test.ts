@@ -89,11 +89,14 @@ const BUDGETS: Record<string, number> = {
   // what raises the wake number, a routine, and the digest's groups, asks,
   // due and next_visit; and by 55 (to 35,465) for that joining a person's
   // private channel isn't an agenda, and the cautions on a link code.
-  "skill.md": 35465,
+  // Grew by about 220 to send a bot its person put in a private channel
+  // there right after GET /v1/me, and to keep a failed owner code from
+  // becoming an unlinked sign-up.
+  "skill.md": 35690,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
-  "roles.md": 3900,
+  "roles.md": 4000,
 };
 
 describe("bot texts stay short", () => {
@@ -380,7 +383,8 @@ describe("people's pages stay short", () => {
     // reads it and how many it wakes (063_person_messages.sql); 12,265 once
     // the account page showed each agent as a card with its channels, a
     // place to add one and changes behind Manage; 12,346 once a person
-    // could claim a channel a bot of theirs made (064_channel_claims.sql).
-    expect(total).toBeLessThanOrEqual(12346);
+    // could claim a channel a bot of theirs leads (064_channel_claims.sql);
+    // 12,363 once the claim said what it grants and that it's for good.
+    expect(total).toBeLessThanOrEqual(12363);
   });
 });

@@ -1262,9 +1262,13 @@ export async function claimChannel(
       throw notYourChannel();
     }
     // A first look without locks, so a group that isn't theirs waits on
-    // nothing; the lock below checks again.
-    const [first] = await tx<{ claimable: boolean }[]>`
-      SELECT channel_claimable(${humanId}, ${id}) AS claimable`;
+    // nothing; the lock below checks again. A claim of theirs that committed
+    // since the read above is the same answer as claiming twice.
+    const [first] = await tx<{ human_id: string | null; claimable: boolean }[]>`
+      SELECT g.human_id, channel_claimable(${humanId}, ${id}) AS claimable
+      FROM group_channels g WHERE g.channel_id = ${id}`;
+    if (first?.human_id != null && Number(first.human_id) === humanId)
+      return { channel: privateRef(id), changed: false };
     if (!first?.claimable) throw notYourChannel();
     // Limit rows, then bots' rows, then the group's lock.
     await consume(tx, personChannelRules(humanId));

@@ -79,18 +79,6 @@ $$;
 ALTER TABLE group_channels ADD CONSTRAINT group_channels_has_maker
   CHECK (human_id IS NOT NULL OR bot_id IS NOT NULL);
 
--- A group still starts with one maker: only a claim's UPDATE gives it both.
-CREATE FUNCTION group_channels_one_maker() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  IF NEW.human_id IS NOT NULL AND NEW.bot_id IS NOT NULL THEN
-    RAISE EXCEPTION 'a group starts with one maker' USING ERRCODE = 'UPR01';
-  END IF;
-  RETURN NEW;
-END;
-$$;
-CREATE TRIGGER group_channels_one_maker BEFORE INSERT ON group_channels
-  FOR EACH ROW EXECUTE FUNCTION group_channels_one_maker();
-
 -- Still append-only but for the claim: human_id from null to the claimer of
 -- a matching claim row, nothing else.
 CREATE FUNCTION group_channels_check_change() RETURNS trigger LANGUAGE plpgsql AS $$
