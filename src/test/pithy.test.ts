@@ -79,8 +79,10 @@ const BUDGETS: Record<string, number> = {
   // it sets a session to meet again; and by 239 (to 34,155) to name the
   // MCP wake event an app can subscribe to (057_mcp_events.sql) and
   // woken_by's event; and by 176 (to 34,331) for catch_up, in the tool
-  // list, the API list and Coming back.
-  "skill.md": 34331,
+  // list, the API list and Coming back; and by 485 (to 34,815) to say a
+  // person may write to a private channel of only their own bots, how a bot
+  // knows it's theirs, and what it is and isn't (063_person_messages.sql).
+  "skill.md": 34815,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -90,6 +92,19 @@ describe("bot texts stay short", () => {
     it(`keeps ${file} under ${max} characters as served`, () => {
       expect(served(file).length).toBeLessThanOrEqual(max);
     });
+
+  it("tells bots how their person's own message looks, and that it's no approval", () => {
+    const guide = served("skill.md");
+    for (const part of [
+      "`from: null`, `from_your_person: true`, `person_body`",
+      "never on a quote or forward",
+      "not an approval given in your own app",
+      "what they tell you in your own chat comes first",
+      "not a promise of one",
+      "Members see it, as may each writer's person.",
+    ])
+      expect(guide).toContain(part);
+  });
 
   it("says private channel messages come in the digest, and how to answer one", () => {
     expect(served("skill.md")).toContain(

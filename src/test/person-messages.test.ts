@@ -16,6 +16,7 @@ import {
   setPrivateChannelHidden,
 } from "@/lib/admin";
 import { compactMessage } from "@/lib/agent-view";
+import { PLAN_NOTICE } from "@/lib/channel-plans";
 import { db } from "@/lib/db";
 import { LIMITS } from "@/lib/limits";
 import { readGroupForPerson } from "@/lib/peek";
@@ -99,6 +100,45 @@ async function wakeOf(b: Bot): Promise<number> {
   return Number(r?.n ?? 0);
 }
 
+// The person's message, group message and wake counts, every window.
+async function quota(): Promise<Record<string, number>> {
+  const rows = await db()<{ bucket: string; n: number }[]>`
+    SELECT bucket, sum(count)::int AS n FROM rate_limits
+    WHERE bucket LIKE 'person-message:%' OR bucket LIKE 'group-message:%'
+       OR bucket LIKE 'channel-wake%'
+    GROUP BY bucket`;
+  return Object.fromEntries(rows.map((r) => [r.bucket, r.n]));
+}
+
+// Until another connection is waiting on a row lock taken for share (the
+// send locking its members' rows), so a test can act at that moment.
+async function waitingOnRowLock(): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE datname = current_database() AND pid <> pg_backend_pid()
+        AND wait_event_type = 'Lock' AND query ILIKE '%FOR SHARE%'`;
+    if ((r?.n ?? 0) > 0) return;
+    await new Promise((res) => setTimeout(res, 10));
+  }
+  throw new Error("the send never waited on a member's row");
+}
+
+// Until another connection is waiting on a private channel's lock (the
+// send, its members' rows already locked for share), so a test can change
+// the roster at that moment.
+async function waitingOnChannelLock(): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE datname = current_database() AND pid <> pg_backend_pid()
+        AND wait_event_type = 'Lock' AND query ILIKE '%lock_private_channel%'`;
+    if ((r?.n ?? 0) > 0) return;
+    await new Promise((res) => setTimeout(res, 10));
+  }
+  throw new Error("the send never waited on the channel's lock");
+}
+
 const read = (b: Bot, g: string) =>
   call(readRoute, {
     key: b.key,
@@ -150,6 +190,16 @@ describe("a person writing to their own bots", () => {
     ]);
     expect(page.body).not.toHaveProperty("person_notice");
     expect(page.body.notice).toBe(CHANNEL_NOTICE);
+    // The words themselves, so a notice can't slip back to "only members".
+    expect(CHANNEL_NOTICE).toContain(
+      "the person a member is linked to may see messages that member wrote while linked",
+    );
+    expect(CHANNEL_NOTICE_WITH_PERSON).toContain(
+      "the person a member is linked to may see messages that member wrote while linked",
+    );
+    expect(PLAN_NOTICE).toContain(
+      "the person a member is linked to may see a version that member saved while linked",
+    );
   });
 
   it("comes in what's new, marked the same, with the notice in the messages note", async () => {
@@ -251,6 +301,98 @@ describe("a person writing to their own bots", () => {
     expect(one.woke).toBe(1);
     expect(await wakeOf(lea)).toBe(l0 + 2);
     expect(await wakeOf(ben)).toBe(b0 + 1);
+  });
+
+  it("refuses, writing nothing, when a member is frozen after its wakes were counted", async () => {
+    const { lea, ben, channel } = await own();
+    const l0 = await wakeOf(lea);
+    const b0 = await wakeOf(ben);
+    const q0 = await quota();
+    // A freeze that holds ben's row while the send counts two wakes, and
+    // commits only once the send is waiting on that row: under the group's
+    // lock it finds one bot to wake, not the two it counted.
+    const holder = await db().reserve();
+    let sending: Promise<unknown>;
+    try {
+      await holder`BEGIN`;
+      await holder`UPDATE bots SET frozen_at = now() WHERE id = ${ben.id}`;
+      sending = post(channel, "Counted two.", {
+        nonce: "nonce-race-000000",
+      });
+      // Caught here so a failed wait can't leave it unhandled.
+      sending.catch(() => {});
+      await waitingOnRowLock();
+      await holder`COMMIT`;
+    } finally {
+      await holder`ROLLBACK`.catch(() => {});
+      holder.release();
+    }
+    await expect(sending).rejects.toMatchObject({
+      status: 409,
+      code: "channel_changed",
+    });
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+    expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0, b0]);
+    // Its message, group message and wake counts rolled back with it.
+    expect(await quota()).toEqual(q0);
+    // Sent again with the same form, it goes through and wakes the one.
+    const again = await post(channel, "Counted two.", {
+      nonce: "nonce-race-000000",
+    });
+    expect(again.woke).toBe(1);
+    expect(await wakeOf(lea)).toBe(l0 + 1);
+    expect(await wakeOf(ben)).toBe(b0);
+  });
+
+  it("refuses, writing nothing, when the roster is swapped after its rows were locked", async () => {
+    const { lea, ben, human, channel } = await own();
+    const cid = await bot("cid");
+    await link("google-p", cid);
+    const l0 = await wakeOf(lea);
+    const c0 = await wakeOf(cid);
+    const q0 = await quota();
+    // The group's lock is held while the send locks lea's and ben's rows;
+    // then ben goes out and cid comes in, one for one, so the count of
+    // bots to wake is unchanged. Only the roster check catches it: cid's
+    // row was never locked for share.
+    const holder = await db().reserve();
+    let sending: Promise<unknown>;
+    try {
+      await holder`BEGIN`;
+      await holder`SELECT lock_private_channel(${Number(num(channel))})`;
+      sending = post(channel, "Counted lea and ben.", {
+        nonce: "nonce-swap-000000",
+      });
+      sending.catch(() => {});
+      await waitingOnChannelLock();
+      await holder`
+        INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)
+        VALUES (${Number(num(channel))}, ${cid.id}, true, 'person', ${human})`;
+      await holder`
+        INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)
+        VALUES (${Number(num(channel))}, ${ben.id}, false, 'person', ${human})`;
+      await holder`COMMIT`;
+    } finally {
+      await holder`ROLLBACK`.catch(() => {});
+      holder.release();
+    }
+    await expect(sending).rejects.toMatchObject({
+      status: 409,
+      code: "channel_changed",
+    });
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+    expect(await quota()).toEqual(q0);
+    // cid's wake rose only for coming in, not for the message.
+    expect(await wakeOf(lea)).toBe(l0);
+    expect(await wakeOf(cid)).toBe(c0 + 1);
+    const again = await post(channel, "Counted lea and ben.", {
+      nonce: "nonce-swap-000000",
+    });
+    expect(again.woke).toBe(2);
   });
 
   it("is one message when the same form is sent twice", async () => {
