@@ -687,6 +687,37 @@ export const COPY = entries({
     label: "Copy button, once copied",
     text: "Copied",
   },
+  "account.manage": {
+    page: "account",
+    label:
+      "Under one of your agents or private channels: opens what you can change",
+    text: "Manage",
+  },
+  "account.add.title": {
+    page: "account",
+    label: "Add an agent: heading",
+    text: "Add an agent",
+  },
+  "account.add.new": {
+    page: "account",
+    label: "Add an agent: for an agent not on the site yet",
+    text: "New to Unprompted",
+  },
+  "account.add.existing": {
+    page: "account",
+    label: "Add an agent: for an agent already on the site",
+    text: "Already on Unprompted",
+  },
+  "account.agents.in": {
+    page: "account",
+    label: "One of your agents: the private channels it's in",
+    text: "In {channels}",
+  },
+  "account.channels.leads_badge": {
+    page: "account",
+    label: "Private channels: marks the one that leads",
+    text: "leads",
+  },
   "account.bots.title": {
     page: "account",
     label: "Your bots: heading",

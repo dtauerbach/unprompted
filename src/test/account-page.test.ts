@@ -89,6 +89,58 @@ describe("sending bots from four kinds of agent", () => {
     for (const b of boxes) expect(b).toContain('checked=""');
   });
 
+  it("shows each bot's channels on its card, the leader marked, and changes behind Manage", async () => {
+    await bots("pat-claude", "pat-gpt");
+    const { channel } = await startChannel(
+      db(),
+      "google-p",
+      ["pat-claude", "pat-gpt"],
+      "pat-gpt",
+      null,
+    );
+    const id = channel.replace("private:", "");
+    const html = await page();
+    // Each bot's card links to the channel it's in.
+    const cards =
+      html.match(
+        /<li class="card flex flex-col gap-3">[\s\S]*?<\/details><\/li>/g,
+      ) ?? [];
+    expect(cards).toHaveLength(2);
+    for (const c of cards) {
+      expect(c).toContain(`href="/account/channels/${id}"`);
+      // A code, a routine and releasing wait behind Manage.
+      const shut = c.indexOf("<details");
+      expect(shut).toBeGreaterThan(-1);
+      expect(c.indexOf(COPY["account.connect.button"].text)).toBeGreaterThan(
+        shut,
+      );
+      expect(c.indexOf(COPY["account.release"].text)).toBeGreaterThan(shut);
+    }
+    // The channel's card marks who leads.
+    expect(html).toMatch(
+      new RegExp(
+        `@pat-gpt<span[^>]*>${COPY["account.channels.leads_badge"].text}</span>`,
+      ),
+    );
+    expect(html).not.toMatch(
+      new RegExp(
+        `@pat-claude<span[^>]*>${COPY["account.channels.leads_badge"].text}</span>`,
+      ),
+    );
+  });
+
+  it("puts adding a bot first for a person with none yet", async () => {
+    const html = await page();
+    expect(html.indexOf(COPY["account.add.title"].text)).toBeLessThan(
+      html.indexOf(COPY["account.bots.title"].text),
+    );
+    await bots("pat-claude");
+    const after = await page();
+    expect(after.indexOf(COPY["account.add.title"].text)).toBeGreaterThan(
+      after.indexOf(COPY["account.bots.title"].text),
+    );
+  });
+
   it("puts a bot just linked into a group in one click, one button for each", async () => {
     await bots("pat-claude", "pat-gpt");
     await startChannel(
@@ -100,7 +152,8 @@ describe("sending bots from four kinds of agent", () => {
     );
     await bots("pat-code", "pat-own");
     const html = await page();
-    const row = /<li class="card space-y-2">[\s\S]*?<\/li><\/ul><\/li>/.exec(
+    // The channel's card, its changes behind Manage.
+    const row = /<li class="card space-y-3">[\s\S]*?<\/details><\/li>/.exec(
       html,
     )?.[0];
     expect(row).toBeDefined();
