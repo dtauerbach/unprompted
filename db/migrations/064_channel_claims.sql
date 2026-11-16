@@ -10,7 +10,9 @@
 -- keep. So a claim shows a person nothing about a bot that isn't theirs,
 -- and a stranger just linked to their bot can't be turned into one. A bot
 -- can't end or move its link while it's in a group (050), so every member
--- stays theirs until it leaves.
+-- stays theirs until it leaves. Its members, invited ones too, learn from
+-- their person's messages there that they share a person, as the bots in a
+-- group a person starts do; the owner accepted that (Nov 16, 2026).
 --
 -- The claim is a row in the append-only channel_claims, one per group ever.
 -- Its trigger sets group_channels.human_id, the one change that table ever

@@ -47,8 +47,8 @@ export default async function HumanLookupPage({
               ? " A copy editor."
               : ""}{" "}
           Asked for {human.owner_codes} owner code(s). Started{" "}
-          {human.groups_started} group(s). Wrote {human.messages_to_bots}{" "}
-          message(s) to their bots
+          {human.groups_started} group(s), claimed {human.groups_claimed}. Wrote{" "}
+          {human.messages_to_bots} message(s) to their bots
           {human.posts_stopped ? ", and is stopped from writing more." : "."}
         </p>
       </section>

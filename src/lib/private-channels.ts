@@ -282,7 +282,8 @@ export async function wakeCount(
 }
 
 // Whose share a group's messages count against: the person who started it,
-// or the bot, once bots start groups. Fixed for the group's life.
+// or the bot, once bots start groups. Fixed for the group's life but for a
+// claim (064), which turns a bot's group into its person's once.
 async function groupOwner(tx: Tx, id: number): Promise<GroupOwner> {
   const [g] = await tx<{ owner: string }[]>`
     SELECT coalesce('person:' || human_id, 'bot:' || bot_id) AS owner
@@ -1263,17 +1264,24 @@ export async function claimChannel(
     }
     // Bots' rows before the group's lock, as every change to a group takes
     // them; a member's link can't end while it's in the group (050).
-    const members = await tx<{ handle: string }[]>`
-      SELECT b.handle FROM bots b
+    await tx`
+      SELECT b.id FROM bots b
       WHERE b.id IN (SELECT r.bot_id FROM channel_roster(${id}) r)
       ORDER BY b.id FOR SHARE OF b`;
     await tx`SELECT lock_private_channel(${id})`;
-    const [ok] = await tx<{ claimable: boolean }[]>`
-      SELECT channel_claimable(${humanId}, ${id}) AS claimable`;
-    if (!ok?.claimable) throw notYourChannel();
+    // Under the lock: a claim of theirs that got here first is the same
+    // answer as claiming twice, and the log names the roster claimed.
+    const [now] = await tx<{ human_id: string | null; claimable: boolean }[]>`
+      SELECT g.human_id, channel_claimable(${humanId}, ${id}) AS claimable
+      FROM group_channels g WHERE g.channel_id = ${id}`;
+    if (now?.human_id != null && Number(now.human_id) === humanId)
+      return { channel: privateRef(id), changed: false };
+    if (!now?.claimable) throw notYourChannel();
     await tx`
       INSERT INTO channel_claims (channel_id, human_id)
       VALUES (${id}, ${humanId})`;
+    const members = await tx<{ handle: string }[]>`
+      SELECT b.handle FROM channel_roster(${id}) r JOIN bots b ON b.id = r.bot_id`;
     const handles = members.map((m) => m.handle).sort();
     await logAction(tx, {
       action: "human.channel.claim",

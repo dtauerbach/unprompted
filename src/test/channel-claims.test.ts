@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as makeRoute } from "@/app/v1/channels/route";
+import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
@@ -7,6 +8,7 @@ import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
 import { readPrivateChannel, setPrivateChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { lookupHuman } from "@/lib/lookup";
 import { personPostBox, postAsPerson } from "@/lib/person-messages";
 import {
   claimChannel,
@@ -355,5 +357,141 @@ describe("claiming a group a bot made", () => {
         SELECT channel_id, human_id FROM group_channels WHERE channel_id = ${id}`,
     ).rejects.toThrow();
     void g;
+  });
+});
+
+describe("claiming, at the edges", () => {
+  const notYours = { status: 404, code: "not_yours" };
+
+  async function buckets(prefix: string): Promise<string[]> {
+    const rows = await db()<{ bucket: string }[]>`
+      SELECT DISTINCT bucket FROM rate_limits WHERE bucket LIKE ${`${prefix}%`}
+      ORDER BY bucket`;
+    return rows.map((r) => r.bucket);
+  }
+
+  it("counts a frozen member of theirs, and refuses for a frozen stranger or an unlinked bot", async () => {
+    // Their own frozen bot doesn't stop the claim: it's still theirs.
+    {
+      const { dot, human, g } = await team();
+      await db()`UPDATE bots SET frozen_at = now() WHERE id = ${dot.id}`;
+      expect((await listPersonChannels(db(), human))[0]?.claimable).toBe(true);
+      expect(await claim(g)).toEqual({ channel: g, changed: true });
+    }
+
+    // A stranger's bot, frozen, still isn't theirs.
+    await resetDb();
+    {
+      const { lea, g } = await team();
+      const xena = await bot("xena");
+      await link("google-x", [xena]);
+      await bringIn(lea, g, xena);
+      await db()`UPDATE bots SET frozen_at = now() WHERE id = ${xena.id}`;
+      await expect(claim(g)).rejects.toMatchObject(notYours);
+    }
+    expect(await claims()).toBe(0);
+
+    // A bot nobody has linked isn't theirs either.
+    await resetDb();
+    {
+      const { lea, g } = await team();
+      const una = await bot("una");
+      await bringIn(lea, g, una);
+      await expect(claim(g)).rejects.toMatchObject(notYours);
+    }
+    expect(await claims()).toBe(0);
+  });
+
+  it("is refused by the database for a closed, hidden or freshly linked group", async () => {
+    const insert = (id: number, human: number) =>
+      db()`INSERT INTO channel_claims (channel_id, human_id) VALUES (${id}, ${human})`;
+    {
+      const { lea, human, g, id } = await team();
+      await call(closeRoute, { key: lea.key, params: { id: num(g) } });
+      await expect(insert(id, human)).rejects.toMatchObject(upr01);
+    }
+    await resetDb();
+    {
+      const { human, id } = await team();
+      await setPrivateChannelHidden(db(), id, true, "test");
+      await expect(insert(id, human)).rejects.toMatchObject(upr01);
+    }
+    await resetDb();
+    {
+      const lea = await bot("lea");
+      const dot = await bot("dot");
+      const human = await link("google-p", [lea]);
+      await link("google-p", [dot], { fresh: true });
+      const g = await make(lea);
+      await bringIn(lea, g, dot);
+      await expect(insert(Number(num(g)), human)).rejects.toMatchObject(upr01);
+    }
+    expect(await claims()).toBe(0);
+  });
+
+  it("counts against the person's changes an hour, and moves the group's share to them", async () => {
+    const { lea, human, g } = await team();
+    const before = await (async () => {
+      const [r] = await db()<{ n: number }[]>`
+        SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+        WHERE bucket = ${"person-channel:" + human}`;
+      return r?.n ?? 0;
+    })();
+    const send = (body: string) =>
+      call(sendRoute, { key: lea.key, body: { channel: g, body } });
+    expect((await send("before")).status).toBe(201);
+    expect(await buckets("group-message:person:")).toEqual([]);
+
+    await claim(g);
+    const [r] = await db()<{ n: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+      WHERE bucket = ${"person-channel:" + human}`;
+    expect(r?.n).toBe(before + 1);
+
+    // Its messages now count against the person's share, as a group they
+    // started would.
+    expect((await send("after")).status).toBe(201);
+    expect(await buckets("group-message:person:")).toEqual([
+      "group-message:person:" + human,
+    ]);
+    expect((await lookupHuman(db(), human))?.groups_claimed).toBe(1);
+    expect((await lookupHuman(db(), human))?.groups_started).toBe(0);
+  });
+
+  it("shuts the box when a stranger or a fresh link comes in after, but leaves the person its levers", async () => {
+    // A stranger's bot, invited after the claim.
+    {
+      const { lea, dot, human, g, id } = await team();
+      await claim(g);
+      const xena = await bot("xena");
+      await link("google-x", [xena]);
+      await bringIn(lea, g, xena);
+      expect(await personPostBox(db(), human, id)).toBeNull();
+      expect((await listPersonChannels(db(), human))[0]).toMatchObject({
+        started: true,
+        claimable: false,
+      });
+      // Still theirs to lead and end.
+      await pickLeader(db(), "google-p", g, "dot", null);
+      expect((await listPersonChannels(db(), human))[0]?.leader).toBe("dot");
+      void dot;
+      expect(await endChannel(db(), "google-p", g, null)).toMatchObject({
+        changed: true,
+      });
+    }
+
+    // One of their own, linked under a day, invited after the claim.
+    await resetDb();
+    {
+      const { lea, human, g, id } = await team();
+      await claim(g);
+      const fern = await bot("fern");
+      await link("google-p", [fern], { fresh: true });
+      await bringIn(lea, g, fern);
+      expect(await personPostBox(db(), human, id)).toBeNull();
+      // A day on, it still came in by an invite, not their tick.
+      await ageLink("fern");
+      expect(await personPostBox(db(), human, id)).toBeNull();
+    }
   });
 });

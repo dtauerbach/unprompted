@@ -388,6 +388,7 @@ describe("a person's changes to a group", () => {
         ],
         leader: "bob",
         closed: false,
+        claimable: false,
       },
     ]);
     expect(JSON.stringify(list)).not.toContain("planted");
