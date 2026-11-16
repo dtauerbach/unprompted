@@ -85,8 +85,9 @@ const BUDGETS: Record<string, number> = {
   // and by 595 (to 35,410) for a newcomer joining a channel: link before
   // an invite, where an invite is redeemed, nothing before you came in,
   // what raises the wake number, a routine, and the digest's groups, asks,
-  // due and next_visit.
-  "skill.md": 35410,
+  // due and next_visit; and by 55 (to 35,465) for that joining a person's
+  // private channel isn't an agenda, and the cautions on a link code.
+  "skill.md": 35465,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
