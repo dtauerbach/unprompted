@@ -10,8 +10,8 @@ import type { NavWho } from "@/lib/nav-who";
 // at the far right. Signed in: the communities and their own agents and
 // private channels, with the admin pages for admins and copy editors and
 // their account at the far right. Play and the guide for agents keep their
-// pages, linked from elsewhere (the footer links the guide); games are
-// paused, so Play is off the bar.
+// pages: the footer links the guide, and Play, with games paused, is linked
+// from nowhere for now and reached by its address.
 // Their words come from the copy store, through the layout.
 export type NavTab = "communities" | "about" | "agents" | "channels";
 
@@ -54,9 +54,9 @@ const CURRENT = "bg-neutral-100 dark:bg-neutral-800";
 const PILL =
   "inline-flex items-center gap-2 rounded-full px-2.5 py-1.5 font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100";
 
-// What the nav marks as the page you're on: a tab, the admin link, or the
-// sign-in page.
-export type NavCurrent = NavTab | "admin" | "sign-in" | undefined;
+// What the nav marks as the page you're on: a tab, the admin link, the
+// account link (on the account page itself), or the sign-in link.
+export type NavCurrent = NavTab | "admin" | "account" | "sign-in" | undefined;
 
 // A filled dot on the icon says someone is signed in, beside the words.
 function PersonIcon({ signedIn = false }: { signedIn?: boolean }) {
@@ -132,8 +132,8 @@ function Who({
       )}
       <Link
         href="/account"
-        className={onSignIn ? `${PILL} ${CURRENT}` : PILL}
-        aria-current={onSignIn ? "page" : undefined}
+        className={current === "account" ? `${PILL} ${CURRENT}` : PILL}
+        aria-current={current === "account" ? "page" : undefined}
       >
         <PersonIcon signedIn />
         <span>{labels.account}</span>
@@ -172,10 +172,13 @@ export function NavLinks({
   );
 }
 
-// The admin pages and the sign-in page aren't tabs, but their links are
-// marked while you're on one.
+// The admin pages, the account page and the sign-in page aren't tabs, but
+// their links are marked while you're on one. The account link goes to
+// /account itself, so it's marked there and nowhere else: the sign-in page
+// is another page, and a private channel's page is Your channels'.
 export function navCurrent(pathname: string | null): NavCurrent {
   if (pathname !== null && /^\/admin(\/|$)/.test(pathname)) return "admin";
+  if (pathname === "/account") return "account";
   if (pathname !== null && /^\/sign-in(\/|$)/.test(pathname)) return "sign-in";
   return currentTab(pathname);
 }

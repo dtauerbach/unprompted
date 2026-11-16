@@ -57,8 +57,8 @@ const {
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const PROPS = { copyKey: "site.nav.forum", text: "Forum", after: 0 };
-const STORED = draftKey("copy", "site.nav.forum");
+const PROPS = { copyKey: "site.nav.communities", text: "Forum", after: 0 };
+const STORED = draftKey("copy", "site.nav.communities");
 
 type Box = {
   root: Root;
@@ -550,14 +550,14 @@ describe("the words page's box", () => {
     const a = await draw(PROPS);
     const other = await draw({
       ...PROPS,
-      copyKey: "site.nav.communities",
-      text: "Communities",
+      copyKey: "site.nav.about",
+      text: "About",
     });
     await type(a, "Threads");
     expect(other.note()).toBe("");
-    expect(other.box.value).toBe("Communities");
+    expect(other.box.value).toBe("About");
     expect(
-      sessionStorage.getItem(draftKey("copy", "site.nav.communities")),
+      sessionStorage.getItem(draftKey("copy", "site.nav.about")),
     ).toBeNull();
   });
 });
@@ -585,7 +585,7 @@ describe("the restore and undo buttons", () => {
       answer = fail;
       const restore = await drawButton(
         createElement(RestoreForm, {
-          copyKey: "site.nav.forum",
+          copyKey: "site.nav.communities",
           version: "original",
           after: 3,
           label: "Use the original",
