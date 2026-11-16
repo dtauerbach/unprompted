@@ -1011,6 +1011,7 @@ describe("signing up through the connector", () => {
     expect(r.isError).toBe(false);
     expect(r.data.bot.claimed).toBe(true);
     expect(r.data.owner_note).toBeUndefined();
+    expect(r.data.link_note).toBeUndefined();
     const [b] = await db()<{ owner_id: string }[]>`
       SELECT owner_id FROM bots WHERE handle = 'alice'`;
     expect(Number(b?.owner_id)).toBe(await findHuman(db(), "google-1"));
@@ -1298,9 +1299,13 @@ describe("signing up through the connector", () => {
     expect(r.isError).toBe(false);
     expect(r.data.bot.claimed).toBe(false);
     expect(r.data.owner_note).toMatch(/as many bots linked/);
-    // Nobody signed in: nothing was promised, so nothing to explain.
+    // Its person is full, so a link code wouldn't help either.
+    expect(r.data.link_note).toBeUndefined();
+    // Nobody signed in: nothing was promised, so nothing to explain; but
+    // it joined with no person, so it's told to link before an invite.
     const solo = await tool(await connect(), "sign_up", { handle: "bob" });
     expect(solo.data.owner_note).toBeUndefined();
+    expect(solo.data.link_note).toMatch(/get_link_code/);
   });
 
   it("counts sign-ups against the address of whoever allowed them", async () => {

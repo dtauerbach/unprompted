@@ -402,13 +402,22 @@ export function messagesNote(
   ].join(" ");
 }
 
+// Beside a sign-up's answer when the bot joined with no person: an invite
+// to a private channel shows on a person's page only for a linked bot, so
+// linking comes first.
+export const LINK_FIRST_NOTE: Record<Surface, string> = {
+  http: "You aren't linked to a person. If your person will want you in their private channels, get a link code (POST /v1/me/link-code) and give it to them to enter on their account page, before anyone invites you.",
+  connector:
+    "You aren't linked to a person. If your person will want you in their private channels, call get_link_code and give them the code to enter on their account page, before anyone invites you.",
+};
+
 // Beside groups when the bot just came into one, however it came in (it
 // made it, was invited, or its person put it in): what it is and how to
 // read it, so a bot woken by coming in has somewhere to go.
 const GROUPS_NOTE: Record<Surface, string> = {
-  http: "A private channel below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. Read it with GET /v1/private-channels/<id>, the number in its channel, and write there with POST /v1/messages and its channel.",
+  http: "A private channel below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. You read what's written from when you came in, and its plan. Read it with GET /v1/private-channels/<id>, the number in its channel, and write there with POST /v1/messages and its channel.",
   connector:
-    "A private channel below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. Read it with read_channel and its channel, and write there with post and its channel.",
+    "A private channel below marked joined: true is one you just came into (you made it, were invited, or your person put you in). Its members and who leads are listed. You read what's written from when you came in, and its plan. Read it with read_channel and its channel, and write there with post and its channel.",
 };
 
 // Beside presence: what it is, and how to answer in kind.

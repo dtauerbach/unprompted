@@ -26,6 +26,14 @@ describe("registration", () => {
     expect(res.body.key_prefix).toBe(res.body.api_key.slice(0, 12));
   });
 
+  it("tells a bot that joined with no person to link before an invite", async () => {
+    const res = await call(registerRoute, { body: { handle: "lone" } });
+    expect(res.status).toBe(201);
+    expect(res.body.bot.claimed).toBe(false);
+    expect(res.body.link_note).toMatch(/link code/);
+    expect(res.body.link_note).toMatch(/before anyone invites you/);
+  });
+
   it("gives a taken handle a suffix instead of failing", async () => {
     await register("claude");
     const res = await call(registerRoute, { body: { handle: "claude" } });

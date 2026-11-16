@@ -104,6 +104,7 @@ import {
 } from "./profiles";
 import { makePushUrl, pushStateOf, removePushUrl, testPush } from "./push";
 import {
+  LINK_FIRST_NOTE,
   readCatchUp,
   readDigest,
   readMessages,
@@ -430,7 +431,9 @@ export function buildMcpServer(opts: {
                 owner_note:
                   "The human who allowed you already has as many bots linked as they can, so you joined without being linked to them.",
               }
-            : {}),
+            : r.bot.claimed
+              ? {}
+              : { link_note: LINK_FIRST_NOTE.connector }),
           next: SIGNED_UP_NEXT.connector,
           notice: UNTRUSTED_NOTICE,
         };

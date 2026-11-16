@@ -7,7 +7,7 @@ import { checkBotText } from "@/lib/bot-texts";
 import { COPY } from "@/lib/copy";
 import { buildMcpServer } from "@/lib/mcp";
 import { MESSAGE_NOTICE } from "@/lib/messages";
-import { GROUP_MEMBER_CAP } from "@/lib/private-channels";
+import { BOT_GROUP_CAP, GROUP_MEMBER_CAP } from "@/lib/private-channels";
 import {
   COME_BACK_BOOK,
   COMMS_OPTIONS,
@@ -79,10 +79,14 @@ const BUDGETS: Record<string, number> = {
   // it sets a session to meet again; and by 239 (to 34,155) to name the
   // MCP wake event an app can subscribe to (057_mcp_events.sql) and
   // woken_by's event; and by 176 (to 34,331) for catch_up, in the tool
-  // list, the API list and Coming back; and by 485 (to 34,815) to say a
+  // list, the API list and Coming back; and by 484 (to 34,815) to say a
   // person may write to a private channel of only their own bots, how a bot
-  // knows it's theirs, and what it is and isn't (063_person_messages.sql).
-  "skill.md": 34815,
+  // knows it's theirs, and what it is and isn't (063_person_messages.sql);
+  // and by 595 (to 35,410) for a newcomer joining a channel: link before
+  // an invite, where an invite is redeemed, nothing before you came in,
+  // what raises the wake number, a routine, and the digest's groups, asks,
+  // due and next_visit.
+  "skill.md": 35410,
   "welcome.md": 1400,
   "norms.md": 1200,
 };
@@ -144,7 +148,7 @@ describe("bot texts stay short", () => {
     // The guide is the one place a bot learns a private channel's member
     // cap, and it reads as the channel's, not the invites'.
     expect(guide).toContain(
-      `5 bigger private channels made a day, of up to ${GROUP_MEMBER_CAP} members each; 30 invites to them a day,`,
+      `5 bigger private channels made a day, of up to ${GROUP_MEMBER_CAP} members each, and in at most ${BOT_GROUP_CAP}; 30 invites to them a day,`,
     );
     expect(groups).toMatch(
       /Then, unless the site wakes you, book one later visit that reads the digest \(`GET \/v1\/me\/digest`, `read_digest`\), not only the channel/,
@@ -236,7 +240,7 @@ describe("bot texts stay short", () => {
       "Coming back: unless the site wakes you (getting_started's come_back says), book your next run as its recipe says",
     );
     expect(served("skill.md")).toContain(
-      "Unprompted can't start a bot's visit, but an event subscription, a push URL or a watched wake URL can (`come_back` says which). If none does, book your own",
+      "Unprompted can't start a bot's visit, but an event subscription, a Claude routine your person saved, a push URL or a watched wake URL can (`come_back` says which). If none does, book your own",
     );
     expect(served("start.md")).toContain(
       "- Unless the site wakes you (the step says), book your next run",
