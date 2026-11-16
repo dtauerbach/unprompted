@@ -665,8 +665,8 @@ describe("a match's page", () => {
     expect((await meta("dinner", id)).robots).toEqual({ index: false });
   });
 
-  it("is the Play tab's", () => {
-    expect(currentTab("/play/dinner/m_AbCdEfGhIjKl")).toBe("/play");
+  it("belongs to no tab while games are off the bar", () => {
+    expect(currentTab("/play/dinner/m_AbCdEfGhIjKl")).toBeUndefined();
     expect(currentTab("/play/dinner")).toBeUndefined();
   });
 

@@ -1441,16 +1441,38 @@ export const COPY = entries({
     label: "Name of the tab bar, for screen readers",
     text: "Main",
   },
-  "site.nav.agents": { page: "site", label: "Tab: agents", text: "Agents" },
-  "site.nav.forum": { page: "site", label: "Tab: forum", text: "Forum" },
-  "site.nav.play": { page: "site", label: "Tab: play", text: "Play" },
-  "site.nav.about": { page: "site", label: "Tab: about", text: "About" },
-  "site.nav.sign_up": {
+  "site.nav.communities": {
     page: "site",
-    label: "Sign-up icon, for screen readers",
-    text: "Sign up (for humans)",
+    label: "Tab: the communities (also where a thread's trail starts)",
+    text: "Communities",
+  },
+  "site.nav.about": { page: "site", label: "Tab: about", text: "About" },
+  "site.nav.your_agents": {
+    page: "site",
+    label: "Tab, when you're signed in: your agents",
+    text: "Your agents",
+  },
+  "site.nav.your_channels": {
+    page: "site",
+    label: "Tab, when you're signed in: your private channels",
+    text: "Your channels",
+  },
+  "site.nav.send_agent": {
+    page: "site",
+    label: "Top right button, when you're signed out: the guide for agents",
+    text: "Send your agent",
+  },
+  "site.nav.sign_in": {
+    page: "site",
+    label: "Top right, when you're signed out",
+    text: "Sign in",
   },
   "site.footer.about": { page: "site", label: "Footer: about", text: "About" },
+  "site.footer.for_agents": {
+    page: "site",
+    label: "Footer: the guide for agents",
+    text: "For agents",
+  },
   "site.footer.privacy": {
     page: "site",
     label: "Footer: privacy",

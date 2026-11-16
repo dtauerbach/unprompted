@@ -9,7 +9,13 @@ import Home from "@/app/page";
 import PlayPage from "@/app/play/page";
 import SignInPage from "@/app/sign-in/page";
 import { POST as post } from "@/app/v1/posts/route";
-import { currentTab, NAV, type NavLabels, NavLinks } from "@/components/nav";
+import {
+  currentTab,
+  NAV_SIGNED_IN,
+  NAV_SIGNED_OUT,
+  type NavLabels,
+  NavLinks,
+} from "@/components/nav";
 import { hidePost, setFrozen } from "@/lib/admin";
 import { siteStats } from "@/lib/board";
 import { COPY } from "@/lib/copy";
@@ -500,27 +506,65 @@ describe("the sign-in page", () => {
 // The tab bar's words, as the layout passes them from the copy store.
 const LABELS: NavLabels = {
   label: COPY["site.nav.label"].text,
-  "/agent": COPY["site.nav.agents"].text,
-  "/forum": COPY["site.nav.forum"].text,
-  "/play": COPY["site.nav.play"].text,
-  "/": COPY["site.nav.about"].text,
-  "/sign-in": COPY["site.nav.sign_up"].text,
+  communities: COPY["site.nav.communities"].text,
+  about: COPY["site.nav.about"].text,
+  agents: COPY["site.nav.your_agents"].text,
+  channels: COPY["site.nav.your_channels"].text,
+  send: COPY["site.nav.send_agent"].text,
+  sign_in: COPY["site.nav.sign_in"].text,
   account: COPY["site.nav.account"].text,
   admin: COPY["site.nav.admin"].text,
 };
 
+const linksIn = (html: string) =>
+  [...html.matchAll(/<a [^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)].map(
+    (m) => [m[2]?.replace(/<[^>]*>/g, "") ?? "", m[1] ?? ""],
+  );
+
 describe("the menu", () => {
-  it("has four tabs and the sign-up icon, in order, and nothing about moderation", () => {
-    expect(NAV.map((n) => [LABELS[n.href], n.href])).toEqual([
-      ["Agents", "/agent"],
-      ["Forum", "/forum"],
-      ["Play", "/play"],
+  it("signed out: the communities and About, then Send your agent and Sign in", () => {
+    expect(NAV_SIGNED_OUT.map((n) => [LABELS[n.tab], n.href])).toEqual([
+      ["Communities", "/forum"],
       ["About", "/"],
-      ["Sign up (for humans)", "/sign-in"],
     ]);
+    const html = renderToStaticMarkup(
+      createElement(NavLinks, { current: undefined, labels: LABELS }),
+    );
+    expect(linksIn(html)).toEqual([
+      ["Communities", "/forum"],
+      ["About", "/"],
+      ["Send your agent", "/agent"],
+      ["Sign in", "/sign-in"],
+    ]);
+    // Play is paused and off the bar; nothing about moderation.
+    expect(html).not.toContain('href="/play"');
+    expect(html).not.toMatch(/moderation/i);
   });
 
-  it("draws sign-up as a person icon at the far right, named for people", () => {
+  it("signed in: the communities, your agents and your channels, then your account", () => {
+    expect(NAV_SIGNED_IN.map((n) => [LABELS[n.tab], n.href])).toEqual([
+      ["Communities", "/forum"],
+      ["Your agents", "/account#agents"],
+      ["Your channels", "/account#groups"],
+    ]);
+    const html = renderToStaticMarkup(
+      createElement(NavLinks, {
+        current: undefined,
+        labels: LABELS,
+        who: { signedIn: true, admin: null },
+      }),
+    );
+    expect(linksIn(html)).toEqual([
+      ["Communities", "/forum"],
+      ["Your agents", "/account#agents"],
+      ["Your channels", "/account#groups"],
+      ["Your account", "/account"],
+    ]);
+    expect(html).not.toContain('href="/agent"');
+    expect(html).not.toContain('href="/sign-in"');
+  });
+
+  it("draws Sign in as a person icon at the far right, in words anyone can see", () => {
     const html = renderToStaticMarkup(
       createElement(NavLinks, { current: undefined, labels: LABELS }),
     );
@@ -530,12 +574,11 @@ describe("the menu", () => {
     const last = links.at(-1) ?? "";
     expect(last).toContain('href="/sign-in"');
     expect(last).toMatch(/<svg[^>]*aria-hidden="true"/);
-    expect(last).toMatch(/class="[^"]*ml-auto[^"]*"/);
-    // In words anyone can see, not only a screen reader.
-    expect(last).toContain("<span>Sign up (for humans)</span>");
+    expect(last).toContain("<span>Sign in</span>");
     expect(last).not.toContain("sr-only");
+    expect(html).toMatch(/<span class="ml-auto[^"]*"><a href="\/agent"/);
     const current = renderToStaticMarkup(
-      createElement(NavLinks, { current: "/sign-in", labels: LABELS }),
+      createElement(NavLinks, { current: "sign-in", labels: LABELS }),
     );
     expect(current).toMatch(
       /<a [^>]*href="\/sign-in"[^>]*aria-current="page"|<a [^>]*aria-current="page"[^>]*href="\/sign-in"/,
@@ -544,20 +587,23 @@ describe("the menu", () => {
 
   it("knows which tab a page belongs to", () => {
     const cases: [string | null, string | undefined][] = [
-      ["/", "/"],
-      ["/agent", "/agent"],
-      ["/forum", "/forum"],
-      ["/play", "/play"],
+      ["/", "about"],
+      ["/forum", "communities"],
+      ["/c/meta", "communities"],
+      ["/p/12", "communities"],
+      ["/b/alice", "communities"],
+      ["/account", undefined],
+      ["/account#groups", undefined],
+      ["/account/channels/5", "channels"],
+      ["/account/x", undefined],
+      ["/agent", undefined],
+      ["/play", undefined],
       ["/play/rps", undefined],
       ["/players", undefined],
-      ["/c/meta", "/forum"],
-      ["/p/12", "/forum"],
-      ["/b/alice", "/forum"],
-      ["/sign-in", "/sign-in"],
-      ["/account", "/sign-in"],
+      ["/sign-in", undefined],
       ["/moderation", undefined],
       ["/forumx", undefined],
-      ["/agent/x", undefined],
+      ["/accounts", undefined],
       ["/admin", undefined],
       [null, undefined],
     ];
@@ -567,36 +613,43 @@ describe("the menu", () => {
 
   it("marks the current tab, and only that one", () => {
     const html = renderToStaticMarkup(
-      createElement(NavLinks, { current: "/forum", labels: LABELS }),
+      createElement(NavLinks, { current: "communities", labels: LABELS }),
     );
     expect(html.match(/aria-current="page"/g)).toHaveLength(1);
     const current = /<a [^>]*aria-current="page"[^>]*>/.exec(html)?.[0] ?? "";
     expect(current).toContain('href="/forum"');
+    const mine = renderToStaticMarkup(
+      createElement(NavLinks, {
+        current: "channels",
+        labels: LABELS,
+        who: { signedIn: true, admin: null },
+      }),
+    );
+    expect(mine.match(/aria-current="page"/g)).toHaveLength(1);
+    expect(/<a [^>]*aria-current="page"[^>]*>/.exec(mine)?.[0]).toContain(
+      'href="/account#groups"',
+    );
     const none = renderToStaticMarkup(
       createElement(NavLinks, { current: undefined, labels: LABELS }),
     );
     expect(none).not.toContain("aria-current");
   });
 
-  it("sits in a layout with About and Source in the footer, and no moderation log", async () => {
+  it("sits in a layout with About, the guide for agents and Source in the footer, and no moderation log", async () => {
     const html = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "page") }),
     );
     const nav = byId(html.replace("<nav ", '<nav id="main-nav" '), "main-nav");
-    const tabs = [...nav.matchAll(/href="([^"]*)"[^>]*>([^<]*)</g)].map((m) => [
-      m[2],
-      m[1],
-    ]);
-    expect(tabs).toEqual([
-      ["Agents", "/agent"],
-      ["Forum", "/forum"],
-      ["Play", "/play"],
+    expect(linksIn(nav)).toEqual([
+      ["Communities", "/forum"],
       ["About", "/"],
-      ["", "/sign-in"],
+      ["Send your agent", "/agent"],
+      ["Sign in", "/sign-in"],
     ]);
     expect(nav).not.toMatch(/moderation|account/i);
     const footer = html.slice(html.indexOf("<footer"));
     expect(footer).toMatch(/href="\/"[^>]*>About</);
+    expect(footer).toMatch(/href="\/agent"[^>]*>For agents</);
     expect(html).not.toMatch(/moderation/i);
     expect(footer).toContain(">Source<");
     expect(html).not.toContain('href="/about"');
@@ -648,8 +701,8 @@ describe("the play page", () => {
     expect(visible(await render())).not.toMatch(JARGON);
   });
 
-  it("is the Play tab's page", () => {
-    expect(currentTab("/play")).toBe("/play");
+  it("keeps its page, off the bar while games are paused", () => {
+    expect(currentTab("/play")).toBeUndefined();
     expect(routes().some((r) => r.test("/play"))).toBe(true);
   });
 });

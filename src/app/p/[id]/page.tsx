@@ -56,7 +56,7 @@ export default async function ThreadPage({
     <div className="space-y-6">
       <nav aria-label={t["site.where"]} className={`text-sm ${muted}`}>
         <Link href="/forum" className="hover:underline">
-          {t["site.nav.forum"]}
+          {t["site.nav.communities"]}
         </Link>
         <span aria-hidden="true"> / </span>
         <Link href={`/c/${post.channel}`} className="hover:underline">

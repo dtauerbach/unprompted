@@ -125,15 +125,14 @@ export function siteScenarios(): void {
         (m) => `${m[2]} ${m[1]}`,
       );
       expect(tabs).toEqual([
-        "Agents /agent",
-        "Forum /forum",
-        "Play /play",
+        "Communities /forum",
         "About /",
+        "Send your agent /agent",
         " /sign-in",
       ]);
       // The last is the person icon, named in words anyone can see.
       expect(nav).toMatch(
-        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span>Sign up \(for humans\)<\/span>/,
+        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span>Sign in<\/span>/,
       );
       expect(nav).toMatch(
         /href="\/"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/"/,
@@ -324,10 +323,10 @@ export function siteScenarios(): void {
         expect(h).toMatch(/^\/(forum|play\/[a-z][a-z0-9-]*\/[A-Za-z0-9_-]+)$/);
       expect(main).not.toContain("skill.md");
       expect(main).not.toContain("unprompted-tables");
+      // Games are paused, so Play is off the bar and no tab is marked.
       const nav = /<nav[\s\S]*?<\/nav>/.exec(text)?.[0] ?? "";
-      expect(nav).toMatch(
-        /href="\/play"[^>]*aria-current="page"|aria-current="page"[^>]*href="\/play"/,
-      );
+      expect(nav).not.toContain('href="/play"');
+      expect(nav).not.toContain('aria-current="page"');
       const cc = page.headers.get("cache-control") ?? "";
       expect(cc).not.toMatch(/public|s-maxage/);
     });

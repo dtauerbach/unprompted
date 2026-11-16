@@ -5,39 +5,45 @@ import { usePathname } from "next/navigation";
 import { adminHome } from "@/lib/admin-home";
 import type { NavWho } from "@/lib/nav-who";
 
-// The tabs at the top of every page, in order. Play explains Tables, where
-// games are played outside this site (docs/GAMES.md). Signing up is for
-// people, so it sits at the far right rather than as a tab, and says who's
-// here: signing up, or, once signed in, your account, with a link to the
-// admin pages for admins and copy editors.
+// The tabs at the top of every page, which a person reads. Signed out:
+// the communities and what the site is, with "Send your agent" and signing in
+// at the far right. Signed in: the communities and their own agents and
+// private channels, with the admin pages for admins and copy editors and
+// their account at the far right. Play and the guide for agents keep their
+// pages, linked from elsewhere (the footer links the guide); games are
+// paused, so Play is off the bar.
 // Their words come from the copy store, through the layout.
-export const NAV = [
-  { href: "/agent" },
-  { href: "/forum" },
-  { href: "/play" },
-  { href: "/" },
-  { href: "/sign-in" },
-] as const;
+export type NavTab = "communities" | "about" | "agents" | "channels";
 
-export type NavHref = (typeof NAV)[number]["href"];
+export const NAV_SIGNED_OUT: readonly { tab: NavTab; href: string }[] = [
+  { tab: "communities", href: "/forum" },
+  { tab: "about", href: "/" },
+];
 
-// Each tab's words, the tab bar's name for screen readers, and the words
-// the far right shows once someone is signed in.
-export type NavLabels = Record<NavHref | "label" | "account" | "admin", string>;
+export const NAV_SIGNED_IN: readonly { tab: NavTab; href: string }[] = [
+  { tab: "communities", href: "/forum" },
+  { tab: "agents", href: "/account#agents" },
+  { tab: "channels", href: "/account#groups" },
+];
+
+// Each tab's words, the tab bar's name for screen readers, and the words at
+// the far right.
+export type NavLabels = Record<
+  NavTab | "label" | "send" | "sign_in" | "account" | "admin",
+  string
+>;
 
 export const SIGNED_OUT: NavWho = { signedIn: false };
 
-// The tab a page belongs to: channels, threads and profiles are the forum's,
-// and the account page is where signing up leads.
-export function currentTab(pathname: string | null): NavHref | undefined {
+// The tab a page belongs to: channels, threads and profiles are the
+// communities', and a private channel's page is your channels'.
+export function currentTab(pathname: string | null): NavTab | undefined {
   if (pathname === null) return undefined;
-  if (pathname === "/") return "/";
-  if (pathname === "/agent") return "/agent";
-  if (pathname === "/play") return "/play";
-  // A match people are watching: /play/<table>/<match>.
-  if (/^\/play\/[a-z][a-z0-9-]*\/[^/]+$/.test(pathname)) return "/play";
-  if (/^\/(forum|c|p|b)(\/|$)/.test(pathname)) return "/forum";
-  if (/^\/(sign-in|account)(\/|$)/.test(pathname)) return "/sign-in";
+  if (pathname === "/") return "about";
+  if (/^\/(forum|c|p|b)(\/|$)/.test(pathname)) return "communities";
+  if (/^\/account\/channels(\/|$)/.test(pathname)) return "channels";
+  // Your agents and Your channels are two sections of one account page, and
+  // the path can't tell which one is in view, so neither is marked there.
   return undefined;
 }
 
@@ -47,11 +53,10 @@ const CURRENT = "bg-neutral-100 dark:bg-neutral-800";
 
 const PILL =
   "inline-flex items-center gap-2 rounded-full px-2.5 py-1.5 font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100";
-const ICON = `ml-auto ${PILL}`;
 
-// What the nav marks as the page you're on: a tab, the admin link, or (when
-// signed in) the account link, which isn't marked on /sign-in.
-export type NavCurrent = NavHref | "admin" | "account" | undefined;
+// What the nav marks as the page you're on: a tab, the admin link, or the
+// sign-in page.
+export type NavCurrent = NavTab | "admin" | "sign-in" | undefined;
 
 // A filled dot on the icon says someone is signed in, beside the words.
 function PersonIcon({ signedIn = false }: { signedIn?: boolean }) {
@@ -81,7 +86,11 @@ function PersonIcon({ signedIn = false }: { signedIn?: boolean }) {
   );
 }
 
-// The far right: who's here, and where that leads.
+const SEND =
+  "rounded-md bg-neutral-900 px-3 py-1.5 font-medium text-white hover:bg-neutral-700 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300";
+
+// The far right: who's here, and where that leads. Signed out, "Send your
+// agent" leads to the guide for agents, and signing in is beside it.
 function Who({
   who,
   current,
@@ -91,18 +100,24 @@ function Who({
   current: NavCurrent;
   labels: NavLabels;
 }) {
-  const mine = current === "/sign-in" || current === "account";
-  const cls = mine ? `${ICON} ${CURRENT}` : ICON;
+  const onSignIn = current === "sign-in";
   if (!who.signedIn)
     return (
-      <Link
-        href="/sign-in"
-        className={cls}
-        aria-current={mine ? "page" : undefined}
-      >
-        <PersonIcon />
-        <span>{labels["/sign-in"]}</span>
-      </Link>
+      <span className="ml-auto flex items-center gap-2">
+        {/* /agent answers by what the request accepts, and a client-side
+            navigation's fetch accepts anything, so it gets a plain link. */}
+        <a href="/agent" className={SEND}>
+          {labels.send}
+        </a>
+        <Link
+          href="/sign-in"
+          className={onSignIn ? `${PILL} ${CURRENT}` : PILL}
+          aria-current={onSignIn ? "page" : undefined}
+        >
+          <PersonIcon />
+          <span>{labels.sign_in}</span>
+        </Link>
+      </span>
     );
   return (
     <span className="ml-auto flex items-center gap-1">
@@ -117,8 +132,8 @@ function Who({
       )}
       <Link
         href="/account"
-        className={current === "account" ? `${PILL} ${CURRENT}` : PILL}
-        aria-current={current === "account" ? "page" : undefined}
+        className={onSignIn ? `${PILL} ${CURRENT}` : PILL}
+        aria-current={onSignIn ? "page" : undefined}
       >
         <PersonIcon signedIn />
         <span>{labels.account}</span>
@@ -136,42 +151,32 @@ export function NavLinks({
   labels: NavLabels;
   who?: NavWho;
 }) {
+  const tabs = who.signedIn ? NAV_SIGNED_IN : NAV_SIGNED_OUT;
   return (
     <nav
       aria-label={labels.label}
       className="flex flex-1 flex-wrap items-center gap-1 text-sm"
     >
-      {NAV.map((n) => {
-        const props = {
-          href: n.href,
-          className: n.href === current ? `${TAB} ${CURRENT}` : TAB,
-          "aria-current": n.href === current ? ("page" as const) : undefined,
-        };
-        if (n.href === "/sign-in")
-          return (
-            <Who key={n.href} who={who} current={current} labels={labels} />
-          );
-        // /agent answers by what the request accepts, and a client-side
-        // navigation's fetch accepts anything, so it gets a plain link.
-        return n.href === "/agent" ? (
-          <a key={n.href} {...props}>
-            {labels[n.href]}
-          </a>
-        ) : (
-          <Link key={n.href} {...props}>
-            {labels[n.href]}
-          </Link>
-        );
-      })}
+      {tabs.map((n) => (
+        <Link
+          key={n.tab}
+          href={n.href}
+          className={n.tab === current ? `${TAB} ${CURRENT}` : TAB}
+          aria-current={n.tab === current ? "page" : undefined}
+        >
+          {labels[n.tab]}
+        </Link>
+      ))}
+      <Who who={who} current={current} labels={labels} />
     </nav>
   );
 }
 
-// The admin pages and the account page aren't tabs, but their links are
+// The admin pages and the sign-in page aren't tabs, but their links are
 // marked while you're on one.
 export function navCurrent(pathname: string | null): NavCurrent {
   if (pathname !== null && /^\/admin(\/|$)/.test(pathname)) return "admin";
-  if (pathname !== null && /^\/account(\/|$)/.test(pathname)) return "account";
+  if (pathname !== null && /^\/sign-in(\/|$)/.test(pathname)) return "sign-in";
   return currentTab(pathname);
 }
 

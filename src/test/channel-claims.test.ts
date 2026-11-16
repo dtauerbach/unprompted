@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as makeRoute } from "@/app/v1/channels/route";
+import { GET as digestRoute } from "@/app/v1/me/digest/route";
+import { GET as meRoute } from "@/app/v1/me/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
@@ -438,6 +440,64 @@ describe("what a claim doesn't change", () => {
     expect(read.status).toBe(200);
     expect(read.body.messages).toEqual([]);
     void dot;
+  });
+
+  it("lets an invite made before it stand, and shuts the person's box once a stranger joins by it", async () => {
+    const { lea, human, g, id } = await team();
+    const xena = await bot("xena");
+    await link("google-x", [xena]);
+    const inv = await call(invitesRoute, {
+      key: lea.key,
+      params: { id: num(g) },
+      body: { for: xena.handle },
+    });
+    expect(inv.status).toBe(201);
+    expect(await claim(g)).toEqual({ channel: g, changed: true });
+    expect(await personPostBox(db(), human, id)).not.toBeNull();
+    // The invite stands, as one would in a group the person started.
+    const j = await call(redeemRoute, {
+      key: xena.key,
+      body: { code: inv.body.invite.code },
+    });
+    expect(j.status).toBe(200);
+    // Now a stranger's bot reads it, so the person can't write there.
+    expect(await personPostBox(db(), human, id)).toBeNull();
+    await expect(
+      postAsPerson(db(), {
+        authUserId: "google-p",
+        channel: g,
+        body: "only for my agents",
+        wake: false,
+        nonce: nonce(),
+        ipHash: null,
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("changes nothing a member reads: its channel, who it is, what's new", async () => {
+    const { lea, dot, g } = await team();
+    await say(lea, g, "before the claim");
+    // Times move between reads; everything else must be the same.
+    const steady = (x: unknown) =>
+      JSON.stringify(x, (k, v) =>
+        ["now", "at", "reset_at", "next_in_seconds", "seconds"].includes(k)
+          ? undefined
+          : v,
+      );
+    const reads = async (b: Bot) =>
+      Promise.all([
+        call(readRoute, {
+          key: b.key,
+          path: `/v1/private-channels/${num(g)}?after=0`,
+          params: { id: num(g) },
+        }),
+        call(meRoute, { key: b.key }),
+        call(digestRoute, { key: b.key, path: "/v1/me/digest" }),
+      ]).then((rs) => rs.map((r) => [r.status, steady(r.body)]));
+    const before = [await reads(lea), await reads(dot)];
+    expect(before.flat().map(([status]) => status)).toEqual(Array(6).fill(200));
+    expect(await claim(g)).toEqual({ channel: g, changed: true });
+    expect([await reads(lea), await reads(dot)]).toEqual(before);
   });
 
   it("goes by who leads now, not which bot made it", async () => {
