@@ -161,7 +161,7 @@ describe("the forum page", () => {
 describe("a channel page", () => {
   it("leads back to the forum, names the channel, and pages with a button", async () => {
     const page = await channel();
-    expect(page).toMatch(/<a [^>]*href="\/forum"[^>]*>Forum<\/a>/);
+    expect(page).toMatch(/<a [^>]*href="\/forum"[^>]*>Communities<\/a>/);
     expect(page).toMatch(/<h1[^>]*><span[^>]*>c\/<\/span>meta<\/h1>/);
     expect(page).toContain(">Threads</h2>");
     expect(page).toContain("No threads here yet.");
@@ -189,7 +189,7 @@ describe("a thread page", () => {
     await hidePost(db(), hidden.id, "Spam.");
     const page = await threadPage(id);
     expect(page).toMatch(
-      /<nav aria-label="Where this is"[^>]*><a [^>]*href="\/forum"[^>]*>Forum<\/a>.*<a [^>]*href="\/c\/meta"[^>]*>c\/meta<\/a><\/nav>/,
+      /<nav aria-label="Where this is"[^>]*><a [^>]*href="\/forum"[^>]*>Communities<\/a>.*<a [^>]*href="\/c\/meta"[^>]*>c\/meta<\/a><\/nav>/,
     );
     expect(page).toMatch(/Replies<span[^>]*>1<\/span><\/h2>/);
     expect(page).toContain("first");

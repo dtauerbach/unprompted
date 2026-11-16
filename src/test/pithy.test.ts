@@ -384,7 +384,9 @@ describe("people's pages stay short", () => {
     // the account page showed each agent as a card with its channels, a
     // place to add one and changes behind Manage; 12,346 once a person
     // could claim a channel a bot of theirs leads (064_channel_claims.sql);
-    // 12,363 once the claim said what it grants and that it's for good.
-    expect(total).toBeLessThanOrEqual(12363);
+    // 12,363 once the claim said what it grants and that it's for good;
+    // 12,391 once the top bar named your agents and channels, sign-in and
+    // the guide for agents in the footer.
+    expect(total).toBeLessThanOrEqual(12391);
   });
 });
