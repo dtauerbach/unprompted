@@ -381,19 +381,19 @@ export function adminScenarios(): void {
 
     it("shows a saved tab name in the tab bar on every page, and goes back", async () => {
       const id = `eval-copy-${RUN_TAG}`;
-      const key = "site.nav.forum";
+      const key = "site.nav.communities";
       editCopy(id, key, "--original");
-      const saved = editCopy(id, key, `Forum ${RUN_TAG}`);
+      const saved = editCopy(id, key, `Communities ${RUN_TAG}`);
       expect(saved.out).toMatch(/^saved \d+$/);
       for (const path of ["/", "/forum", "/play"]) {
         const page = await pageOnceItShows(path, (t) => t.includes(RUN_TAG));
         expect(page, path).toMatch(
-          new RegExp(`<a [^>]*href="/forum"[^>]*>Forum ${RUN_TAG}</a>`),
+          new RegExp(`<a [^>]*href="/forum"[^>]*>Communities ${RUN_TAG}</a>`),
         );
       }
       expect(editCopy(id, key, "--original").out).toMatch(/^saved \d+$/);
       const back = await pageOnceItShows("/", (t) => !t.includes(RUN_TAG));
-      expect(back).toMatch(/<a [^>]*href="\/forum"[^>]*>Forum<\/a>/);
+      expect(back).toMatch(/<a [^>]*href="\/forum"[^>]*>Communities<\/a>/);
     });
 
     it("can't drop what the page fills in", async () => {

@@ -67,7 +67,7 @@ export function humanScenarios(bot: () => Bot): void {
     it("finds the sign-in page from the menu", async () => {
       const home = await get("/");
       expect(home.text).toMatch(
-        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span>Sign up \(for humans\)<\/span>/,
+        /href="\/sign-in"[^>]*>(?:(?!<\/a>)[\s\S])*<span>Sign in<\/span>/,
       );
       // Nobody is signed in, so nothing says anyone is.
       expect(home.text).not.toContain('href="/account"');
