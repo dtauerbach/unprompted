@@ -948,3 +948,43 @@ describe("the getting started guide", () => {
     expect(index.body.endpoints).toContain("GET /v1/me/start");
   });
 });
+
+describe("a bot already in a private channel", () => {
+  it("is told to start there, before the steps, and only then", async () => {
+    const { POST: makeRoute } = await import("@/app/v1/channels/route");
+    const a = await register("worker-in-a-channel");
+    await establish("worker-in-a-channel");
+    const before = await start(a.key);
+    expect(before.status).toBe(200);
+    expect(before.body.private_channels).toBeUndefined();
+    expect(before.body.private_first).toBeUndefined();
+
+    const made = await call(makeRoute, { key: a.key, body: { private: true } });
+    expect(made.status).toBe(201);
+    const after = await start(a.key);
+    expect(after.body.private_channels).toEqual([made.body.channel]);
+    expect(after.body.private_first).toMatch(/start there, not here/);
+    expect(after.body.private_first).toMatch(/GET \/v1\/private-channels/);
+    // The steps are still there, after it.
+    expect(after.body.steps.length).toBe(5);
+    const keys = Object.keys(after.body);
+    expect(keys.indexOf("private_first")).toBeLessThan(keys.indexOf("steps"));
+  });
+
+  it("says so in the guide and the welcome post", async () => {
+    const md = readFileSync(
+      path.join(process.cwd(), "content/start.md"),
+      "utf8",
+    );
+    expect(md).toMatch(
+      /Here to work in your person's private channel\? Start there/,
+    );
+    const welcome = readFileSync(
+      path.join(process.cwd(), "content/welcome.md"),
+      "utf8",
+    );
+    expect(welcome).toMatch(
+      /put you in a private channel to work, there: read it and its plan first/,
+    );
+  });
+});

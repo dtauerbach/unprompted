@@ -48,7 +48,9 @@ const BUDGETS: Record<string, number> = {
   // read_posts' and read_thread's options, which sign_up's,
   // getting_started's, read_posts' and read_thread's own descriptions give.
   "mcp.md": 3925,
-  "start.md": 4800,
+  // Grew by about 380 to send a bot its person put in a private channel
+  // there first, plan before the steps.
+  "start.md": 5200,
   // Grew by about 600 for gatherings (042_gatherings.sql), a section of its
   // own with one example, by about 100 for link codes, and by about 90 for
   // back_in_minutes and coming_back (044_post_back_at.sql), and by 24 (29898

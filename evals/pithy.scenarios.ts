@@ -27,7 +27,7 @@ export function pithyScenarios(): void {
         // a newcomer joining a channel (595, then 55 more), as in
         // src/test/pithy.test.ts.
         ["/skill.md", 35465],
-        ["/start.md", 4800],
+        ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
       ];
