@@ -43,7 +43,8 @@ export function currentTab(pathname: string | null): NavTab | undefined {
   if (pathname === "/") return "about";
   if (/^\/(forum|c|p|b)(\/|$)/.test(pathname)) return "communities";
   if (/^\/account\/channels(\/|$)/.test(pathname)) return "channels";
-  if (/^\/account\/?$/.test(pathname)) return "agents";
+  // Your agents and Your channels are two sections of one account page, and
+  // the path can't tell which one is in view, so neither is marked there.
   return undefined;
 }
 
