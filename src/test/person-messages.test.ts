@@ -16,6 +16,7 @@ import {
   setPrivateChannelHidden,
 } from "@/lib/admin";
 import { compactMessage } from "@/lib/agent-view";
+import { PLAN_NOTICE } from "@/lib/channel-plans";
 import { db } from "@/lib/db";
 import { LIMITS } from "@/lib/limits";
 import { readGroupForPerson } from "@/lib/peek";
@@ -123,6 +124,21 @@ async function waitingOnRowLock(): Promise<void> {
   throw new Error("the send never waited on a member's row");
 }
 
+// Until another connection is waiting on a private channel's lock (the
+// send, its members' rows already locked for share), so a test can change
+// the roster at that moment.
+async function waitingOnChannelLock(): Promise<void> {
+  for (let i = 0; i < 500; i++) {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE datname = current_database() AND pid <> pg_backend_pid()
+        AND wait_event_type = 'Lock' AND query ILIKE '%lock_private_channel%'`;
+    if ((r?.n ?? 0) > 0) return;
+    await new Promise((res) => setTimeout(res, 10));
+  }
+  throw new Error("the send never waited on the channel's lock");
+}
+
 const read = (b: Bot, g: string) =>
   call(readRoute, {
     key: b.key,
@@ -174,6 +190,16 @@ describe("a person writing to their own bots", () => {
     ]);
     expect(page.body).not.toHaveProperty("person_notice");
     expect(page.body.notice).toBe(CHANNEL_NOTICE);
+    // The words themselves, so a notice can't slip back to "only members".
+    expect(CHANNEL_NOTICE).toContain(
+      "the person a member is linked to may see messages that member wrote while linked",
+    );
+    expect(CHANNEL_NOTICE_WITH_PERSON).toContain(
+      "the person a member is linked to may see messages that member wrote while linked",
+    );
+    expect(PLAN_NOTICE).toContain(
+      "the person a member is linked to may see a version that member saved while linked",
+    );
   });
 
   it("comes in what's new, marked the same, with the notice in the messages note", async () => {
@@ -318,6 +344,55 @@ describe("a person writing to their own bots", () => {
     expect(again.woke).toBe(1);
     expect(await wakeOf(lea)).toBe(l0 + 1);
     expect(await wakeOf(ben)).toBe(b0);
+  });
+
+  it("refuses, writing nothing, when the roster is swapped after its rows were locked", async () => {
+    const { lea, ben, human, channel } = await own();
+    const cid = await bot("cid");
+    await link("google-p", cid);
+    const l0 = await wakeOf(lea);
+    const c0 = await wakeOf(cid);
+    const q0 = await quota();
+    // The group's lock is held while the send locks lea's and ben's rows;
+    // then ben goes out and cid comes in, one for one, so the count of
+    // bots to wake is unchanged. Only the roster check catches it: cid's
+    // row was never locked for share.
+    const holder = await db().reserve();
+    let sending: Promise<unknown>;
+    try {
+      await holder`BEGIN`;
+      await holder`SELECT lock_private_channel(${Number(num(channel))})`;
+      sending = post(channel, "Counted lea and ben.", {
+        nonce: "nonce-swap-000000",
+      });
+      sending.catch(() => {});
+      await waitingOnChannelLock();
+      await holder`
+        INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)
+        VALUES (${Number(num(channel))}, ${cid.id}, true, 'person', ${human})`;
+      await holder`
+        INSERT INTO channel_members (channel_id, bot_id, member, via, by_human_id)
+        VALUES (${Number(num(channel))}, ${ben.id}, false, 'person', ${human})`;
+      await holder`COMMIT`;
+    } finally {
+      await holder`ROLLBACK`.catch(() => {});
+      holder.release();
+    }
+    await expect(sending).rejects.toMatchObject({
+      status: 409,
+      code: "channel_changed",
+    });
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+    expect(await quota()).toEqual(q0);
+    // cid's wake rose only for coming in, not for the message.
+    expect(await wakeOf(lea)).toBe(l0);
+    expect(await wakeOf(cid)).toBe(c0 + 1);
+    const again = await post(channel, "Counted lea and ben.", {
+      nonce: "nonce-swap-000000",
+    });
+    expect(again.woke).toBe(2);
   });
 
   it("is one message when the same form is sent twice", async () => {

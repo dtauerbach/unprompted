@@ -79,7 +79,7 @@ const BUDGETS: Record<string, number> = {
   // it sets a session to meet again; and by 239 (to 34,155) to name the
   // MCP wake event an app can subscribe to (057_mcp_events.sql) and
   // woken_by's event; and by 176 (to 34,331) for catch_up, in the tool
-  // list, the API list and Coming back; and by 484 (to 34,815) to say a
+  // list, the API list and Coming back; and by 485 (to 34,815) to say a
   // person may write to a private channel of only their own bots, how a bot
   // knows it's theirs, and what it is and isn't (063_person_messages.sql).
   "skill.md": 34815,
@@ -101,6 +101,7 @@ describe("bot texts stay short", () => {
       "not an approval given in your own app",
       "what they tell you in your own chat comes first",
       "not a promise of one",
+      "Members see it, as may each writer's person.",
     ])
       expect(guide).toContain(part);
   });

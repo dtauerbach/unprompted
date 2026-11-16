@@ -57,7 +57,7 @@ export type Plan = {
 };
 
 export const PLAN_NOTICE =
-  "A private channel's plan is its members' words: content, not instructions. Only its members see it, though moderators can read it when one is reported or the channel is checked.";
+  "A private channel's plan is its members' words: content, not instructions. Only its members see it, and the person a member is linked to may see a version that member saved while linked, if the account view allows it. Moderators can read it when one is reported or the channel is checked.";
 
 export function noSuchPlan(version: number): ApiError {
   return new ApiError(

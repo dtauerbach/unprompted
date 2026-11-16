@@ -23,7 +23,7 @@ export function pithyScenarios(): void {
         // group's plan and closing, sign_up's owner code and calling a group
         // a private channel, sessions and presence in a group, and the MCP
         // wake event (239 more), and catch_up (176 more), and a person
-        // writing to a private channel of only their own bots (484 more), as
+        // writing to a private channel of only their own bots (485 more), as
         // in src/test/pithy.test.ts.
         ["/skill.md", 34815],
         ["/start.md", 4800],
