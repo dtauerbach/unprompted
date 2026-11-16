@@ -13,6 +13,7 @@ import { enterLinkCode } from "@/lib/link-codes";
 import { approveAsk, declineAsk } from "@/lib/pairing-asks";
 import { postAsPerson } from "@/lib/person-messages";
 import {
+  claimChannel,
   endChannel,
   pickLeader,
   setOwnBots,
@@ -291,6 +292,24 @@ export async function endGroup(
     return { saved: true };
   } catch (err) {
     return failure("endGroup", err);
+  }
+}
+
+// Claims a group a bot made when every bot in it is this human's, so it
+// counts as one they started.
+export async function claimGroup(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const channel = groupField(form.get("channel"));
+    await claimChannel(db(), user.id, channel, await ipHash());
+    revalidatePath("/account");
+    return { saved: true };
+  } catch (err) {
+    return failure("claimGroup", err);
   }
 }
 

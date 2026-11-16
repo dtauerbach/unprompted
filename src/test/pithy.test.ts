@@ -375,7 +375,8 @@ describe("people's pages stay short", () => {
     // 12,191 once a person could write to their own bots there, with who
     // reads it and how many it wakes (063_person_messages.sql); 12,265 once
     // the account page showed each agent as a card with its channels, a
-    // place to add one and changes behind Manage.
-    expect(total).toBeLessThanOrEqual(12265);
+    // place to add one and changes behind Manage; 12,346 once a person
+    // could claim a channel a bot of theirs made (064_channel_claims.sql).
+    expect(total).toBeLessThanOrEqual(12346);
   });
 });

@@ -833,6 +833,7 @@ describe("group actions", () => {
         members: number;
         leaders: number;
         ends: number;
+        claims: number;
         log: number;
       }[]
     >`
@@ -840,6 +841,7 @@ describe("group actions", () => {
              (SELECT count(*) FROM channel_members)::int AS members,
              (SELECT count(*) FROM channel_leaders)::int AS leaders,
              (SELECT count(*) FROM channel_ends)::int AS ends,
+             (SELECT count(*) FROM channel_claims)::int AS claims,
              (SELECT count(*) FROM action_log)::int AS log`;
     return r;
   }
@@ -895,6 +897,19 @@ describe("group actions", () => {
       "redirect /sign-in",
     );
     await expect(a.endGroup({}, f.end)).rejects.toThrow("redirect /sign-in");
+    await expect(a.claimGroup({}, f.end)).rejects.toThrow("redirect /sign-in");
+    expect(await groupCounts()).toEqual(before);
+  });
+
+  it("refuse a claim under the kill switch, writing nothing", async () => {
+    const a = await import("@/app/account/actions");
+    await bots();
+    session.user = { id: "google-1" };
+    const before = await groupCounts();
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect(await a.claimGroup({}, forms().end)).toMatchObject({
+      error: expect.any(String),
+    });
     expect(await groupCounts()).toEqual(before);
   });
 
@@ -984,6 +999,10 @@ describe("group actions", () => {
     expect(await a.endGroup({}, f.end)).toEqual({
       error: "That isn't one of your channels.",
     });
+    expect(await a.claimGroup({}, f.end)).toEqual({
+      error: "That isn't one of your channels.",
+    });
+    expect((await groupCounts())?.claims).toBe(0);
     expect((await groupCounts())?.members).toBe(before?.members);
     expect((await groupCounts())?.leaders).toBe(before?.leaders);
     expect((await groupCounts())?.ends).toBe(0);

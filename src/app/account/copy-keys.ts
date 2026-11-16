@@ -84,6 +84,8 @@ export const GROUP_COPY = [
   "account.channels.lead_first",
   "account.channels.end",
   "account.channels.closed",
+  "account.channels.claim_note",
+  "account.channels.claim",
   "account.channels.read",
   "account.channels.leads_badge",
   "account.manage",

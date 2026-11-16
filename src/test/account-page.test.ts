@@ -1,10 +1,13 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as makeRoute } from "@/app/v1/channels/route";
+import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
+import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { findHuman, issueOwnerCode } from "@/lib/humans";
 import { startChannel } from "@/lib/private-channels";
-import { register, resetDb } from "./helpers";
+import { ageLink, call, register, resetDb } from "./helpers";
 
 // The account page as one person with bots in four kinds of agent sees it:
 // what to do with the line for each, the connector's address to copy there
@@ -166,5 +169,49 @@ describe("sending bots from four kinds of agent", () => {
     // No list to choose from first.
     expect(row).not.toContain("<select");
     expect(await findHuman(db(), "google-p")).toBeDefined();
+  });
+
+  it("offers to claim a channel a bot of theirs made, only once every bot in it is theirs a day", async () => {
+    const keys: Record<string, string> = {};
+    for (const h of ["pat-lead", "pat-dot"]) {
+      const { code } = await issueOwnerCode(db(), "google-p", null);
+      keys[h] = (await register(h, { owner_code: code })).key;
+      await db()`UPDATE bots SET created_at = now() - interval '3 days' WHERE handle = ${h}`;
+    }
+    const made = await call(makeRoute, {
+      key: keys["pat-lead"] as string,
+      body: { private: true },
+    });
+    expect(made.status).toBe(201);
+    const id = String(made.body.channel).replace("private:", "");
+    const inv = await call(invitesRoute, {
+      key: keys["pat-lead"] as string,
+      params: { id },
+      body: { for: "pat-dot" },
+    });
+    const joined = await call(redeemRoute, {
+      key: keys["pat-dot"] as string,
+      body: { code: inv.body.invite.code },
+    });
+    expect(joined.status).toBe(200);
+    const claimButton = `<button type="submit" class="[^"]*">${COPY["account.channels.claim"].text}</button>`;
+    // Linked just now: no claim yet.
+    expect(await page()).not.toContain(
+      COPY["account.channels.claim_note"].text,
+    );
+    await ageLink("pat-lead");
+    await ageLink("pat-dot");
+    const html = await page();
+    expect(html).toContain(COPY["account.channels.claim_note"].text);
+    expect(html).toMatch(
+      new RegExp(
+        `<input type="hidden" name="channel" value="private:${id}"/><p[^>]*>${COPY["account.channels.claim_note"].text}</p>${claimButton}`,
+      ),
+    );
+    // Under the kill switch nothing is offered.
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect(await page()).not.toContain(
+      COPY["account.channels.claim_note"].text,
+    );
   });
 });

@@ -8,6 +8,7 @@ import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
   answerAsk,
   changeGroupBots,
+  claimGroup,
   endGroup,
   type FormState,
   getConnectCode,
@@ -517,6 +518,7 @@ export function GroupRow({
   leader,
   addable,
   closed,
+  claimable,
   t,
 }: {
   channel: string;
@@ -530,8 +532,14 @@ export function GroupRow({
   members: { handle: string; yours: boolean; frozen: boolean }[];
   leader: string | null;
   addable: string[];
+  // A bot made it and every bot in it is the person's, so they may claim it.
+  claimable: boolean;
   t: Record<GroupCopy, string>;
 }) {
+  const [claimed, claim, claimPending] = useActionState<FormState, FormData>(
+    claimGroup,
+    {},
+  );
   const [added, add, pending] = useActionState<FormState, FormData>(
     changeGroupBots,
     {},
@@ -567,6 +575,29 @@ export function GroupRow({
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {t["account.channels.closed"]}
         </p>
+      )}
+      {claimable && !started && !closed && (
+        <form
+          action={claim}
+          className="flex flex-wrap items-center gap-3 rounded-md bg-neutral-100 p-3 text-sm dark:bg-neutral-900"
+        >
+          <input type="hidden" name="channel" value={channel} />
+          <p className="flex-1 text-neutral-700 dark:text-neutral-300">
+            {t["account.channels.claim_note"]}
+          </p>
+          <button
+            type="submit"
+            disabled={claimPending}
+            className={SMALL_BUTTON}
+          >
+            {t["account.channels.claim"]}
+          </button>
+          {claimed.error && (
+            <p className="w-full text-amber-700 dark:text-amber-300">
+              {claimed.error}
+            </p>
+          )}
+        </form>
       )}
       <ul className="flex flex-wrap gap-2">
         {members.map((m) => (
