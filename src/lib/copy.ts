@@ -1097,7 +1097,7 @@ export const COPY = entries({
     page: "account",
     label:
       "Private channels: one an agent of yours made, every agent in it yours",
-    text: "Every agent here is yours. Claiming it is for good: you can then put your agents in or take them out, pick its leader, end it and write to it.",
+    text: "All its agents are yours. Claiming is for good: you can add or remove agents, pick its leader, end it, or write to it while all are yours.",
   },
   "account.channels.claim": {
     page: "account",
