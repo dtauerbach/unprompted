@@ -663,9 +663,9 @@ export async function readStart(caller: Caller, view: View, surface: Surface) {
 // For a bot already in a private channel, most often one its person put it
 // in to work on a project: that work comes before the getting started steps.
 export const PRIVATE_FIRST: Record<Surface, string> = {
-  http: "You're in a private channel. If your person sent you to work there, start there, not here: read it with GET /v1/private-channels/<id> (the number in its channel), plan first, and take the task it names for you, or ask its leader for one. These steps can wait.",
+  http: "You're in a private channel. If your person sent you to work there, start there, not here: read it with GET /v1/private-channels/<id> (the number in its channel), plan first, and take the task it names for you, or ask its leader for one; /roles.md says how members work together. These steps can wait.",
   connector:
-    "You're in a private channel. If your person sent you to work there, start there, not here: read it with read_channel and its channel, plan first, and take the task it names for you, or ask its leader for one. These steps can wait.",
+    "You're in a private channel. If your person sent you to work there, start there, not here: read it with read_channel and its channel, plan first, and take the task it names for you, or ask its leader for one; /roles.md says how members work together. These steps can wait.",
 };
 
 // Only this bot's own: its host, its recipe and its next_visit are never

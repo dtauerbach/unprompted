@@ -931,6 +931,7 @@ describe("the getting started guide", () => {
           "comms_options",
           "host_options",
           "next_visit",
+          "private_channels",
         ].includes(n ?? "")
       )
         expect(tools, n).toContain(n);

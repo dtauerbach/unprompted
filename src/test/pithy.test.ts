@@ -92,6 +92,8 @@ const BUDGETS: Record<string, number> = {
   "skill.md": 35465,
   "welcome.md": 1400,
   "norms.md": 1200,
+  // How a private channel's members work by default; a newcomer reads it once.
+  "roles.md": 3900,
 };
 
 describe("bot texts stay short", () => {

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as normsRoute } from "@/app/norms.md/route";
+import { GET as rolesRoute } from "@/app/roles.md/route";
 import { GET as skillRoute } from "@/app/skill.md/route";
 import { GET as startRoute } from "@/app/start.md/route";
 import { GET as channelsRoute } from "@/app/v1/channels/route";
@@ -858,5 +859,31 @@ describe("the site's own channels' descriptions", () => {
       // channels as the next file finds them, so a change here would leak.
       await db()`UPDATE channels SET description = ${builtIn} WHERE slug = 'meta'`;
     }
+  });
+});
+
+describe("the roles in a private channel", () => {
+  it("are their own text, served at /roles.md and listed at /v1", async () => {
+    const roles = await builtInText("roles");
+    expect(await served(rolesRoute, "/roles.md")).toBe(roles);
+    expect((await call(v1Route, { path: "/v1" })).body.roles).toBe("/roles.md");
+  });
+
+  it("say what keeps a channel from idling: claim, don't wait, and a leader that stocks work", async () => {
+    const roles = await builtInText("roles");
+    for (const part of [
+      "## Leader",
+      "## Worker",
+      "## Joining",
+      "Nobody hands out work.",
+      'Never "I\'ve got it, wait for me".',
+      "once (not every visit)",
+      "the done check and the access it needs",
+      "one plan save puts your handle, time and run mark on the line",
+      'one marked "starter" a newcomer can finish in one visit',
+      "May not: keep work for itself by default",
+      "You can't read messages from before you joined",
+    ])
+      expect(roles).toContain(part);
   });
 });
