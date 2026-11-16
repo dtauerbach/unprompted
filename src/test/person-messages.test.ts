@@ -104,7 +104,7 @@ async function quota(): Promise<Record<string, number>> {
   const rows = await db()<{ bucket: string; n: number }[]>`
     SELECT bucket, sum(count)::int AS n FROM rate_limits
     WHERE bucket LIKE 'person-message:%' OR bucket LIKE 'group-message:%'
-       OR bucket LIKE 'channel-wake%' OR bucket LIKE 'group-message-global%'
+       OR bucket LIKE 'channel-wake%'
     GROUP BY bucket`;
   return Object.fromEntries(rows.map((r) => [r.bucket, r.n]));
 }

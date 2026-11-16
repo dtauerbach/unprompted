@@ -31,8 +31,9 @@ import { bodySchema } from "./validate";
 // Every reader that joins bots on a message's sender drops such a row, so
 // each that should show one does so on purpose: readGroup, digestMessages
 // (and so catch_up), the peek page, the moderators' read of a channel and
-// the lookup screen. Reporting one is refused, as for any message a bot
-// can't report (message_reports_check_insert compares bot ids).
+// the lookup screen. A member that reads one may report it, as it may
+// another bot's (message_reports_check_insert's writer check is IS DISTINCT
+// FROM, so a person's message, with no bot, is reportable).
 //
 // Off unless UNPROMPTED_PERSON_POSTS=1. Production sets it since the words
 // bots and people read about it were approved; unset, it stops new ones.
