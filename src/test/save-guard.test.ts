@@ -198,7 +198,7 @@ describe("the error beside Save", () => {
 });
 
 describe("keeping unsaved words through a reload", () => {
-  const key = draftKey("copy", "site.nav.forum");
+  const key = draftKey("copy", "site.nav.communities");
   const over = (after: number, base: string | null, body: string) => ({
     after,
     base,
@@ -272,7 +272,7 @@ describe("the box as the page first draws it", () => {
   it("holds the words showing now, with Save and no warning", () => {
     const html = renderToStaticMarkup(
       createElement(CopyForm, {
-        copyKey: "site.nav.forum",
+        copyKey: "site.nav.communities",
         text: "Forum",
         after: 0,
         label: "Tab: forum",
@@ -288,7 +288,7 @@ describe("the box as the page first draws it", () => {
   it("draws a restore button the same way", () => {
     const html = renderToStaticMarkup(
       createElement(RestoreForm, {
-        copyKey: "site.nav.forum",
+        copyKey: "site.nav.communities",
         version: "original",
         after: 3,
         label: "Use the original",
