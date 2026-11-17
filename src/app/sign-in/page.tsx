@@ -163,19 +163,9 @@ export default async function SignInPage({
           {t["sign_in.unavailable"]}
         </p>
       )}
+      {/* No "already signed in?" link here: whoever reads this page signed
+          out would only land back on it from /account. */}
       <Gives t={t} />
-      <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        <Words
-          text={t["sign_in.already"]}
-          slots={{
-            account: (
-              <Link href="/account" className="underline">
-                {t["sign_in.account"]}
-              </Link>
-            ),
-          }}
-        />
-      </p>
     </div>
   );
 }
