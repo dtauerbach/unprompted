@@ -2,17 +2,20 @@
 // production, as `npm audit --omit=dev --audit-level=high` did, except an
 // advisory listed in ALLOWED below. An allowance holds only while the
 // advisory still reads exactly as it did when it was allowed (the same
-// severity and affected range), every route to its package in the production
-// tree still runs through the dependency chain it names, and its review date
-// hasn't passed. Anything else fails CI until the allowance is looked at
-// again: a fix (a changed range), a reclassification either way, a new route
-// in, or the date. An allowance whose advisory no longer shows fails too, so
-// it gets taken out. CI runs it on every push:
+// severity and affected range), package-lock.json is the one reviewed, every
+// route to its package in the production tree still runs through the
+// dependency chain it names, and its review date hasn't passed. Anything else
+// fails CI until the allowance is looked at again: a fix (a changed range), a
+// reclassification either way, a changed lockfile, a new route in, a tree npm
+// reports a problem with, or the date. An allowance whose advisory no longer
+// shows fails too, so it gets taken out. CI runs it on every push:
 //
 //   node --experimental-strip-types scripts/check-audit.ts
 //
 // Plain Node, no dependencies.
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 export type Allowance = {
@@ -28,6 +31,9 @@ export type Allowance = {
   through: string[];
   // After this day (UTC) the allowance fails until someone looks again.
   reviewBy: string;
+  // SHA-256 of package-lock.json as reviewed. Any change to what's
+  // installed fails until someone checks the tree again and updates it.
+  lockfile: string;
   why: string;
 };
 
@@ -47,6 +53,8 @@ export const ALLOWED: Allowance[] = [
     range: "<=4.0.7",
     through: ["@neondatabase/auth", "better-auth", "vitest"],
     reviewBy: "2026-12-17",
+    lockfile:
+      "7a8a9f59020da632455d41d60bc2736ec4d739c4f47dc728bc92ccc8550c0049",
     why: "ReDoS reached only through a test runner; no fix released yet",
   },
 ];
@@ -61,32 +69,50 @@ type Advisory = {
 type Vulnerability = { name: string; via: (string | Advisory)[] };
 export type AuditReport = { vulnerabilities?: Record<string, Vulnerability> };
 
-// `npm ls <name> --omit=dev --all --json`: the production tree, cut to the
-// routes that reach <name>. A package npm has already shown elsewhere is
-// listed again without its children (deduped).
-export type LsNode = { dependencies?: Record<string, LsNode> };
+// `npm ls <name> --omit=dev --all --long --json`: the production tree, cut
+// to the routes that reach <name>, each package with its installed path. A
+// package npm has already shown elsewhere is listed again without its
+// children (deduped), so routes are rebuilt by installed path, never by name,
+// and two installed copies of one package stay apart. `problems` or `error`,
+// or npm exiting non-zero (`failed`, set by the caller), means the tree can't
+// be trusted.
+export type LsNode = {
+  path?: string;
+  dependencies?: Record<string, LsNode>;
+  problems?: unknown;
+  error?: unknown;
+  failed?: boolean;
+};
 
 // Every route from the site to `target`, as package names. A deduped package
-// that leads to `target` somewhere else in the tree ends a route too, so a
-// new route through an already-listed package isn't missed.
+// whose installed copy leads to `target` somewhere else in the tree ends a
+// route too, so a new route through an already-listed package isn't missed.
+// A package without an installed path throws: the routes can't be told apart.
 export function routesTo(tree: LsNode, target: string): string[][] {
-  const carriers = new Set<string>();
-  const full: string[][] = [];
-  const walk = (n: LsNode, path: string[]) => {
-    for (const [k, v] of Object.entries(n.dependencies ?? {})) {
-      const p = [...path, k];
-      if (k === target) full.push(p);
-      else walk(v, p);
-    }
+  const at = (n: LsNode, name: string) => {
+    if (!n.path) throw new Error(`npm ls gave no installed path for ${name}`);
+    return n.path;
   };
-  walk(tree, []);
-  for (const p of full) for (const k of p.slice(0, -1)) carriers.add(k);
-  const routes: string[][] = [];
-  const ends = (n: LsNode, path: string[]) => {
+  const carriers = new Set<string>();
+  const walk = (n: LsNode): boolean => {
+    let leads = false;
     for (const [k, v] of Object.entries(n.dependencies ?? {})) {
-      const p = [...path, k];
+      const here = at(v, k);
+      if (k === target || walk(v)) {
+        leads = true;
+        if (k !== target) carriers.add(here);
+      }
+    }
+    return leads;
+  };
+  walk(tree);
+  const routes: string[][] = [];
+  const ends = (n: LsNode, names: string[]) => {
+    for (const [k, v] of Object.entries(n.dependencies ?? {})) {
+      const p = [...names, k];
       const kids = Object.keys(v.dependencies ?? {}).length;
-      if (k === target || (carriers.has(k) && kids === 0)) routes.push(p);
+      if (k === target || (kids === 0 && carriers.has(at(v, k))))
+        routes.push(p);
       else ends(v, p);
     }
   };
@@ -101,6 +127,7 @@ export function judge(
   allowed: Allowance[],
   trees: Record<string, LsNode>,
   today: string,
+  lockfile: string,
 ): { failures: string[]; skipped: string[] } {
   const seen = new Map<string, Advisory>();
   for (const v of Object.values(report.vulnerabilities ?? {}))
@@ -137,7 +164,26 @@ export function judge(
       );
       continue;
     }
-    const routes = routesTo(trees[a.name] ?? {}, a.name);
+    if (lockfile !== allow.lockfile) {
+      failures.push(
+        `${a.name}: ${a.url} was allowed for package-lock.json ${allow.lockfile.slice(0, 12)}, and it's now ${lockfile.slice(0, 12)}. Check every route to ${a.name} again (npm ls ${a.name} --omit=dev --all), then put the new sha256sum of package-lock.json in its allowance in scripts/check-audit.ts.`,
+      );
+      continue;
+    }
+    const tree = trees[a.name];
+    if (!tree || tree.failed || tree.problems || tree.error) {
+      failures.push(
+        `${a.name}: ${a.url}: npm ls reported a problem with the tree, so its allowance can't be checked.`,
+      );
+      continue;
+    }
+    let routes: string[][];
+    try {
+      routes = routesTo(tree, a.name);
+    } catch (e) {
+      failures.push(`${a.name}: ${a.url}: ${(e as Error).message}.`);
+      continue;
+    }
     const outside = routes.filter(
       (r) =>
         r.length < allow.through.length ||
@@ -161,19 +207,21 @@ export function judge(
   return { failures, skipped };
 }
 
-// npm audit and npm ls exit non-zero when they find something; their report
-// is still on stdout.
-function npmJson(args: string[]): unknown {
-  let out: string;
+// npm audit exits non-zero when it finds something, and its report is still
+// on stdout; `ok` says whether it exited zero.
+function npmJson(args: string[]): { json: unknown; ok: boolean } {
   try {
-    out = execFileSync("npm", args, {
+    const out = execFileSync("npm", args, {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
     });
+    return { json: JSON.parse(out), ok: true };
   } catch (e) {
-    out = (e as { stdout?: string }).stdout ?? "";
+    return {
+      json: JSON.parse((e as { stdout?: string }).stdout ?? ""),
+      ok: false,
+    };
   }
-  return JSON.parse(out);
 }
 
 const invoked =
@@ -182,15 +230,18 @@ if (invoked) {
   let report: AuditReport;
   const trees: Record<string, LsNode> = {};
   try {
-    report = npmJson(["audit", "--omit=dev", "--json"]) as AuditReport;
-    for (const name of new Set(ALLOWED.map((a) => a.name)))
-      trees[name] = npmJson([
+    report = npmJson(["audit", "--omit=dev", "--json"]).json as AuditReport;
+    for (const name of new Set(ALLOWED.map((a) => a.name))) {
+      const ls = npmJson([
         "ls",
         name,
         "--omit=dev",
         "--all",
+        "--long",
         "--json",
-      ]) as LsNode;
+      ]);
+      trees[name] = { ...(ls.json as LsNode), failed: !ls.ok };
+    }
   } catch {
     console.error("::error::npm audit or npm ls gave no report.");
     process.exit(1);
@@ -200,7 +251,10 @@ if (invoked) {
     process.exit(1);
   }
   const today = new Date().toISOString().slice(0, 10);
-  const { failures, skipped } = judge(report, ALLOWED, trees, today);
+  const lockfile = createHash("sha256")
+    .update(readFileSync("package-lock.json"))
+    .digest("hex");
+  const { failures, skipped } = judge(report, ALLOWED, trees, today, lockfile);
   for (const s of skipped) console.log(`Allowed for now: ${s}`);
   if (failures.length) {
     for (const f of failures) console.error(`::error::${f}`);

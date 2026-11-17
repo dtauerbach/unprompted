@@ -11,11 +11,12 @@ import {
 
 // CI fails on a high or critical advisory in the production tree, except one
 // the maintainer allowed, and only while it reads exactly as it did when
-// allowed, every route to it runs through the chain it names, and its review
-// date hasn't passed.
+// allowed, the lockfile is the one reviewed, every route to it runs through
+// the chain it names, and its review date hasn't passed.
 
 const URL = "https://github.com/advisories/GHSA-test-0000-0000";
 const TODAY = "2026-11-17";
+const LOCK = "a".repeat(64);
 const allow: Allowance = {
   url: URL,
   name: "lib",
@@ -23,6 +24,7 @@ const allow: Allowance = {
   range: "<=1.0.0",
   through: ["auth", "runner"],
   reviewBy: "2026-12-17",
+  lockfile: LOCK,
   why: "test",
 };
 
@@ -48,25 +50,30 @@ function report(
   };
 }
 
+// A package at its installed path, with what it depends on.
+const node = (path: string, deps?: Record<string, LsNode>): LsNode => ({
+  path: `/site/node_modules/${path}`,
+  ...(deps ? { dependencies: deps } : {}),
+});
+
 // auth > runner > lib, and auth > runner > glob > lib (deduped).
-const inside: LsNode = {
-  dependencies: {
-    auth: {
-      dependencies: {
-        runner: {
-          dependencies: { lib: {}, glob: { dependencies: { lib: {} } } },
-        },
-      },
-    },
-  },
+const insideDeps = {
+  auth: node("auth", {
+    runner: node("runner", {
+      lib: node("lib"),
+      glob: node("glob", { lib: node("lib") }),
+    }),
+  }),
 };
+const inside: LsNode = { dependencies: insideDeps };
 const trees = { lib: inside };
 const run = (
   r: AuditReport,
   a: Allowance[] = [allow],
   t: Record<string, LsNode> = trees,
   today = TODAY,
-) => judge(r, a, t, today);
+  lockfile = LOCK,
+) => judge(r, a, t, today, lockfile);
 
 describe("the audit check", () => {
   it("passes a clean tree", () => {
@@ -117,8 +124,8 @@ describe("the audit check", () => {
   it("fails it again once a route to the package bypasses the allowed chain", () => {
     const server: LsNode = {
       dependencies: {
-        ...inside.dependencies,
-        server: { dependencies: { lib: {} } },
+        ...insideDeps,
+        server: node("server", { lib: node("lib") }),
       },
     };
     expect(run(report(), [allow], { lib: server }).failures[0]).toContain(
@@ -130,8 +137,8 @@ describe("the audit check", () => {
     // server > glob, where glob's children are listed only under runner.
     const viaDedupe: LsNode = {
       dependencies: {
-        ...inside.dependencies,
-        server: { dependencies: { glob: {} } },
+        ...insideDeps,
+        server: node("server", { glob: node("glob") }),
       },
     };
     expect(run(report(), [allow], { lib: viaDedupe }).failures[0]).toContain(
@@ -139,8 +146,45 @@ describe("the audit check", () => {
     );
   });
 
+  it("keeps two installed copies of one package apart", () => {
+    // server has its own copy of glob, which doesn't lead to lib: no route.
+    const twoCopies: LsNode = {
+      dependencies: {
+        ...insideDeps,
+        server: node("server", { glob: node("server/node_modules/glob") }),
+      },
+    };
+    expect(run(report(), [allow], { lib: twoCopies }).failures).toEqual([]);
+  });
+
+  it("fails once package-lock.json isn't the one reviewed", () => {
+    const r = run(report(), [allow], trees, TODAY, "b".repeat(64));
+    expect(r.failures[0]).toContain("package-lock.json");
+    expect(r.skipped).toEqual([]);
+  });
+
+  it("fails closed when npm ls reports a problem, even with a tree that parses", () => {
+    for (const bad of [
+      { ...inside, failed: true },
+      { ...inside, problems: ["invalid: lib"] },
+      { ...inside, error: { code: "ELSPROBLEMS" } },
+    ])
+      expect(run(report(), [allow], { lib: bad }).failures[0]).toContain(
+        "npm ls reported a problem",
+      );
+  });
+
+  it("fails closed when npm ls gives no installed path", () => {
+    const pathless: LsNode = {
+      dependencies: { auth: { dependencies: { lib: {} } } },
+    };
+    expect(run(report(), [allow], { lib: pathless }).failures[0]).toContain(
+      "no installed path",
+    );
+  });
+
   it("fails when it can't find how the package reaches the site", () => {
-    expect(run(report(), [allow], {}).failures[0]).toContain(
+    expect(run(report(), [allow], { lib: {} }).failures[0]).toContain(
       "couldn't find how it reaches",
     );
   });
@@ -171,6 +215,7 @@ describe("the audit check", () => {
         range: "<=4.0.7",
         through: ["@neondatabase/auth", "better-auth", "vitest"],
         reviewBy: "2026-12-17",
+        lockfile: expect.stringMatching(/^[0-9a-f]{64}$/),
       }),
     ]);
   });
