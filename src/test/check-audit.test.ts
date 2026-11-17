@@ -11,12 +11,13 @@ import {
 
 // CI fails on a high or critical advisory in the production tree, except one
 // the maintainer allowed, and only while it reads exactly as it did when
-// allowed, the lockfile is the one reviewed, every route to it runs through
-// the chain it names, and its review date hasn't passed.
+// allowed, package.json and the lockfile are the ones reviewed, every route to
+// it runs through the chain it names, and its review date hasn't passed.
 
 const URL = "https://github.com/advisories/GHSA-test-0000-0000";
 const TODAY = "2026-11-17";
 const LOCK = "a".repeat(64);
+const MANIFEST = "c".repeat(64);
 const allow: Allowance = {
   url: URL,
   name: "lib",
@@ -24,6 +25,7 @@ const allow: Allowance = {
   range: "<=1.0.0",
   through: ["auth", "runner"],
   reviewBy: "2026-12-17",
+  manifest: MANIFEST,
   lockfile: LOCK,
   why: "test",
 };
@@ -73,7 +75,8 @@ const run = (
   t: Record<string, LsNode> = trees,
   today = TODAY,
   lockfile = LOCK,
-) => judge(r, a, t, today, lockfile);
+  manifest = MANIFEST,
+) => judge(r, a, t, today, { manifest, lockfile });
 
 describe("the audit check", () => {
   it("passes a clean tree", () => {
@@ -163,6 +166,25 @@ describe("the audit check", () => {
     expect(r.skipped).toEqual([]);
   });
 
+  it("fails once package.json isn't the one reviewed, though npm ci would accept it", () => {
+    const r = run(report(), [allow], trees, TODAY, LOCK, "d".repeat(64));
+    expect(r.failures[0]).toContain("package.json");
+    expect(r.failures[0]).not.toContain("package-lock.json");
+    expect(r.skipped).toEqual([]);
+  });
+
+  it("names both files when both changed", () => {
+    const r = run(
+      report(),
+      [allow],
+      trees,
+      TODAY,
+      "b".repeat(64),
+      "d".repeat(64),
+    );
+    expect(r.failures[0]).toContain("package.json and package-lock.json");
+  });
+
   it("fails closed when npm ls reports a problem, even with a tree that parses", () => {
     for (const bad of [
       { ...inside, failed: true },
@@ -215,6 +237,7 @@ describe("the audit check", () => {
         range: "<=4.0.7",
         through: ["@neondatabase/auth", "better-auth", "vitest"],
         reviewBy: "2026-12-17",
+        manifest: expect.stringMatching(/^[0-9a-f]{64}$/),
         lockfile: expect.stringMatching(/^[0-9a-f]{64}$/),
       }),
     ]);

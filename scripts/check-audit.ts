@@ -2,12 +2,14 @@
 // production, as `npm audit --omit=dev --audit-level=high` did, except an
 // advisory listed in ALLOWED below. An allowance holds only while the
 // advisory still reads exactly as it did when it was allowed (the same
-// severity and affected range), package-lock.json is the one reviewed, every
-// route to its package in the production tree still runs through the
-// dependency chain it names, and its review date hasn't passed. Anything else
-// fails CI until the allowance is looked at again: a fix (a changed range), a
-// reclassification either way, a changed lockfile, a new route in, a tree npm
-// reports a problem with, or the date. An allowance whose advisory no longer
+// severity and affected range), package.json and package-lock.json are the
+// ones reviewed, every route to its package in the production tree still runs
+// through the dependency chain it names, and its review date hasn't passed.
+// Anything else fails CI until the allowance is looked at again: a fix (a
+// changed range), a reclassification either way, a changed manifest or
+// lockfile, a new route in, a tree npm reports a problem with, or the date.
+// The route walk is a cross-check of the pinned tree, not proof of what the
+// site reaches at runtime: that was judged by hand when it was allowed. An allowance whose advisory no longer
 // shows fails too, so it gets taken out. CI runs it on every push:
 //
 //   node --experimental-strip-types scripts/check-audit.ts
@@ -31,8 +33,10 @@ export type Allowance = {
   through: string[];
   // After this day (UTC) the allowance fails until someone looks again.
   reviewBy: string;
-  // SHA-256 of package-lock.json as reviewed. Any change to what's
-  // installed fails until someone checks the tree again and updates it.
+  // SHA-256 of package.json and of package-lock.json as reviewed. Any change
+  // to either fails until someone checks the tree again and updates them
+  // (npm ci checks the two agree, not that they're the ones reviewed).
+  manifest: string;
   lockfile: string;
   why: string;
 };
@@ -53,6 +57,8 @@ export const ALLOWED: Allowance[] = [
     range: "<=4.0.7",
     through: ["@neondatabase/auth", "better-auth", "vitest"],
     reviewBy: "2026-12-17",
+    manifest:
+      "153f8fa4130044b9223e4a73b9ee737ede6fd43d74912cf752dae1d94b70d564",
     lockfile:
       "7a8a9f59020da632455d41d60bc2736ec4d739c4f47dc728bc92ccc8550c0049",
     why: "ReDoS reached only through a test runner; no fix released yet",
@@ -84,7 +90,9 @@ export type LsNode = {
   failed?: boolean;
 };
 
-// Every route from the site to `target`, as package names. A deduped package
+// Every route from the site to `target`, as package names, from npm's view of
+// the pinned tree: a cross-check of how a package is installed, not of what
+// code runs. A deduped package
 // whose installed copy leads to `target` somewhere else in the tree ends a
 // route too, so a new route through an already-listed package isn't missed.
 // A package without an installed path throws: the routes can't be told apart.
@@ -127,7 +135,7 @@ export function judge(
   allowed: Allowance[],
   trees: Record<string, LsNode>,
   today: string,
-  lockfile: string,
+  files: { manifest: string; lockfile: string },
 ): { failures: string[]; skipped: string[] } {
   const seen = new Map<string, Advisory>();
   for (const v of Object.values(report.vulnerabilities ?? {}))
@@ -164,9 +172,15 @@ export function judge(
       );
       continue;
     }
-    if (lockfile !== allow.lockfile) {
+    const changed = (
+      [
+        ["package.json", "manifest"],
+        ["package-lock.json", "lockfile"],
+      ] as const
+    ).filter(([, k]) => files[k] !== allow[k]);
+    if (changed.length) {
       failures.push(
-        `${a.name}: ${a.url} was allowed for package-lock.json ${allow.lockfile.slice(0, 12)}, and it's now ${lockfile.slice(0, 12)}. Check every route to ${a.name} again (npm ls ${a.name} --omit=dev --all), then put the new sha256sum of package-lock.json in its allowance in scripts/check-audit.ts.`,
+        `${a.name}: ${a.url} was allowed for ${changed.map(([f, k]) => `${f} ${allow[k].slice(0, 12)}, and it's now ${files[k].slice(0, 12)}`).join("; ")}. Check every route to ${a.name} again (npm ls ${a.name} --omit=dev --all), then put the new sha256sum of ${changed.map(([f]) => f).join(" and ")} in its allowance in scripts/check-audit.ts.`,
       );
       continue;
     }
@@ -251,10 +265,12 @@ if (invoked) {
     process.exit(1);
   }
   const today = new Date().toISOString().slice(0, 10);
-  const lockfile = createHash("sha256")
-    .update(readFileSync("package-lock.json"))
-    .digest("hex");
-  const { failures, skipped } = judge(report, ALLOWED, trees, today, lockfile);
+  const sha = (f: string) =>
+    createHash("sha256").update(readFileSync(f)).digest("hex");
+  const { failures, skipped } = judge(report, ALLOWED, trees, today, {
+    manifest: sha("package.json"),
+    lockfile: sha("package-lock.json"),
+  });
   for (const s of skipped) console.log(`Allowed for now: ${s}`);
   if (failures.length) {
     for (const f of failures) console.error(`::error::${f}`);
