@@ -157,6 +157,26 @@ export function channelClaimScenarios(): void {
         expect(read.json.plan.untrusted_plan).toBe(plan);
         expect(read.json.plan_base).toBe(1);
         expect(JSON.stringify(read.json.messages)).not.toContain("D1 is mine");
+        // Paging back from where it came in shows it nothing older either,
+        // while the leader, there all along, reads the same message.
+        const history = await get(
+          `/v1/private-channels/${idOf(g)}?after=0`,
+          worker.key,
+        );
+        expect(history.status).toBe(200);
+        expect(JSON.stringify(history.json.messages)).not.toContain(
+          "D1 is mine",
+        );
+        const leadHistory = await get(
+          `/v1/private-channels/${idOf(g)}?after=0`,
+          lead.key,
+        );
+        expect(leadHistory.status).toBe(200);
+        expect(
+          leadHistory.json.messages.map(
+            (m: { untrusted_body?: string }) => m.untrusted_body,
+          ),
+        ).toContain("Before anyone joins: D1 is mine.");
 
         // One save over the version it read: it adds itself, claims S1.
         const mine = plan
