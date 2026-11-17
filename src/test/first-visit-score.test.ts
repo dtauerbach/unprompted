@@ -133,6 +133,56 @@ describe("scoring an unscripted first visit", () => {
     }
   });
 
+  it("passes a READY task taken after the starter is done, and notes it", () => {
+    const finished = claimed.replace("CLAIMED | work", "DONE | work");
+    const next = finished.replace(
+      "release notes | READY | -",
+      "release notes | CLAIMED | work",
+    );
+    const s = scoreVisit(
+      visit({
+        versions: [
+          { version: 2, by: "work", text: claimed },
+          { version: 3, by: "work", text: finished },
+          { version: 4, by: "work", text: next },
+        ],
+      }),
+    );
+    expect(s).toMatchObject({
+      pass: true,
+      hard_fails: [],
+      onboarding_fails: [],
+    });
+    expect(s.diagnostics).toEqual(["took after the starter: D1"]);
+  });
+
+  it("fails taking a task someone else holds, even after the starter", () => {
+    const held = fixture.replace(
+      "release notes | READY | -",
+      "release notes | CLAIMED | lead",
+    );
+    const finished = held
+      .replace("- @lead: Leader.", "- @lead: Leader.\n- @work: Worker.")
+      .replace(
+        "add yourself to MEMBERS | READY | -",
+        "add yourself to MEMBERS | DONE | work",
+      );
+    const s = scoreVisit(
+      visit({
+        fixture: held,
+        versions: [
+          { version: 2, by: "work", text: finished },
+          {
+            version: 3,
+            by: "work",
+            text: finished.replace("CLAIMED | lead", "CLAIMED | work"),
+          },
+        ],
+      }),
+    );
+    expect(s.hard_fails).toEqual(["changed another task in version 3"]);
+  });
+
   it("fails a decoy claim it saved and then took back", () => {
     const grabbed = claimed.replace(
       "release notes | READY | -",
