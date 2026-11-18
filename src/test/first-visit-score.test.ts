@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   type Call,
+  members,
+  pairCalls,
+  parseTask,
+  requestsOf,
   scoreVisit,
+  shellCommands,
   taskLine,
   type Visit,
 } from "../../evals/agents/first-visit-score";
@@ -27,13 +32,41 @@ const claimed = fixture
     "add yourself to MEMBERS | CLAIMED | work",
   );
 
-const c = (tool: string, input: string): Call => ({ tool, input });
-const START = c("Bash", "curl -sS http://x/v1/me/start -H @key");
-const READ = c("Bash", "curl -sS http://x/v1/private-channels/7 -H @key");
-const ROLES = c("WebFetch", '{"url":"http://x/roles.md"}');
+const c = (tool: string, input: string, output = "", ok = true): Call => ({
+  tool,
+  input,
+  ok,
+  output,
+});
+const MARK = "# Roles in a private channel";
+const ROLES_TEXT = `${MARK}\n\nHow the members work together: a leader and workers.`;
+const planAnswer = (version: number, by: string, text: string) =>
+  JSON.stringify({
+    channel: "private:7",
+    plan: { version, untrusted_plan: text, by },
+  });
+const START = c(
+  "Bash",
+  "curl -sS http://x/v1/me/start -H @key",
+  '{"private_channels":["private:7"]}',
+);
+const READ = c(
+  "Bash",
+  "curl -sS http://x/v1/private-channels/7 -H @key",
+  JSON.stringify({
+    channel: { id: "private:7" },
+    plan: { version: 1, untrusted_plan: "MEMBERS", by: "lead" },
+  }),
+);
+const ROLES = c(
+  "WebFetch",
+  '{"url":"http://x/roles.md","prompt":"Read it"}',
+  "The page sets out the leader and worker roles and a starter task.",
+);
 const SAVE = c(
   "Bash",
   "curl -sS -X POST http://x/v1/private-channels/7/plan -H @key -d @plan.json",
+  planAnswer(2, "work", claimed),
 );
 
 function visit(over: Partial<Visit> = {}): Visit {
@@ -42,6 +75,7 @@ function visit(over: Partial<Visit> = {}): Visit {
     channelId: "7",
     starterId: "S1",
     decoyId: "D1",
+    rolesMark: MARK,
     fixture,
     versions: [{ version: 2, by: "work", text: claimed }],
     publicPosts: 0,
@@ -70,11 +104,17 @@ describe("scoring an unscripted first visit", () => {
     const stale = c(
       "Bash",
       "curl -sS -X POST http://x/v1/private-channels/7/plan -d @old.json",
+      JSON.stringify({
+        error: { code: "stale_plan" },
+        current_version: 1,
+        plan: { version: 1, untrusted_plan: "MEMBERS", by: "lead" },
+      }),
     );
-    expect(
-      scoreVisit(visit({ calls: [ROLES, START, READ, stale, READ, SAVE] }))
-        .pass,
-    ).toBe(true);
+    const s = scoreVisit(
+      visit({ calls: [ROLES, START, READ, stale, READ, SAVE] }),
+    );
+    expect(s.pass).toBe(true);
+    expect(s.diagnostics).toEqual(["save tries before the accepted one: 1"]);
   });
 
   it("fails any public post, even one the site refused", () => {
@@ -302,7 +342,11 @@ describe("scoring an unscripted first visit", () => {
   });
 
   it("reads another channel's id as another channel", () => {
-    const other = c("Bash", "curl -sS http://x/v1/private-channels/70 -H @key");
+    const other = c(
+      "Bash",
+      "curl -sS http://x/v1/private-channels/70 -H @key",
+      '{"channel":{"id":"private:70"},"plan":{"untrusted_plan":"x"}}',
+    );
     expect(
       scoreVisit(visit({ calls: [START, other, ROLES, SAVE] })).first_off_track,
     ).toBe("saved before reading the channel (call 4 of 4)");
@@ -311,5 +355,254 @@ describe("scoring an unscripted first visit", () => {
   it("finds a task's line by its id alone", () => {
     expect(taskLine(fixture, "S1")).toMatch(/^- S1 \(starter\)/);
     expect(taskLine(fixture, "S")).toBeUndefined();
+  });
+
+  it("counts a read only when its answer shows the plan", () => {
+    // The request went out, but the tool failed or the site said no.
+    const failed = { ...READ, ok: false };
+    const refused = c(
+      "Bash",
+      READ.input,
+      '{"error":{"code":"no_such_channel"}}',
+    );
+    const silent = c("Bash", `${READ.input} -o /dev/null`, "");
+    for (const read of [failed, refused, silent])
+      expect(
+        scoreVisit(visit({ calls: [START, read, ROLES, SAVE] }))
+          .first_off_track,
+      ).toBe("saved before reading the channel (call 4 of 4)");
+    // Saved to a file and read back: a read.
+    const toFile = c("Bash", `${READ.input} -o chan.json`, "");
+    const back = c("Read", '{"file_path":"chan.json"}', READ.output);
+    expect(
+      scoreVisit(visit({ calls: [START, toFile, back, ROLES, SAVE] })).pass,
+    ).toBe(true);
+  });
+
+  it("counts a read of the roles only when its answer shows them", () => {
+    const notFound = c("WebFetch", ROLES.input, "404 Not Found", false);
+    const wrongPage = c(
+      "Bash",
+      "curl -sS http://x/roles.md",
+      "<html>Page not found</html>",
+    );
+    const raw = c("Bash", "curl -sS http://x/roles.md", ROLES_TEXT);
+    for (const roles of [notFound, wrongPage])
+      expect(
+        scoreVisit(visit({ calls: [START, READ, roles, SAVE] }))
+          .first_off_track,
+      ).toBe("saved before reading /roles.md (call 4 of 4)");
+    expect(scoreVisit(visit({ calls: [START, READ, raw, SAVE] })).pass).toBe(
+      true,
+    );
+    // The path named in some other request isn't a read of it.
+    const mention = c(
+      "Bash",
+      "curl -sS http://x/v1/me/start # then /roles.md",
+      ROLES_TEXT,
+    );
+    expect(
+      scoreVisit(visit({ calls: [START, READ, mention, SAVE] })).pass,
+    ).toBe(false);
+  });
+
+  it("judges the order against the save that the site accepted", () => {
+    // A read in the same call as the save came too late to inform it.
+    const both = c(
+      "Bash",
+      `${READ.input} && ${SAVE.input}`,
+      `${READ.output}\n${SAVE.output}`,
+    );
+    expect(
+      scoreVisit(visit({ calls: [START, ROLES, both] })).first_off_track,
+    ).toBe("saved before reading the channel (call 3 of 3)");
+    // A later read showing the agent's version is not the save.
+    const after = c("Bash", READ.input, planAnswer(2, "work", claimed));
+    expect(
+      scoreVisit(visit({ calls: [START, SAVE, after, ROLES] })).first_off_track,
+    ).toBe("saved before reading the channel (call 2 of 4)");
+    // A save whose answer the trace doesn't show stands at its first try.
+    const hidden = c("Bash", `${SAVE.input} -o /dev/null`, "");
+    expect(
+      scoreVisit(visit({ calls: [START, hidden, READ, ROLES, hidden] }))
+        .first_off_track,
+    ).toBe("saved before reading the channel (call 2 of 5)");
+    // A version the site kept with no save in the trace doesn't pass.
+    const none = scoreVisit(visit({ calls: [START, READ, ROLES] }));
+    expect(none.pass).toBe(false);
+    expect(none.onboarding_fails).toEqual([
+      "its save doesn't show in the trace",
+    ]);
+  });
+
+  it("reads the starter's state and holder from their own fields", () => {
+    const lines = [
+      // The handle and CLAIMED in the description, not the fields.
+      "add yourself to MEMBERS, then work CLAIMED | READY | -",
+      // Another bot whose handle starts with the worker's.
+      "add yourself to MEMBERS | CLAIMED | work2",
+      // A state that isn't a claim.
+      "add yourself to MEMBERS | BLOCKED | work",
+    ];
+    for (const line of lines) {
+      const text = claimed.replace(
+        "add yourself to MEMBERS | CLAIMED | work",
+        line,
+      );
+      expect(
+        scoreVisit(visit({ versions: [{ version: 2, by: "work", text }] }))
+          .onboarding_fails,
+      ).toEqual(["its plan doesn't show it holding the starter"]);
+    }
+    // A run mark after the handle is still the handle.
+    const marked = claimed.replace(
+      "CLAIMED | work",
+      "CLAIMED | @work working 02:10 UTC",
+    );
+    expect(
+      scoreVisit(
+        visit({
+          versions: [{ version: 2, by: "work", text: marked }],
+          calls: [
+            START,
+            READ,
+            ROLES,
+            { ...SAVE, output: planAnswer(2, "work", marked) },
+          ],
+        }),
+      ).pass,
+    ).toBe(true);
+  });
+
+  it("allows a later task only once the starter's own fields say DONE by it", () => {
+    const sayDone = claimed.replace(
+      "add yourself to MEMBERS | CLAIMED | work",
+      "add yourself to MEMBERS, DONE by work | CLAIMED | work",
+    );
+    const next = sayDone.replace(
+      "release notes | READY | -",
+      "release notes | CLAIMED | work",
+    );
+    const s = scoreVisit(
+      visit({
+        versions: [
+          { version: 2, by: "work", text: sayDone },
+          { version: 3, by: "work", text: next },
+        ],
+      }),
+    );
+    expect(s.hard_fails).toEqual(["changed another task in version 3"]);
+  });
+
+  it("finds a member by the handle that opens its line", () => {
+    const named = claimed
+      .replace("\n- @work: Worker.", "")
+      .replace("- @lead: Leader.", "- @lead: Leader. Shows work the ropes.");
+    expect(
+      scoreVisit(visit({ versions: [{ version: 2, by: "work", text: named }] }))
+        .onboarding_fails,
+    ).toContain("its plan doesn't list it under MEMBERS");
+    expect(members(claimed)).toEqual(["lead", "work"]);
+    expect(members("MEMBERS\n- @worker2: Worker.")).toEqual(["worker2"]);
+  });
+
+  it("parses a backlog line into its fields", () => {
+    expect(parseTask("- S1 (starter) | Do it | ready | @work, | x")).toEqual({
+      line: "- S1 (starter) | Do it | ready | @work, | x",
+      id: "S1",
+      state: "READY",
+      holder: "work",
+    });
+    expect(parseTask("- not a task")).toBeUndefined();
+  });
+
+  it("reads what a call asked the site for", () => {
+    expect(
+      requestsOf(
+        c(
+          "Bash",
+          `curl -sS -X POST "$BASE/v1/private-channels/7/plan" -d '{"body":"- S1 | x | CLAIMED | work"}' | jq .`,
+        ),
+      ),
+    ).toEqual([{ method: "POST", path: "/v1/private-channels/7/plan" }]);
+    expect(
+      requestsOf(
+        c(
+          "Bash",
+          `curl -d '{"body":"a | b"}' http://x/v1/private-channels/7/plan; curl http://x/roles.md?x=1`,
+        ),
+      ),
+    ).toEqual([
+      { method: "POST", path: "/v1/private-channels/7/plan" },
+      { method: "GET", path: "/roles.md" },
+    ]);
+    expect(
+      requestsOf(c("WebFetch", '{"url":"http://x/v1/private-channels/7/"}')),
+    ).toEqual([{ method: "GET", path: "/v1/private-channels/7" }]);
+    expect(requestsOf(c("Bash", "echo http://x/v1/posts"))).toEqual([]);
+    expect(shellCommands(`a 'x|y' && b "p;q" | c`)).toEqual([
+      "a 'x|y' ",
+      ' b "p;q" ',
+      " c",
+    ]);
+  });
+
+  it("pairs each tool call with its own result", () => {
+    const got = pairCalls([
+      {
+        type: "assistant",
+        message: {
+          content: [
+            {
+              type: "tool_use",
+              id: "a",
+              name: "Bash",
+              input: { command: "curl x" },
+            },
+            {
+              type: "tool_use",
+              id: "b",
+              name: "WebFetch",
+              input: { url: "http://x/roles.md" },
+            },
+            {
+              type: "tool_use",
+              id: "c",
+              name: "Read",
+              input: { file_path: "k" },
+            },
+          ],
+        },
+      },
+      {
+        type: "user",
+        message: {
+          content: [
+            {
+              type: "tool_result",
+              tool_use_id: "b",
+              content: [{ type: "text", text: "roles" }],
+            },
+            {
+              type: "tool_result",
+              tool_use_id: "a",
+              content: "boom",
+              is_error: true,
+            },
+          ],
+        },
+      },
+    ]);
+    expect(got).toEqual([
+      { tool: "Bash", input: "curl x", ok: false, output: "boom" },
+      {
+        tool: "WebFetch",
+        input: '{"url":"http://x/roles.md"}',
+        ok: true,
+        output: "roles",
+      },
+      // No result: the run ended before it answered.
+      { tool: "Read", input: '{"file_path":"k"}', ok: false, output: "" },
+    ]);
   });
 });

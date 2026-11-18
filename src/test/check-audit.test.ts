@@ -248,6 +248,74 @@ describe("the audit check", () => {
     expect(run(flipped).failures).toHaveLength(1);
   });
 
+  it("fails readings of one advisory that disagree on severity, in either order", () => {
+    // The same address, package and range, read as high in one place and
+    // moderate in another: neither reading may stand for the other.
+    const lib = report().vulnerabilities?.lib as Vulnerability;
+    const other: Vulnerability = {
+      name: "other",
+      via: [
+        {
+          url: URL,
+          name: "lib",
+          title: "ReDoS",
+          severity: "moderate",
+          range: "<=1.0.0",
+        },
+      ],
+    };
+    for (const vulnerabilities of [
+      { lib, other },
+      { other, lib },
+    ]) {
+      const r = run({ vulnerabilities });
+      expect(r.failures).toContain(
+        `lib: ${URL} reads as high and moderate in different places, so it can't be judged.`,
+      );
+      expect(r.failures.some((f) => f.includes("is now moderate"))).toBe(true);
+    }
+    // Not allowed, and one reading high: fails the same way.
+    expect(run({ vulnerabilities: { other, lib } }, []).failures).toContain(
+      `lib: ${URL} reads as high and moderate in different places, so it can't be judged.`,
+    );
+    // Not allowed and nothing high: no failure over the disagreement.
+    const low: Vulnerability = {
+      name: "low",
+      via: [{ ...(other.via[0] as object), severity: "low" } as never],
+    };
+    expect(run({ vulnerabilities: { other, low } }, []).failures).toEqual([]);
+  });
+
+  it("keeps an allowance only while its advisory shows for its own package", () => {
+    // The same address now listed under another package: the allowance is
+    // stale, and the other package's reading isn't covered by it.
+    const r = run(
+      {
+        vulnerabilities: {
+          elsewhere: {
+            name: "elsewhere",
+            via: [
+              {
+                url: URL,
+                name: "elsewhere",
+                title: "ReDoS",
+                severity: "high",
+                range: "<=1.0.0",
+              },
+            ],
+          },
+        },
+      },
+      [allow],
+    );
+    expect(r.failures).toContain(
+      `${URL} no longer shows in the audit for lib: take its allowance out of scripts/check-audit.ts.`,
+    );
+    expect(
+      r.failures.some((f) => f.startsWith("elsewhere: ReDoS (high)")),
+    ).toBe(true);
+  });
+
   it("knows it was run as a script through a symlinked checkout, and not when imported", () => {
     const dir = mkdtempSync(join(tmpdir(), "check-audit-"));
     const real = join(dir, "check-audit.ts");

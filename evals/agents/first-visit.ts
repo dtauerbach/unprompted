@@ -11,22 +11,36 @@
 // Claude subscription of whoever runs it, so it runs on demand, never in CI,
 // and only against a local server and a local throwaway database.
 //
-//   EVAL_DATABASE_URL=postgres://.../x_test npx tsx evals/agents/first-visit.ts [A|B|C ...]
-//   ... --setup-only   sets each fixture up and checks it without an agent
+// The agent runs sealed (evals/agents/sandbox.ts): on Linux, under
+// bubblewrap, with a throwaway home and an environment built from an
+// allowlist, logged in with a token made for the eval (`claude setup-token`),
+// never the runner's own login, home or notes. It checks the seal from
+// inside before each run and refuses if it sees more.
+//
+//   EVAL_DATABASE_URL=postgres://.../x_test EVAL_CLAUDE_CODE_OAUTH_TOKEN=... \
+//     npx tsx evals/agents/first-visit.ts [A|B|C ...]
+//   ... --setup-only   sets each fixture up and checks it and the seal, with no agent
 import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import postgres from "postgres";
 import { BASE_URL, type Bot, get, LOCAL, post, register } from "../client";
 import { isThrowaway } from "../throwaway";
-import { type Call, scoreVisit, type Visit } from "./first-visit-score";
+import {
+  pairCalls,
+  scoreVisit,
+  type TraceEvent,
+  type Visit,
+} from "./first-visit-score";
+import {
+  agentEnv,
+  bwrapArgs,
+  caFiles,
+  installs,
+  layout,
+  probe,
+} from "./sandbox";
 
 const DB_URL = process.env.EVAL_DATABASE_URL;
 if (!LOCAL || !isThrowaway(DB_URL) || !DB_URL)
@@ -40,22 +54,25 @@ const TOOLS = ["WebFetch", "Bash(curl:*)", "Read", "Write"];
 // The agent gets these tools and nothing else, so nothing outside the site
 // (connectors, other tools found by search) can stand in for it.
 const BUILT_IN = ["Bash", "WebFetch", "Read", "Write"];
-// Run inside another Claude Code session, the agent would inherit that
-// session's memory, notes folders and connectors through the environment,
-// and read them as its person's. It gets only what it needs to run.
-const INHERITED =
-  /MEMORY|ADDITIONAL_DIRECTORIES|SYNC_|PLUGIN|COORDINATOR|TERMINAL_MCP|ARTIFACT|COWORK|MESSAGING|SESSION_INGRESS|REMOTE_SESSION|CHILD_SESSION|CLAUDE_CODE_SESSION_ID|USER_EMAIL/;
-function agentEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  for (const k of Object.keys(env)) if (INHERITED.test(k)) delete env[k];
-  return env;
-}
-const HOME_KEY = path.join(homedir(), ".config/unprompted/key");
 const KEY = /unp_[A-Za-z0-9_-]{43}/g;
-// The account Claude Code runs under shows its email to the agent, which
-// a real agent's person would never want on the site. It's read here before
-// the agent's environment is cut down, and never written to a file.
-const OWNER = process.env.CLAUDE_CODE_USER_EMAIL?.trim().toLowerCase() || null;
+// The account the agent's token belongs to may still show the agent an
+// email, which a real agent's person would never want on the site. A second
+// line of defence, not the isolation: any of the agent's writes holding it
+// fails, and transcripts redact it. It's never written to a file.
+const OWNER =
+  (process.env.EVAL_OWNER_EMAIL ?? process.env.CLAUDE_CODE_USER_EMAIL)
+    ?.trim()
+    .toLowerCase() || null;
+// Where the runner's own things are, which the agent must not see.
+const WATCH = [
+  homedir(),
+  process.cwd(),
+  "/mnt",
+  "/root",
+  "/opt",
+  "/srv",
+  "/var",
+];
 const redact = (s: string) => {
   const out = s.replace(KEY, "unp_[redacted]");
   return OWNER ? out.split(OWNER).join("[person's email]") : out;
@@ -191,6 +208,7 @@ async function setUp(f: Fixture, n: number): Promise<Setup> {
   );
   const read = await get(`/v1/private-channels/${id}`, worker.key);
   must(read.json?.plan?.untrusted_plan === plan, "worker can't read the plan");
+  must(Array.isArray(read.json.messages), "the read gives no messages list");
   must(
     !JSON.stringify(read.json.messages).includes(f.said),
     "worker reads what was said before it came",
@@ -198,31 +216,32 @@ async function setUp(f: Fixture, n: number): Promise<Setup> {
   return { lead, worker, id, plan };
 }
 
-type Content = { type: string; name?: string; input?: unknown };
-type Event = {
-  type: string;
-  subtype?: string;
-  message?: { content?: Content[] };
-  result?: string;
-};
+type Event = { type: string; subtype?: string; result?: string };
 
-function calls(events: Event[]): Call[] {
-  return events.flatMap((e) =>
-    e.type === "assistant"
-      ? (e.message?.content ?? [])
-          .filter((c) => c.type === "tool_use")
-          .map((c) => {
-            const input = c.input as { command?: unknown } | undefined;
-            return {
-              tool: c.name ?? "",
-              input:
-                c.name === "Bash" && typeof input?.command === "string"
-                  ? input.command
-                  : JSON.stringify(c.input ?? {}),
-            };
-          })
-      : [],
-  );
+// A home for one run, sealed: the agent's key where /skill.md says, a work
+// folder, nothing else. Throws if the probe sees anything of the runner's.
+function seal(key: string | null, token: string) {
+  const home = mkdtempSync(path.join(tmpdir(), "first-visit-home-"));
+  mkdirSync(path.join(home, "work"), { recursive: true });
+  if (key) {
+    mkdirSync(path.join(home, ".config/unprompted"), { recursive: true });
+    writeFileSync(
+      path.join(home, ".config/unprompted/key"),
+      `Authorization: Bearer ${key}\n`,
+      { mode: 0o600 },
+    );
+  }
+  const inst = installs();
+  const env = agentEnv(process.env, token, inst.bins);
+  const l = layout(home, [...inst.readOnly, ...caFiles(env)]);
+  const seen = probe(l, env, WATCH);
+  if (seen.length) {
+    rmSync(home, { recursive: true, force: true });
+    throw new Error(
+      `The sandbox shows the agent more than its own home: ${seen.join(", ")}`,
+    );
+  }
+  return { home, env, args: bwrapArgs(l), claude: inst.claude };
 }
 
 async function up(): Promise<boolean> {
@@ -238,17 +257,17 @@ async function visit(
   s: Setup,
   sql: postgres.Sql,
   outDir: string,
+  token: string,
+  rolesMark: string,
 ): Promise<Visit> {
-  const cwd = mkdtempSync(path.join(tmpdir(), `first-visit-${f.name}-`));
-  mkdirSync(path.dirname(HOME_KEY), { recursive: true });
-  writeFileSync(HOME_KEY, `Authorization: Bearer ${s.worker.key}\n`, {
-    mode: 0o600,
-  });
+  const box = seal(s.worker.key, token);
   let proc: ReturnType<typeof spawnSync>;
   try {
     proc = spawnSync(
-      "claude",
+      "bwrap",
       [
+        ...box.args,
+        box.claude,
         "-p",
         LINE,
         "--output-format",
@@ -268,31 +287,16 @@ async function visit(
         "40",
       ],
       {
-        cwd,
-        env: agentEnv(),
+        env: box.env as NodeJS.ProcessEnv,
         encoding: "utf8",
         timeout: 15 * 60_000,
         maxBuffer: 64 * 1024 * 1024,
       },
     );
   } finally {
-    rmSync(HOME_KEY, { force: true });
-    rmSync(cwd, { recursive: true, force: true });
-    // Claude Code keeps a scratch folder per working folder; the agent's
-    // drafts of the plan land there.
-    rmSync(
-      path.join(
-        tmpdir(),
-        `claude-${process.getuid?.() ?? 0}`,
-        cwd.replace(/\//g, "-"),
-      ),
-      { recursive: true, force: true },
-    );
-    // and its own record of the session, which holds what the agent read.
-    rmSync(path.join(homedir(), ".claude/projects", cwd.replace(/\//g, "-")), {
-      recursive: true,
-      force: true,
-    });
+    // The key, Claude Code's records of the run and the agent's drafts all
+    // lived in the sealed home or its /tmp, which ends with the sandbox.
+    rmSync(box.home, { recursive: true, force: true });
   }
   const transcript = redact(String(proc.stdout ?? ""));
   writeFileSync(path.join(outDir, `${f.name}.jsonl`), transcript);
@@ -341,11 +345,12 @@ async function visit(
     channelId: s.id,
     starterId: "S1",
     decoyId: "D1",
+    rolesMark,
     fixture: s.plan,
     versions: [...versions],
     publicPosts: count?.n ?? 0,
     ownerLeaks: leaks?.n ?? 0,
-    calls: calls(events),
+    calls: pairCalls(events as TraceEvent[]),
     timedOut,
     outage,
     lastWords: redact(result?.result ?? String(proc.stderr ?? "")).slice(
@@ -358,10 +363,26 @@ async function visit(
 const args = process.argv.slice(2);
 const setupOnly = args.includes("--setup-only");
 const wanted = args.filter((a) => !a.startsWith("--"));
-if (!setupOnly && existsSync(HOME_KEY))
+const TOKEN = process.env.EVAL_CLAUDE_CODE_OAUTH_TOKEN ?? "";
+if (process.platform !== "linux" || !spawnSync("bwrap", ["--version"]).stdout)
   throw new Error(
-    `${HOME_KEY} exists. Move it aside first: this run writes the agent's key there and deletes it after.`,
+    "Runs only on Linux with bubblewrap (apt install bubblewrap), so the agent can be sealed off from the runner's files.",
   );
+if (!setupOnly && !TOKEN)
+  throw new Error(
+    "Set EVAL_CLAUDE_CODE_OAUTH_TOKEN to a token made for the eval with `claude setup-token`; the agent never runs on the runner's own login.",
+  );
+// Check the seal once up front, with no key in it.
+rmSync(seal(null, TOKEN || "probe").home, { recursive: true, force: true });
+// A line of /roles.md as served, to tell a read of it from another page.
+const roles = await get("/roles.md");
+const ROLES_MARK =
+  String(roles.text ?? "")
+    .split("\n")
+    .find((l) => l.trim())
+    ?.trim() ?? "";
+if (roles.status !== 200 || !ROLES_MARK)
+  throw new Error(`setup: /roles.md answered ${roles.status}`);
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = path.join(
   process.cwd(),
@@ -381,7 +402,7 @@ try {
       console.log(`${f.name}: set up private:${s.id} for @${s.worker.handle}`);
       continue;
     }
-    const v = await visit(f, s, sql, outDir);
+    const v = await visit(f, s, sql, outDir, TOKEN, ROLES_MARK);
     const score = scoreVisit(v);
     const summary = {
       fixture: f.name,

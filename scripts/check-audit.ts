@@ -9,8 +9,10 @@
 // changed range), a reclassification either way, a changed manifest or
 // lockfile, a new route in, a tree npm reports a problem with, or the date.
 // The route walk is a cross-check of the pinned tree, not proof of what the
-// site reaches at runtime: that was judged by hand when it was allowed. An allowance whose advisory no longer
-// shows fails too, so it gets taken out. CI runs it on every push:
+// site reaches at runtime: that was judged by hand when it was allowed.
+// Readings of one advisory that disagree on severity fail. An allowance whose
+// advisory no longer shows for its own package fails too, so it gets taken
+// out. CI runs it on every push:
 //
 //   node --experimental-strip-types scripts/check-audit.ts
 //
@@ -138,19 +140,38 @@ export function judge(
   files: { manifest: string; lockfile: string },
 ): { failures: string[]; skipped: string[] } {
   // One advisory can show under several packages. Each distinct reading of
-  // it (address, package, range) is judged, so a second reading never hides
-  // behind the first.
+  // it (address, package, range, severity) is judged, so a second reading
+  // never hides behind the first.
   const seen = new Map<string, Advisory>();
   for (const v of Object.values(report.vulnerabilities ?? {}))
     for (const a of v.via) {
       if (typeof a === "string") continue;
-      const key = `${a.url} ${a.name} ${a.range}`;
+      const key = `${a.url} ${a.name} ${a.range} ${a.severity}`;
       if (!seen.has(key)) seen.set(key, a);
     }
   const failures: string[] = [];
   const skipped: string[] = [];
   const fix =
     "Look at it again, then update or take out its allowance in scripts/check-audit.ts.";
+  // Readings of one advisory for one package that disagree on severity
+  // can't be judged as one, so they fail when it's allowed or any reading
+  // is high or critical.
+  const severities = new Map<string, Set<string>>();
+  for (const a of seen.values()) {
+    const k = `${a.url} ${a.name}`;
+    severities.set(k, (severities.get(k) ?? new Set()).add(a.severity));
+  }
+  for (const [k, s] of severities)
+    if (
+      s.size > 1 &&
+      (allowed.some((x) => `${x.url} ${x.name}` === k) ||
+        [...s].some((x) => SERIOUS.has(x)))
+    ) {
+      const [url, name] = k.split(" ");
+      failures.push(
+        `${name}: ${url} reads as ${[...s].sort().join(" and ")} in different places, so it can't be judged.`,
+      );
+    }
   for (const a of seen.values()) {
     const allow = allowed.find((x) => x.url === a.url && x.name === a.name);
     if (!allow) {
@@ -223,11 +244,13 @@ export function judge(
     }
     skipped.push(`${a.name}: ${a.url} (${allow.why})`);
   }
-  const urls = new Set([...seen.values()].map((a) => a.url));
+  // An allowance stands only while its advisory still shows for its own
+  // package.
+  const shown = new Set([...seen.values()].map((a) => `${a.url} ${a.name}`));
   for (const allow of allowed)
-    if (!urls.has(allow.url))
+    if (!shown.has(`${allow.url} ${allow.name}`))
       failures.push(
-        `${allow.url} no longer shows in the audit: take its allowance out of scripts/check-audit.ts.`,
+        `${allow.url} no longer shows in the audit for ${allow.name}: take its allowance out of scripts/check-audit.ts.`,
       );
   return { failures, skipped };
 }
