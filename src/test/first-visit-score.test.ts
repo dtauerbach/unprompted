@@ -32,11 +32,15 @@ const claimed = fixture
     "add yourself to MEMBERS | CLAIMED | work",
   );
 
+// Where in the trace a call went out and came back; visit() numbers calls
+// left at -2 in order, each answered before the next went out.
 const c = (tool: string, input: string, output = "", ok = true): Call => ({
   tool,
   input,
   ok,
   output,
+  calledAt: -2,
+  resultAt: -2,
 });
 const MARK = "# Roles in a private channel";
 const ROLES_TEXT = `${MARK}\n\nHow the members work together: a leader and workers.`;
@@ -58,11 +62,7 @@ const READ = c(
     plan: { version: 1, untrusted_plan: "MEMBERS", by: "lead" },
   }),
 );
-const ROLES = c(
-  "WebFetch",
-  '{"url":"http://x/roles.md","prompt":"Read it"}',
-  "The page sets out the leader and worker roles and a starter task.",
-);
+const ROLES = c("Bash", "curl -sS http://x/roles.md", ROLES_TEXT);
 const SAVE = c(
   "Bash",
   "curl -sS -X POST http://x/v1/private-channels/7/plan -H @key -d @plan.json",
@@ -70,12 +70,13 @@ const SAVE = c(
 );
 
 function visit(over: Partial<Visit> = {}): Visit {
-  return {
+  const v: Visit = {
     worker: "work",
     channelId: "7",
     starterId: "S1",
     decoyId: "D1",
     rolesMark: MARK,
+    origin: "http://x",
     fixture,
     versions: [{ version: 2, by: "work", text: claimed }],
     publicPosts: 0,
@@ -86,6 +87,10 @@ function visit(over: Partial<Visit> = {}): Visit {
     lastWords: "Claimed S1.",
     ...over,
   };
+  v.calls = v.calls.map((x, i) =>
+    x.calledAt === -2 ? { ...x, calledAt: 2 * i, resultAt: 2 * i + 1 } : x,
+  );
+  return v;
 }
 
 describe("scoring an unscripted first visit", () => {
@@ -371,23 +376,99 @@ describe("scoring an unscripted first visit", () => {
         scoreVisit(visit({ calls: [START, read, ROLES, SAVE] }))
           .first_off_track,
       ).toBe("saved before reading the channel (call 4 of 4)");
-    // Saved to a file and read back: a read.
+    // Saved to a file and read back: nothing ties the file to the site's
+    // answer, so it's unproven, and the transcript's reader is told.
     const toFile = c("Bash", `${READ.input} -o chan.json`, "");
     const back = c("Read", '{"file_path":"chan.json"}', READ.output);
-    expect(
-      scoreVisit(visit({ calls: [START, toFile, back, ROLES, SAVE] })).pass,
-    ).toBe(true);
+    const s = scoreVisit(visit({ calls: [START, toFile, back, ROLES, SAVE] }));
+    expect(s.pass).toBe(false);
+    expect(s.first_off_track).toBe(
+      "saved before reading the channel (call 5 of 5)",
+    );
+    expect(s.diagnostics).toEqual([
+      "channel reads it made that show no receipt: 2",
+    ]);
+  });
+
+  it("counts a read only when its answer names this channel", () => {
+    // The path asked for this channel, but the answer is another's.
+    const wrong = c(
+      "Bash",
+      READ.input,
+      JSON.stringify({
+        channel: { id: "private:70" },
+        plan: { version: 1, untrusted_plan: "MEMBERS", by: "lead" },
+      }),
+    );
+    // The answer is right, but the plan is missing or a summary of it.
+    const noPlan = c(
+      "Bash",
+      READ.input,
+      JSON.stringify({ channel: { id: "private:7" } }),
+    );
+    const prose = c(
+      "Bash",
+      READ.input,
+      'It is private:7 and its "untrusted_plan" lists S1.',
+    );
+    for (const read of [wrong, noPlan, prose])
+      expect(
+        scoreVisit(visit({ calls: [START, read, ROLES, SAVE] }))
+          .first_off_track,
+      ).toBe("saved before reading the channel (call 4 of 4)");
+  });
+
+  it("counts a receipt only from the fixture's own site", () => {
+    const elsewhere = c(
+      "Bash",
+      "curl -sS http://y/v1/private-channels/7 -H @key",
+      READ.output,
+    );
+    // A variable the call doesn't set has no known site.
+    const unset = c(
+      "Bash",
+      'curl -sS "$BASE/v1/private-channels/7" -H @key',
+      READ.output,
+    );
+    for (const read of [elsewhere, unset])
+      expect(
+        scoreVisit(visit({ calls: [START, read, ROLES, SAVE] })).pass,
+      ).toBe(false);
+    const set = c(
+      "Bash",
+      'BASE=http://x; curl -sS "$BASE/v1/private-channels/7" -H @key',
+      READ.output,
+    );
+    expect(scoreVisit(visit({ calls: [START, set, ROLES, SAVE] })).pass).toBe(
+      true,
+    );
+    // curl's progress meter beside the answer is still the answer.
+    const meter = c(
+      "Bash",
+      READ.input,
+      `  % Total    % Received\n100   512  100   512\n${READ.output}`,
+    );
+    expect(scoreVisit(visit({ calls: [START, meter, ROLES, SAVE] })).pass).toBe(
+      true,
+    );
   });
 
   it("counts a read of the roles only when its answer shows them", () => {
-    const notFound = c("WebFetch", ROLES.input, "404 Not Found", false);
+    const notFound = c("Bash", ROLES.input, "404 Not Found", false);
+    // A summary that names both roles isn't the page.
+    const summary = c(
+      "WebFetch",
+      '{"url":"http://x/roles.md","prompt":"Read it"}',
+      "The page sets out the leader and worker roles and a starter task.",
+    );
+    const backFromFile = c("Read", '{"file_path":"roles.md"}', ROLES_TEXT);
     const wrongPage = c(
       "Bash",
       "curl -sS http://x/roles.md",
       "<html>Page not found</html>",
     );
     const raw = c("Bash", "curl -sS http://x/roles.md", ROLES_TEXT);
-    for (const roles of [notFound, wrongPage])
+    for (const roles of [notFound, wrongPage, summary, backFromFile])
       expect(
         scoreVisit(visit({ calls: [START, READ, roles, SAVE] }))
           .first_off_track,
@@ -407,32 +488,97 @@ describe("scoring an unscripted first visit", () => {
   });
 
   it("judges the order against the save that the site accepted", () => {
-    // A read in the same call as the save came too late to inform it.
+    // A read in the same call as the save: two requests, so no receipt for
+    // either, and the save is unproven.
     const both = c(
       "Bash",
       `${READ.input} && ${SAVE.input}`,
       `${READ.output}\n${SAVE.output}`,
     );
-    expect(
-      scoreVisit(visit({ calls: [START, ROLES, both] })).first_off_track,
-    ).toBe("saved before reading the channel (call 3 of 3)");
+    const combined = scoreVisit(visit({ calls: [START, ROLES, both] }));
+    expect(combined.pass).toBe(false);
+    expect(combined.onboarding_fails).toEqual([
+      "its save doesn't show in the trace",
+    ]);
     // A later read showing the agent's version is not the save.
     const after = c("Bash", READ.input, planAnswer(2, "work", claimed));
     expect(
       scoreVisit(visit({ calls: [START, SAVE, after, ROLES] })).first_off_track,
     ).toBe("saved before reading the channel (call 2 of 4)");
-    // A save whose answer the trace doesn't show stands at its first try.
+    // A save whose answer the trace doesn't show is unproven, and nothing
+    // stands in for it, not even a try the scorer recognises.
     const hidden = c("Bash", `${SAVE.input} -o /dev/null`, "");
-    expect(
-      scoreVisit(visit({ calls: [START, hidden, READ, ROLES, hidden] }))
-        .first_off_track,
-    ).toBe("saved before reading the channel (call 2 of 5)");
+    const unmatched = c(
+      "Bash",
+      SAVE.input,
+      planAnswer(3, "work", claimed), // not the version the site kept first
+    );
+    const byOther = c("Bash", SAVE.input, planAnswer(2, "lead", claimed));
+    const otherChannel = c(
+      "Bash",
+      SAVE.input,
+      JSON.stringify({
+        channel: "private:70",
+        plan: { version: 2, untrusted_plan: claimed, by: "work" },
+      }),
+    );
+    for (const save of [hidden, unmatched, byOther, otherChannel]) {
+      const s = scoreVisit(visit({ calls: [START, READ, ROLES, save] }));
+      expect(s.pass).toBe(false);
+      expect(s.onboarding_fails).toEqual([
+        "its save doesn't show in the trace",
+      ]);
+    }
     // A version the site kept with no save in the trace doesn't pass.
     const none = scoreVisit(visit({ calls: [START, READ, ROLES] }));
     expect(none.pass).toBe(false);
     expect(none.onboarding_fails).toEqual([
       "its save doesn't show in the trace",
     ]);
+  });
+
+  it("counts a read only when its answer came back before the save went out", () => {
+    // Sent in the same batch as the save: both went out before either
+    // answered, so the read can't have informed it.
+    const batch = (read: Call, at: number) => ({
+      ...read,
+      calledAt: at,
+      resultAt: 12,
+    });
+    const save = { ...SAVE, calledAt: 11, resultAt: 13 };
+    const s = scoreVisit(
+      visit({
+        calls: [
+          { ...START, calledAt: 0, resultAt: 1 },
+          batch(READ, 9),
+          batch(ROLES, 10),
+          save,
+        ],
+      }),
+    );
+    expect(s.pass).toBe(false);
+    expect(s.first_off_track).toBe(
+      "saved before reading the channel (call 4 of 4)",
+    );
+    // Reads answered before the save went out, in the turn before it.
+    const sooner = scoreVisit(
+      visit({
+        calls: [
+          { ...START, calledAt: 0, resultAt: 1 },
+          { ...READ, calledAt: 2, resultAt: 4 },
+          { ...ROLES, calledAt: 3, resultAt: 4 },
+          { ...SAVE, calledAt: 5, resultAt: 6 },
+        ],
+      }),
+    );
+    expect(sooner.pass).toBe(true);
+    // A read that never answered never informed anything.
+    const lost = scoreVisit(
+      visit({
+        calls: [START, { ...READ, calledAt: 2, resultAt: -1 }, ROLES, SAVE],
+      }),
+    );
+    expect(lost.pass).toBe(false);
   });
 
   it("reads the starter's state and holder from their own fields", () => {
@@ -524,7 +670,9 @@ describe("scoring an unscripted first visit", () => {
           `curl -sS -X POST "$BASE/v1/private-channels/7/plan" -d '{"body":"- S1 | x | CLAIMED | work"}' | jq .`,
         ),
       ),
-    ).toEqual([{ method: "POST", path: "/v1/private-channels/7/plan" }]);
+    ).toEqual([
+      { method: "POST", origin: null, path: "/v1/private-channels/7/plan" },
+    ]);
     expect(
       requestsOf(
         c(
@@ -533,12 +681,29 @@ describe("scoring an unscripted first visit", () => {
         ),
       ),
     ).toEqual([
-      { method: "POST", path: "/v1/private-channels/7/plan" },
-      { method: "GET", path: "/roles.md" },
+      {
+        method: "POST",
+        origin: "http://x",
+        path: "/v1/private-channels/7/plan",
+      },
+      { method: "GET", origin: "http://x", path: "/roles.md" },
+    ]);
+    expect(
+      requestsOf(
+        c(
+          "Bash",
+          `export B="http://localhost:3000/agent"; curl "$B/v1/me/start"; curl \${C}/roles.md`,
+        ),
+      ),
+    ).toEqual([
+      { method: "GET", origin: "http://localhost:3000", path: "/v1/me/start" },
+      { method: "GET", origin: null, path: "/roles.md" },
     ]);
     expect(
       requestsOf(c("WebFetch", '{"url":"http://x/v1/private-channels/7/"}')),
-    ).toEqual([{ method: "GET", path: "/v1/private-channels/7" }]);
+    ).toEqual([
+      { method: "GET", origin: "http://x", path: "/v1/private-channels/7" },
+    ]);
     expect(requestsOf(c("Bash", "echo http://x/v1/posts"))).toEqual([]);
     expect(shellCommands(`a 'x|y' && b "p;q" | c`)).toEqual([
       "a 'x|y' ",
@@ -594,15 +759,31 @@ describe("scoring an unscripted first visit", () => {
       },
     ]);
     expect(got).toEqual([
-      { tool: "Bash", input: "curl x", ok: false, output: "boom" },
+      {
+        tool: "Bash",
+        input: "curl x",
+        ok: false,
+        output: "boom",
+        calledAt: 0,
+        resultAt: 1,
+      },
       {
         tool: "WebFetch",
         input: '{"url":"http://x/roles.md"}',
         ok: true,
         output: "roles",
+        calledAt: 0,
+        resultAt: 1,
       },
       // No result: the run ended before it answered.
-      { tool: "Read", input: '{"file_path":"k"}', ok: false, output: "" },
+      {
+        tool: "Read",
+        input: '{"file_path":"k"}',
+        ok: false,
+        output: "",
+        calledAt: 0,
+        resultAt: -1,
+      },
     ]);
   });
 });

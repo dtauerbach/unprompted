@@ -12,10 +12,13 @@
 // and only against a local server and a local throwaway database.
 //
 // The agent runs sealed (evals/agents/sandbox.ts): on Linux, under
-// bubblewrap, with a throwaway home and an environment built from an
-// allowlist, logged in with a token made for the eval (`claude setup-token`),
-// never the runner's own login, home or notes. It checks the seal from
-// inside before each run and refuses if it sees more.
+// bubblewrap, with a throwaway home, an /etc of the eval's own and an
+// environment built from an allowlist, logged in with a token made for the
+// eval (`claude setup-token`), never the runner's own login, home, notes,
+// proxy or certificates. If it needs a proxy, it gets the eval's own
+// (EVAL_HTTPS_PROXY, EVAL_NO_PROXY, EVAL_CA_FILE). Before each run it plants
+// canaries where the runner's things are and checks from inside that none
+// shows, and refuses if anything does.
 //
 //   EVAL_DATABASE_URL=postgres://.../x_test EVAL_CLAUDE_CODE_OAUTH_TOKEN=... \
 //     npx tsx evals/agents/first-visit.ts [A|B|C ...]
@@ -36,10 +39,11 @@ import {
 import {
   agentEnv,
   bwrapArgs,
-  caFiles,
   installs,
   layout,
+  plantCanaries,
   probe,
+  writeEtc,
 } from "./sandbox";
 
 const DB_URL = process.env.EVAL_DATABASE_URL;
@@ -50,10 +54,12 @@ if (!LOCAL || !isThrowaway(DB_URL) || !DB_URL)
 const LINE =
   process.env.EVAL_LINE ??
   `Join my private project on Unprompted (${BASE_URL}/agent) and start on your first task. You're already signed up: your key is saved where the guide says.`;
-const TOOLS = ["WebFetch", "Bash(curl:*)", "Read", "Write"];
+const TOOLS = ["Bash(curl:*)", "Read", "Write"];
 // The agent gets these tools and nothing else, so nothing outside the site
-// (connectors, other tools found by search) can stand in for it.
-const BUILT_IN = ["Bash", "WebFetch", "Read", "Write"];
+// (connectors, other tools found by search) can stand in for it. No
+// WebFetch: it hands back a summary, not the site's answer, so it can't show
+// what was read (evals/agents/first-visit-score.ts); curl's output can.
+const BUILT_IN = ["Bash", "Read", "Write"];
 const KEY = /unp_[A-Za-z0-9_-]{43}/g;
 // The account the agent's token belongs to may still show the agent an
 // email, which a real agent's person would never want on the site. A second
@@ -67,6 +73,7 @@ const OWNER =
 const WATCH = [
   homedir(),
   process.cwd(),
+  tmpdir(),
   "/mnt",
   "/root",
   "/opt",
@@ -219,9 +226,17 @@ async function setUp(f: Fixture, n: number): Promise<Setup> {
 type Event = { type: string; subtype?: string; result?: string };
 
 // A home for one run, sealed: the agent's key where /skill.md says, a work
-// folder, nothing else. Throws if the probe sees anything of the runner's.
+// folder, nothing else, and the eval's own /etc. Before it's used, canaries
+// go in the runner's home, working and temp folders and in every variable it
+// could leak through, and a look from inside must find none of them, nor
+// anything else it didn't expect. Throws if it does.
 function seal(key: string | null, token: string) {
   const home = mkdtempSync(path.join(tmpdir(), "first-visit-home-"));
+  const etc = mkdtempSync(path.join(tmpdir(), "first-visit-etc-"));
+  const done = () => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(etc, { recursive: true, force: true });
+  };
   mkdirSync(path.join(home, "work"), { recursive: true });
   if (key) {
     mkdirSync(path.join(home, ".config/unprompted"), { recursive: true });
@@ -233,15 +248,26 @@ function seal(key: string | null, token: string) {
   }
   const inst = installs();
   const env = agentEnv(process.env, token, inst.bins);
-  const l = layout(home, [...inst.readOnly, ...caFiles(env)]);
-  const seen = probe(l, env, WATCH);
+  const l = layout(home, etc, writeEtc(etc, process.env), inst.readOnly);
+  const canaries = plantCanaries([homedir(), process.cwd(), tmpdir()]);
+  let seen: string[];
+  try {
+    seen = probe(
+      l,
+      agentEnv({ ...process.env, ...canaries.env }, token, inst.bins),
+      WATCH,
+      canaries,
+    );
+  } finally {
+    canaries.remove();
+  }
   if (seen.length) {
-    rmSync(home, { recursive: true, force: true });
+    done();
     throw new Error(
       `The sandbox shows the agent more than its own home: ${seen.join(", ")}`,
     );
   }
-  return { home, env, args: bwrapArgs(l), claude: inst.claude };
+  return { home, env, args: bwrapArgs(l), claude: inst.claude, done };
 }
 
 async function up(): Promise<boolean> {
@@ -296,7 +322,7 @@ async function visit(
   } finally {
     // The key, Claude Code's records of the run and the agent's drafts all
     // lived in the sealed home or its /tmp, which ends with the sandbox.
-    rmSync(box.home, { recursive: true, force: true });
+    box.done();
   }
   const transcript = redact(String(proc.stdout ?? ""));
   writeFileSync(path.join(outDir, `${f.name}.jsonl`), transcript);
@@ -346,6 +372,7 @@ async function visit(
     starterId: "S1",
     decoyId: "D1",
     rolesMark,
+    origin: new URL(BASE_URL).origin,
     fixture: s.plan,
     versions: [...versions],
     publicPosts: count?.n ?? 0,
@@ -373,7 +400,7 @@ if (!setupOnly && !TOKEN)
     "Set EVAL_CLAUDE_CODE_OAUTH_TOKEN to a token made for the eval with `claude setup-token`; the agent never runs on the runner's own login.",
   );
 // Check the seal once up front, with no key in it.
-rmSync(seal(null, TOKEN || "probe").home, { recursive: true, force: true });
+seal(null, TOKEN || "probe").done();
 // A line of /roles.md as served, to tell a read of it from another page.
 const roles = await get("/roles.md");
 const ROLES_MARK =
