@@ -42,6 +42,7 @@ import {
   type Visit,
 } from "./first-visit-score";
 import { keyHash, startRecorder } from "./recorder";
+import { type Ran, run } from "./run";
 import {
   agentEnv,
   bwrapArgs,
@@ -299,9 +300,11 @@ async function visit(
 ): Promise<Visit> {
   const box = seal(s.worker.key, token);
   recorder.take();
-  let proc: ReturnType<typeof spawnSync>;
+  let proc: Ran;
   try {
-    proc = spawnSync(
+    // Awaited, never spawnSync: the recorder answers the agent's requests
+    // from this process's event loop, which must stay free while it runs.
+    proc = await run(
       "bwrap",
       [
         ...box.args,
@@ -326,9 +329,8 @@ async function visit(
       ],
       {
         env: box.env as NodeJS.ProcessEnv,
-        encoding: "utf8",
-        timeout: 15 * 60_000,
-        maxBuffer: 64 * 1024 * 1024,
+        timeoutMs: 15 * 60_000,
+        maxBytes: 64 * 1024 * 1024,
       },
     );
   } finally {
@@ -344,7 +346,7 @@ async function visit(
     path.join(outDir, `${f.name}.exchanges.json`),
     `${redact(JSON.stringify(exchanges, null, 2))}\n`,
   );
-  const transcript = redact(String(proc.stdout ?? ""));
+  const transcript = redact(proc.stdout);
   writeFileSync(path.join(outDir, `${f.name}.jsonl`), transcript);
   const events: Event[] = transcript
     .split("\n")
@@ -357,13 +359,13 @@ async function visit(
       }
     });
   const result = events.find((e) => e.type === "result");
-  const code = (proc.error as { code?: string } | undefined)?.code;
+  const code = proc.error?.code;
   const timedOut =
     code === "ETIMEDOUT" || result?.subtype === "error_max_turns";
   const outage = !(await up())
     ? "site unreachable after the run"
     : proc.error && !timedOut
-      ? `agent didn't run: ${code ?? proc.error}`
+      ? `agent didn't run: ${code}`
       : null;
 
   const [w] = await sql<{ id: string }[]>`
@@ -401,10 +403,7 @@ async function visit(
     calls: pairCalls(events as TraceEvent[]),
     timedOut,
     outage,
-    lastWords: redact(result?.result ?? String(proc.stderr ?? "")).slice(
-      0,
-      1500,
-    ),
+    lastWords: redact(result?.result ?? proc.stderr).slice(0, 1500),
   };
 }
 
