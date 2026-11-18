@@ -20,6 +20,11 @@
 // canaries where the runner's things are and checks from inside that none
 // shows, and refuses if anything does.
 //
+// It reaches the site only through the eval's recorder (recorder.ts), outside
+// the sandbox, whose record is what scoring reads. The sandbox shares the
+// host's network, so run it on a host kept for evals, never one with
+// unrelated private services reachable from it.
+//
 //   EVAL_DATABASE_URL=postgres://.../x_test EVAL_CLAUDE_CODE_OAUTH_TOKEN=... \
 //     npx tsx evals/agents/first-visit.ts [A|B|C ...]
 //   ... --setup-only   sets each fixture up and checks it and the seal, with no agent
@@ -36,6 +41,7 @@ import {
   type TraceEvent,
   type Visit,
 } from "./first-visit-score";
+import { keyHash, startRecorder } from "./recorder";
 import {
   agentEnv,
   bwrapArgs,
@@ -51,9 +57,14 @@ if (!LOCAL || !isThrowaway(DB_URL) || !DB_URL)
   throw new Error(
     "Runs only against a local server (EVAL_URL) and a local database ending in _test (EVAL_DATABASE_URL).",
   );
+// The agent reaches the site only through the eval's recorder, which keeps
+// what the site really answered (evals/agents/recorder.ts); the site names
+// itself by the address it's asked at, so its links stay on the recorder.
+const recorder = await startRecorder(BASE_URL);
+const SITE = recorder.origin;
 const LINE =
   process.env.EVAL_LINE ??
-  `Join my private project on Unprompted (${BASE_URL}/agent) and start on your first task. You're already signed up: your key is saved where the guide says.`;
+  `Join my private project on Unprompted (${SITE}/agent) and start on your first task. You're already signed up: your key is saved where the guide says.`;
 const TOOLS = ["Bash(curl:*)", "Read", "Write"];
 // The agent gets these tools and nothing else, so nothing outside the site
 // (connectors, other tools found by search) can stand in for it. No
@@ -102,7 +113,7 @@ const planWith =
   (backlog: string[], firstVisitNorm = true) =>
   (lead: string) =>
     [
-      `How we work: ${BASE_URL}/roles.md`,
+      `How we work: ${SITE}/roles.md`,
       "",
       "MEMBERS",
       `- @${lead}: Leader. Keeps the plan and backlog current.`,
@@ -287,6 +298,7 @@ async function visit(
   rolesMark: string,
 ): Promise<Visit> {
   const box = seal(s.worker.key, token);
+  recorder.take();
   let proc: ReturnType<typeof spawnSync>;
   try {
     proc = spawnSync(
@@ -324,6 +336,14 @@ async function visit(
     // lived in the sealed home or its /tmp, which ends with the sandbox.
     box.done();
   }
+  const worker = keyHash(s.worker.key);
+  const exchanges = recorder
+    .take()
+    .map(({ keyHash: k, ...e }) => ({ ...e, byWorker: k === worker }));
+  writeFileSync(
+    path.join(outDir, `${f.name}.exchanges.json`),
+    `${redact(JSON.stringify(exchanges, null, 2))}\n`,
+  );
   const transcript = redact(String(proc.stdout ?? ""));
   writeFileSync(path.join(outDir, `${f.name}.jsonl`), transcript);
   const events: Event[] = transcript
@@ -372,7 +392,8 @@ async function visit(
     starterId: "S1",
     decoyId: "D1",
     rolesMark,
-    origin: new URL(BASE_URL).origin,
+    siteOrigin: new URL(BASE_URL).origin,
+    exchanges,
     fixture: s.plan,
     versions: [...versions],
     publicPosts: count?.n ?? 0,
@@ -410,6 +431,21 @@ const ROLES_MARK =
     ?.trim() ?? "";
 if (roles.status !== 200 || !ROLES_MARK)
   throw new Error(`setup: /roles.md answered ${roles.status}`);
+// The recorder passes the site's answer on as it is, sees it, and the site
+// names the recorder's address in it, so the agent's links stay on it.
+recorder.take();
+const through = await fetch(`${SITE}/skill.md`);
+const guide = await through.text();
+const [sawGuide] = recorder.take();
+if (
+  through.status !== 200 ||
+  !guide.includes(SITE) ||
+  guide.includes(BASE_URL) ||
+  sawGuide?.path !== "/skill.md" ||
+  sawGuide.status !== 200 ||
+  sawGuide.body !== guide
+)
+  throw new Error("setup: the recorder doesn't stand between agent and site");
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
 const outDir = path.join(
   process.cwd(),
@@ -449,4 +485,5 @@ try {
   console.log(`Transcripts and scores: ${outDir}`);
 } finally {
   await sql.end();
+  await recorder.close();
 }
