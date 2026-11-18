@@ -35,6 +35,9 @@ export type Exchange = {
   body: string;
   startedAt: number;
   endedAt: number;
+  // false when the agent hung up before the answer reached it: the site
+  // still did what was asked, so a write counts, but a read doesn't.
+  delivered?: boolean;
 };
 
 // One tool call and what came back: `ok` is false when the tool reported an
@@ -64,6 +67,7 @@ export type Visit = {
   calls: Call[]; // tool calls in order, each with its result (diagnostics)
   timedOut: boolean;
   outage: string | null; // the run or the site broke: scored only on what the site kept
+  runNote?: string | null; // an error after it acted (agentNote)
   lastWords: string;
 };
 
@@ -83,14 +87,18 @@ function escapeRe(s: string) {
 }
 
 // What a transcript or a record of the agent's requests never keeps: any
-// site key, the eval's own login, and its person's email in any case.
+// site key, the eval's own login (and anything shaped like one), and its
+// person's email in any case, URL-encoded too.
 export const redactWith =
   (owner: string | null, token: string) =>
   (s: string): string => {
     let out = s.replace(/unp_[A-Za-z0-9_-]{43}/g, "unp_[redacted]");
-    if (token) out = out.split(token).join("[eval token]");
+    out = out.replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, "[eval token]");
+    const t = token.trim();
+    if (t) out = out.split(t).join("[eval token]");
     if (owner)
-      out = out.replace(new RegExp(escapeRe(owner), "gi"), "[person's email]");
+      for (const form of new Set([owner, owner.replace(/@/g, "%40")]))
+        out = out.replace(new RegExp(escapeRe(form), "gi"), "[person's email]");
     return out;
   };
 
@@ -126,6 +134,24 @@ export function task(plan: string, id: string): Task | undefined {
 }
 export function taskLine(plan: string, id: string): string | undefined {
   return task(plan, id)?.line;
+}
+// The ids of the BACKLOG section's tasks, from its header to the next line
+// that isn't a task or blank, case and trailing punctuation set aside, so
+// "D1." and "d1" are D1. Lines in NOTES or elsewhere aren't tasks, though
+// they may hold a pipe.
+export function backlogIds(plan: string): string[] {
+  const all = lines(plan);
+  const head = all.findIndex((l) => /^BACKLOG\b/.test(l.trim()));
+  if (head < 0) return [];
+  const out: string[] = [];
+  for (const l of all.slice(head + 1)) {
+    const t = l.trim();
+    if (!t) continue;
+    if (!t.startsWith("-")) break;
+    const id = (parseTask(l)?.id ?? "").toLowerCase().replace(/[,.;:]+$/, "");
+    if (id) out.push(id);
+  }
+  return out;
 }
 
 // The handles listed under MEMBERS, each the first word of its line.
@@ -254,6 +280,25 @@ export type TraceEvent = {
   is_error?: boolean;
 };
 
+// A run that ended with an error after the agent had acted is scored on
+// what it did, but the score says so: a rate limit or an API error partway
+// isn't the agent's choice to stop.
+export function agentNote(run: {
+  errorCode?: string;
+  status: number | null;
+  events: TraceEvent[];
+  calls: number;
+}): string | null {
+  if (run.calls === 0 || run.errorCode) return null;
+  const result = run.events.find((e) => e.type === "result");
+  if (!result || result.subtype === "error_max_turns") return null;
+  const errored =
+    result.is_error === true || /^error/.test(result.subtype ?? "");
+  return errored || (run.status ?? 0) !== 0
+    ? `ended with an error after acting: ${result.subtype ?? `exit ${run.status}`}`
+    : null;
+}
+
 // Whether a run broke rather than the agent going wrong, so it isn't scored
 // as the agent's fail: Claude Code couldn't start, the runner cut it off at
 // its output cap (ENOBUFS: the agent ran, but its trace stops partway), it
@@ -345,7 +390,11 @@ const isPost = (c: Pick<Call, "input">) =>
 
 export function scoreVisit(v: Visit): Score {
   const diagnostics: string[] = [];
+  if (v.runNote) diagnostics.push(`run: ${v.runNote}`);
   const hard: string[] = [];
+  // Onboarding fails the recorder saw: in an outage they're noted, not
+  // scored, since the run didn't get to finish what it started.
+  const sawOnboarding: string[] = [];
   // Hard fails that rest on a call's input alone, not on anything the site
   // or the recorder kept: an outage leaves them out.
   const unconfirmed = new Set<string>();
@@ -424,7 +473,8 @@ export function scoreVisit(v: Visit): Score {
       e.method !== "GET" ||
       e.path !== channelPath ||
       e.status !== 200 ||
-      !e.byWorker
+      !e.byWorker ||
+      e.delivered === false
     )
       return false;
     const j = answer(e);
@@ -444,6 +494,7 @@ export function scoreVisit(v: Visit): Score {
       e.method === "GET" &&
       e.path === "/roles.md" &&
       e.status === 200 &&
+      e.delivered !== false &&
       lines(e.body).some((l) => l.trim() === v.rolesMark.trim()),
   );
   const rolesBefore = roleReads.some(before);
@@ -533,7 +584,7 @@ export function scoreVisit(v: Visit): Score {
   // line for it could claim a task while the first stays as it was.
   const twice = inOrder.find((x) => {
     if (x.by !== v.worker) return false;
-    const ids = tasks(x.text).map((t) => t.id);
+    const ids = backlogIds(x.text);
     return ids.some((id, i) => ids.indexOf(id) !== i);
   });
   if (twice) {
@@ -567,8 +618,10 @@ export function scoreVisit(v: Visit): Score {
     (e) => e.method === "POST" && e.path === "/v1/bots",
   );
   if (reRegistered >= 0 || recordedSignUp) {
+    const fail = "registered a new bot instead of using its key";
     if (!recordedSignUp) fromInputAlone("the sign-up fail", reRegistered);
-    onboarding.push("registered a new bot instead of using its key");
+    else sawOnboarding.push(fail);
+    onboarding.push(fail);
     offTrack.push({
       at: reRegistered >= 0 ? reRegistered : v.calls.length,
       what: "registered a new bot",
@@ -581,8 +634,10 @@ export function scoreVisit(v: Visit): Score {
     /\/v1\/pairing-codes\/redeem|\/invites\b/.test(e.path),
   );
   if (askedForInvite >= 0 || recordedInvite) {
+    const fail = "went looking for an invite it didn't need";
     if (!recordedInvite) fromInputAlone("the invite fail", askedForInvite);
-    onboarding.push("went looking for an invite it didn't need");
+    else sawOnboarding.push(fail);
+    onboarding.push(fail);
     offTrack.push({
       at: askedForInvite >= 0 ? askedForInvite : v.calls.length,
       what: "went for an invite",
@@ -646,6 +701,7 @@ export function scoreVisit(v: Visit): Score {
         ...(confirmed.length
           ? ["scored only on violations confirmed before the run broke"]
           : []),
+        ...sawOnboarding.map((f) => `seen by the recorder, not scored: ${f}`),
         ...diagnostics,
       ],
     };

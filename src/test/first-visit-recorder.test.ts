@@ -20,7 +20,14 @@ beforeAll(async () => {
       // An answer that promises more than it sends, then drops the line.
       res.writeHead(200, { "content-length": "100" });
       res.write("partial");
-      return setTimeout(() => res.socket?.destroy(), 20);
+      return setTimeout(() => res.socket?.resetAndDestroy(), 20);
+    }
+    if (req.url?.startsWith("/slow")) {
+      // Answers after the agent has given up on it.
+      return setTimeout(() => {
+        res.writeHead(201, { "content-type": "application/json" });
+        res.end('{"saved":true}');
+      }, 150);
     }
     if (req.url?.startsWith("/missing")) {
       res.writeHead(404, { "content-type": "application/json" });
@@ -101,20 +108,51 @@ describe("the eval's recorder", () => {
   it("answers once when the site drops an answer partway", async () => {
     const rec = await startRecorder(siteUrl);
     try {
-      const got = await fetch(`${rec.origin}/cut`).then(
-        async (r) => ({ status: r.status, text: await r.text() }),
-        () => null,
-      );
-      // Either the agent got the recorder's 502 or its line was dropped;
-      // the recorder itself stays up and answers the next request.
-      if (got) expect(got.status).toBe(502);
+      // The site's answer and its connection both report the reset; the
+      // agent gets one 502, and the recorder keeps one exchange.
+      const got = await fetch(`${rec.origin}/cut`);
+      expect(got.status).toBe(502);
+      expect(await got.text()).toBe("site unreachable\n");
       const next = await fetch(`${rec.origin}/v1/after`);
       expect(next.status).toBe(200);
       const seen = rec.take();
-      expect(seen.filter((e) => e.path === "/cut").length).toBeLessThanOrEqual(
-        1,
-      );
+      expect(seen.filter((e) => e.path === "/cut")).toEqual([
+        expect.objectContaining({ status: 502 }),
+      ]);
       expect(seen.at(-1)).toMatchObject({ path: "/v1/after", status: 200 });
+    } finally {
+      await rec.close();
+    }
+  });
+
+  it("keeps a write the agent hung up on, marked undelivered", async () => {
+    const rec = await startRecorder(siteUrl);
+    try {
+      const stop = new AbortController();
+      const got = fetch(`${rec.origin}/slow`, {
+        method: "POST",
+        body: "{}",
+        signal: stop.signal,
+      }).catch(() => null);
+      setTimeout(() => stop.abort(), 30);
+      expect(await got).toBeNull();
+      // The site still answers; the recorder keeps what it said.
+      let seen: ReturnType<typeof rec.take> = [];
+      for (let i = 0; i < 50 && !seen.length; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+        seen = rec.take();
+      }
+      expect(seen).toEqual([
+        expect.objectContaining({
+          method: "POST",
+          path: "/slow",
+          status: 201,
+          delivered: false,
+        }),
+      ]);
+      // One it read to the end carries no mark.
+      await fetch(`${rec.origin}/v1/after`).then((r) => r.text());
+      expect(rec.take()[0]).not.toHaveProperty("delivered");
     } finally {
       await rec.close();
     }

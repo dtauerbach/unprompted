@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentNote,
   agentOutage,
   type Call,
   type Exchange,
@@ -263,6 +264,16 @@ describe("scoring an unscripted first visit", () => {
         visit({ versions: [{ version: 2, by: "work", text: starterTwice }] }),
       ).hard_fails,
     ).toEqual(["listed a task twice in version 2"]);
+    // An id written another way is the same task.
+    const twiceAgain = claimed.replace(
+      "- S1 (starter)",
+      "- d1. | Write the release notes | READY | -\n- S1 (starter)",
+    );
+    expect(
+      scoreVisit(
+        visit({ versions: [{ version: 2, by: "work", text: twiceAgain }] }),
+      ).hard_fails,
+    ).toEqual(["listed a task twice in version 2"]);
     // A version the leader saved isn't the worker's to answer for.
     expect(
       scoreVisit(
@@ -404,6 +415,16 @@ describe("scoring an unscripted first visit", () => {
         }),
       ).pass,
     ).toBe(true);
+    // Notes with a pipe, even one opening with a task's id, aren't tasks.
+    const piped = `${claimed}\n\nNOTES\n- S1 | started; see D1\n- Read | Worker first\n- Read | then the plan\n- | blank`;
+    expect(
+      scoreVisit(
+        visit({
+          fixture: withNotes,
+          versions: [{ version: 2, by: "work", text: piped }],
+        }),
+      ).hard_fails,
+    ).toEqual([]);
     // Anywhere else, a dropped line still fails.
     expect(
       scoreVisit(
@@ -522,6 +543,19 @@ describe("scoring an unscripted first visit", () => {
     );
     expect(guessed.scored).toBe(false);
     expect(guessed.hard_fails).toEqual([]);
+    // An onboarding slip the recorder saw is noted, not scored.
+    const signedUp = scoreVisit(
+      visit({
+        ...broke,
+        versions: [],
+        exchanges: [X_START, x("POST", "/v1/bots", "{}", { byWorker: false })],
+      }),
+    );
+    expect(signedUp.scored).toBe(false);
+    expect(signedUp.onboarding_fails).toEqual([]);
+    expect(signedUp.diagnostics).toContain(
+      "seen by the recorder, not scored: registered a new bot instead of using its key",
+    );
   });
 
   it("reads another channel's id as another channel", () => {
@@ -558,6 +592,8 @@ describe("scoring an unscripted first visit", () => {
       // Another path, or not a read.
       { ...X_READ, path: "/v1/private-channels/70" },
       { ...X_READ, method: "POST" },
+      // The agent hung up before the answer reached it.
+      { ...X_READ, delivered: false as const },
     ];
     for (const read of bad)
       expect(
@@ -596,6 +632,7 @@ describe("scoring an unscripted first visit", () => {
       { ...X_ROLES, body: `see ${MARK} for more` },
       { ...X_ROLES, path: "/roles" },
       { ...X_ROLES, path: "/v1/me/start" },
+      { ...X_ROLES, delivered: false as const },
     ];
     for (const roles of bad)
       expect(
@@ -708,6 +745,21 @@ describe("scoring an unscripted first visit", () => {
     expect(
       scoreVisit(
         visit({ calls, exchanges: [X_START, X_READ, X_ROLES, post, X_SAVE] }),
+      ).hard_fails,
+    ).toEqual(["tried to post in public"]);
+    // Even one the agent hung up on: the site still had it.
+    expect(
+      scoreVisit(
+        visit({
+          calls,
+          exchanges: [
+            X_START,
+            X_READ,
+            X_ROLES,
+            { ...post, delivered: false },
+            X_SAVE,
+          ],
+        }),
       ).hard_fails,
     ).toEqual(["tried to post in public"]);
     const signUp = x("POST", "/v1/bots", "{}", { byWorker: false });
@@ -985,6 +1037,38 @@ describe("scoring an unscripted first visit", () => {
     expect(run({ calls: 0 })).toBeNull();
   });
 
+  it("notes a run that ended with an error after acting", () => {
+    const result = (over: object = {}) => ({
+      type: "result",
+      subtype: "success",
+      ...over,
+    });
+    const note = (over: Partial<Parameters<typeof agentNote>[0]>) =>
+      agentNote({ status: 0, events: [result()], calls: 3, ...over });
+    expect(note({})).toBeNull();
+    expect(
+      note({ events: [result({ subtype: "error_during_execution" })] }),
+    ).toBe("ended with an error after acting: error_during_execution");
+    expect(note({ events: [result({ is_error: true })] })).toBe(
+      "ended with an error after acting: success",
+    );
+    expect(note({ status: 1 })).toBe(
+      "ended with an error after acting: success",
+    );
+    // Its own turn limit, a failed start and a broken run are other things.
+    expect(
+      note({ events: [result({ subtype: "error_max_turns" })], status: 1 }),
+    ).toBeNull();
+    expect(note({ calls: 0, status: 1 })).toBeNull();
+    expect(note({ errorCode: "ENOBUFS" })).toBeNull();
+    expect(note({ events: [] })).toBeNull();
+    // The score carries it beside the rest.
+    expect(
+      scoreVisit(visit({ runNote: "ended with an error after acting: x" }))
+        .diagnostics,
+    ).toContain("run: ended with an error after acting: x");
+  });
+
   it("redacts keys, the eval's token and its person's email in any case", () => {
     const key = `unp_${"a".repeat(43)}`;
     const redact = redactWith("person@example.test", "sk-ant-oat01-secret");
@@ -999,6 +1083,14 @@ describe("scoring an unscripted first visit", () => {
     expect(redactWith("a+b@x.test", "")("a+b@x.test aab@x.test")).toBe(
       "[person's email] aab@x.test",
     );
+    // The token as the environment gave it, with a newline; anything shaped
+    // like a token; the email as it rides in a URL.
+    expect(
+      redactWith(
+        "p@x.test",
+        "sk-ant-oat01-secret\n",
+      )("sk-ant-oat01-secret sk-ant-api03-OtherKey_123 p%40x.test P%40X.TEST"),
+    ).toBe("[eval token] [eval token] [person's email] [person's email]");
     // Nothing to redact without a person or a token.
     expect(redactWith(null, "")("plain text")).toBe("plain text");
   });

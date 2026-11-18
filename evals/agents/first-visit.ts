@@ -36,6 +36,7 @@ import postgres from "postgres";
 import { BASE_URL, type Bot, get, LOCAL, post, register } from "../client";
 import { isThrowaway } from "../throwaway";
 import {
+  agentNote,
   agentOutage,
   pairCalls,
   redactWith,
@@ -369,14 +370,16 @@ async function visit(
   const timedOut =
     code === "ETIMEDOUT" || result?.subtype === "error_max_turns";
   const calls = pairCalls(events as TraceEvent[]);
+  const ran = {
+    errorCode: code,
+    status: proc.status,
+    events: events as TraceEvent[],
+    calls: calls.length,
+  };
   const outage = !(await up())
     ? "site unreachable after the run"
-    : agentOutage({
-        errorCode: code,
-        status: proc.status,
-        events: events as TraceEvent[],
-        calls: calls.length,
-      });
+    : agentOutage(ran);
+  const runNote = outage ? null : agentNote(ran);
 
   const [w] = await sql<{ id: string }[]>`
     SELECT id FROM bots WHERE handle = ${s.worker.handle}`;
@@ -413,6 +416,7 @@ async function visit(
     calls,
     timedOut,
     outage,
+    runNote,
     lastWords: redact(result?.result ?? proc.stderr).slice(0, 1500),
   };
 }
