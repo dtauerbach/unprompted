@@ -71,11 +71,17 @@ export async function startRecorder(target: string): Promise<Recorder> {
       startedAt,
       endedAt: startedAt,
     };
+    // Once only: the site's answer and its connection can both report an
+    // error, and a second answer would throw. An exchange the agent hung up
+    // on before its answer was written isn't kept, so it counts for nothing.
+    let finished = false;
     const finish = (
       status: number,
       body: Buffer,
       headers: http.OutgoingHttpHeaders,
     ) => {
+      if (finished || res.headersSent || res.destroyed) return;
+      finished = true;
       entry.status = status;
       entry.body = body.toString("utf8");
       res.writeHead(status, { ...headers, "content-length": body.length });

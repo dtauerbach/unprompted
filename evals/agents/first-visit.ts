@@ -36,7 +36,9 @@ import postgres from "postgres";
 import { BASE_URL, type Bot, get, LOCAL, post, register } from "../client";
 import { isThrowaway } from "../throwaway";
 import {
+  agentOutage,
   pairCalls,
+  redactWith,
   scoreVisit,
   type TraceEvent,
   type Visit,
@@ -72,7 +74,6 @@ const TOOLS = ["Bash(curl:*)", "Read", "Write"];
 // WebFetch: it hands back a summary, not the site's answer, so it can't show
 // what was read (evals/agents/first-visit-score.ts); curl's output can.
 const BUILT_IN = ["Bash", "Read", "Write"];
-const KEY = /unp_[A-Za-z0-9_-]{43}/g;
 // The account the agent's token belongs to may still show the agent an
 // email, which a real agent's person would never want on the site. A second
 // line of defence, not the isolation: any of the agent's writes holding it
@@ -92,10 +93,10 @@ const WATCH = [
   "/srv",
   "/var",
 ];
-const redact = (s: string) => {
-  const out = s.replace(KEY, "unp_[redacted]");
-  return OWNER ? out.split(OWNER).join("[person's email]") : out;
-};
+// The eval's own login, which the agent holds in its environment and could
+// print; transcripts never keep it.
+const TOKEN = process.env.EVAL_CLAUDE_CODE_OAUTH_TOKEN ?? "";
+const redact = redactWith(OWNER, TOKEN);
 
 // The fixtures as written for this eval (R18 in the working channel): the
 // same plan but for the backlog's order, and the leader's one message from
@@ -235,7 +236,12 @@ async function setUp(f: Fixture, n: number): Promise<Setup> {
   return { lead, worker, id, plan };
 }
 
-type Event = { type: string; subtype?: string; result?: string };
+type Event = {
+  type: string;
+  subtype?: string;
+  result?: string;
+  is_error?: boolean;
+};
 
 // A home for one run, sealed: the agent's key where /skill.md says, a work
 // folder, nothing else, and the eval's own /etc. Before it's used, canaries
@@ -362,11 +368,15 @@ async function visit(
   const code = proc.error?.code;
   const timedOut =
     code === "ETIMEDOUT" || result?.subtype === "error_max_turns";
+  const calls = pairCalls(events as TraceEvent[]);
   const outage = !(await up())
     ? "site unreachable after the run"
-    : proc.error && !timedOut
-      ? `agent didn't run: ${code}`
-      : null;
+    : agentOutage({
+        errorCode: code,
+        status: proc.status,
+        events: events as TraceEvent[],
+        calls: calls.length,
+      });
 
   const [w] = await sql<{ id: string }[]>`
     SELECT id FROM bots WHERE handle = ${s.worker.handle}`;
@@ -400,7 +410,7 @@ async function visit(
     versions: [...versions],
     publicPosts: count?.n ?? 0,
     ownerLeaks: leaks?.n ?? 0,
-    calls: pairCalls(events as TraceEvent[]),
+    calls,
     timedOut,
     outage,
     lastWords: redact(result?.result ?? proc.stderr).slice(0, 1500),
@@ -410,7 +420,6 @@ async function visit(
 const args = process.argv.slice(2);
 const setupOnly = args.includes("--setup-only");
 const wanted = args.filter((a) => !a.startsWith("--"));
-const TOKEN = process.env.EVAL_CLAUDE_CODE_OAUTH_TOKEN ?? "";
 if (process.platform !== "linux" || !spawnSync("bwrap", ["--version"]).stdout)
   throw new Error(
     "Runs only on Linux with bubblewrap (apt install bubblewrap), so the agent can be sealed off from the runner's files.",

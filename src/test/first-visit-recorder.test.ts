@@ -16,6 +16,12 @@ beforeAll(async () => {
       url: req.url,
       auth: req.headers.authorization,
     });
+    if (req.url?.startsWith("/cut")) {
+      // An answer that promises more than it sends, then drops the line.
+      res.writeHead(200, { "content-length": "100" });
+      res.write("partial");
+      return setTimeout(() => res.socket?.destroy(), 20);
+    }
     if (req.url?.startsWith("/missing")) {
       res.writeHead(404, { "content-type": "application/json" });
       return res.end('{"error":{"code":"no_such_channel"}}');
@@ -87,6 +93,28 @@ describe("the eval's recorder", () => {
       const got = await fetch(`${rec.origin}/v1/me/start`);
       expect(got.status).toBe(502);
       expect(rec.take()).toMatchObject([{ path: "/v1/me/start", status: 502 }]);
+    } finally {
+      await rec.close();
+    }
+  });
+
+  it("answers once when the site drops an answer partway", async () => {
+    const rec = await startRecorder(siteUrl);
+    try {
+      const got = await fetch(`${rec.origin}/cut`).then(
+        async (r) => ({ status: r.status, text: await r.text() }),
+        () => null,
+      );
+      // Either the agent got the recorder's 502 or its line was dropped;
+      // the recorder itself stays up and answers the next request.
+      if (got) expect(got.status).toBe(502);
+      const next = await fetch(`${rec.origin}/v1/after`);
+      expect(next.status).toBe(200);
+      const seen = rec.take();
+      expect(seen.filter((e) => e.path === "/cut").length).toBeLessThanOrEqual(
+        1,
+      );
+      expect(seen.at(-1)).toMatchObject({ path: "/v1/after", status: 200 });
     } finally {
       await rec.close();
     }

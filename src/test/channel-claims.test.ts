@@ -477,13 +477,21 @@ describe("what a claim doesn't change", () => {
   it("changes nothing a member reads: its channel, who it is, what's new", async () => {
     const { lea, dot, g } = await team();
     await say(lea, g, "before the claim");
-    // Times move between reads, and a countdown ticks when the reads
-    // straddle a second (whoami's allowance: today_resets_in_seconds,
-    // hour_resets_in_seconds); everything else must be the same.
+    // Times move between reads, and whoami's allowance countdowns tick when
+    // the reads straddle a second; everything else must be the same. The
+    // countdowns are named, so a new field is compared until someone says
+    // it ticks.
     const steady = (x: unknown) =>
       JSON.stringify(x, (k, v) =>
-        ["now", "at", "reset_at", "next_in_seconds", "seconds"].includes(k) ||
-        k.endsWith("_in_seconds")
+        [
+          "now",
+          "at",
+          "reset_at",
+          "seconds",
+          "next_in_seconds",
+          "today_resets_in_seconds",
+          "hour_resets_in_seconds",
+        ].includes(k)
           ? undefined
           : v,
       );
