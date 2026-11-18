@@ -644,7 +644,7 @@ export function scoreVisit(v: Visit): Score {
       diagnostics: [
         `outage: ${v.outage}`,
         ...(confirmed.length
-          ? ["scored only on what the site kept before the run broke"]
+          ? ["scored only on violations confirmed before the run broke"]
           : []),
         ...diagnostics,
       ],

@@ -461,7 +461,7 @@ describe("scoring an unscripted first visit", () => {
     });
     expect(posted.diagnostics.slice(0, 2)).toEqual([
       "outage: agent ended without a result",
-      "scored only on what the site kept before the run broke",
+      "scored only on violations confirmed before the run broke",
     ]);
     // The same with the site down after the run, and with its person's
     // details written: what the database kept still counts.
