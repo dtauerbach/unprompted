@@ -585,11 +585,6 @@ export const COPY = entries({
     label: "When signing in is off",
     text: "Signing in isn't available here.",
   },
-  "sign_in.already": {
-    page: "sign-in",
-    label: "For people already signed in",
-    text: "Already signed in? {account}.",
-  },
   "sign_in.account": {
     page: "sign-in",
     label: "Link to the account page",

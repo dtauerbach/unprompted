@@ -17,8 +17,8 @@
 // Plain Node, no dependencies.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { readFileSync, realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 export type Allowance = {
   // The advisory's address, as npm audit gives it.
@@ -65,14 +65,14 @@ export const ALLOWED: Allowance[] = [
   },
 ];
 
-type Advisory = {
+export type Advisory = {
   url: string;
   name: string;
   title: string;
   severity: string;
   range: string;
 };
-type Vulnerability = { name: string; via: (string | Advisory)[] };
+export type Vulnerability = { name: string; via: (string | Advisory)[] };
 export type AuditReport = { vulnerabilities?: Record<string, Vulnerability> };
 
 // `npm ls <name> --omit=dev --all --long --json`: the production tree, cut
@@ -137,10 +137,16 @@ export function judge(
   today: string,
   files: { manifest: string; lockfile: string },
 ): { failures: string[]; skipped: string[] } {
+  // One advisory can show under several packages. Each distinct reading of
+  // it (address, package, range) is judged, so a second reading never hides
+  // behind the first.
   const seen = new Map<string, Advisory>();
   for (const v of Object.values(report.vulnerabilities ?? {}))
-    for (const a of v.via)
-      if (typeof a !== "string" && !seen.has(a.url)) seen.set(a.url, a);
+    for (const a of v.via) {
+      if (typeof a === "string") continue;
+      const key = `${a.url} ${a.name} ${a.range}`;
+      if (!seen.has(key)) seen.set(key, a);
+    }
   const failures: string[] = [];
   const skipped: string[] = [];
   const fix =
@@ -160,9 +166,13 @@ export function judge(
       );
       continue;
     }
+    // A changed range is one way a fix shows, but not the likely one: a fix
+    // released as a new version usually leaves the range as it was (say
+    // "<=4.0.7" once 4.0.8 is out). That shows only through the review date,
+    // or through the lockfile pin once the fix is installed.
     if (a.range !== allow.range) {
       failures.push(
-        `${a.name}: ${a.url} now affects ${a.range}, not ${allow.range}, so a fix may be out. ${fix}`,
+        `${a.name}: ${a.url} now affects ${a.range}, not ${allow.range}, so it may have been fixed. ${fix}`,
       );
       continue;
     }
@@ -213,8 +223,9 @@ export function judge(
     }
     skipped.push(`${a.name}: ${a.url} (${allow.why})`);
   }
+  const urls = new Set([...seen.values()].map((a) => a.url));
   for (const allow of allowed)
-    if (!seen.has(allow.url))
+    if (!urls.has(allow.url))
       failures.push(
         `${allow.url} no longer shows in the audit: take its allowance out of scripts/check-audit.ts.`,
       );
@@ -238,8 +249,28 @@ function npmJson(args: string[]): { json: unknown; ok: boolean } {
   }
 }
 
-const invoked =
-  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// Run as a script, never when a test imports it. Paths are compared after
+// following links, so a checkout reached through a symlink still runs the
+// check, and run under another name it fails rather than pass unchecked.
+export function invokedAs(argv1: string | undefined, self: string): boolean {
+  if (!argv1) return false;
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  return real(argv1) === real(self);
+}
+const self = fileURLToPath(import.meta.url);
+const invoked = invokedAs(process.argv[1], self);
+if (!invoked && /check-audit(\.ts)?$/.test(process.argv[1] ?? "")) {
+  console.error(
+    "::error::check-audit.ts was run but couldn't tell it was the script being run, so nothing was checked.",
+  );
+  process.exit(1);
+}
 if (invoked) {
   let report: AuditReport;
   const trees: Record<string, LsNode> = {};
