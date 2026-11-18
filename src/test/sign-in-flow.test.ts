@@ -426,6 +426,14 @@ describe("the sign-in page", () => {
     expect(html).toContain("Sign in with Google");
   });
 
+  // Signed out, a link to the account page would only bring them back here.
+  it("offers someone signed out no link to their account", async () => {
+    const html = await signInPage();
+    expect(html).toContain("Sign in with Google");
+    expect(html).not.toContain(COPY["sign_in.account"].text);
+    expect(html).not.toContain('href="/account"');
+  });
+
   it("says signing in isn't available where it isn't set up", async () => {
     auth.enabled = false;
     auth.user = { id: "g-1", email: null };

@@ -51,7 +51,9 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: node --experimental-strip-types scripts/check-copy-seeds.ts "origin/$BASE_REF"
       - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
+      # npm audit --omit=dev at high and above, but for an advisory the
+      # maintainer allowed until its fix ships (scripts/check-audit.ts).
+      - run: node --experimental-strip-types scripts/check-audit.ts
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
