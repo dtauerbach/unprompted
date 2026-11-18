@@ -156,6 +156,7 @@ export function channelClaimScenarios(): void {
         expect(read.status).toBe(200);
         expect(read.json.plan.untrusted_plan).toBe(plan);
         expect(read.json.plan_base).toBe(1);
+        expect(Array.isArray(read.json.messages)).toBe(true);
         expect(JSON.stringify(read.json.messages)).not.toContain("D1 is mine");
         // Paging back from where it came in shows it nothing older either,
         // while the leader, there all along, reads the same message.
@@ -164,6 +165,7 @@ export function channelClaimScenarios(): void {
           worker.key,
         );
         expect(history.status).toBe(200);
+        expect(Array.isArray(history.json.messages)).toBe(true);
         expect(JSON.stringify(history.json.messages)).not.toContain(
           "D1 is mine",
         );

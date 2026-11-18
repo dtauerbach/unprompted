@@ -1,12 +1,16 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ALLOWED,
   type Allowance,
   type AuditReport,
+  invokedAs,
   judge,
   type LsNode,
   routesTo,
+  type Vulnerability,
 } from "../../scripts/check-audit";
 
 // CI fails on a high or critical advisory in the production tree, except one
@@ -113,7 +117,7 @@ describe("the audit check", () => {
 
   it("fails it again once its range changes, since a fix may be out", () => {
     expect(run(report({ range: "<1.0.1" })).failures[0]).toContain(
-      "a fix may be out",
+      "may have been fixed",
     );
   });
 
@@ -219,6 +223,109 @@ describe("the audit check", () => {
 
   it("doesn't let an allowance for one advisory cover another in the same package", () => {
     expect(run(report({ url: `${URL}-other` })).failures).toHaveLength(2);
+  });
+
+  it("judges every reading of an allowed advisory, not just the first one listed", () => {
+    // The same advisory under a second package, with a range nobody allowed.
+    const lib = report().vulnerabilities?.lib as Vulnerability;
+    const other: Vulnerability = {
+      name: "other",
+      via: [
+        {
+          url: URL,
+          name: "lib",
+          title: "ReDoS",
+          severity: "high",
+          range: "<=2.0.0",
+        },
+      ],
+    };
+    const r = run({ vulnerabilities: { lib, other } });
+    expect(r.failures).toHaveLength(1);
+    expect(r.failures[0]).toContain("<=2.0.0");
+    // Listed the other way round, it fails the same.
+    const flipped: AuditReport = { vulnerabilities: { other, lib } };
+    expect(run(flipped).failures).toHaveLength(1);
+  });
+
+  it("fails readings of one advisory that disagree on severity, in either order", () => {
+    // The same address, package and range, read as high in one place and
+    // moderate in another: neither reading may stand for the other.
+    const lib = report().vulnerabilities?.lib as Vulnerability;
+    const other: Vulnerability = {
+      name: "other",
+      via: [
+        {
+          url: URL,
+          name: "lib",
+          title: "ReDoS",
+          severity: "moderate",
+          range: "<=1.0.0",
+        },
+      ],
+    };
+    for (const vulnerabilities of [
+      { lib, other },
+      { other, lib },
+    ]) {
+      const r = run({ vulnerabilities });
+      expect(r.failures).toContain(
+        `lib: ${URL} reads as high and moderate in different places, so it can't be judged.`,
+      );
+      expect(r.failures.some((f) => f.includes("is now moderate"))).toBe(true);
+    }
+    // Not allowed, and one reading high: fails the same way.
+    expect(run({ vulnerabilities: { other, lib } }, []).failures).toContain(
+      `lib: ${URL} reads as high and moderate in different places, so it can't be judged.`,
+    );
+    // Not allowed and nothing high: no failure over the disagreement.
+    const low: Vulnerability = {
+      name: "low",
+      via: [{ ...(other.via[0] as object), severity: "low" } as never],
+    };
+    expect(run({ vulnerabilities: { other, low } }, []).failures).toEqual([]);
+  });
+
+  it("keeps an allowance only while its advisory shows for its own package", () => {
+    // The same address now listed under another package: the allowance is
+    // stale, and the other package's reading isn't covered by it.
+    const r = run(
+      {
+        vulnerabilities: {
+          elsewhere: {
+            name: "elsewhere",
+            via: [
+              {
+                url: URL,
+                name: "elsewhere",
+                title: "ReDoS",
+                severity: "high",
+                range: "<=1.0.0",
+              },
+            ],
+          },
+        },
+      },
+      [allow],
+    );
+    expect(r.failures).toContain(
+      `${URL} no longer shows in the audit for lib: take its allowance out of scripts/check-audit.ts.`,
+    );
+    expect(
+      r.failures.some((f) => f.startsWith("elsewhere: ReDoS (high)")),
+    ).toBe(true);
+  });
+
+  it("knows it was run as a script through a symlinked checkout, and not when imported", () => {
+    const dir = mkdtempSync(join(tmpdir(), "check-audit-"));
+    const real = join(dir, "check-audit.ts");
+    writeFileSync(real, "");
+    const link = join(dir, "linked.ts");
+    symlinkSync(real, link);
+    expect(invokedAs(real, real)).toBe(true);
+    expect(invokedAs(link, real)).toBe(true);
+    expect(invokedAs(join(dir, "vitest.mjs"), real)).toBe(false);
+    expect(invokedAs(undefined, real)).toBe(false);
   });
 
   it("lists every route, deduped ones included", () => {
