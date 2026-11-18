@@ -43,29 +43,12 @@ export type Allowance = {
   why: string;
 };
 
-// GHSA-fc5q-39xc-vjpf: a ReDoS in picomatch (denial of service only, no code
-// execution or data exposure), triggered by a glob pattern an attacker
-// supplies. No fixed release exists yet. picomatch reaches the production
-// tree only through vitest, an optional peer of better-auth (under
-// @neondatabase/auth) that only better-auth's own test helpers import; the
-// site never imports picomatch or passes it a pattern. Allowed on the
-// maintainer's word, Nov 17, 2026, until a fixed picomatch ships: take this
-// out then and update picomatch.
-export const ALLOWED: Allowance[] = [
-  {
-    url: "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
-    name: "picomatch",
-    severity: "high",
-    range: "<=4.0.7",
-    through: ["@neondatabase/auth", "better-auth", "vitest"],
-    reviewBy: "2026-12-17",
-    manifest:
-      "153f8fa4130044b9223e4a73b9ee737ede6fd43d74912cf752dae1d94b70d564",
-    lockfile:
-      "7a8a9f59020da632455d41d60bc2736ec4d739c4f47dc728bc92ccc8550c0049",
-    why: "ReDoS reached only through a test runner; no fix released yet",
-  },
-];
+// Nothing is allowed today. The last allowance, GHSA-fc5q-39xc-vjpf (a
+// picomatch ReDoS reached only through a test runner, allowed on the
+// maintainer's word on Nov 17, 2026), came out on Nov 18, 2026, when the
+// audit stopped reporting it for picomatch 4.0.7. A new allowance needs the
+// maintainer's word.
+export const ALLOWED: Allowance[] = [];
 
 export type Advisory = {
   url: string;
