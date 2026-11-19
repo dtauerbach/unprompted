@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
+import { LiveRefresh, ScrollToEnd } from "@/components/live";
 import { LocalTime } from "@/components/local-time";
 import { Words } from "@/components/words";
+import { startsRun } from "@/lib/chat";
 import { fill } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
@@ -68,21 +70,19 @@ export default async function PeekPage({
   // Only where the person may write here now (src/lib/person-messages.ts).
   const box = await personPostBox(db(), humanId, id);
   const handle = (h: string) => `@${h}`;
+  const last = page.messages.at(-1)?.id ?? null;
   return (
-    <div className="max-w-2xl space-y-8">
-      <header className="space-y-2">
+    <div className="mx-auto flex max-w-2xl flex-col gap-4">
+      <header className="space-y-1">
         <Link href="/account#groups" className="text-sm underline">
           {t["account.peek.back"]}
         </Link>
-        <h1 className="text-3xl font-bold tracking-tight">
+        <h1 className="text-2xl font-bold tracking-tight">
           <Words
             text={t["account.peek.title"]}
             slots={{ channel: page.channel }}
           />
         </h1>
-        <p className="text-neutral-700 dark:text-neutral-300">
-          {t["account.peek.lead"]}
-        </p>
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           <Words
             text={t["account.peek.members"]}
@@ -98,15 +98,19 @@ export default async function PeekPage({
                 .join(", "),
             }}
           />
+          {page.leader && (
+            <>
+              {" · "}
+              <Words
+                text={t["account.peek.leads"]}
+                slots={{ handle: handle(page.leader) }}
+              />
+            </>
+          )}
         </p>
-        {page.leader && (
-          <p className="text-sm text-neutral-600 dark:text-neutral-400">
-            <Words
-              text={t["account.peek.leads"]}
-              slots={{ handle: handle(page.leader) }}
-            />
-          </p>
-        )}
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          {t["account.peek.lead"]}
+        </p>
         {page.closed && (
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             {t["account.channels.closed"]}
@@ -114,13 +118,11 @@ export default async function PeekPage({
         )}
       </header>
 
-      <section id="plan" className="space-y-2">
-        <h2 className="text-xl font-semibold">
+      <details id="plan" className="card group">
+        <summary className="cursor-pointer select-none font-semibold">
           {t["account.peek.plan.title"]}
-        </h2>
-        {page.plan ? (
-          <div className="card space-y-2">
-            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          {page.plan && (
+            <span className="ml-2 text-sm font-normal text-neutral-600 dark:text-neutral-400">
               <Words
                 text={t["account.peek.plan.line"]}
                 slots={{
@@ -129,96 +131,127 @@ export default async function PeekPage({
                   at: <LocalTime iso={page.plan.at.toISOString()} />,
                 }}
               />
+            </span>
+          )}
+        </summary>
+        <div className="mt-3">
+          {!page.plan ? (
+            <p className="text-neutral-600 dark:text-neutral-400">
+              {t["account.peek.plan.none"]}
             </p>
-            {page.plan.body === null ? (
-              <p className="text-sm italic text-neutral-600 dark:text-neutral-400">
-                {t["account.peek.not_shown"]}
-              </p>
-            ) : (
-              <p className="whitespace-pre-wrap break-words">
-                {page.plan.body}
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="text-neutral-600 dark:text-neutral-400">
-            {t["account.peek.plan.none"]}
+          ) : page.plan.body === null ? (
+            <p className="text-sm italic text-neutral-600 dark:text-neutral-400">
+              {t["account.peek.not_shown"]}
+            </p>
+          ) : (
+            <p className="whitespace-pre-wrap break-words text-sm">
+              {page.plan.body}
+            </p>
+          )}
+        </div>
+      </details>
+
+      <section id="messages" className="space-y-3">
+        <h2 className="sr-only">{t["account.peek.messages.title"]}</h2>
+        {page.next_before !== null && (
+          <p className="text-center">
+            <Link
+              href={`/account/channels/${id}?before=${page.next_before}`}
+              className="text-sm underline"
+            >
+              {t["account.peek.older"]}
+            </Link>
           </p>
         )}
-      </section>
-
-      <section id="messages" className="space-y-2">
-        <h2 className="text-xl font-semibold">
-          {t["account.peek.messages.title"]}
-        </h2>
-        {page.next_before !== null && (
-          <Link
-            href={`/account/channels/${id}?before=${page.next_before}`}
-            className="text-sm underline"
-          >
-            {t["account.peek.older"]}
-          </Link>
-        )}
         {page.messages.length === 0 ? (
-          <p className="text-neutral-600 dark:text-neutral-400">
+          <p className="text-center text-neutral-600 dark:text-neutral-400">
             {t["account.peek.messages.none"]}
           </p>
         ) : (
-          <ol className="space-y-2">
-            {page.messages.map((m) => (
-              <li key={m.id} id={`m${m.id}`} className="card space-y-1">
-                <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                  {m.from === null ? (
-                    <Words
-                      text={t["account.peek.message.you"]}
-                      slots={{
-                        at: <LocalTime iso={m.created_at.toISOString()} />,
-                      }}
-                    />
+          <ol className="flex flex-col gap-1">
+            {page.messages.map((m, i) => {
+              const mine = m.from === null;
+              const head = startsRun(page.messages[i - 1], m);
+              return (
+                <li
+                  key={m.id}
+                  id={`m${m.id}`}
+                  className={`flex max-w-[85%] flex-col gap-0.5 ${
+                    mine ? "self-end items-end" : "self-start items-start"
+                  } ${head ? "mt-3" : ""}`}
+                >
+                  {head && (
+                    <p className="px-1 text-xs text-neutral-600 dark:text-neutral-400">
+                      {mine ? (
+                        <Words
+                          text={t["account.peek.message.you"]}
+                          slots={{
+                            at: <LocalTime iso={m.created_at.toISOString()} />,
+                          }}
+                        />
+                      ) : (
+                        <Words
+                          text={t["account.peek.message.line"]}
+                          slots={{
+                            handle: handle(m.from ?? ""),
+                            at: <LocalTime iso={m.created_at.toISOString()} />,
+                          }}
+                        />
+                      )}
+                      {m.plan_version !== null && (
+                        <>
+                          {", "}
+                          <Words
+                            text={t["account.peek.message.plan"]}
+                            slots={{ version: m.plan_version }}
+                          />
+                        </>
+                      )}
+                    </p>
+                  )}
+                  {m.body === null ? (
+                    <p className="rounded-2xl bg-neutral-100 px-3 py-2 text-sm italic text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400">
+                      {t["account.peek.not_shown"]}
+                    </p>
                   ) : (
-                    <Words
-                      text={t["account.peek.message.line"]}
-                      slots={{
-                        handle: handle(m.from),
-                        at: <LocalTime iso={m.created_at.toISOString()} />,
-                      }}
-                    />
+                    <p
+                      className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-2 ${
+                        mine
+                          ? "bg-brand text-white"
+                          : "border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900"
+                      }`}
+                    >
+                      {m.body}
+                    </p>
                   )}
-                  {m.plan_version !== null && (
-                    <>
-                      {", "}
-                      <Words
-                        text={t["account.peek.message.plan"]}
-                        slots={{ version: m.plan_version }}
-                      />
-                    </>
-                  )}
-                </p>
-                {m.body === null ? (
-                  <p className="text-sm italic text-neutral-600 dark:text-neutral-400">
-                    {t["account.peek.not_shown"]}
-                  </p>
-                ) : (
-                  <p className="whitespace-pre-wrap break-words">{m.body}</p>
-                )}
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ol>
         )}
         {before !== undefined && (
-          <Link href={`/account/channels/${id}`} className="text-sm underline">
-            {t["account.peek.newest"]}
-          </Link>
+          <p className="text-center">
+            <Link
+              href={`/account/channels/${id}`}
+              className="text-sm underline"
+            >
+              {t["account.peek.newest"]}
+            </Link>
+          </p>
         )}
-        {box && (
+        <ScrollToEnd last={before === undefined ? last : null} />
+      </section>
+      {box && (
+        <div className="sticky bottom-0 -mx-4 border-t border-neutral-200 bg-page px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:border-neutral-800 dark:bg-neutral-950">
           <PersonPostForm
             channel={page.channel}
             wakes={box.wakes}
             nonce={randomBytes(18).toString("hex")}
             t={pick(t, PERSON_POST_COPY)}
           />
-        )}
-      </section>
+        </div>
+      )}
+      {before === undefined && <LiveRefresh />}
     </div>
   );
 }

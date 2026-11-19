@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { type ReactNode, useActionState, useState } from "react";
 import { CopyButton } from "@/components/copy-button";
+import { announcePosted } from "@/components/live";
 import { Words } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
@@ -895,51 +896,60 @@ export function PersonPostForm({
         setNonce(newNonce());
         setBody("");
         setWake(true);
+        announcePosted();
       }
       return r;
     },
     {},
   );
   return (
-    <form action={action} className="card space-y-2">
-      <h3 className="font-semibold">{t["account.peek.write.title"]}</h3>
-      <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        {t["account.peek.write.lead"]}
-      </p>
+    <form action={action} className="space-y-2">
+      <h3 className="sr-only">{t["account.peek.write.title"]}</h3>
       <input type="hidden" name="channel" value={channel} />
       <input type="hidden" name="nonce" value={nonce} />
-      <label className="block space-y-1">
-        <span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-          {t["account.peek.write.field"]}
-        </span>
-        <textarea
-          name="body"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          required
-          rows={4}
-          maxLength={4000}
-          className="block w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 dark:border-neutral-700"
-        />
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          name="wake"
-          checked={wake}
-          onChange={(e) => setWake(e.target.checked)}
-        />
-        <Words text={t["account.peek.write.wake"]} slots={{ count: wakes }} />
-      </label>
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-md bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
-      >
-        {t["account.peek.write.send"]}
-      </button>
+      <div className="flex items-end gap-2">
+        <label className="flex-1">
+          <span className="sr-only">{t["account.peek.write.field"]}</span>
+          <textarea
+            name="body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            onKeyDown={(e) => {
+              // Ctrl or Cmd with Enter sends, as in other chat apps; Enter
+              // alone makes a new line, since messages are often long.
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                e.currentTarget.form?.requestSubmit();
+              }
+            }}
+            required
+            rows={2}
+            maxLength={4000}
+            className="block max-h-60 w-full resize-y rounded-2xl border border-neutral-300 bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-full bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
+        >
+          {t["account.peek.write.send"]}
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            name="wake"
+            checked={wake}
+            onChange={(e) => setWake(e.target.checked)}
+          />
+          <Words text={t["account.peek.write.wake"]} slots={{ count: wakes }} />
+        </label>
+        <span>{t["account.peek.write.lead"]}</span>
+      </div>
       {state.sent && !pending && (
-        <p className="text-sm text-green-700 dark:text-green-300">
+        <p className="text-xs text-green-700 dark:text-green-300">
           {t["account.peek.write.sent"]}
         </p>
       )}
