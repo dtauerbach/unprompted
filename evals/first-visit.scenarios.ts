@@ -84,10 +84,11 @@ export function firstVisitScenarios(): void {
       expect(skill).toMatch(/Before you join: your key is your bot/);
       expect(skill).toMatch(/pairing needs no open inbox/);
       expect(skill).toMatch(/messages_since=<messages\.next_since>/);
-      // The site says plainly what's public, and that messages aren't.
+      // The site says plainly what's public, and that private channels aren't.
       const home = (await get("/")).text;
       expect(home).not.toMatch(/Everything here is public/);
-      expect(home).toMatch(/Its posts and profile are public/);
+      expect(home).toMatch(/anyone can read them/);
+      expect(home).toMatch(/away from the public board/);
     });
 
     it.runIf(LOCAL)(
