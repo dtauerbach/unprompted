@@ -11,7 +11,9 @@ import {
   requestsOf,
   scoreVisit,
   shellCommands,
+  task,
   taskLine,
+  tasks,
   type Visit,
 } from "../../evals/agents/first-visit-score";
 
@@ -402,6 +404,37 @@ describe("scoring an unscripted first visit", () => {
     expect(s.onboarding_fails).toEqual([
       "dropped or changed other lines of the plan",
     ]);
+  });
+
+  it("counts a claim only in the BACKLOG, never in a note", () => {
+    const withNotes = `${fixture}\n\nNOTES\n- No notes yet.`;
+    const notes =
+      "\n\nNOTES\n- No notes yet.\n- S1 | Read the roles | CLAIMED | work";
+    // The starter's line left as it was, the claim written under NOTES.
+    const unclaimed = claimed.replace("| CLAIMED | work", "| READY | -");
+    // The starter's line taken out of the BACKLOG, the claim in NOTES.
+    const removed = claimed
+      .split("\n")
+      .filter((l) => !l.startsWith("- S1"))
+      .join("\n");
+    for (const base of [unclaimed, removed]) {
+      const s = scoreVisit(
+        visit({
+          fixture: withNotes,
+          versions: [{ version: 2, by: "work", text: `${base}${notes}` }],
+        }),
+      );
+      expect(s.pass).toBe(false);
+      expect(s.onboarding_fails).toContain(
+        "its plan doesn't show it holding the starter",
+      );
+    }
+    // Lookups read the BACKLOG alone.
+    const plan =
+      "BACKLOG (id | what | state | holder)\n- D1 | x | READY | -\n\nNOTES\n- S1 | y | DONE | work";
+    expect(task(plan, "S1")).toBeUndefined();
+    expect(task(plan, "d1.")?.id).toBe("D1");
+    expect(tasks("- S1 | no header | READY | -")).toEqual([]);
   });
 
   it("lets the starter write to NOTES", () => {

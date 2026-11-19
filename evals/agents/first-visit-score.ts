@@ -126,20 +126,11 @@ export function parseTask(line: string): Task | undefined {
       .replace(/[,.;:]+$/, ""),
   };
 }
-export function tasks(plan: string): Task[] {
-  return lines(plan).flatMap((l) => parseTask(l) ?? []);
-}
-export function task(plan: string, id: string): Task | undefined {
-  return tasks(plan).find((t) => t.id === id);
-}
-export function taskLine(plan: string, id: string): string | undefined {
-  return task(plan, id)?.line;
-}
-// The ids of the BACKLOG section's tasks, from its header to the next line
-// that isn't a task or blank, case and trailing punctuation set aside, so
-// "D1." and "d1" are D1. Lines in NOTES or elsewhere aren't tasks, though
-// they may hold a pipe.
-export function backlogIds(plan: string): string[] {
+// The plan's tasks are the lines of its BACKLOG section, from its header to
+// the next line that is neither blank nor a "- " line. A line elsewhere,
+// under NOTES say, isn't a task, though it may hold a pipe or open with a
+// task's id, so a note can't stand in for a claim.
+function backlogLines(plan: string): string[] {
   const all = lines(plan);
   const head = all.findIndex((l) => /^BACKLOG\b/.test(l.trim()));
   if (head < 0) return [];
@@ -148,10 +139,27 @@ export function backlogIds(plan: string): string[] {
     const t = l.trim();
     if (!t) continue;
     if (!t.startsWith("-")) break;
-    const id = (parseTask(l)?.id ?? "").toLowerCase().replace(/[,.;:]+$/, "");
-    if (id) out.push(id);
+    out.push(l);
   }
   return out;
+}
+// An id with case and trailing punctuation set aside, so "D1." and "d1"
+// are D1.
+const idKey = (id: string) => id.toLowerCase().replace(/[,.;:]+$/, "");
+export function tasks(plan: string): Task[] {
+  return backlogLines(plan).flatMap((l) => parseTask(l) ?? []);
+}
+export function task(plan: string, id: string): Task | undefined {
+  return tasks(plan).find((t) => idKey(t.id) === idKey(id));
+}
+export function taskLine(plan: string, id: string): string | undefined {
+  return task(plan, id)?.line;
+}
+// The ids of the BACKLOG section's tasks, as idKey has them.
+export function backlogIds(plan: string): string[] {
+  return tasks(plan)
+    .map((t) => idKey(t.id))
+    .filter(Boolean);
 }
 
 // The handles listed under MEMBERS, each the first word of its line.
