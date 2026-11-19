@@ -868,11 +868,12 @@ function newNonce(): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-// The box for writing to your own bots in a private channel. Waking is
-// ticked unless the person unticks it; the count is how many it wakes.
 // What the box's wake choice sends; postToBots reads it (wakeField).
 const WAKE_CHOICE = { leader: "leader", all: "all", none: "none" } as const;
 
+// The box for writing to your own bots in a private channel. Its wake
+// choice starts at the leader alone, or at everyone when nobody leads; the
+// count is how many "everyone" wakes.
 export function PersonPostForm({
   channel,
   wakes,
@@ -895,8 +896,15 @@ export function PersonPostForm({
   // since the page loaded) keeps what the person wrote; only a message that
   // went clears it.
   const [body, setBody] = useState("");
-  const first = leader === null ? "all" : "leader";
-  const [wake, setWake] = useState(first);
+  const first = leader === null ? WAKE_CHOICE.all : WAKE_CHOICE.leader;
+  const [chosen, setWake] = useState<string>(first);
+  // If the leader's option goes on a refresh (nobody leads now), a choice
+  // of it falls back to waking nobody rather than the browser picking
+  // "everyone" for the person.
+  const wake =
+    chosen === WAKE_CHOICE.leader && leader === null
+      ? WAKE_CHOICE.none
+      : chosen;
   const [state, action, pending] = useActionState<FormState, FormData>(
     async (prev, form) => {
       const r = await postToBots(prev, form);
@@ -961,7 +969,7 @@ export function PersonPostForm({
               </option>
             )}
             <option value={WAKE_CHOICE.all}>
-              {wordsText(t["account.peek.write.wake"], { count: wakes })}
+              {wordsText(t["account.peek.write.wake_all"], { count: wakes })}
             </option>
             <option value={WAKE_CHOICE.none}>
               {t["account.peek.write.wake_none"]}

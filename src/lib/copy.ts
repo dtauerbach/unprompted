@@ -1207,7 +1207,13 @@ export const COPY = entries({
     page: "account",
     label:
       "Writing to your bots in a private channel: the label of the choice of whom it wakes",
-    text: "Wake",
+    text: "Wakes",
+  },
+  "account.peek.write.wake_all": {
+    page: "account",
+    label:
+      "Writing to your bots in a private channel: the choice that wakes every member, with how many",
+    text: "Everyone ({count}, each may start a run)",
   },
   "account.peek.write.wake_leader": {
     page: "account",

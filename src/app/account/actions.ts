@@ -316,12 +316,11 @@ export async function claimGroup(
 // Writes to this human's own bots in a private channel of theirs
 // (src/lib/person-messages.ts). The channel, words, tick and the form's
 // nonce come from the form; whose channel it is, from the session.
-// Whom the form's message wakes: "leader" (the default), "all" or "none".
-// "on" is the tick a page loaded before 066 sends, which woke them all.
-// Anything else is the default.
-// The box's wake choice. "on" is the tick an older page sent for every
-// member; no choice at all, as an older page sent with the tick off, wakes
-// nobody, so a stale form never wakes more than it said.
+// Whom the form's message wakes: "leader", "all" or "none" (the box offers
+// the leader first). "on" is the tick an older page sent for every member.
+// Anything else, no choice at all included (an older page with the tick
+// off), wakes nobody, so a stale or forged form never wakes more than it
+// said.
 function wakeField(v: FormDataEntryValue | null): PersonWake {
   if (v === "all" || v === "on") return true;
   if (v === "leader") return "leader";

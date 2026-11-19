@@ -648,8 +648,16 @@ describe("who may write, and where", () => {
     const [m] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM messages WHERE human_id = ${human}`;
     expect(m?.n).toBe(1);
-    // One that wakes nobody still goes.
+    // One that wakes nobody still goes, and one to the leader alone fits
+    // the one wake left; then even that is refused, writing nothing.
     expect((await post(channel, "quiet", { wake: false })).woke).toBe(0);
+    expect((await post(channel, "lea", { wake: "leader" })).woke).toBe(1);
+    await expect(
+      post(channel, "lea again", { wake: "leader" }),
+    ).rejects.toMatchObject({ status: 429 });
+    const [after] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id = ${human}`;
+    expect(after?.n).toBe(3);
   });
 
   it("is refused by the database too, outside the app's checks", async () => {

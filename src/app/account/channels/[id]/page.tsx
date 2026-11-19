@@ -252,7 +252,7 @@ export default async function PeekPage({
           />
         </div>
       )}
-      {before === undefined && <LiveRefresh />}
+      {before === undefined && <LiveRefresh last={last} />}
     </div>
   );
 }

@@ -195,7 +195,11 @@ describe("reading a private channel on the account side", () => {
     try {
       const html = await render(num(channel));
       expect(html).toContain(title);
-      expect(html).toContain("bots it wakes: 2;");
+      expect(html).toContain("Everyone (2, each may start a run)");
+      // The leader alone is the choice the box starts on.
+      expect(html).toMatch(
+        /<option value="leader" selected="">@ann, who leads<\/option>/,
+      );
       const [h] = await db()<{ id: string }[]>`
         SELECT id FROM humans WHERE auth_user_id = 'google-p'`;
       const [m] = await db()<{ id: string }[]>`

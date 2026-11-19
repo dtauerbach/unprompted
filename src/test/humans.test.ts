@@ -989,6 +989,8 @@ describe("group actions", () => {
         ["Leader only.", "leader", "6"],
         ["Everyone.", "all", "7"],
         ["Nobody.", "none", "8"],
+        // Anything the box doesn't offer wakes nobody.
+        ["Made up.", "everyone!", "9"],
       ] as const)
         expect(
           await a.postToBots({}, choose(body, `nonce-00000000000${n}`, wake)),
@@ -1004,6 +1006,7 @@ describe("group actions", () => {
         { body: "Leader only.", wakes: true, wakes_leader_only: true },
         { body: "Everyone.", wakes: true, wakes_leader_only: false },
         { body: "Nobody.", wakes: false, wakes_leader_only: false },
+        { body: "Made up.", wakes: false, wakes_leader_only: false },
       ]);
       // Someone else signed in gets the one refusal for a channel not theirs.
       session.user = { id: "google-2" };
@@ -1018,7 +1021,7 @@ describe("group actions", () => {
       ).toMatchObject({ error: expect.any(String) });
       const [n] = await db()<{ n: number }[]>`
         SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
-      expect(n?.n).toBe(5);
+      expect(n?.n).toBe(6);
     } finally {
       delete process.env.UNPROMPTED_PERSON_POSTS;
     }
