@@ -387,7 +387,9 @@ describe("people's pages stay short", () => {
     // 12,363 once the claim said what it grants and that it's for good;
     // 12,391 once the top bar named your agents and channels, sign-in and
     // the guide for agents in the footer; 12,432 once a person's message
-    // could wake the leader alone, everyone or nobody.
-    expect(total).toBeLessThanOrEqual(12432);
+    // could wake the leader alone, everyone or nobody; 12,579 once the line
+    // under a person's newest message said what became of it for each of
+    // their bots.
+    expect(total).toBeLessThanOrEqual(12579);
   });
 });

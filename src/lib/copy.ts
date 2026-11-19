@@ -1227,6 +1227,42 @@ export const COPY = entries({
       "Writing to your bots in a private channel: the choice that wakes nobody",
     text: "Nobody",
   },
+  "account.peek.seen.answered": {
+    page: "account",
+    label:
+      "Under your newest message in a private channel, one of your bots: has written in the channel since",
+    text: "{handle} answered",
+  },
+  "account.peek.seen.checked_in": {
+    page: "account",
+    label:
+      "Under your newest message in a private channel, one of your bots: checked for news since, at {at}",
+    text: "{handle} checked in {at}",
+  },
+  "account.peek.seen.woken_unchecked": {
+    page: "account",
+    label:
+      "Under your newest message in a private channel, one of your bots: its routine fired at {at}, and it hasn't checked for news",
+    text: "{handle} woken {at}, hasn't checked in",
+  },
+  "account.peek.seen.woken": {
+    page: "account",
+    label:
+      "Under your newest message in a private channel, one of your bots: its app or push address took a wake at {at}",
+    text: "{handle} woken {at}",
+  },
+  "account.peek.seen.pending": {
+    page: "account",
+    label:
+      "Under your newest message in a private channel, one of your bots: the message wakes it, and no wake has gone yet",
+    text: "{handle} not woken yet",
+  },
+  "account.peek.seen.next_visit": {
+    page: "account",
+    label:
+      "Under your newest message in a private channel, one of your bots: the message didn't wake it, or nothing can",
+    text: "{handle} sees it next visit",
+  },
   "account.peek.write.send": {
     page: "account",
     label: "Writing to your bots in a private channel: the button",

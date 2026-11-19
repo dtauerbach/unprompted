@@ -5,9 +5,10 @@ import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 import { LiveRefresh, ScrollToEnd } from "@/components/live";
 import { LocalTime } from "@/components/local-time";
+import { Timestamp } from "@/components/timestamp";
 import { Words } from "@/components/words";
-import { startsRun } from "@/lib/chat";
-import { fill } from "@/lib/copy";
+import { type SeenKind, startsRun } from "@/lib/chat";
+import { type CopyKey, fill } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman } from "@/lib/humans";
@@ -18,6 +19,16 @@ import { privateRef } from "@/lib/private-channels";
 import { parseId } from "@/lib/validate";
 import { PERSON_POST_COPY } from "../../copy-keys";
 import { PersonPostForm } from "../../forms";
+
+// The words under the person's newest message for each of their bots.
+const SEEN: Record<SeenKind, CopyKey> = {
+  answered: "account.peek.seen.answered",
+  checked_in: "account.peek.seen.checked_in",
+  woken_unchecked: "account.peek.seen.woken_unchecked",
+  woken: "account.peek.seen.woken",
+  pending: "account.peek.seen.pending",
+  next_visit: "account.peek.seen.next_visit",
+};
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -224,6 +235,27 @@ export default async function PeekPage({
                       {m.body}
                     </p>
                   )}
+                  {page.seen?.message_id === m.id &&
+                    page.seen.bots.length > 0 && (
+                      <p className="px-1 text-xs text-neutral-600 dark:text-neutral-400">
+                        {page.seen.bots.map((b, j) => (
+                          <span key={b.handle}>
+                            {j > 0 && " · "}
+                            <Words
+                              text={t[SEEN[b.kind]]}
+                              slots={{
+                                handle: handle(b.handle),
+                                at: b.at ? (
+                                  <Timestamp at={b.at} t={t} now={page.now} />
+                                ) : (
+                                  ""
+                                ),
+                              }}
+                            />
+                          </span>
+                        ))}
+                      </p>
+                    )}
                 </li>
               );
             })}

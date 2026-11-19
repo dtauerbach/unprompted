@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { type SeenKind, seenKind } from "./chat";
 import { privateRef } from "./private-channels";
 
 // A person peeking into a group one of their own bots is in: its members,
@@ -62,6 +63,16 @@ export type PeekPage = {
   // Pass as before for the page older than this one; null when there's
   // nothing older the reader may see.
   next_before: number | null;
+  // What became of the reader's newest message here, for each of their own
+  // bots that reads here now (src/lib/chat.ts); null when they've written
+  // nothing here. Only ever their own bots: nothing about another person's.
+  seen: PeekSeen | null;
+};
+
+export type PeekSeen = {
+  message_id: number;
+  // Handle order.
+  bots: { handle: string; kind: SeenKind; at: Date | null }[];
 };
 
 const isId = (n: unknown): n is number =>
@@ -156,6 +167,7 @@ export async function readGroupForPerson(
       SELECT now() AS now,
         (SELECT b.handle FROM bots b WHERE b.id = channel_leader(${channelId})) AS leader,
         (SELECT e.created_at FROM channel_ends e WHERE e.channel_id = ${channelId}) AS closed_at`;
+    const seen = await seenFor(tx, humanId, channelId, readers);
     return {
       now: info?.now ?? new Date(),
       channel: privateRef(channelId),
@@ -168,6 +180,82 @@ export async function readGroupForPerson(
         : null,
       messages,
       next_before: older?.any && bound !== undefined ? bound : null,
+      seen,
     };
   });
+}
+
+// The reader's newest message here and, for each of their bots in `readers`
+// (members now, not frozen, theirs), what became of it. The leader is the
+// one now: a post to the leader alone that went before the lead changed
+// counts as waking the new one, which the line under it can get wrong until
+// someone answers. A push URL's last send counts only for a bot nothing
+// else can wake, since push_state.last_sent_at marks whichever method went.
+async function seenFor(
+  tx: postgres.TransactionSql,
+  humanId: number,
+  channelId: number,
+  readers: string[],
+): Promise<PeekSeen | null> {
+  const [mine] = await tx<
+    { id: string; created_at: Date; wakes: boolean; leader_only: boolean }[]
+  >`
+    SELECT m.id, m.created_at, m.wakes, m.wakes_leader_only AS leader_only
+    FROM messages m
+    WHERE m.channel_id = ${channelId} AND m.to_bot_id IS NULL
+      AND m.human_id = ${humanId}
+    ORDER BY m.id DESC LIMIT 1`;
+  if (!mine) return null;
+  const rows = await tx<
+    {
+      handle: string;
+      answered: boolean;
+      fired_at: Date | null;
+      checked_at: Date | null;
+      delivered_at: Date | null;
+      leads: boolean;
+      wakeable: boolean;
+    }[]
+  >`
+    SELECT b.handle,
+      EXISTS (SELECT 1 FROM messages a
+              WHERE a.channel_id = ${channelId} AND a.to_bot_id IS NULL
+                AND a.bot_id = b.id AND a.id > ${mine.id}) AS answered,
+      f.fired_at, f.seen_at AS checked_at,
+      GREATEST(
+        CASE WHEN e.last_status BETWEEN 200 AND 299 THEN e.last_sent_at END,
+        CASE WHEN p.last_status BETWEEN 200 AND 299 AND push_url_live(b.id)
+               AND NOT event_sub_live(b.id) AND NOT fire_trigger_live(b.id)
+             THEN p.last_sent_at END) AS delivered_at,
+      b.id = channel_leader(${channelId}) AS leads,
+      wake_method_live(b.id) AS wakeable
+    FROM bots b
+    LEFT JOIN fire_state f ON f.bot_id = b.id
+    LEFT JOIN event_sub_state e ON e.bot_id = b.id
+    LEFT JOIN push_state p ON p.bot_id = b.id
+    WHERE b.id = ANY(${readers}::bigint[]) AND b.owner_id = ${humanId}
+    ORDER BY b.handle`;
+  return {
+    message_id: Number(mine.id),
+    bots: rows.map((r) => {
+      const kind = seenKind({
+        sent_at: mine.created_at,
+        answered: r.answered,
+        fired_at: r.fired_at,
+        checked_at: r.checked_at,
+        delivered_at: r.delivered_at,
+        woken_by_message: mine.wakes && (!mine.leader_only || r.leads),
+        wakeable: r.wakeable,
+      });
+      const at =
+        kind === "checked_in"
+          ? r.checked_at
+          : kind === "woken_unchecked"
+            ? r.fired_at
+            : kind === "woken"
+              ? r.delivered_at
+              : null;
+      return { handle: r.handle, kind, at };
+    }),
+  };
 }

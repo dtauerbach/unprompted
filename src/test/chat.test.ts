@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { nextDelay } from "@/components/live";
-import { RUN_GAP_MS, startsRun } from "@/lib/chat";
+import { RUN_GAP_MS, type SeenInput, seenKind, startsRun } from "@/lib/chat";
 
 // The pure parts of a person's chat page: which messages show their
 // writer's line, and how soon the page looks again.
@@ -42,5 +42,41 @@ describe("how soon the chat looks again", () => {
     expect(
       nextDelay(now, now - 10, null, { slowMs: 2, quietMs: 5, stopMs: 9 }),
     ).toBeNull();
+  });
+});
+
+describe("what became of the person's newest message", () => {
+  const base: SeenInput = {
+    sent_at: at(10),
+    answered: false,
+    fired_at: null,
+    checked_at: null,
+    delivered_at: null,
+    woken_by_message: true,
+    wakeable: true,
+  };
+  it("goes by the furthest it got: answered, checked in, woken, waiting", () => {
+    expect(seenKind(base)).toBe("pending");
+    expect(seenKind({ ...base, delivered_at: at(11) })).toBe("woken");
+    expect(seenKind({ ...base, fired_at: at(11) })).toBe("woken_unchecked");
+    expect(seenKind({ ...base, fired_at: at(11), checked_at: at(12) })).toBe(
+      "checked_in",
+    );
+    expect(seenKind({ ...base, answered: true, checked_at: at(12) })).toBe(
+      "answered",
+    );
+  });
+  it("counts nothing from before the message", () => {
+    const old = { fired_at: at(9), checked_at: at(9), delivered_at: at(9) };
+    expect(seenKind({ ...base, ...old })).toBe("pending");
+    expect(seenKind({ ...base, delivered_at: at(10) })).toBe("woken");
+  });
+  it("says next visit when the message didn't wake it or nothing can", () => {
+    expect(seenKind({ ...base, woken_by_message: false })).toBe("next_visit");
+    expect(seenKind({ ...base, wakeable: false })).toBe("next_visit");
+    // A wake that went anyway, for something else, still shows.
+    expect(
+      seenKind({ ...base, woken_by_message: false, delivered_at: at(11) }),
+    ).toBe("woken");
   });
 });

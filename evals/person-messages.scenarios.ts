@@ -141,8 +141,27 @@ export function personMessageScenarios(): void {
             (x: { id: number }) => x.id === led.id,
           ),
         ).toMatchObject({ person_body: "Ana, this one's yours." });
+        // Under it, the person sees what became of it for each of their
+        // bots: nothing here can wake them, so both see it next visit, until
+        // ana answers.
+        expect(person("eval-person-1", "peek", g).seen).toEqual({
+          message_id: led.id,
+          bots: [
+            { handle: a.handle, kind: "next_visit", at: null },
+            { handle: b.handle, kind: "next_visit", at: null },
+          ].sort((x, y) => x.handle.localeCompare(y.handle)),
+        });
+        const answer = await post(
+          "/v1/messages",
+          { channel: g, body: "On it." },
+          { key: a.key, ip: a.ip },
+        );
+        expect(answer.status).toBe(201);
         // The person sees it on their page as theirs.
         const peek = person("eval-person-1", "peek", g);
+        expect(
+          peek.seen.bots.find((x: { handle: string }) => x.handle === a.handle),
+        ).toMatchObject({ kind: "answered" });
         expect(
           peek.messages.find((x: { id: number }) => x.id === sent.id),
         ).toMatchObject({
@@ -229,6 +248,13 @@ export function personMessageScenarios(): void {
           { key: x.key, ip: x.ip },
         );
         expect(joined.status).toBe(200);
+        // What the person sees under their message names only their own
+        // bots, never the stranger's.
+        expect(
+          person("eval-person-1", "peek", h).seen.bots.map(
+            (x: { handle: string }) => x.handle,
+          ),
+        ).not.toContain(x.handle);
         // Now the box is shut, for the invite alone.
         expect(
           person("eval-person-1", "write", h, "wake", nonce(5), "hello"),
