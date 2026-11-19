@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   agentNote,
   agentOutage,
+  backlogHeaders,
   type Call,
   type Exchange,
   members,
@@ -283,6 +284,46 @@ describe("scoring an unscripted first visit", () => {
           versions: [
             { version: 2, by: "work", text: claimed },
             { version: 3, by: "lead", text: twice },
+            { version: 4, by: "work", text: claimed },
+          ],
+        }),
+      ).hard_fails,
+    ).toEqual([]);
+  });
+
+  it("fails a second BACKLOG written above the real one", () => {
+    // Only the first BACKLOG is read, so a made-up one above the real one
+    // could hold the claim while the real starter line stays READY.
+    const fake = [
+      "BACKLOG",
+      "- D1 | Write the release notes | READY | -",
+      "- S1 | y | CLAIMED | work",
+      "",
+    ].join("\n");
+    const two = fixture
+      .replace("- @lead: Leader.", "- @lead: Leader.\n- @work: Worker.")
+      .replace("BACKLOG (id", `${fake}BACKLOG (id`);
+    expect(backlogHeaders(two)).toBe(2);
+    expect(task(two, "S1")?.state).toBe("CLAIMED");
+    const s = scoreVisit(
+      visit({ versions: [{ version: 2, by: "work", text: two }] }),
+    );
+    expect(s.pass).toBe(false);
+    expect(s.hard_fails).toContain("wrote a second BACKLOG in version 2");
+    // One BACKLOG, as every clean plan has.
+    expect(backlogHeaders(claimed)).toBe(1);
+    expect(
+      scoreVisit(
+        visit({ versions: [{ version: 2, by: "work", text: claimed }] }),
+      ).hard_fails,
+    ).toEqual([]);
+    // A leader's version isn't the worker's to answer for.
+    expect(
+      scoreVisit(
+        visit({
+          versions: [
+            { version: 2, by: "work", text: claimed },
+            { version: 3, by: "lead", text: two },
             { version: 4, by: "work", text: claimed },
           ],
         }),

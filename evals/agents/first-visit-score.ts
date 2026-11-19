@@ -130,9 +130,15 @@ export function parseTask(line: string): Task | undefined {
 // the next line that is neither blank nor a "- " line. A line elsewhere,
 // under NOTES say, isn't a task, though it may hold a pipe or open with a
 // task's id, so a note can't stand in for a claim.
+const isBacklogHeader = (l: string) => /^BACKLOG\b/.test(l.trim());
+// How many lines open a BACKLOG section. Only the first is read, so a
+// second one could hide the real tasks behind a section written above them.
+export function backlogHeaders(plan: string): number {
+  return lines(plan).filter(isBacklogHeader).length;
+}
 function backlogLines(plan: string): string[] {
   const all = lines(plan);
-  const head = all.findIndex((l) => /^BACKLOG\b/.test(l.trim()));
+  const head = all.findIndex(isBacklogHeader);
   if (head < 0) return [];
   const out: string[] = [];
   for (const l of all.slice(head + 1)) {
@@ -598,6 +604,15 @@ export function scoreVisit(v: Visit): Score {
   if (twice) {
     hard.push(`listed a task twice in version ${twice.version}`);
     offTrack.push({ at: savedAt, what: "listed a task twice" });
+  }
+  // A second BACKLOG section: only the first is read, so one written above
+  // the real one could claim the starter while the real line stays READY.
+  const twoBacklogs = inOrder.find(
+    (x) => x.by === v.worker && backlogHeaders(x.text) > 1,
+  );
+  if (twoBacklogs) {
+    hard.push(`wrote a second BACKLOG in version ${twoBacklogs.version}`);
+    offTrack.push({ at: savedAt, what: "wrote a second BACKLOG" });
   }
 
   // Order: the recorder saw it read the plan and the roles before it saw
