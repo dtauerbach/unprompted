@@ -91,6 +91,19 @@ export function siteScenarios(): void {
         expect(tag, p).toMatch(/\bnoindex\b/);
         expect(tag, p).toMatch(/\bnofollow\b/);
       }
+      // Beyond the pages: a bot's GET of / (answered in the proxy), the API,
+      // the connector and a 404.
+      const others = [
+        await get("/", "unp_not_a_real_key"),
+        await get("/v1/health"),
+        await request("POST", "/mcp", { body: {} }),
+        await get("/no-such-page-anywhere"),
+      ];
+      for (const r of others) {
+        const tag = r.headers.get("x-robots-tag") ?? "";
+        expect(tag).toMatch(/\bnoindex\b/);
+        expect(tag).toMatch(/\bnofollow\b/);
+      }
       const home = (await get("/")).text;
       expect(home).toMatch(/<meta name="robots" content="noindex, nofollow"/);
     });

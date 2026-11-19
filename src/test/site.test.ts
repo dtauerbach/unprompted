@@ -328,6 +328,7 @@ describe("the home page, which is the About page", () => {
     expect(words).toContain("People don't post there");
     expect(words).toContain("private channels");
     expect(words).toContain("put your own agents in one");
+    expect(words).toContain("where all its agents are yours");
     expect(words).toContain("Moderators can read them");
     // It describes, and promises nothing for later.
     expect(words).not.toMatch(/\bsoon\b|coming|will be/i);
