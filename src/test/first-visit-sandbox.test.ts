@@ -15,6 +15,8 @@ import {
   ALLOWED_ENV,
   agentEnv,
   bwrapArgs,
+  canaryGrep,
+  claudePackage,
   expectedEntries,
   INSIDE_CA,
   INSIDE_HOME,
@@ -233,6 +235,85 @@ describe("the agent's sandbox", () => {
     expect(expectedEntries(l, "/usr/local")).toEqual([]);
     expect(expectedEntries(l, "/tmp")).toEqual([]);
     expect(expectedEntries(l, "/root")).toEqual([]);
+  });
+
+  it("shares Claude Code's own package folder, never one that only lists it", () => {
+    const root = temp("claude-pkg");
+    // A home folder whose package.json lists Claude Code as a dependency,
+    // with a single-file install below it.
+    const home = path.join(root, "home");
+    mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
+    writeFileSync(
+      path.join(home, "package.json"),
+      JSON.stringify({ dependencies: { "@anthropic-ai/claude-code": "1" } }),
+    );
+    const single = path.join(home, ".local", "bin", "claude");
+    writeFileSync(single, "");
+    expect(claudePackage(single)).toBeUndefined();
+    // A package install: the folder whose package.json is the package.
+    const pkg = path.join(
+      root,
+      "lib",
+      "node_modules",
+      "@anthropic-ai",
+      "claude-code",
+    );
+    mkdirSync(path.join(pkg, "bin"), { recursive: true });
+    writeFileSync(
+      path.join(pkg, "package.json"),
+      JSON.stringify({ name: "@anthropic-ai/claude-code", version: "1" }),
+    );
+    writeFileSync(path.join(pkg, "bin", "claude.js"), "");
+    expect(claudePackage(path.join(pkg, "bin", "claude.js"))).toBe(pkg);
+    // A package.json that isn't JSON is passed over, not trusted.
+    const broken = path.join(root, "broken");
+    mkdirSync(path.join(broken, "bin"), { recursive: true });
+    writeFileSync(
+      path.join(broken, "package.json"),
+      '"@anthropic-ai/claude-code"',
+    );
+    expect(claudePackage(path.join(broken, "bin", "claude"))).toBeUndefined();
+  });
+
+  it("looks for the canary everywhere but the paths it skips, by full path", () => {
+    const root = temp("canary-grep");
+    const word = "canary-word-123";
+    const put = (rel: string) => {
+      const f = path.join(root, rel);
+      mkdirSync(path.dirname(f), { recursive: true });
+      writeFileSync(f, `x ${word} x`);
+      return f;
+    };
+    const skipped = put("usr/lib/thing");
+    const sharedNode = put("opt/node/bin/node");
+    // The same names elsewhere are still read.
+    const nestedUsr = put("home/runner/usr/secret");
+    const otherNode = put("srv/node");
+    const odd = put("we[ird]/f*le");
+    const out = spawnSync(
+      "sh",
+      [
+        "-c",
+        canaryGrep(
+          word,
+          [path.join(root, "usr"), path.join(root, "opt/node/bin/node")],
+          root,
+        ),
+      ],
+      { encoding: "utf8" },
+    ).stdout;
+    const found = out.split("\n").filter(Boolean).sort();
+    expect(found).toEqual([nestedUsr, odd, otherNode].sort());
+    expect(found).not.toContain(skipped);
+    expect(found).not.toContain(sharedNode);
+    // A skipped path with pattern characters skips only itself.
+    const out2 = spawnSync(
+      "sh",
+      ["-c", canaryGrep(word, [path.join(root, "we[ird]")], root)],
+      { encoding: "utf8" },
+    ).stdout;
+    expect(out2).not.toContain("f*le");
+    expect(out2).toContain(nestedUsr);
   });
 });
 

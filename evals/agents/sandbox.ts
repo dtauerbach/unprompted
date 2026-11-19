@@ -179,6 +179,25 @@ export function nameServers(resolv: string): string {
     .join("");
 }
 
+// The folder of the Claude Code package the executable lives in: the
+// nearest folder above it whose package.json is that package by name. One
+// that only lists it (a dependency, a home folder's package.json) isn't, so
+// it's never shared in.
+export function claudePackage(real: string): string | undefined {
+  for (let d = path.dirname(real); d !== path.dirname(d); d = path.dirname(d)) {
+    const pj = path.join(d, "package.json");
+    if (!existsSync(pj)) continue;
+    try {
+      if (
+        JSON.parse(readFileSync(pj, "utf8"))?.name ===
+        "@anthropic-ai/claude-code"
+      )
+        return d;
+    } catch {}
+  }
+  return undefined;
+}
+
 // The Node and Claude Code executables, each shared alone (a package
 // install of Claude Code shares its package folder), and the path to run
 // Claude Code by.
@@ -193,17 +212,7 @@ export function installs(): {
   if (!which) throw new Error("Claude Code (claude) isn't on PATH.");
   const node = realpathSync(process.execPath);
   const real = realpathSync(which);
-  let shared = real;
-  for (let d = path.dirname(real); d !== path.dirname(d); d = path.dirname(d)) {
-    const pj = path.join(d, "package.json");
-    if (
-      existsSync(pj) &&
-      /"@anthropic-ai\/claude-code"/.test(readFileSync(pj, "utf8"))
-    ) {
-      shared = d;
-      break;
-    }
-  }
+  const shared = claudePackage(real) ?? real;
   return {
     readOnly: [...new Set([node, shared])],
     bins: [...new Set([path.dirname(node), path.dirname(real)])],
@@ -297,6 +306,17 @@ export function plantCanaries(places: string[]): Canaries {
   };
 }
 
+// A shell line listing every file under root holding the word, skipping the
+// paths given by their full path, never by name, so a folder that only
+// shares a name with one (a "usr" or a "node" anywhere else) is still read.
+export function canaryGrep(word: string, skip: string[], root = "/"): string {
+  const q = (s: string) => `'${s.replace(/'/g, "")}'`;
+  // find -path takes a pattern, so its special characters are escaped.
+  const exact = (p: string) => q(p.replace(/[*?[\]\\]/g, "\\$&"));
+  const prune = skip.map((p) => `-path ${exact(p)}`).join(" -o ");
+  return `find ${q(root)} ${prune ? `\\( ${prune} \\) -prune -o ` : ""}-type f -print0 2>/dev/null | xargs -0 -r grep -lF -- ${q(word)} 2>/dev/null`;
+}
+
 // Looks from inside, with the same layout and environment the agent gets.
 // Returns what it saw that it shouldn't have, empty when sealed: any
 // variable outside the allowlist, any entry it didn't expect in the folders
@@ -325,9 +345,7 @@ export function probe(
           ...canaries.files.map(
             (f) => `[ -e ${q(f)} ] && echo ${q(`file ${f}`)}`,
           ),
-          `grep -rlF ${q(canaries.word)} / --exclude-dir=proc --exclude-dir=sys --exclude-dir=dev --exclude-dir=usr ${l.readOnly
-            .map((p) => `--exclude=${q(path.basename(p))}`)
-            .join(" ")} 2>/dev/null | sed 's/^/file /'`,
+          `${canaryGrep(canaries.word, ["/proc", "/sys", "/dev", "/usr", ...l.readOnly])} | sed 's/^/file /'`,
         ]
       : []),
     "true",

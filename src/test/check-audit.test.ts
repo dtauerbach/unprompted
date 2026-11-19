@@ -335,19 +335,8 @@ describe("the audit check", () => {
     ]);
   });
 
-  it("allows only the one picomatch ReDoS, through the sign-in library's test runner, for a month", () => {
-    expect(ALLOWED).toEqual([
-      expect.objectContaining({
-        url: "https://github.com/advisories/GHSA-fc5q-39xc-vjpf",
-        name: "picomatch",
-        severity: "high",
-        range: "<=4.0.7",
-        through: ["@neondatabase/auth", "better-auth", "vitest"],
-        reviewBy: "2026-12-17",
-        manifest: expect.stringMatching(/^[0-9a-f]{64}$/),
-        lockfile: expect.stringMatching(/^[0-9a-f]{64}$/),
-      }),
-    ]);
+  it("allows nothing: the picomatch ReDoS left the audit and its allowance came out", () => {
+    expect(ALLOWED).toEqual([]);
   });
 
   it("runs in CI in place of the bare npm audit", () => {

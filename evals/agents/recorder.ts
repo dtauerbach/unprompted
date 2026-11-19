@@ -7,7 +7,9 @@
 // the key it carried (never the key), and when it began and ended by its own
 // clock. Scoring reads this, never the agent's shell output, so a read counts
 // only if the site really answered it. A request that goes around the
-// recorder isn't seen, and counts for nothing.
+// recorder isn't seen, and counts for nothing. One the agent hung up on is
+// still kept once the site has answered, marked undelivered: the site did
+// what it was asked, but the agent never read the answer.
 import { createHash } from "node:crypto";
 import http from "node:http";
 import { performance } from "node:perf_hooks";
@@ -20,6 +22,7 @@ export type Recorded = {
   body: string;
   startedAt: number;
   endedAt: number;
+  delivered?: false; // the agent hung up before the answer reached it
 };
 
 export const keyHash = (key: string) =>
@@ -71,19 +74,38 @@ export async function startRecorder(target: string): Promise<Recorder> {
       startedAt,
       endedAt: startedAt,
     };
+    // Once only: the site's answer and its connection can both report an
+    // error, and a second answer would throw. An exchange the agent hung up
+    // on is kept as undelivered, since the site may have acted on it.
+    let finished = false;
+    let kept = false;
+    let gone = false;
+    const keep = (delivered: boolean) => {
+      if (kept) return;
+      kept = true;
+      entry.endedAt = performance.now();
+      if (!delivered) entry.delivered = false;
+      seen.push(entry);
+    };
     const finish = (
       status: number,
       body: Buffer,
       headers: http.OutgoingHttpHeaders,
     ) => {
+      if (finished) return;
+      finished = true;
       entry.status = status;
       entry.body = body.toString("utf8");
+      if (gone || res.headersSent || res.destroyed) return keep(false);
       res.writeHead(status, { ...headers, "content-length": body.length });
-      res.end(body, () => {
-        entry.endedAt = performance.now();
-        seen.push(entry);
-      });
+      res.end(body, () => keep(true));
     };
+    // "close" comes after the end's callback when the answer went out, and
+    // alone when the agent hung up first.
+    res.on("close", () => {
+      gone = true;
+      if (finished) keep(false);
+    });
     const chunks: Buffer[] = [];
     let size = 0;
     req.on("data", (c: Buffer) => {
