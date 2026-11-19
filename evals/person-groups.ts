@@ -8,7 +8,7 @@
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> list
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> release <handle>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> peek <private:id>
-//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> write <private:id> wake|quiet <nonce> <body>
+//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> write <private:id> wake|leader|quiet <nonce> <body>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> age-link <handle> [hours]
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> claim <private:id>
 // write is the box on the peek-in page (src/lib/person-messages.ts), with its
@@ -49,7 +49,7 @@ if (
   ].includes(what ?? "")
 ) {
   console.error(
-    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> | write <private:id> wake|quiet <nonce> <body> | age-link <handle> [hours] | claim <private:id>",
+    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> | write <private:id> wake|leader|quiet <nonce> <body> | age-link <handle> [hours] | claim <private:id>",
   );
   process.exit(1);
 }
@@ -70,7 +70,7 @@ try {
       authUserId: id,
       channel,
       body: words.join(" "),
-      wake: wake === "wake",
+      wake: wake === "leader" ? "leader" : wake === "wake",
       nonce,
       ipHash: null,
     });

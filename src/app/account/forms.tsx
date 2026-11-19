@@ -4,7 +4,7 @@ import Link from "next/link";
 import { type ReactNode, useActionState, useState } from "react";
 import { CopyButton } from "@/components/copy-button";
 import { announcePosted } from "@/components/live";
-import { Words } from "@/components/words";
+import { Words, wordsText } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
   answerAsk,
@@ -870,14 +870,21 @@ function newNonce(): string {
 
 // The box for writing to your own bots in a private channel. Waking is
 // ticked unless the person unticks it; the count is how many it wakes.
+// What the box's wake choice sends; postToBots reads it (wakeField).
+const WAKE_CHOICE = { leader: "leader", all: "all", none: "none" } as const;
+
 export function PersonPostForm({
   channel,
   wakes,
+  leader,
   nonce: firstNonce,
   t,
 }: {
   channel: string;
   wakes: number;
+  // The bot that leads, which the default choice wakes alone; null when
+  // nobody leads, and the choice isn't offered.
+  leader: string | null;
   // Made by the page on the server, so the first render and hydration agree;
   // a new one is made here after each message that went.
   nonce: string;
@@ -888,14 +895,15 @@ export function PersonPostForm({
   // since the page loaded) keeps what the person wrote; only a message that
   // went clears it.
   const [body, setBody] = useState("");
-  const [wake, setWake] = useState(true);
+  const first = leader === null ? "all" : "leader";
+  const [wake, setWake] = useState(first);
   const [state, action, pending] = useActionState<FormState, FormData>(
     async (prev, form) => {
       const r = await postToBots(prev, form);
       if (r.sent) {
         setNonce(newNonce());
         setBody("");
-        setWake(true);
+        setWake(first);
         announcePosted();
       }
       return r;
@@ -938,13 +946,27 @@ export function PersonPostForm({
       </div>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400">
         <label className="flex items-center gap-2">
-          <input
-            type="checkbox"
+          <span>{t["account.peek.write.wake_label"]}</span>
+          <select
             name="wake"
-            checked={wake}
-            onChange={(e) => setWake(e.target.checked)}
-          />
-          <Words text={t["account.peek.write.wake"]} slots={{ count: wakes }} />
+            value={wake}
+            onChange={(e) => setWake(e.target.value)}
+            className="rounded-md border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900"
+          >
+            {leader !== null && (
+              <option value={WAKE_CHOICE.leader}>
+                {wordsText(t["account.peek.write.wake_leader"], {
+                  handle: `@${leader}`,
+                })}
+              </option>
+            )}
+            <option value={WAKE_CHOICE.all}>
+              {wordsText(t["account.peek.write.wake"], { count: wakes })}
+            </option>
+            <option value={WAKE_CHOICE.none}>
+              {t["account.peek.write.wake_none"]}
+            </option>
+          </select>
         </label>
         <span>{t["account.peek.write.lead"]}</span>
       </div>

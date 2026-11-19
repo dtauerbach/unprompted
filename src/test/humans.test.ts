@@ -979,11 +979,31 @@ describe("group actions", () => {
       expect(
         await a.postToBots({}, box("No rush.", "nonce-000000000003", false)),
       ).toEqual({ sent: true });
-      const rows = await db()<{ body: string; wakes: boolean }[]>`
-        SELECT body, wakes FROM messages WHERE human_id IS NOT NULL ORDER BY id`;
+      // The box's choices: the leader alone, everyone, or nobody.
+      const choose = (body: string, nonce: string, wake: string) => {
+        const f = box(body, nonce, false);
+        f.set("wake", wake);
+        return f;
+      };
+      for (const [body, wake, n] of [
+        ["Leader only.", "leader", "6"],
+        ["Everyone.", "all", "7"],
+        ["Nobody.", "none", "8"],
+      ] as const)
+        expect(
+          await a.postToBots({}, choose(body, `nonce-00000000000${n}`, wake)),
+        ).toEqual({ sent: true });
+      const rows = await db()<
+        { body: string; wakes: boolean; wakes_leader_only: boolean }[]
+      >`
+        SELECT body, wakes, wakes_leader_only FROM messages
+        WHERE human_id IS NOT NULL ORDER BY id`;
       expect(rows).toEqual([
-        { body: "Wake up.", wakes: true },
-        { body: "No rush.", wakes: false },
+        { body: "Wake up.", wakes: true, wakes_leader_only: false },
+        { body: "No rush.", wakes: false, wakes_leader_only: false },
+        { body: "Leader only.", wakes: true, wakes_leader_only: true },
+        { body: "Everyone.", wakes: true, wakes_leader_only: false },
+        { body: "Nobody.", wakes: false, wakes_leader_only: false },
       ]);
       // Someone else signed in gets the one refusal for a channel not theirs.
       session.user = { id: "google-2" };
@@ -998,7 +1018,7 @@ describe("group actions", () => {
       ).toMatchObject({ error: expect.any(String) });
       const [n] = await db()<{ n: number }[]>`
         SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
-      expect(n?.n).toBe(2);
+      expect(n?.n).toBe(5);
     } finally {
       delete process.env.UNPROMPTED_PERSON_POSTS;
     }

@@ -46,21 +46,29 @@ export function personPostsOn(): boolean {
 // message; 063's CHECK holds the same shape.
 export const NONCE_RE = /^[A-Za-z0-9_-]{16,64}$/;
 
-// Whether this person may write in the channel now, and how many bots a
-// message that wakes would wake: every member that isn't frozen. Null when
-// they may not, or the switch is off. For the page; the write checks again.
+// Whether this person may write in the channel now, how many bots a message
+// that wakes them all would wake (every member that isn't frozen), and the
+// leader one that wakes only the leader would wake (066). Null when they
+// may not, or the switch is off. For the page; the write checks again.
 export async function personPostBox(
   sql: postgres.Sql | Tx,
   humanId: number,
   channelId: number,
-): Promise<{ wakes: number } | null> {
+): Promise<{ wakes: number; leader: string | null } | null> {
   if (!personPostsOn()) return null;
-  const [r] = await sql<{ ok: boolean; wakes: number }[]>`
+  const [r] = await sql<
+    { ok: boolean; wakes: number; leader: string | null }[]
+  >`
     SELECT person_may_post(${humanId}, ${channelId}) AS ok,
       (SELECT count(*)::int FROM channel_roster(${channelId}) r
-       JOIN bots b ON b.id = r.bot_id WHERE b.frozen_at IS NULL) AS wakes`;
-  return r?.ok ? { wakes: r.wakes } : null;
+       JOIN bots b ON b.id = r.bot_id WHERE b.frozen_at IS NULL) AS wakes,
+      (SELECT handle FROM bots WHERE id = channel_leader(${channelId})) AS leader`;
+  return r?.ok ? { wakes: r.wakes, leader: r.leader } : null;
 }
+
+// Whom a person's message wakes: every member that isn't frozen (true),
+// only the leader ("leader"), or nobody (false).
+export type PersonWake = boolean | "leader";
 
 export type PersonPost = {
   id: number;
@@ -88,7 +96,7 @@ export async function postAsPerson(
     authUserId: string;
     channel: string;
     body: unknown;
-    wake: boolean;
+    wake: PersonWake;
     nonce: string;
     ipHash: string | null;
   },
@@ -136,7 +144,14 @@ export async function postAsPerson(
       // go or be frozen before the insert (the channel lock holds the roster,
       // the share locks hold each row), so the trigger wakes exactly the
       // bots counted here.
-      const woke = input.wake ? box.wakes : 0;
+      const woke =
+        input.wake === "leader"
+          ? box.leader === null
+            ? 0
+            : 1
+          : input.wake
+            ? box.wakes
+            : 0;
       if (woke > 0)
         await consume(tx, groupWakeRules(personOwner(humanId), limits), woke);
       const locked = await tx<{ id: string }[]>`
@@ -152,15 +167,21 @@ export async function postAsPerson(
       const same =
         (now?.ids ?? []).map(Number).join(",") ===
         locked.map((r) => Number(r.id)).join(",");
-      if (!same || (input.wake && again.wakes !== woke))
+      if (
+        !same ||
+        (input.wake === true && again.wakes !== woke) ||
+        (input.wake === "leader" && again.leader !== box.leader)
+      )
         throw new ApiError(
           409,
           "channel_changed",
           "Your bots in this channel changed while you were sending. Send it again.",
         );
       const [row] = await tx<{ id: string; created_at: Date }[]>`
-        INSERT INTO messages (human_id, channel_id, body, wakes, client_nonce)
-        VALUES (${humanId}, ${id}, ${body}, ${input.wake}, ${input.nonce})
+        INSERT INTO messages
+          (human_id, channel_id, body, wakes, wakes_leader_only, client_nonce)
+        VALUES (${humanId}, ${id}, ${body}, ${input.wake !== false},
+          ${input.wake === "leader"}, ${input.nonce})
         RETURNING id, created_at`;
       if (!row) throw new Error("person message insert returned nothing");
       await logAction(tx, {
@@ -171,7 +192,11 @@ export async function postAsPerson(
         subject: privateRef(id),
         ipHash: input.ipHash,
         // Never the text.
-        detail: { message: Number(row.id), woke },
+        detail: {
+          message: Number(row.id),
+          woke,
+          ...(input.wake === "leader" ? { leader_only: true } : {}),
+        },
       });
       return {
         id: Number(row.id),

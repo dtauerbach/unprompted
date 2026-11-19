@@ -33,3 +33,15 @@ export function Words({
     </>
   );
 }
+
+// The same, as one string, for a place that takes text alone, such as a
+// select's option. Same spots, same rule: a spot not filled shows as nothing.
+export function wordsText(
+  text: string,
+  slots: Record<string, string | number> = {},
+): string {
+  return text
+    .split(/\{([a-z_]+)\}/)
+    .map((part, i) => (i % 2 === 1 ? String(slots[part] ?? "") : part))
+    .join("");
+}

@@ -20,7 +20,12 @@ import { PLAN_NOTICE } from "@/lib/channel-plans";
 import { db } from "@/lib/db";
 import { LIMITS } from "@/lib/limits";
 import { readGroupForPerson } from "@/lib/peek";
-import { NONCE_RE, personPostBox, postAsPerson } from "@/lib/person-messages";
+import {
+  NONCE_RE,
+  type PersonWake,
+  personPostBox,
+  postAsPerson,
+} from "@/lib/person-messages";
 import {
   CHANNEL_NOTICE,
   CHANNEL_NOTICE_WITH_PERSON,
@@ -67,7 +72,7 @@ const num = (ref: string) => ref.replace("private:", "");
 function post(
   channel: string,
   body: string,
-  opts: { wake?: boolean; nonce?: string; who?: string } = {},
+  opts: { wake?: PersonWake; nonce?: string; who?: string } = {},
 ) {
   return postAsPerson(db(), {
     authUserId: opts.who ?? "google-p",
@@ -303,6 +308,90 @@ describe("a person writing to their own bots", () => {
     expect(await wakeOf(ben)).toBe(b0 + 1);
   });
 
+  it("wakes only the leader when asked, and every member still reads it", async () => {
+    const { lea, ben, human, channel } = await own();
+    const l0 = await wakeOf(lea);
+    const b0 = await wakeOf(ben);
+    const q0 = await quota();
+    const sent = await post(channel, "Lea, take this one.", { wake: "leader" });
+    expect(sent.woke).toBe(1);
+    expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0 + 1, b0]);
+    // One wake counted against the person's share, not two.
+    const q1 = await quota();
+    expect(q1[`channel-wake:person:${human}`]).toBe(
+      (q0[`channel-wake:person:${human}`] ?? 0) + 1,
+    );
+    const [row] = await db()<{ wakes: boolean; wakes_leader_only: boolean }[]>`
+      SELECT wakes, wakes_leader_only FROM messages WHERE human_id = ${human}`;
+    expect(row).toEqual({ wakes: true, wakes_leader_only: true });
+    for (const b of [lea, ben]) {
+      const res = await read(b, channel);
+      const bodies = (res.body.messages as { person_body?: string }[]).map(
+        (m) => m.person_body,
+      );
+      expect(bodies).toContain("Lea, take this one.");
+    }
+    // A leader that's frozen isn't the leader: the next member leads.
+    await setFrozen(db(), "lea", true, "test");
+    const next = await post(channel, "Ben then.", { wake: "leader" });
+    expect(next.woke).toBe(1);
+    expect(await wakeOf(ben)).toBe(b0 + 1);
+    expect(await wakeOf(lea)).toBe(l0 + 1);
+  });
+
+  it("refuses, writing nothing, when the lead changes after the send read it", async () => {
+    const { lea, ben, human, channel } = await own();
+    const l0 = await wakeOf(lea);
+    const b0 = await wakeOf(ben);
+    const holder = await db().reserve();
+    let sending: Promise<unknown>;
+    try {
+      await holder`BEGIN`;
+      await holder`SELECT lock_private_channel(${Number(num(channel))})`;
+      sending = post(channel, "For lea.", {
+        wake: "leader",
+        nonce: "nonce-lead-000000",
+      });
+      sending.catch(() => {});
+      await waitingOnChannelLock();
+      await holder`
+        INSERT INTO channel_leaders (channel_id, bot_id, human_id)
+        VALUES (${Number(num(channel))}, ${ben.id}, ${human})`;
+      await holder`COMMIT`;
+    } finally {
+      await holder`ROLLBACK`.catch(() => {});
+      holder.release();
+    }
+    await expect(sending).rejects.toMatchObject({
+      status: 409,
+      code: "channel_changed",
+    });
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+    expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0, b0]);
+    // Sent again, it wakes the leader now in force.
+    const again = await post(channel, "For lea.", {
+      wake: "leader",
+      nonce: "nonce-lead-000000",
+    });
+    expect(again.woke).toBe(1);
+    expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0, b0 + 1]);
+  });
+
+  it("keeps leader-only waking to a person's message that wakes, in the database too", async () => {
+    const { lea, human, channel } = await own();
+    await expect(
+      db()`INSERT INTO messages (human_id, channel_id, body, client_nonce, wakes, wakes_leader_only)
+           VALUES (${human}, ${Number(num(channel))}, 'x', ${nonce()}, false, true)`,
+    ).rejects.toThrow(/messages_leader_only_person/);
+    await expect(
+      db()`INSERT INTO messages (bot_id, key_id, channel_id, body, wakes_leader_only)
+           SELECT ${lea.id}, id, ${Number(num(channel))}, 'x', true
+           FROM api_keys WHERE bot_id = ${lea.id} AND revoked_at IS NULL LIMIT 1`,
+    ).rejects.toThrow(/messages_leader_only_person/);
+  });
+
   it("refuses, writing nothing, when a member is frozen after its wakes were counted", async () => {
     const { lea, ben, channel } = await own();
     const l0 = await wakeOf(lea);
@@ -443,6 +532,7 @@ describe("who may write, and where", () => {
     await ageLink("ben", 25);
     expect(await personPostBox(db(), human, Number(num(channel)))).toEqual({
       wakes: 2,
+      leader: "lea",
     });
   });
 

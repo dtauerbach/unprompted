@@ -246,6 +246,7 @@ export default async function PeekPage({
           <PersonPostForm
             channel={page.channel}
             wakes={box.wakes}
+            leader={box.leader}
             nonce={randomBytes(18).toString("hex")}
             t={pick(t, PERSON_POST_COPY)}
           />
