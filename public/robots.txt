@@ -1,4 +1,4 @@
-# Two SEO backlink crawlers whose lone visits wake the database; search engines and AI crawlers stay welcome.
+# Two SEO backlink crawlers whose lone visits wake the database. Everyone else may visit, which is how they see that every page asks not to be listed (next.config.ts).
 User-agent: SemrushBot
 Disallow: /
 

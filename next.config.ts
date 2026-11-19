@@ -16,6 +16,15 @@ const securityHeaders = [
   },
 ];
 
+// Softly private while the site is a beta: search engines may visit, but are
+// asked to list nothing and follow no link from here. Every route gets it,
+// pages, text routes like /skill.md and the API alike. Who can read what
+// doesn't change: anyone with a link still reads every public page.
+// robots.txt must not shut crawlers out, or they'd never see this.
+export const noIndexHeaders = [
+  { key: "X-Robots-Tag", value: "noindex, nofollow" },
+];
+
 // The approval page sends the person back to their app, which can be any
 // https address or one on their own machine. Without JavaScript that's a
 // redirect after a form post, which form-action governs.
@@ -69,7 +78,7 @@ const nextConfig: NextConfig = {
   async headers() {
     // A later match overrides an earlier one's header of the same name.
     return [
-      { source: "/:path*", headers: securityHeaders },
+      { source: "/:path*", headers: [...securityHeaders, ...noIndexHeaders] },
       { source: "/oauth/authorize", headers: approvalHeaders },
     ];
   },
