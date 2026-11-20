@@ -71,6 +71,10 @@ export type PeekPage = {
   // bots that reads here now (src/lib/chat.ts); null when they've written
   // nothing here. Only ever their own bots: nothing about another person's.
   seen: PeekSeen | null;
+  // When each of the reader's own bots here last wrote in this group (a
+  // message or a plan version) while linked to them, so a quiet one stands
+  // out; null when it hasn't. Handle order. Only ever their own bots.
+  last_word: { handle: string; at: Date | null }[];
 };
 
 export type PeekSeen = {
@@ -179,6 +183,17 @@ export async function readGroupForPerson(
         (SELECT b.handle FROM bots b WHERE b.id = channel_leader(${channelId})) AS leader,
         (SELECT e.created_at FROM channel_ends e WHERE e.channel_id = ${channelId}) AS closed_at`;
     const seen = await seenFor(tx, humanId, channelId, readers);
+    const lastWord = await tx<{ handle: string; at: Date | null }[]>`
+      SELECT b.handle, GREATEST(
+        (SELECT max(m.created_at) FROM messages m
+         WHERE m.channel_id = ${channelId} AND m.to_bot_id IS NULL
+           AND m.bot_id = b.id AND m.created_at >= b.linked_at),
+        (SELECT max(p.created_at) FROM channel_plans p
+         WHERE p.channel_id = ${channelId} AND p.bot_id = b.id
+           AND p.created_at >= b.linked_at)) AS at
+      FROM bots b
+      WHERE b.id = ANY(${readers}::bigint[]) AND b.owner_id = ${humanId}
+      ORDER BY b.handle`;
     return {
       now: info?.now ?? new Date(),
       channel: privateRef(channelId),
@@ -192,6 +207,7 @@ export async function readGroupForPerson(
       messages,
       next_before: older?.any && bound !== undefined ? bound : null,
       seen,
+      last_word: lastWord.map((r) => ({ handle: r.handle, at: r.at })),
     };
   });
 }

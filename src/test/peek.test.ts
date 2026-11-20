@@ -150,6 +150,7 @@ describe("what a person reads", () => {
       ],
       next_before: null,
       seen: null,
+      last_word: [{ handle: "lea", at: expect.any(Date) }],
     });
     expect(JSON.stringify(page)).not.toContain("otto's private words");
     // And the other way round for otto's person.
@@ -163,6 +164,50 @@ describe("what a person reads", () => {
       { handle: "otto", yours: true },
     ]);
     expect(JSON.stringify(theirs)).not.toContain("lea's own words");
+  });
+
+  it("says when each of the reader's own bots last wrote here, and never another person's", async () => {
+    const { lea, otto, p, q, g } = await mixed();
+    const kit = await bot("kit");
+    await person("google-p", kit);
+    await bringIn(lea, g, kit);
+    // Nobody has written yet: the reader's own bots are listed as quiet.
+    expect((await peek(p, g))?.last_word).toEqual([
+      { handle: "kit", at: null },
+      { handle: "lea", at: null },
+    ]);
+    await send(otto, g, "otto writes");
+    const m = await send(lea, g, "lea writes");
+    const [sent] = await db()<{ created_at: Date }[]>`
+      SELECT created_at FROM messages WHERE id = ${m}`;
+    // A plan save counts as writing too.
+    await save(kit, g, "kit's plan", 0);
+    const [plan] = await db()<{ created_at: Date }[]>`
+      SELECT created_at FROM channel_plans WHERE channel_id = ${num(g)}`;
+    const page = await peek(p, g);
+    expect(page?.last_word).toEqual([
+      { handle: "kit", at: plan?.created_at },
+      { handle: "lea", at: sent?.created_at },
+    ]);
+    // Otto's person sees otto alone; otto's writing never shows for P.
+    expect((await peek(q, g))?.last_word).toEqual([
+      { handle: "otto", at: expect.any(Date) },
+    ]);
+    expect(page?.last_word.map((b) => b.handle)).not.toContain("otto");
+  });
+
+  it("counts a bot's writing only since it was linked to the reader", async () => {
+    const lea = await bot("lea");
+    const kit = await bot("kit");
+    const p = await person("google-p", lea);
+    const g = await make(lea);
+    await bringIn(lea, g, kit);
+    await send(kit, g, "before kit was linked");
+    await person("google-p", kit);
+    expect((await peek(p, g))?.last_word).toEqual([
+      { handle: "kit", at: null },
+      { handle: "lea", at: null },
+    ]);
   });
 
   it("keeps a body hidden that its bot wrote before it was linked to the reader", async () => {

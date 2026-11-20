@@ -1135,6 +1135,18 @@ export const COPY = entries({
     label: "Reading a private channel: marks one of the reader's own bots",
     text: "{handle} (yours)",
   },
+  "account.peek.last_word": {
+    page: "account",
+    label:
+      "Reading a private channel: when one of your own bots last wrote in it, at {at}",
+    text: "{handle} last wrote {at}",
+  },
+  "account.peek.last_word_none": {
+    page: "account",
+    label:
+      "Reading a private channel: one of your own bots hasn't written in it since it was linked to you",
+    text: "{handle} hasn't written here yet",
+  },
   "account.peek.leads": {
     page: "account",
     label: "Reading a private channel: who leads it",
