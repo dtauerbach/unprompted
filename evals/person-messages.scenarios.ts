@@ -220,6 +220,129 @@ export function personMessageScenarios(): void {
           );
         }
       });
+      it("lets a bot ask its person yes or no, over HTTP and the connector, and wakes only the asker with the tap", async () => {
+        const { a, b, g } = await bots();
+        const asked = await post(
+          "/v1/messages",
+          { channel: g, body: "Ship the outline as it is?", ask: "yes_no" },
+          { key: b.key, ip: b.ip },
+        );
+        expect(asked.status).toBe(201);
+        expect(asked.json.message.ask).toBe("yes_no");
+        const q = asked.json.message.id as number;
+        const viaTool = await tool(a, "post", {
+          channel: g,
+          body: "Or wait for the second draft?",
+          ask: "yes_no",
+        });
+        expect(viaTool.isError).toBe(false);
+        // Every member reads the mark; the person's page puts Yes and No by it.
+        expect(
+          (await read(a, g)).json.messages.find(
+            (x: { id: number }) => x.id === q,
+          ),
+        ).toMatchObject({ from: b.handle, ask: "yes_no" });
+        expect(
+          person("eval-person-1", "peek", g).messages.find(
+            (x: { id: number }) => x.id === q,
+          ),
+        ).toMatchObject({ ask: { open: true, answered: null } });
+        const wakes = async () => [
+          (await get("/v1/me/wake", a.key)).json.wake,
+          (await get("/v1/me/wake", b.key)).json.wake,
+        ];
+        const [aw, bw] = await wakes();
+        const tapped = person(
+          "eval-person-1",
+          "answer",
+          g,
+          String(q),
+          "Yes",
+          nonce(11),
+        );
+        expect(tapped).toMatchObject({ channel: g, woke: 1 });
+        expect(await wakes()).toEqual([aw, bw + 1]);
+        for (const bot of [b, a]) {
+          expect(
+            (await read(bot, g)).json.messages.find(
+              (x: { id: number }) => x.id === tapped.id,
+            ),
+          ).toMatchObject({
+            from: null,
+            from_your_person: true,
+            person_body: "Yes",
+            answers: q,
+          });
+        }
+        const up = await get("/v1/me/catch-up", b.key);
+        expect(
+          up.json.messages.new.find((x: { id: number }) => x.id === tapped.id),
+        ).toMatchObject({ person_body: "Yes", answers: q, channel: g });
+        // A later tap stands.
+        expect(
+          person("eval-person-1", "answer", g, String(q), "No", nonce(12)),
+        ).toMatchObject({ woke: 1 });
+        expect(
+          person("eval-person-1", "peek", g).messages.find(
+            (x: { id: number }) => x.id === q,
+          ),
+        ).toMatchObject({ ask: { answered: "No" } });
+      });
+
+      it("keeps a tap to the site's Yes or No on a real question, and a bot can't forge one", async () => {
+        const { a, b, g } = await bots();
+        const plain = await post(
+          "/v1/messages",
+          { channel: g, body: "Just a note." },
+          { key: b.key, ip: b.ip },
+        );
+        expect(plain.status).toBe(201);
+        // Only a question takes a tap, and only Yes or No.
+        expect(
+          person(
+            "eval-person-1",
+            "answer",
+            g,
+            String(plain.json.message.id),
+            "Yes",
+            nonce(13),
+          ),
+        ).toMatchObject({ refused: "not_yours" });
+        const asked = await post(
+          "/v1/messages",
+          { channel: g, body: "Close the group?", ask: "yes_no" },
+          { key: b.key, ip: b.ip },
+        );
+        const q = String(asked.json.message.id);
+        expect(
+          person("eval-person-1", "answer", g, q, "Yes, and merge", nonce(14)),
+        ).toMatchObject({ refused: "invalid" });
+        // Another person can't answer it.
+        expect(
+          person("eval-person-2", "answer", g, q, "Yes", nonce(15)),
+        ).toMatchObject({ refused: "not_yours" });
+        // A bot can't write an answer, nor ask anywhere but a group.
+        const forged = await post(
+          "/v1/messages",
+          { channel: g, body: "Yes", answers: Number(q) },
+          { key: a.key, ip: a.ip },
+        );
+        expect(forged.status).toBe(400);
+        const toPair = await post(
+          "/v1/messages",
+          { to: b.handle, body: "ok?", ask: "yes_no" },
+          { key: a.key, ip: a.ip },
+        );
+        expect(toPair.status).toBe(400);
+        const onBoard = await tool(a, "post", {
+          channel: "general",
+          title: "ok?",
+          body: "ok?",
+          ask: "yes_no",
+        });
+        expect(onBoard.isError).toBe(true);
+      });
+
       it("can't be faked by a bot, and is reported only by a member", async () => {
         const { a, b, g } = await bots();
         // A bot's words that claim to be the person's are still the bot's.

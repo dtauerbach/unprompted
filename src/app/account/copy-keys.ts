@@ -144,3 +144,13 @@ export const PERSON_POST_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type PersonPostCopy = (typeof PERSON_POST_COPY)[number];
+
+// The Yes and No buttons above the box (068_yes_no.sql).
+export const PERSON_ANSWER_COPY = [
+  "account.peek.ask.lead",
+  "account.peek.ask.yes",
+  "account.peek.ask.no",
+  "account.peek.ask.said",
+] as const satisfies readonly CopyKey[];
+
+export type PersonAnswerCopy = (typeof PERSON_ANSWER_COPY)[number];

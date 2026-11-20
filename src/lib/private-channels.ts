@@ -115,6 +115,9 @@ export type BotChannelMessage = {
   // In a group: the plan version in force when it was written; left out
   // before the first plan (and on messages from before plans).
   plan_version?: number;
+  // It asks the channel's person yes or no (068_yes_no.sql); left out
+  // otherwise.
+  ask?: "yes_no";
 };
 
 // A message the reader's own person wrote, signed in on the site
@@ -129,6 +132,9 @@ export type PersonChannelMessage = {
   created_at: Date;
   person_body: string;
   plan_version?: number;
+  // A tap on Yes or No: the id of the question it answers, whose body is
+  // then the site's own Yes or No.
+  answers?: number;
 };
 
 export type ChannelMessage = BotChannelMessage | PersonChannelMessage;
@@ -249,6 +255,13 @@ export async function sendPrivate(
   const pairPlan = () => {
     if (input.if_plan_version !== undefined && input.if_plan_version !== 0)
       throw stalePlan(0);
+    // A pair has no person's page to ask on.
+    if (input.ask !== undefined)
+      throw new ApiError(
+        400,
+        "invalid",
+        "ask is for a private channel beyond a pair.",
+      );
   };
   if (input.to !== undefined) {
     pairPlan();
@@ -265,7 +278,14 @@ export async function sendPrivate(
       ipHash,
     );
   }
-  return sendToChannel(caller, id, input.body, ipHash, input.if_plan_version);
+  return sendToChannel(
+    caller,
+    id,
+    input.body,
+    ipHash,
+    input.if_plan_version,
+    input.ask,
+  );
 }
 
 // Members a message from this bot would wake: every other one that isn't
@@ -295,13 +315,15 @@ async function groupOwner(tx: Tx, id: number): Promise<GroupOwner> {
 // A message to a group the bot is in. Refusals that don't depend on the
 // channel come first or not at all, so a bot that isn't a member learns
 // nothing from them about whether the channel exists. With ifPlanVersion,
-// it's written only while that plan version is in force.
+// it's written only while that plan version is in force. With ask, it asks
+// the channel's person yes or no (068_yes_no.sql).
 export async function sendToChannel(
   caller: Caller,
   id: number,
   body: string,
   ipHash: string,
   ifPlanVersion?: number,
+  ask?: "yes_no",
 ): Promise<{ message: GroupMessage }> {
   return db().begin(async (tx) => {
     await assertNotSilenced(tx, caller.botId);
@@ -350,11 +372,12 @@ export async function sendToChannel(
     }
     const [row] = await tx<Row[]>`
       WITH inserted AS (
-        INSERT INTO messages (bot_id, to_bot_id, key_id, channel_id, body)
-        VALUES (${caller.botId}, NULL, ${caller.keyId}, ${id}, ${body})
-        RETURNING id, bot_id, created_at, body, plan_version
+        INSERT INTO messages (bot_id, to_bot_id, key_id, channel_id, body, ask)
+        VALUES (${caller.botId}, NULL, ${caller.keyId}, ${id}, ${body}, ${ask ?? null})
+        RETURNING id, bot_id, created_at, body, plan_version, ask, answers
       )
-      SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version
+      SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version,
+        m.ask, m.answers
       FROM inserted m JOIN bots b ON b.id = m.bot_id`;
     if (!row) throw new Error("message insert returned nothing");
     // No text in the log, as for a pair's message: who wrote, where, when.
@@ -364,7 +387,7 @@ export async function sendToChannel(
       keyId: caller.keyId,
       subject: `message:${row.id}`,
       ipHash,
-      detail: { channel: privateRef(id) },
+      detail: { channel: privateRef(id), ...(ask ? { ask } : {}) },
     });
     return {
       message: { ...toMessage(row), channel: privateRef(id) },
@@ -451,6 +474,8 @@ type Row = {
   created_at: Date;
   body: string;
   plan_version: number | null;
+  ask: string | null;
+  answers: string | null;
 };
 
 const toMessage = (r: Row): ChannelMessage => {
@@ -464,6 +489,7 @@ const toMessage = (r: Row): ChannelMessage => {
       created_at: r.created_at,
       person_body: r.body,
       ...plan,
+      ...(r.answers !== null ? { answers: Number(r.answers) } : {}),
     };
   return {
     id: Number(r.id),
@@ -471,6 +497,7 @@ const toMessage = (r: Row): ChannelMessage => {
     created_at: r.created_at,
     untrusted_body: r.body,
     ...plan,
+    ...(r.ask === "yes_no" ? { ask: "yes_no" as const } : {}),
   };
 };
 
@@ -563,13 +590,15 @@ async function readGroup(
       const rows =
         after !== undefined
           ? await tx<Row[]>`
-              SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version
+              SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version,
+                m.ask, m.answers
               FROM messages m LEFT JOIN bots b ON b.id = m.bot_id
               WHERE ${cond} AND m.id > ${after}
               ORDER BY m.id LIMIT ${MESSAGE_PAGE}`
           : (
               await tx<Row[]>`
-              SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version
+              SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version,
+                m.ask, m.answers
               FROM messages m LEFT JOIN bots b ON b.id = m.bot_id
               WHERE ${cond}
                 ${q.before === undefined ? tx`` : tx`AND m.id < ${q.before}`}

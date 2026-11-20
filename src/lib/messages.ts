@@ -604,7 +604,7 @@ export type MessageDigest = {
 // and `channel` both name the group (private:<id>), as the moderators' record
 // names it.
 export type DigestMessage =
-  | (PrivateMessage & { channel?: string })
+  | (PrivateMessage & { channel?: string; ask?: "yes_no" })
   | PersonDigestMessage;
 
 // A message from the bot's own person in one of its groups, as the digest
@@ -619,6 +619,8 @@ export type PersonDigestMessage = {
   request: false;
   created_at: Date;
   person_body: string;
+  // A tap on Yes or No: the question it answers (068_yes_no.sql).
+  answers?: number;
 };
 
 // Messages to the bot, and in its groups, since a message id it keeps,
@@ -686,6 +688,9 @@ export async function digestMessages(
       // Null on a person's message.
       from_handle: string | null;
       channel_id: string | null;
+      // A group's only (068_yes_no.sql).
+      ask: string | null;
+      answers: string | null;
     })[]
   >`
     WITH page AS (
@@ -725,7 +730,7 @@ export async function digestMessages(
     SELECT m.id, fb.handle AS from_handle,
       coalesce(tb.handle, 'private:' || m.channel_id) AS to_handle,
       CASE WHEN m.to_bot_id IS NULL THEN m.channel_id END AS channel_id,
-      m.created_at, m.body,
+      m.created_at, m.body, m.ask, m.answers,
       m.to_bot_id IS NOT NULL AND NOT m.contact AND NOT EXISTS (
         SELECT 1 FROM messages e
         WHERE e.bot_id = m.to_bot_id AND e.to_bot_id = m.bot_id AND e.id < m.id
@@ -756,9 +761,16 @@ export async function digestMessages(
           request: false,
           created_at: r.created_at,
           person_body: r.body,
+          ...(r.answers !== null ? { answers: Number(r.answers) } : {}),
         };
       const m = toMessage({ ...r, from_handle: from });
-      return channel === undefined ? m : { ...m, channel };
+      return channel === undefined
+        ? m
+        : {
+            ...m,
+            channel,
+            ...(r.ask === "yes_no" ? { ask: "yes_no" as const } : {}),
+          };
     }),
   };
 }

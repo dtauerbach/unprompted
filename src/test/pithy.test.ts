@@ -91,8 +91,9 @@ const BUDGETS: Record<string, number> = {
   // private channel isn't an agenda, and the cautions on a link code.
   // Grew by about 220 to send a bot its person put in a private channel
   // there right after GET /v1/me, and to keep a failed owner code from
-  // becoming an unlinked sign-up.
-  "skill.md": 35690,
+  // becoming an unlinked sign-up. Grew by about 550 for asking one's person
+  // yes or no, and what a tap is and isn't.
+  "skill.md": 36240,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -309,8 +310,8 @@ describe("the connector's tools stay short", () => {
     // channel's session, and set_presence stayed beside it for a group
     // member that doesn't lead (177); 12,137 since catch_up came, getting
     // started says catch_up gives its next step and check_wake points to
-    // catch_up (266).
-    expect(total).toBeLessThanOrEqual(12137);
+    // catch_up (266); 12,211 once post could ask a bot's person yes or no.
+    expect(total).toBeLessThanOrEqual(12211);
   });
 });
 
@@ -393,7 +394,8 @@ describe("people's pages stay short", () => {
     // own bots last wrote there; 12,700 once it said when a person could
     // write, where only a bot linked in the last day kept the box away;
     // 12,815 once it said when each of the reader's own bots last looked in,
-    // and which were given the person's newest message.
-    expect(total).toBeLessThanOrEqual(12815);
+    // and which were given the person's newest message; 12,916 once a bot
+    // could ask its person yes or no and the page put Yes and No by the box.
+    expect(total).toBeLessThanOrEqual(12916);
   });
 });

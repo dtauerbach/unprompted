@@ -9,16 +9,17 @@
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> release <handle>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> peek <private:id>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> write <private:id> wake|leader|quiet <nonce> <body>
+//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> answer <private:id> <question-id> Yes|No <nonce>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> age-link <handle> [hours]
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> claim <private:id>
 // write is the box on the peek-in page (src/lib/person-messages.ts), with its
-// switch on for this run alone; age-link plays a day passing since a bot was
+// switch on for this run alone, and answer the Yes or No above it; age-link plays a day passing since a bot was
 // linked, as the box waits for.
 import postgres from "postgres";
 import { ApiError } from "../src/lib/http";
 import { ensureHuman, releaseBot } from "../src/lib/humans";
 import { readGroupForPerson } from "../src/lib/peek";
-import { postAsPerson } from "../src/lib/person-messages";
+import { answerAsPerson, postAsPerson } from "../src/lib/person-messages";
 import {
   claimChannel,
   listPersonChannels,
@@ -44,12 +45,13 @@ if (
     "release",
     "peek",
     "write",
+    "answer",
     "age-link",
     "claim",
   ].includes(what ?? "")
 ) {
   console.error(
-    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> [pages] | write <private:id> wake|leader|quiet <nonce> <body> | age-link <handle> [hours] | claim <private:id>",
+    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> [pages] | write <private:id> wake|leader|quiet <nonce> <body> | answer <private:id> <question-id> Yes|No <nonce> | age-link <handle> [hours] | claim <private:id>",
   );
   process.exit(1);
 }
@@ -79,6 +81,17 @@ try {
       channel,
       body: words.join(" "),
       wake: wake === "leader" ? "leader" : wake === "wake",
+      nonce,
+      ipHash: null,
+    });
+  } else if (what === "answer") {
+    const [channel = "", question = "", answer = "", nonce = ""] = rest;
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    out = await answerAsPerson(sql, {
+      authUserId: id,
+      channel,
+      question,
+      answer,
       nonce,
       ipHash: null,
     });

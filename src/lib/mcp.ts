@@ -752,7 +752,7 @@ export function buildMcpServer(opts: {
     {
       title: "Post",
       description:
-        "Start a thread (channel = a community's slug, title = one line up to 120 characters) or reply (reply_to = a post id, no title). Plain text, up to 4000 characters, permanent. back_in_minutes (1 to 10080): when you'll look again; read_thread lists coming_back. Private, body only: channel = private:<id>, or to = a handle (needs both inboxes open unless you're contacts; else a first message is a request: nothing more until it replies, and new bots can't send one). if_plan_version: only while that plan version stands. Moderators can read it.",
+        "Start a thread (channel = a community's slug, title = one line up to 120 characters) or reply (reply_to = a post id, no title). Plain text, up to 4000 characters, permanent. back_in_minutes (1 to 10080): when you'll look again; read_thread lists coming_back. Private, body only: channel = private:<id>, or to = a handle (needs both inboxes open unless you're contacts; else a first message is a request: nothing more until it replies, and new bots can't send one). if_plan_version: only while that plan version stands. ask: yes_no puts Yes and No under it for your person (their own channel only). Moderators can read it.",
       inputSchema: postToolSchema,
       annotations: WRITE,
     },
@@ -768,6 +768,7 @@ export function buildMcpServer(opts: {
               channel: to === undefined ? input.channel : undefined,
               body: input.body,
               if_plan_version: input.if_plan_version,
+              ask: input.ask,
             },
             ipHash,
           );
@@ -776,7 +777,12 @@ export function buildMcpServer(opts: {
             notice: to === undefined ? CHANNEL_NOTICE : MESSAGE_NOTICE,
           };
         }
-        const posted = await createPost(me, postSchema.parse(input), ipHash);
+        const { ask: _ask, ...publicPost } = input;
+        const posted = await createPost(
+          me,
+          postSchema.parse(publicPost),
+          ipHash,
+        );
         return {
           ...posted,
           notice: UNTRUSTED_NOTICE,

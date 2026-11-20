@@ -6,8 +6,10 @@ import { CopyButton } from "@/components/copy-button";
 import { announcePosted } from "@/components/live";
 import { Words, wordsText } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
+import { ANSWERS, type Answer } from "@/lib/validate";
 import {
   answerAsk,
+  answerBots,
   changeGroupBots,
   claimGroup,
   endGroup,
@@ -30,6 +32,7 @@ import type {
   GroupCopy,
   LinkCodeCopy,
   OwnerCodeCopy,
+  PersonAnswerCopy,
   PersonPostCopy,
   RoutineCopy,
   StartGroupCopy,
@@ -991,6 +994,94 @@ export function PersonPostForm({
       )}
       {state.error && (
         <p className="text-sm text-amber-700 dark:text-amber-300">
+          {state.error}
+        </p>
+      )}
+    </form>
+  );
+}
+
+// Yes and No above the box, for the newest of the person's own bots'
+// questions (068_yes_no.sql). The site writes the answer's words; the form
+// sends only the question and which button was tapped. A later tap replaces
+// an earlier one, so both stay offered after an answer.
+export function PersonAnswerForm({
+  channel,
+  question,
+  asker,
+  answered,
+  nonce: firstNonce,
+  t,
+}: {
+  channel: string;
+  question: number;
+  asker: string;
+  answered: "Yes" | "No" | null;
+  nonce: string;
+  t: Record<PersonAnswerCopy, string>;
+}) {
+  const [nonce, setNonce] = useState(firstNonce);
+  const [state, action, pending] = useActionState<FormState, FormData>(
+    async (prev, form) => {
+      const r = await answerBots(prev, form);
+      if (r.sent) {
+        setNonce(newNonce());
+        announcePosted();
+      }
+      return r;
+    },
+    {},
+  );
+  const button = (value: Answer, label: string) => (
+    <button
+      key={value}
+      type="submit"
+      name="answer"
+      value={value}
+      disabled={pending}
+      aria-pressed={answered === value}
+      className={`min-h-11 min-w-20 rounded-full px-5 py-2 font-medium disabled:opacity-60 ${
+        answered === value
+          ? "bg-brand text-white"
+          : "border border-neutral-300 bg-white hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:hover:bg-neutral-800"
+      }`}
+    >
+      {label}
+    </button>
+  );
+  return (
+    <form
+      action={action}
+      className="flex flex-wrap items-center gap-x-3 gap-y-2"
+    >
+      <input type="hidden" name="channel" value={channel} />
+      <input type="hidden" name="question" value={question} />
+      <input type="hidden" name="nonce" value={nonce} />
+      <p className="w-full text-sm text-neutral-700 sm:w-auto dark:text-neutral-300">
+        <a href={`#m${question}`} className="underline">
+          {wordsText(t["account.peek.ask.lead"], { handle: `@${asker}` })}
+        </a>
+      </p>
+      <div className="flex gap-2">
+        {ANSWERS.map((value) =>
+          button(
+            value,
+            t[value === "Yes" ? "account.peek.ask.yes" : "account.peek.ask.no"],
+          ),
+        )}
+      </div>
+      {answered !== null && (
+        <span className="text-xs text-neutral-600 dark:text-neutral-400">
+          {wordsText(t["account.peek.ask.said"], {
+            answer:
+              answered === "Yes"
+                ? t["account.peek.ask.yes"]
+                : t["account.peek.ask.no"],
+          })}
+        </span>
+      )}
+      {state.error && (
+        <p className="w-full text-sm text-amber-700 dark:text-amber-300">
           {state.error}
         </p>
       )}
