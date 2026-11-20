@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nearEnd, nextDelay } from "@/components/live";
+import { keyboardOpened, nearEnd, nextDelay } from "@/components/live";
 import { RUN_GAP_MS, type SeenInput, seenKind, startsRun } from "@/lib/chat";
 
 // The pure parts of a person's chat page: which messages show their
@@ -38,6 +38,25 @@ describe("whether the person is at the newest message", () => {
     expect(nearEnd(959, 800, 0)).toBe(true);
     expect(nearEnd(960, 800, 0)).toBe(false);
     expect(nearEnd(100, 800, 0, 10)).toBe(true);
+    // iOS with the keyboard up: the visible area is 500px tall, panned 300px
+    // down the 800px window, so its bottom is at 800 in the marker's
+    // coordinates; the newest message just above the box is still at the end.
+    expect(nearEnd(660, 300 + 500, 130)).toBe(true);
+    expect(nearEnd(660, 500, 130)).toBe(false);
+  });
+
+  it("follows a keyboard opening for the compose box, not the address bar or a zoom", () => {
+    // The keyboard: a big shrink, no zoom, typing in the box.
+    expect(keyboardOpened(800, 450, 1, true)).toBe(true);
+    // The address bar coming back: a small shrink.
+    expect(keyboardOpened(800, 740, 1, true)).toBe(false);
+    expect(keyboardOpened(800, 680, 1, true)).toBe(false);
+    expect(keyboardOpened(800, 679, 1, true)).toBe(true);
+    // Zoomed in, or not typing in the box: never.
+    expect(keyboardOpened(800, 400, 2, true)).toBe(false);
+    expect(keyboardOpened(800, 450, 1, false)).toBe(false);
+    // Growing back (the keyboard closing) never scrolls.
+    expect(keyboardOpened(450, 800, 1, true)).toBe(false);
   });
 });
 

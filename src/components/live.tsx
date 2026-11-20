@@ -101,16 +101,16 @@ export function LiveRefresh({ last }: { last: number | null }) {
 
 // Whether the newest message is in view, or close to it: its end marker's
 // bottom is within slackPx of the top of the compose box, or of the visible
-// area's bottom when there's no box. Measured against the marker rather than
+// area's bottom (viewBottom, in the marker's coordinates) when there's no box. Measured against the marker rather than
 // the document, so the compose box and footer below it don't count as being
 // away from the end. Pure, so a test pins the numbers.
 export function nearEnd(
   endBottom: number,
-  viewHeight: number,
+  viewBottom: number,
   composeHeight: number,
   slackPx = 160,
 ): boolean {
-  return endBottom - (viewHeight - composeHeight) < slackPx;
+  return endBottom - (viewBottom - composeHeight) < slackPx;
 }
 
 // The pinned compose box, if this page has one (data-compose), and its height.
@@ -119,18 +119,42 @@ function composeHeight(): number {
   return box ? box.getBoundingClientRect().height : 0;
 }
 
-// The height of what's visible: on a phone with the keyboard up that's less
-// than the window (visualViewport), which is what the person can see.
-function viewHeight(): number {
-  return window.visualViewport?.height ?? window.innerHeight;
+// Whether a shrink of the visible area is a phone's keyboard opening for the
+// compose box, not the address bar coming back or a pinch-zoom: it shrank by
+// a keyboard's height, at no zoom, while the person is typing in the box.
+// Pure, so a test pins the numbers.
+export function keyboardOpened(
+  before: number,
+  after: number,
+  scale: number,
+  composing: boolean,
+  minPx = 120,
+): boolean {
+  return composing && scale === 1 && before - after > minPx;
+}
+
+// The bottom of what's visible, in the same coordinates as
+// getBoundingClientRect: on a phone with the keyboard up, or when zoomed in,
+// that's the visual viewport's bottom (its offset plus its height), which can
+// sit above the window's.
+function viewBottom(): number {
+  const v = window.visualViewport;
+  return v ? v.offsetTop + v.height : window.innerHeight;
+}
+
+// Whether the person is typing in the pinned compose box.
+function composing(): boolean {
+  const active = document.activeElement;
+  return !!active?.closest("[data-compose]");
 }
 
 // Keeps a chat scrolled to its newest message: on first load (unless the
 // address names one message), after the person posts, when a new message
-// arrives while they were already at the bottom, and when the visible area
-// shrinks (a phone's keyboard opening) while they were. The newest message
-// lands just above the pinned compose box, not under it. Someone scrolled up
-// to read stays where they are.
+// arrives while they were already at the bottom, when a phone's keyboard
+// opens for the compose box, and when the box grows with a long draft, while
+// they were. The newest message lands just above the pinned compose box, not
+// under it. Someone scrolled up to read stays where they are, and the address
+// bar coming and going or a pinch-zoom never moves them.
 export function ScrollToEnd({ last }: { last: number | null }) {
   const end = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -148,23 +172,42 @@ export function ScrollToEnd({ last }: { last: number | null }) {
       if (!el) return;
       atBottom.current = nearEnd(
         el.getBoundingClientRect().bottom,
-        viewHeight(),
+        viewBottom(),
         composeHeight(),
       );
     };
     const posted = () => {
       atBottom.current = true;
     };
+    const v = window.visualViewport;
+    let lastHeight = v?.height ?? 0;
     const resized = () => {
-      if (atBottom.current) toEnd.current();
+      if (!v) return;
+      const opened = keyboardOpened(lastHeight, v.height, v.scale, composing());
+      lastHeight = v.height;
+      if (opened && atBottom.current) toEnd.current();
     };
+    // The compose box grows with a long draft; keep the newest message above it.
+    const box = document.querySelector<HTMLElement>("[data-compose]");
+    let boxHeight = box?.getBoundingClientRect().height ?? 0;
+    const grew =
+      box && typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => {
+            const h = box.getBoundingClientRect().height;
+            const bigger = h > boxHeight;
+            boxHeight = h;
+            if (bigger && atBottom.current) toEnd.current();
+          })
+        : null;
+    grew?.observe(box as HTMLElement);
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener(POSTED_EVENT, posted);
-    window.visualViewport?.addEventListener("resize", resized);
+    v?.addEventListener("resize", resized);
     return () => {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener(POSTED_EVENT, posted);
-      window.visualViewport?.removeEventListener("resize", resized);
+      v?.removeEventListener("resize", resized);
+      grew?.disconnect();
     };
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the newest message changes
