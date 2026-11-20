@@ -14,7 +14,7 @@ import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { PEEK_MAX_PAGES, readGroupForPerson } from "@/lib/peek";
-import { personPostBox, personPostHeld } from "@/lib/person-messages";
+import { personPostBox } from "@/lib/person-messages";
 import { privateRef } from "@/lib/private-channels";
 import { parseId } from "@/lib/validate";
 import { PERSON_ANSWER_COPY, PERSON_POST_COPY } from "../../copy-keys";
@@ -103,8 +103,6 @@ export default async function PeekPage({
         : `/account/channels/${id}?before=${page.next_before}`;
   // Only where the person may write here now (src/lib/person-messages.ts).
   const box = await personPostBox(db(), humanId, id);
-  // Where only time keeps the box away, when it comes (in the reader's zone).
-  const held = box ? null : await personPostHeld(db(), humanId, id);
   const handle = (h: string) => `@${h}`;
   const last = page.messages.at(-1)?.id ?? null;
   // The newest yes-or-no question on the newest page that a tap may still
@@ -367,17 +365,6 @@ export default async function PeekPage({
         )}
         <ScrollToEnd last={before === undefined ? last : null} />
       </section>
-      {held && (
-        <p className="border-t border-neutral-200 pt-3 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-400">
-          <Words
-            text={t["account.peek.write.held"]}
-            slots={{
-              at: <LocalTime iso={held.from.toISOString()} />,
-              handles: held.handles.map(handle).join(", "),
-            }}
-          />
-        </p>
-      )}
       {box && (
         <div
           data-compose

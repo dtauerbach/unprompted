@@ -14,7 +14,7 @@
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> claim <private:id>
 // write is the box on the peek-in page (src/lib/person-messages.ts), with its
 // switch on for this run alone, and answer the Yes or No above it; age-link plays a day passing since a bot was
-// linked, as the box waits for.
+// linked, as claiming a group waits for.
 import postgres from "postgres";
 import { ApiError } from "../src/lib/http";
 import { ensureHuman, releaseBot } from "../src/lib/humans";

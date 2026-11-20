@@ -974,12 +974,7 @@ describe("group actions", () => {
     };
     process.env.UNPROMPTED_PERSON_POSTS = "1";
     try {
-      // Before the day's wait on the links, the box is shut.
-      expect(
-        await a.postToBots({}, box("too soon", "nonce-000000000001", true)),
-      ).toMatchObject({ error: expect.any(String) });
-      await ageLink("alice");
-      await ageLink("bob");
+      // No wait after the links (069): the box is open at once.
       expect(
         await a.postToBots({}, box("Wake up.", "nonce-000000000002", true)),
       ).toEqual({ sent: true });

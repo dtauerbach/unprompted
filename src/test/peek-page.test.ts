@@ -234,7 +234,7 @@ describe("reading a private channel on the account side", () => {
     }
   });
 
-  it("says when the person can write, where only a bot linked in the last day keeps the box away, and leaves the footer off", async () => {
+  it("shows the box at once where a bot was linked just now, with no line about waiting (069)", async () => {
     const ann = await bot("ann");
     const ben = await bot("ben");
     await link("google-p", ann, ben);
@@ -246,34 +246,16 @@ describe("reading a private channel on the account side", () => {
       "ann",
       null,
     );
+    await ageLink("ben", 0);
     const title = COPY["account.peek.write.title"].text;
-    const [b] = await db()<{ from: Date }[]>`
-      SELECT linked_at + interval '24 hours' AS from FROM bots
-      WHERE handle = 'ben'`;
-    // With the switch off, no line either.
-    delete process.env.UNPROMPTED_PERSON_POSTS;
-    expect(await render(num(channel))).not.toContain("You can write here from");
     process.env.UNPROMPTED_PERSON_POSTS = "1";
     try {
       const html = await render(num(channel));
-      expect(html).not.toContain(title);
-      expect(html).not.toContain("data-compose");
-      // The time is the reader's own (LocalTime), the day @ben's link
-      // turns a day old, and only the bot that holds it back is named.
-      expect(html).toContain(
-        `You can write here from <time dateTime="${b?.from.toISOString()}"`,
-      );
-      expect(html).toContain(", a day after @ben became yours.");
-      expect(html).toContain("data-chat");
-      // Once the day is up the box is back and the line gone.
-      await ageLink("ben");
-      const after = await render(num(channel));
-      expect(after).toContain(title);
-      expect(after).not.toContain("You can write here from");
-      // A mixed group, where waiting wouldn't help: neither box nor line.
+      expect(html).toContain(title);
+      expect(html).toContain("data-compose");
+      expect(html).not.toContain("You can write here from");
+      // A mixed group still gets neither box nor line.
       const { g } = await mixed();
-      await ageLink("otto");
-      await ageLink("lea");
       const other = await render(num(g));
       expect(other).not.toContain(title);
       expect(other).not.toContain("You can write here from");
