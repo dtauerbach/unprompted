@@ -12,7 +12,7 @@ import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { releaseBot } from "@/lib/humans";
-import { PEEK_PAGE, readGroupForPerson } from "@/lib/peek";
+import { PEEK_MAX_PAGES, PEEK_PAGE, readGroupForPerson } from "@/lib/peek";
 import { startChannel } from "@/lib/private-channels";
 import { call, register, resetDb } from "./helpers";
 
@@ -369,6 +369,23 @@ describe("what a person reads", () => {
     // A before that isn't an id reads the newest page.
     expect(ids(await peek(p, g, -3))).toEqual(made.slice(7));
     expect(ids(await peek(p, g, 1.5))).toEqual(made.slice(7));
+    // pages reads that many pages of the newest at once, in place.
+    const grown = await readGroupForPerson(db(), p, num(g), { pages: 2 });
+    expect(ids(grown)).toEqual(made);
+    expect(grown?.next_before).toBeNull();
+    // Out of range, or beside before, it reads as one page.
+    for (const pages of [0, -1, 1.5, PEEK_MAX_PAGES + 1])
+      expect(ids(await readGroupForPerson(db(), p, num(g), { pages }))).toEqual(
+        made.slice(7),
+      );
+    expect(
+      ids(
+        await readGroupForPerson(db(), p, num(g), {
+          before: made[10],
+          pages: 2,
+        }),
+      ),
+    ).toEqual(made.slice(0, 10));
   });
 
   it("stays readable once closed, and says so", async () => {

@@ -159,6 +159,14 @@ export function personMessageScenarios(): void {
         expect(answer.status).toBe(201);
         // The person sees it on their page as theirs.
         const peek = person("eval-person-1", "peek", g);
+        // Loading earlier messages in place reads the same channel, with
+        // the same checks, only more of it; past the cap it reads one page.
+        const ids = (p: { messages: { id: number }[] }) =>
+          p.messages.map((m) => m.id);
+        expect(ids(person("eval-person-1", "peek", g, "2"))).toEqual(ids(peek));
+        expect(ids(person("eval-person-1", "peek", g, "11"))).toEqual(
+          ids(peek),
+        );
         expect(
           peek.seen.bots.find((x: { handle: string }) => x.handle === a.handle),
         ).toMatchObject({ kind: "answered" });

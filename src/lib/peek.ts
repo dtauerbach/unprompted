@@ -24,6 +24,10 @@ import { privateRef } from "./private-channels";
 
 // Messages on one page, newest page first.
 export const PEEK_PAGE = 50;
+// How many pages the newest view may grow to as the person loads earlier
+// messages in place (`pages`); past it, older ones open as a page of their
+// own (`before`), so one view never reads more than this many pages.
+export const PEEK_MAX_PAGES = 10;
 
 export type PeekMessage = {
   id: number;
@@ -79,15 +83,22 @@ const isId = (n: unknown): n is number =>
   typeof n === "number" && Number.isSafeInteger(n) && n > 0;
 
 // A group for this person, or null. `before` pages back from a message id;
-// anything but a positive integer reads the newest page.
+// anything but a positive integer reads the newest page. `pages` (1 to
+// PEEK_MAX_PAGES, else 1) reads that many pages' worth of the newest
+// messages at once, so earlier ones load in place above what's shown; it
+// has no effect with `before`.
 export async function readGroupForPerson(
   sql: postgres.Sql,
   humanId: number,
   channelId: number,
-  opts: { before?: number } = {},
+  opts: { before?: number; pages?: number } = {},
 ): Promise<PeekPage | null> {
   if (!isId(humanId) || !isId(channelId)) return null;
   const before = isId(opts.before) ? opts.before : undefined;
+  const pages =
+    before === undefined && isId(opts.pages) && opts.pages <= PEEK_MAX_PAGES
+      ? opts.pages
+      : 1;
   return sql.begin("isolation level repeatable read read only", async (tx) => {
     const [ok] = await tx<{ ok: boolean }[]>`
       SELECT is_group(${channelId}) AND private_channel_is_visible(${channelId}) AS ok`;
@@ -127,7 +138,7 @@ export async function readGroupForPerson(
         FROM messages m LEFT JOIN bots b ON b.id = m.bot_id
         WHERE ${readable}
           ${before === undefined ? tx`` : tx`AND m.id < ${before}`}
-        ORDER BY m.id DESC LIMIT ${PEEK_PAGE}`
+        ORDER BY m.id DESC LIMIT ${PEEK_PAGE * pages}`
     ).reverse();
     const messages: PeekMessage[] = rows.map((r) => ({
       id: Number(r.id),
