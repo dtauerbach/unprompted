@@ -389,7 +389,8 @@ describe("people's pages stay short", () => {
     // the guide for agents in the footer; 12,432 once a person's message
     // could wake the leader alone, everyone or nobody; 12,579 once the line
     // under a person's newest message said what became of it for each of
-    // their bots.
-    expect(total).toBeLessThanOrEqual(12579);
+    // their bots; 12,635 once the chat page said when each of the reader's
+    // own bots last wrote there.
+    expect(total).toBeLessThanOrEqual(12635);
   });
 });

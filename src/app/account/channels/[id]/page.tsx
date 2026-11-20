@@ -144,6 +144,32 @@ export default async function PeekPage({
             </>
           )}
         </p>
+        {page.last_word.length > 0 && (
+          <p className="text-sm text-neutral-600 dark:text-neutral-400">
+            {page.last_word.map((b, j) => (
+              <span key={b.handle}>
+                {j > 0 && " · "}
+                <Words
+                  text={
+                    t[
+                      b.at
+                        ? "account.peek.last_word"
+                        : "account.peek.last_word_none"
+                    ]
+                  }
+                  slots={{
+                    handle: handle(b.handle),
+                    at: b.at ? (
+                      <Timestamp at={b.at} t={t} now={page.now} />
+                    ) : (
+                      ""
+                    ),
+                  }}
+                />
+              </span>
+            ))}
+          </p>
+        )}
         <p className="text-sm text-neutral-600 dark:text-neutral-400">
           {t["account.peek.lead"]}
         </p>
