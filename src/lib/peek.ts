@@ -202,6 +202,11 @@ export async function readGroupForPerson(
 // counts as waking the new one, which the line under it can get wrong until
 // someone answers. A push URL's last send counts only for a bot nothing
 // else can wake, since push_state.last_sent_at marks whichever method went.
+// Only bots that can read the message are named (one put in, or relinked,
+// after it can't). Known limits, since the state keeps only the last send:
+// a later failed send turns "woken" back into "not woken yet"; a push claim
+// reads as sent a moment before it lands; a bot's own test push reads as a
+// wake; and a send in the same instant as the message counts as after it.
 async function seenFor(
   tx: postgres.TransactionSql,
   humanId: number,
@@ -245,6 +250,8 @@ async function seenFor(
     LEFT JOIN event_sub_state e ON e.bot_id = b.id
     LEFT JOIN push_state p ON p.bot_id = b.id
     WHERE b.id = ANY(${readers}::bigint[]) AND b.owner_id = ${humanId}
+      AND EXISTS (SELECT 1 FROM messages m
+                  WHERE m.id = ${mine.id} AND group_message_readable(m, b.id))
     ORDER BY b.handle`;
   return {
     message_id: Number(mine.id),

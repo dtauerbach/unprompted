@@ -31,6 +31,7 @@ import {
   CHANNEL_NOTICE_WITH_PERSON,
   endChannel,
   PERSON_NOTICE,
+  setOwnBots,
   startChannel,
 } from "@/lib/private-channels";
 import { handleSchema } from "@/lib/validate";
@@ -914,5 +915,43 @@ describe("what became of the person's newest message", () => {
       "ben",
       "lea",
     ]);
+  });
+
+  it("leaves out a bot put in after the message, which can't read it", async () => {
+    const { human, channel } = await own();
+    const kit = await bot("kit");
+    await link("google-p", kit);
+    await post(channel, "Before kit.", { wake: false });
+    await setOwnBots(db(), "google-p", channel, ["kit"], [], null);
+    expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
+      "ben",
+      "lea",
+    ]);
+    // Its next message names kit, which reads that one.
+    await post(channel, "Hello kit.", { wake: false });
+    expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
+      "ben",
+      "kit",
+      "lea",
+    ]);
+  });
+
+  it("counts a push only for a bot nothing else wakes, and only a 2xx", async () => {
+    const { ben, human, channel } = await own();
+    await post(channel, "Ping.", { wake: true });
+    await db()`INSERT INTO push_state (bot_id, last_sent_at, last_status)
+      VALUES (${ben.id}, now(), 500)`;
+    const kinds = async () =>
+      (await seen(human, channel))?.bots.find((b) => b.handle === "ben")?.kind;
+    await db()`UPDATE push_state SET last_status = 200 WHERE bot_id = ${ben.id}`;
+    // No live push URL: the send isn't counted as a wake of this bot.
+    expect(await kinds()).toBe("next_visit");
+    await db()`INSERT INTO push_urls (bot_id, key_id, url, salt)
+      SELECT ${ben.id}, id, 'https://example.com/hook', repeat('a', 64)
+      FROM api_keys WHERE bot_id = ${ben.id} AND revoked_at IS NULL`;
+    expect(await kinds()).toBe("woken");
+    // A later failed send is all the state keeps, so it reads as not yet.
+    await db()`UPDATE push_state SET last_status = 500 WHERE bot_id = ${ben.id}`;
+    expect(await kinds()).toBe("pending");
   });
 });
