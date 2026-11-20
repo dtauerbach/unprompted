@@ -121,16 +121,17 @@ function composeHeight(): number {
 
 // Whether a shrink of the visible area is a phone's keyboard opening for the
 // compose box, not the address bar coming back or a pinch-zoom: it shrank by
-// a keyboard's height, at no zoom, while the person is typing in the box.
-// Pure, so a test pins the numbers.
+// a keyboard's height from its tallest since the last scroll (so a keyboard
+// that slides up in several steps still counts), at no zoom, while the person
+// is typing in the box. Pure, so a test pins the numbers.
 export function keyboardOpened(
-  before: number,
+  tallest: number,
   after: number,
   scale: number,
   composing: boolean,
   minPx = 120,
 ): boolean {
-  return composing && scale === 1 && before - after > minPx;
+  return composing && Math.abs(scale - 1) < 0.01 && tallest - after > minPx;
 }
 
 // The bottom of what's visible, in the same coordinates as
@@ -180,26 +181,17 @@ export function ScrollToEnd({ last }: { last: number | null }) {
       atBottom.current = true;
     };
     const v = window.visualViewport;
-    let lastHeight = v?.height ?? 0;
+    // The tallest the visible area has been since the last keyboard scroll:
+    // raised whenever it grows, brought down only once the keyboard counted.
+    let tallest = v?.height ?? 0;
     const resized = () => {
       if (!v) return;
-      const opened = keyboardOpened(lastHeight, v.height, v.scale, composing());
-      lastHeight = v.height;
-      if (opened && atBottom.current) toEnd.current();
+      if (v.height > tallest) tallest = v.height;
+      else if (keyboardOpened(tallest, v.height, v.scale, composing())) {
+        tallest = v.height;
+        if (atBottom.current) toEnd.current();
+      }
     };
-    // The compose box grows with a long draft; keep the newest message above it.
-    const box = document.querySelector<HTMLElement>("[data-compose]");
-    let boxHeight = box?.getBoundingClientRect().height ?? 0;
-    const grew =
-      box && typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => {
-            const h = box.getBoundingClientRect().height;
-            const bigger = h > boxHeight;
-            boxHeight = h;
-            if (bigger && atBottom.current) toEnd.current();
-          })
-        : null;
-    grew?.observe(box as HTMLElement);
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener(POSTED_EVENT, posted);
     v?.addEventListener("resize", resized);
@@ -207,9 +199,24 @@ export function ScrollToEnd({ last }: { last: number | null }) {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener(POSTED_EVENT, posted);
       v?.removeEventListener("resize", resized);
-      grew?.disconnect();
     };
   }, []);
+  // The compose box grows with a long draft; keep the newest message above
+  // it. Looked for on every refresh, since the box can first appear on one.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: looks again when the newest message changes
+  useEffect(() => {
+    const box = document.querySelector<HTMLElement>("[data-compose]");
+    if (!box || typeof ResizeObserver === "undefined") return;
+    let boxHeight = box.getBoundingClientRect().height;
+    const grew = new ResizeObserver(() => {
+      const h = box.getBoundingClientRect().height;
+      const bigger = h > boxHeight;
+      boxHeight = h;
+      if (bigger && atBottom.current) toEnd.current();
+    });
+    grew.observe(box);
+    return () => grew.disconnect();
+  }, [last]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the newest message changes
   useEffect(() => {
     // A link to one message (#m<id>) lands on it, not at the end.

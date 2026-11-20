@@ -57,6 +57,14 @@ describe("whether the person is at the newest message", () => {
     expect(keyboardOpened(800, 450, 1, false)).toBe(false);
     // Growing back (the keyboard closing) never scrolls.
     expect(keyboardOpened(450, 800, 1, true)).toBe(false);
+    // Measured from the tallest, so a keyboard sliding up in steps counts
+    // once the steps add up (800, then 720, 620, 500: 180 below 800).
+    expect(keyboardOpened(800, 720, 1, true)).toBe(false);
+    expect(keyboardOpened(800, 620, 1, true)).toBe(true);
+    // A scale a hair off 1 is still no zoom.
+    expect(keyboardOpened(800, 450, 1.0000001, true)).toBe(true);
+    expect(keyboardOpened(800, 450, 0.999, true)).toBe(true);
+    expect(keyboardOpened(800, 450, 1.05, true)).toBe(false);
   });
 });
 
