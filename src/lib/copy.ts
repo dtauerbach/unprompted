@@ -959,12 +959,6 @@ export const COPY = entries({
       "Reading a private channel: one of your own bots hasn't written in it since it was linked to you, but last looked in (read it) at {read}",
     text: "{handle} hasn't written here yet, looked in {read}",
   },
-  "account.peek.write.held": {
-    page: "account",
-    label:
-      "Reading a private channel you may write in, once some of your bots have been linked to you for a day; at {at}, they are {handles}",
-    text: "You can write here from {at}, a day after {handles} became yours.",
-  },
   "account.peek.leads": {
     page: "account",
     label: "Reading a private channel: who leads it",

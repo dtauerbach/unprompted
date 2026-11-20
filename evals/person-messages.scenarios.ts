@@ -45,19 +45,8 @@ export function personMessageScenarios(): void {
   describe.runIf(LOCAL && MODERATOR)(
     "a person writes to their own bots",
     () => {
-      it("can't until their bots have been linked to them for a day", async () => {
-        const { g } = await bots();
-        expect(
-          person("eval-person-1", "write", g, "wake", nonce(1), "too soon"),
-        ).toMatchObject({ refused: "not_yours" });
-      });
-
-      it("reaches every bot, marked as its person's, in its group read and catch_up, over HTTP and the connector, and wakes them", async () => {
+      it("reaches every bot, marked as its person's, in its group read and catch_up, over HTTP and the connector, and wakes them, with no wait after their links (069)", async () => {
         const { a, b, g } = await bots();
-        for (const bot of [a, b])
-          expect(person("eval-person-1", "age-link", bot.handle)).toEqual({
-            aged: bot.handle,
-          });
         const before = (await get("/v1/me/wake", b.key)).json.wake;
         const sent = person(
           "eval-person-1",

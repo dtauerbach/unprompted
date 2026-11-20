@@ -24,7 +24,6 @@ import {
   NONCE_RE,
   type PersonWake,
   personPostBox,
-  personPostHeld,
   postAsPerson,
 } from "@/lib/person-messages";
 import {
@@ -40,7 +39,7 @@ import { ageLink, call, register, resetDb } from "./helpers";
 
 // A person writing to their own bots in a private channel
 // (063_person_messages.sql, src/lib/person-messages.ts): only in a group
-// they started of their own bots, ticked in and linked a day; read by each
+// they started of their own bots, ticked in; read by each
 // bot as from_your_person and person_body, never as a handle; behind a
 // switch that ships off.
 
@@ -517,11 +516,12 @@ describe("who may write, and where", () => {
     expect(c?.n).toBe(0);
   });
 
-  it("refuses a group with a bot linked less than a day", async () => {
+  it("takes a group whose bots were linked just now, with no day's wait (069)", async () => {
     const lea = await bot("lea");
     const ben = await bot("ben");
     const human = await link("google-p", lea, ben);
-    await ageLink("ben", 2);
+    await ageLink("lea", 0);
+    await ageLink("ben", 0);
     const { channel } = await startChannel(
       db(),
       "google-p",
@@ -529,13 +529,12 @@ describe("who may write, and where", () => {
       "lea",
       null,
     );
-    expect(await personPostBox(db(), human, Number(num(channel)))).toBeNull();
-    await expect(post(channel, "hello")).rejects.toMatchObject(refused);
-    await ageLink("ben", 25);
     expect(await personPostBox(db(), human, Number(num(channel)))).toEqual({
       wakes: 2,
       leader: "lea",
     });
+    const sent = await post(channel, "hello");
+    expect(sent.id).toBeGreaterThan(0);
   });
 
   it("refuses once a bot came in by an invite, even the person's own", async () => {
@@ -608,105 +607,6 @@ describe("who may write, and where", () => {
     await setFrozen(db(), "ben", false, "test");
     await endChannel(db(), "google-p", channel, null);
     await expect(post(channel, "hello")).rejects.toMatchObject(refused);
-  });
-
-  // personPostHeld mirrors person_may_post without its day-old-link rule,
-  // so the page's "you can write from" line comes only where waiting
-  // alone would bring the box back. Each case checks both before and after
-  // every linked bot in it turns a day old.
-  async function heldThenAged(
-    human: number,
-    channel: string,
-    ...handles: string[]
-  ) {
-    const id = Number(num(channel));
-    const held = await personPostHeld(db(), human, id);
-    expect(await personPostBox(db(), human, id)).toBeNull();
-    for (const h of handles) await ageLink(h);
-    const box = await personPostBox(db(), human, id);
-    // In step: a line now means a box once the day is up, and no line
-    // means no box either.
-    expect(box !== null).toBe(held !== null);
-    expect(await personPostHeld(db(), human, id)).toBeNull();
-    return held;
-  }
-
-  it("says when a person can write only where a day-old link is all that's missing, naming the latest of their bots", async () => {
-    const lea = await bot("lea");
-    const ben = await bot("ben");
-    const human = await link("google-p", lea, ben);
-    await ageLink("lea", 2);
-    await ageLink("ben", 5);
-    const { channel } = await startChannel(
-      db(),
-      "google-p",
-      ["lea", "ben"],
-      "lea",
-      null,
-    );
-    const [l] = await db()<{ from: Date }[]>`
-      SELECT linked_at + interval '24 hours' AS from FROM bots
-      WHERE handle = 'lea'`;
-    const held = await heldThenAged(human, channel, "lea", "ben");
-    expect(held).toEqual({ from: l?.from, handles: ["ben", "lea"] });
-  });
-
-  it("says nothing, and names no one, where another person's bot came in by an invite", async () => {
-    const { lea, ben, human, channel } = await own();
-    await ageLink("ben", 2);
-    const otto = await bot("otto");
-    await link("google-q", otto);
-    await ageLink("otto", 2);
-    const inv = await call(invitesRoute, {
-      key: lea.key,
-      params: { id: num(channel) },
-      body: { for: "otto" },
-    });
-    expect(inv.status).toBe(201);
-    const j = await call(redeemRoute, {
-      key: otto.key,
-      body: { code: inv.body.invite.code },
-    });
-    expect(j.status).toBe(200);
-    expect(await heldThenAged(human, channel, ben.handle, "otto")).toBeNull();
-  });
-
-  it("says nothing where the person's own bot came in by an invite", async () => {
-    const { lea, human, channel } = await own();
-    const zed = await bot("zed");
-    await link("google-p", zed);
-    await ageLink("zed", 2);
-    const inv = await call(invitesRoute, {
-      key: lea.key,
-      params: { id: num(channel) },
-      body: { for: "zed" },
-    });
-    const j = await call(redeemRoute, {
-      key: zed.key,
-      body: { code: inv.body.invite.code },
-    });
-    expect(j.status).toBe(200);
-    expect(await heldThenAged(human, channel, "zed")).toBeNull();
-  });
-
-  it("says nothing in a hidden group, a closed one or for a stopped person, and counts a frozen bot's day", async () => {
-    const { human, channel } = await own();
-    const id = Number(num(channel));
-    await ageLink("ben", 2);
-    expect(await personPostHeld(db(), human, id)).not.toBeNull();
-    await setPrivateChannelHidden(db(), id, true, "test");
-    expect(await personPostHeld(db(), human, id)).toBeNull();
-    await setPrivateChannelHidden(db(), id, false, "test");
-    await setPersonPostsStopped(db(), human, true, "test");
-    expect(await personPostHeld(db(), human, id)).toBeNull();
-    await setPersonPostsStopped(db(), human, false, "test");
-    // A frozen bot still holds the box back for its day, as
-    // person_may_post has it, and the line still says so.
-    await setFrozen(db(), "ben", true, "test");
-    expect((await personPostHeld(db(), human, id))?.handles).toEqual(["ben"]);
-    await setFrozen(db(), "ben", false, "test");
-    await endChannel(db(), "google-p", channel, null);
-    expect(await heldThenAged(human, channel, "ben")).toBeNull();
   });
 
   it("refuses an empty body and one over the limit", async () => {
