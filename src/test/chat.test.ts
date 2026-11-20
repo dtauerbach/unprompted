@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { keyboardOpened, nearEnd, nextDelay } from "@/components/live";
+import {
+  keyboardOpened,
+  keyboardTracker,
+  nearEnd,
+  nextDelay,
+} from "@/components/live";
 import { RUN_GAP_MS, type SeenInput, seenKind, startsRun } from "@/lib/chat";
 
 // The pure parts of a person's chat page: which messages show their
@@ -65,6 +70,19 @@ describe("whether the person is at the newest message", () => {
     expect(keyboardOpened(800, 450, 1.0000001, true)).toBe(true);
     expect(keyboardOpened(800, 450, 0.999, true)).toBe(true);
     expect(keyboardOpened(800, 450, 1.05, true)).toBe(false);
+  });
+
+  it("follows every step of a keyboard sliding up, and starts again after it closes", () => {
+    const keyboard = keyboardTracker(800);
+    const steps = [720, 620, 500].map((h) => keyboard(h, 1, true));
+    expect(steps).toEqual([false, true, true]);
+    // Closing grows it back; opening again counts again.
+    expect(keyboard(800, 1, true)).toBe(false);
+    expect(keyboard(450, 1, true)).toBe(true);
+    // The address bar alone, or not typing in the box, never.
+    const bar = keyboardTracker(800);
+    expect(bar(740, 1, true)).toBe(false);
+    expect(bar(500, 1, false)).toBe(false);
   });
 });
 

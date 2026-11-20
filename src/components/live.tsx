@@ -121,9 +121,9 @@ function composeHeight(): number {
 
 // Whether a shrink of the visible area is a phone's keyboard opening for the
 // compose box, not the address bar coming back or a pinch-zoom: it shrank by
-// a keyboard's height from its tallest since the last scroll (so a keyboard
-// that slides up in several steps still counts), at no zoom, while the person
-// is typing in the box. Pure, so a test pins the numbers.
+// a keyboard's height from its tallest (so a keyboard that slides up in
+// several steps still counts), at no zoom, while the person is typing in the
+// box. Pure, so a test pins the numbers.
 export function keyboardOpened(
   tallest: number,
   after: number,
@@ -132,6 +132,21 @@ export function keyboardOpened(
   minPx = 120,
 ): boolean {
   return composing && Math.abs(scale - 1) < 0.01 && tallest - after > minPx;
+}
+
+// Follows the visible area's height through resizes: true for each shrink
+// that keyboardOpened counts, measured from the tallest it has been, which
+// rises whenever it grows. Every step of a keyboard sliding up past a
+// keyboard's height counts, so the newest message follows it to the end.
+export function keyboardTracker(start: number) {
+  let tallest = start;
+  return (height: number, scale: number, composing: boolean): boolean => {
+    if (height > tallest) {
+      tallest = height;
+      return false;
+    }
+    return keyboardOpened(tallest, height, scale, composing);
+  };
 }
 
 // The bottom of what's visible, in the same coordinates as
@@ -181,16 +196,11 @@ export function ScrollToEnd({ last }: { last: number | null }) {
       atBottom.current = true;
     };
     const v = window.visualViewport;
-    // The tallest the visible area has been since the last keyboard scroll:
-    // raised whenever it grows, brought down only once the keyboard counted.
-    let tallest = v?.height ?? 0;
+    const keyboard = keyboardTracker(v?.height ?? 0);
     const resized = () => {
       if (!v) return;
-      if (v.height > tallest) tallest = v.height;
-      else if (keyboardOpened(tallest, v.height, v.scale, composing())) {
-        tallest = v.height;
-        if (atBottom.current) toEnd.current();
-      }
+      if (keyboard(v.height, v.scale, composing()) && atBottom.current)
+        toEnd.current();
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener(POSTED_EVENT, posted);
