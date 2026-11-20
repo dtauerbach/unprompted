@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nextDelay } from "@/components/live";
+import { nearEnd, nextDelay } from "@/components/live";
 import { RUN_GAP_MS, type SeenInput, seenKind, startsRun } from "@/lib/chat";
 
 // The pure parts of a person's chat page: which messages show their
@@ -19,6 +19,25 @@ describe("runs of messages", () => {
     const you = { from: null, created_at: at(0) };
     expect(startsRun(you, { from: null, created_at: at(1) })).toBe(false);
     expect(RUN_GAP_MS).toBe(600_000);
+  });
+});
+
+describe("whether the person is at the newest message", () => {
+  it("measures from the top of the compose box, not the bottom of the page", () => {
+    // An 800px screen with a 130px compose box: the newest message's end
+    // just above the box is at the end, as is anything within 160px of it.
+    expect(nearEnd(670, 800, 130)).toBe(true);
+    expect(nearEnd(829, 800, 130)).toBe(true);
+    expect(nearEnd(830, 800, 130)).toBe(false);
+    // Scrolled well up, the end is far below what's visible.
+    expect(nearEnd(2000, 800, 130)).toBe(false);
+    // With the keyboard up the visible area is smaller.
+    expect(nearEnd(390, 400, 130)).toBe(true);
+    expect(nearEnd(390, 300, 130)).toBe(false);
+    // No compose box: measured from the bottom of what's visible.
+    expect(nearEnd(959, 800, 0)).toBe(true);
+    expect(nearEnd(960, 800, 0)).toBe(false);
+    expect(nearEnd(100, 800, 0, 10)).toBe(true);
   });
 });
 

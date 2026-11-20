@@ -941,13 +941,18 @@ export function PersonPostForm({
             required
             rows={2}
             maxLength={4000}
-            className="block max-h-60 w-full resize-y rounded-2xl border border-neutral-300 bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+            // Grows with what's typed where the browser can (one line to
+            // start, up to max-h-60); elsewhere it stays at two rows.
+            className="block min-h-11 max-h-60 w-full resize-y rounded-2xl border border-neutral-300 bg-white px-3 py-2 [field-sizing:content] dark:border-neutral-700 dark:bg-neutral-900"
           />
         </label>
         <button
           type="submit"
           disabled={pending}
-          className="rounded-full bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
+          // Keeps the focus (and a phone's keyboard) in the message box when
+          // Send is tapped, so the next message can follow at once.
+          onPointerDown={(e) => e.preventDefault()}
+          className="min-h-11 rounded-full bg-brand px-5 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
         >
           {t["account.peek.write.send"]}
         </button>
@@ -959,7 +964,8 @@ export function PersonPostForm({
             name="wake"
             value={wake}
             onChange={(e) => setWake(e.target.value)}
-            className="rounded-md border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900"
+            // 16px on a phone, since iOS zooms the page into a smaller field.
+            className="min-h-11 rounded-md border border-neutral-300 bg-white px-2 py-1 text-base sm:min-h-0 sm:text-xs dark:border-neutral-700 dark:bg-neutral-900"
           >
             {leader !== null && (
               <option value={WAKE_CHOICE.leader}>

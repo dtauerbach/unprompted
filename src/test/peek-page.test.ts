@@ -203,6 +203,12 @@ describe("reading a private channel on the account side", () => {
       const html = await render(num(channel));
       expect(html).toContain(title);
       expect(html).toContain("Everyone (2, each may start a run)");
+      // Built for a phone: the box is marked for the scroll to land above,
+      // the wake choice is 16px there (no zoom on focus), and Send keeps
+      // the keyboard up.
+      expect(html).toContain("data-compose");
+      expect(html).toMatch(/<select[^>]*class="[^"]*\btext-base\b/);
+      expect(html).toMatch(/<textarea[^>]*\[field-sizing:content\]/);
       // The leader alone is the choice the box starts on.
       expect(html).toMatch(
         /<option value="leader" selected="">@ann, who leads<\/option>/,
