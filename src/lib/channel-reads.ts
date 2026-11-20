@@ -45,6 +45,9 @@ export async function noteReads(botId: number, reads: ReadNote): Promise<void> {
     // In channel order, so two reads of one bot's groups at once take
     // their rows in the same order.
     const order = [...reads.entries()].sort((a, b) => a[0] - b[0]);
+    const [linked] = await sql<{ yes: boolean }[]>`
+      SELECT owner_id IS NOT NULL AS yes FROM bots WHERE id = ${botId}`;
+    if (!linked?.yes) return;
     const have = await sql<
       {
         channel_id: string;

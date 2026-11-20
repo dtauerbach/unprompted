@@ -183,6 +183,22 @@ describe("noting a bot's reads of a group", () => {
     await expect(
       db()`DELETE FROM channel_reads WHERE bot_id = ${ben.id}`,
     ).rejects.toThrow(/never deleted/);
+    // The person's half only moves forward too, and keeps its time.
+    const human = await db()<{ id: string }[]>`
+      SELECT owner_id AS id FROM bots WHERE id = ${ben.id}`;
+    const mine = await personSays(Number(human[0]?.id), channel, "hi");
+    await read(ben, channel);
+    expect((await row(channel, ben))?.person).toBe(mine);
+    await expect(
+      db()`UPDATE channel_reads SET person_upto = 0 WHERE bot_id = ${ben.id}`,
+    ).rejects.toThrow(/only moves forward/);
+    await expect(
+      db()`UPDATE channel_reads SET person_at = NULL WHERE bot_id = ${ben.id}`,
+    ).rejects.toThrow(/only moves forward/);
+    await expect(
+      db()`INSERT INTO channel_reads (channel_id, bot_id, person_upto)
+        VALUES (${num(channel)}, ${lea.id}, 5)`,
+    ).rejects.toThrow(/check/i);
   });
 });
 
