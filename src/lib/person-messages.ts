@@ -73,7 +73,7 @@ export async function personPostBox(
 // write. Null otherwise (including when they may write now, or the switch
 // is off). It names only the reader's own bots, which the page already
 // marks as theirs. Mirrors 064's person_may_post without its linked_at
-// clause; src/test/person-messages.test.ts holds the two in step.
+// clause; src/test/person-messages.test.ts checks the two agree.
 export async function personPostHeld(
   sql: postgres.Sql | Tx,
   humanId: number,
