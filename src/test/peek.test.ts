@@ -203,9 +203,42 @@ describe("what a person reads", () => {
     const g = await make(lea);
     await bringIn(lea, g, kit);
     await send(kit, g, "before kit was linked");
+    await save(kit, g, "planned before kit was linked", 0);
     await person("google-p", kit);
     expect((await peek(p, g))?.last_word).toEqual([
       { handle: "kit", at: null },
+      { handle: "lea", at: null },
+    ]);
+  });
+
+  it("counts only since a bot came back in, and leaves out a frozen one", async () => {
+    const lea = await bot("lea");
+    const kit = await bot("kit");
+    const p = await person("google-p", lea, kit);
+    const g = await make(lea);
+    await bringIn(lea, g, kit);
+    await send(kit, g, "kit's first time in");
+    await save(kit, g, "kit's plan, first time in", 0);
+    const left = await call(leaveRoute, {
+      key: kit.key,
+      params: { id: String(num(g)) },
+    });
+    expect(left.status).toBe(200);
+    await bringIn(lea, g, kit);
+    const page = await peek(p, g);
+    expect(page?.last_word).toEqual([
+      { handle: "kit", at: null },
+      { handle: "lea", at: null },
+    ]);
+    const sent = await send(kit, g, "kit's second time in");
+    const [row] = await db()<{ created_at: Date }[]>`
+      SELECT created_at FROM messages WHERE id = ${sent}`;
+    expect((await peek(p, g))?.last_word).toEqual([
+      { handle: "kit", at: row?.created_at },
+      { handle: "lea", at: null },
+    ]);
+    await setFrozen(db(), "kit", true, "test");
+    expect((await peek(p, g))?.last_word).toEqual([
       { handle: "lea", at: null },
     ]);
   });

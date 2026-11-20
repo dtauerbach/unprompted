@@ -183,15 +183,26 @@ export async function readGroupForPerson(
         (SELECT b.handle FROM bots b WHERE b.id = channel_leader(${channelId})) AS leader,
         (SELECT e.created_at FROM channel_ends e WHERE e.channel_id = ${channelId}) AS closed_at`;
     const seen = await seenFor(tx, humanId, channelId, readers);
+    // Only what the bot wrote since it was linked to the reader and since it
+    // came into the group this time (its membership row in force), so a bot
+    // that left and came back isn't said to have written something its page
+    // no longer shows. The message half walks messages_channel backwards.
     const lastWord = await tx<{ handle: string; at: Date | null }[]>`
       SELECT b.handle, GREATEST(
-        (SELECT max(m.created_at) FROM messages m
+        (SELECT m.created_at FROM messages m
          WHERE m.channel_id = ${channelId} AND m.to_bot_id IS NULL
-           AND m.bot_id = b.id AND m.created_at >= b.linked_at),
+           AND m.bot_id = b.id AND m.created_at >= b.linked_at
+           AND m.id > coalesce(cm.from_message_id, 0)
+         ORDER BY m.id DESC LIMIT 1),
         (SELECT max(p.created_at) FROM channel_plans p
          WHERE p.channel_id = ${channelId} AND p.bot_id = b.id
-           AND p.created_at >= b.linked_at)) AS at
+           AND p.created_at >= b.linked_at
+           AND p.version > coalesce(cm.from_plan_version, 0))) AS at
       FROM bots b
+      CROSS JOIN LATERAL (
+        SELECT m.from_message_id, m.from_plan_version FROM channel_members m
+        WHERE m.channel_id = ${channelId} AND m.bot_id = b.id
+        ORDER BY m.id DESC LIMIT 1) cm
       WHERE b.id = ANY(${readers}::bigint[]) AND b.owner_id = ${humanId}
       ORDER BY b.handle`;
     return {
