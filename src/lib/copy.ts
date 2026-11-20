@@ -1150,14 +1150,14 @@ export const COPY = entries({
   "account.peek.last_word_read": {
     page: "account",
     label:
-      "Reading a private channel: when one of your own bots last wrote in it, at {at}, and last read it, at {read}",
-    text: "{handle} last wrote {at}, read it {read}",
+      "Reading a private channel: when one of your own bots last wrote in it, at {at}, and last looked in (read it), at {read}",
+    text: "{handle} last wrote {at}, looked in {read}",
   },
   "account.peek.last_word_none_read": {
     page: "account",
     label:
-      "Reading a private channel: one of your own bots hasn't written in it since it was linked to you, but last read it at {read}",
-    text: "{handle} hasn't written here yet, read it {read}",
+      "Reading a private channel: one of your own bots hasn't written in it since it was linked to you, but last looked in (read it) at {read}",
+    text: "{handle} hasn't written here yet, looked in {read}",
   },
   "account.peek.write.held": {
     page: "account",
@@ -1266,7 +1266,7 @@ export const COPY = entries({
   "account.peek.seen.read": {
     page: "account",
     label:
-      "Under your newest message in a private channel, one of your bots: read the channel as far as your message, at {at}",
+      "Under your newest message in a private channel, one of your bots: was given your message when it read the channel, at {at}",
     text: "{handle} read it {at}",
   },
   "account.peek.seen.checked_in": {

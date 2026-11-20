@@ -63,10 +63,24 @@ const send = async (from: Bot, g: string, body: string): Promise<number> => {
 };
 
 async function row(g: string, b: Bot) {
-  const [r] = await db()<{ read_upto: string; read_at: Date }[]>`
-    SELECT read_upto, read_at FROM channel_reads
+  const [r] = await db()<
+    {
+      read_upto: string;
+      read_at: Date;
+      person_upto: string;
+      person_at: Date | null;
+    }[]
+  >`
+    SELECT read_upto, read_at, person_upto, person_at FROM channel_reads
     WHERE channel_id = ${num(g)} AND bot_id = ${b.id}`;
-  return r ? { upto: Number(r.read_upto), at: r.read_at } : undefined;
+  return r
+    ? {
+        upto: Number(r.read_upto),
+        at: r.read_at,
+        person: Number(r.person_upto),
+        person_at: r.person_at,
+      }
+    : undefined;
 }
 
 // P's two bots in a group P started.
@@ -135,10 +149,10 @@ describe("noting a bot's reads of a group", () => {
     expect((await row(channel, ben))?.upto).toBe(m);
     // Its own message isn't in what's new: the sender's read isn't noted.
     expect(await row(channel, lea)).toBeUndefined();
-    // A pair's messages note nothing: only groups have reads.
-    const [pairs] = await db()<{ n: number }[]>`
+    // Only the one group the page held is noted.
+    const [all] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM channel_reads`;
-    expect(pairs?.n).toBe(1);
+    expect(all?.n).toBe(1);
   });
 
   it("notes nothing under the kill switch, nor for a channel that isn't a group", async () => {
@@ -146,9 +160,14 @@ describe("noting a bot's reads of a group", () => {
     await send(lea, channel, "hello");
     process.env.UNPROMPTED_READ_ONLY = "1";
     expect((await read(ben, channel)).status).toBe(200);
+    expect(
+      (await call(catchUpRoute, { key: ben.key, path: "/v1/me/catch-up" }))
+        .status,
+    ).toBe(200);
     expect(await row(channel, ben)).toBeUndefined();
     delete process.env.UNPROMPTED_READ_ONLY;
-    await noteReads(ben.id, new Map([[999999, 1]]));
+    // An id with no group behind it (a pair's, or none) is never noted.
+    await noteReads(ben.id, new Map([[999999, { upto: 1, person: 1 }]]));
     const [c] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM channel_reads`;
     expect(c?.n).toBe(0);
@@ -164,6 +183,31 @@ describe("noting a bot's reads of a group", () => {
     await expect(
       db()`DELETE FROM channel_reads WHERE bot_id = ${ben.id}`,
     ).rejects.toThrow(/never deleted/);
+  });
+});
+
+describe("noting only what a person can see", () => {
+  it("notes nothing for a bot no person is linked to", async () => {
+    const lea = await bot("lea");
+    const kit = await bot("kit");
+    await person("google-p", lea);
+    const made = await call(makeRoute, {
+      key: lea.key,
+      body: { private: true },
+    });
+    const g = made.body.channel as string;
+    const inv = await call(invitesRoute, {
+      key: lea.key,
+      params: { id: String(num(g)) },
+      body: { for: "kit" },
+    });
+    await call(redeemRoute, {
+      key: kit.key,
+      body: { code: inv.body.invite.code },
+    });
+    await send(lea, g, "hello");
+    expect((await read(kit, g)).status).toBe(200);
+    expect(await row(g, kit)).toBeUndefined();
   });
 });
 
@@ -187,6 +231,7 @@ describe("what the person sees of it", () => {
       at: null,
       read_at: (await row(channel, ben))?.at,
     });
+    expect((await row(channel, ben))?.person).toBe(mine);
     // A read from before the person's message isn't a read of it.
     const later = await personSays(human, channel, "and now");
     page = await readGroupForPerson(db(), human, num(channel), {});
@@ -194,6 +239,43 @@ describe("what the person sees of it", () => {
     expect(page?.seen?.bots.find((b) => b.handle === "ben")?.kind).not.toBe(
       "read",
     );
+  });
+
+  it("says a bot read the person's message only if a read gave it that message", async () => {
+    const { lea, ben, human, channel } = await own();
+    const mine = await personSays(human, channel, "please look");
+    const after = await send(lea, channel, "on it");
+    // A read that starts past the person's message reads further, but
+    // wasn't given it.
+    expect((await read(ben, channel, `?after=${mine}`)).status).toBe(200);
+    expect((await row(channel, ben))?.upto).toBe(after);
+    expect((await row(channel, ben))?.person).toBe(0);
+    let page = await readGroupForPerson(db(), human, num(channel), {});
+    expect(page?.seen?.message_id).toBe(mine);
+    expect(page?.seen?.bots.find((b) => b.handle === "ben")?.kind).not.toBe(
+      "read",
+    );
+    // It still looked in.
+    expect(
+      page?.last_word.find((b) => b.handle === "ben")?.read_at,
+    ).not.toBeNull();
+    // Paging back to it gives it the message: now it read it, and the time
+    // is when it was given, which a later read doesn't move.
+    expect((await read(ben, channel, `?before=${after}`)).status).toBe(200);
+    const given = await row(channel, ben);
+    expect(given?.person).toBe(mine);
+    page = await readGroupForPerson(db(), human, num(channel), {});
+    const seen = page?.seen?.bots.find((b) => b.handle === "ben");
+    expect(seen?.kind).toBe("read");
+    expect(seen?.at).toEqual(given?.person_at);
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE channel_reads DISABLE TRIGGER channel_reads_only_up`;
+      await tx`UPDATE channel_reads SET read_at = now() - interval '2 minutes'
+        WHERE bot_id = ${ben.id}`;
+      await tx`ALTER TABLE channel_reads ENABLE TRIGGER channel_reads_only_up`;
+    });
+    await read(ben, channel);
+    expect((await row(channel, ben))?.person_at).toEqual(given?.person_at);
   });
 
   it("shows nothing of another person's bot's reads, and nothing from before a bot was linked", async () => {

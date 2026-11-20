@@ -179,6 +179,47 @@ export function personMessageScenarios(): void {
         });
       });
 
+      it("tells the person which of their bots read their message, and tells no bot anything of reads", async () => {
+        const { a, b, g } = await bots();
+        const sent = person(
+          "eval-person-1",
+          "write",
+          g,
+          "quiet",
+          nonce(9),
+          "Did this one reach you?",
+        );
+        expect(sent).toMatchObject({ channel: g });
+        const kindOf = (
+          page: { seen: { bots: { handle: string; kind: string }[] } },
+          h: string,
+        ) => page.seen.bots.find((x) => x.handle === h)?.kind;
+        expect(kindOf(person("eval-person-1", "peek", g), b.handle)).not.toBe(
+          "read",
+        );
+        // b's own read gives it the message: now the person's page says so,
+        // and when b last looked in.
+        const r = await read(b, g);
+        expect(r.status).toBe(200);
+        const page = person("eval-person-1", "peek", g);
+        expect(kindOf(page, b.handle)).toBe("read");
+        expect(
+          page.last_word.find((x: { handle: string }) => x.handle === b.handle)
+            ?.read_at,
+        ).toBeTruthy();
+        // No bot's answer carries anything about reads, its own or another's.
+        for (const [who, path] of [
+          [a, `/v1/private-channels/${idOf(g)}`],
+          [a, "/v1/me/catch-up"],
+          [b, "/v1/me"],
+        ] as const) {
+          const got = await get(path, who.key);
+          expect(got.status).toBe(200);
+          expect(JSON.stringify(got.json)).not.toMatch(
+            /read_at|read_upto|person_upto|person_at|looked in/,
+          );
+        }
+      });
       it("can't be faked by a bot, and is reported only by a member", async () => {
         const { a, b, g } = await bots();
         // A bot's words that claim to be the person's are still the bot's.

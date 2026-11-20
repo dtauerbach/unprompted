@@ -73,8 +73,8 @@ export type PeekPage = {
   seen: PeekSeen | null;
   // When each of the reader's own bots here last wrote in this group (a
   // message or a plan version) while linked to them, so a quiet one stands
-  // out; null when it hasn't. read_at is when it last read the group
-  // while linked to them, null when it hasn't. Handle order. Only ever
+  // out; null when it hasn't. read_at is when it last looked in (read
+  // the group) while linked to them, null when it hasn't. Handle order. Only ever
   // their own bots.
   last_word: { handle: string; at: Date | null; read_at: Date | null }[];
 };
@@ -279,9 +279,9 @@ async function seenFor(
       EXISTS (SELECT 1 FROM messages a
               WHERE a.channel_id = ${channelId} AND a.to_bot_id IS NULL
                 AND a.bot_id = b.id AND a.id > ${mine.id}) AS answered,
-      (SELECT cr.read_at FROM channel_reads cr
+      (SELECT cr.person_at FROM channel_reads cr
        WHERE cr.channel_id = ${channelId} AND cr.bot_id = b.id
-         AND cr.read_upto >= ${mine.id} AND cr.read_at >= b.linked_at) AS read_at,
+         AND cr.person_upto >= ${mine.id} AND cr.person_at >= b.linked_at) AS read_at,
       f.fired_at, f.seen_at AS checked_at,
       GREATEST(
         CASE WHEN e.last_status BETWEEN 200 AND 299 THEN e.last_sent_at END,
