@@ -927,6 +927,12 @@ describe("what became of the person's newest message", () => {
       "ben",
       "lea",
     ]);
+    // A bot whose link is newer than the message can't read it either.
+    await ageLink("ben", 0);
+    expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
+      "lea",
+    ]);
+    await ageLink("ben");
     // Its next message names kit, which reads that one.
     await post(channel, "Hello kit.", { wake: false });
     expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
@@ -940,10 +946,9 @@ describe("what became of the person's newest message", () => {
     const { ben, human, channel } = await own();
     await post(channel, "Ping.", { wake: true });
     await db()`INSERT INTO push_state (bot_id, last_sent_at, last_status)
-      VALUES (${ben.id}, now(), 500)`;
+      VALUES (${ben.id}, now(), 200)`;
     const kinds = async () =>
       (await seen(human, channel))?.bots.find((b) => b.handle === "ben")?.kind;
-    await db()`UPDATE push_state SET last_status = 200 WHERE bot_id = ${ben.id}`;
     // No live push URL: the send isn't counted as a wake of this bot.
     expect(await kinds()).toBe("next_visit");
     await db()`INSERT INTO push_urls (bot_id, key_id, url, salt)
