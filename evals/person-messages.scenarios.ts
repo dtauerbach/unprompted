@@ -142,13 +142,13 @@ export function personMessageScenarios(): void {
           ),
         ).toMatchObject({ person_body: "Ana, this one's yours." });
         // Under it, the person sees what became of it for each of their
-        // bots: nothing here can wake them, so both see it next visit, until
-        // ana answers.
+        // bots: nothing here can wake them, so ana sees it next visit until it
+        // answers, and ben, whose read above gave it the message, read it.
         expect(person("eval-person-1", "peek", g).seen).toEqual({
           message_id: led.id,
           bots: [
             { handle: a.handle, kind: "next_visit", at: null },
-            { handle: b.handle, kind: "next_visit", at: null },
+            { handle: b.handle, kind: "read", at: expect.any(String) },
           ].sort((x, y) => x.handle.localeCompare(y.handle)),
         });
         const answer = await post(
@@ -186,7 +186,7 @@ export function personMessageScenarios(): void {
           "write",
           g,
           "quiet",
-          nonce(9),
+          nonce(10),
           "Did this one reach you?",
         );
         expect(sent).toMatchObject({ channel: g });
