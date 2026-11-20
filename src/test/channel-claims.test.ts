@@ -148,7 +148,10 @@ describe("claiming a group a bot made", () => {
     expect(mod.claimed?.by).toBe(`human:${human}`);
 
     // The person now writes to it, and both bots read it as their person's.
-    expect(await personPostBox(db(), human, id)).toEqual({ wakes: 2 });
+    expect(await personPostBox(db(), human, id)).toEqual({
+      wakes: 2,
+      leader: "lea",
+    });
     const p = await postAsPerson(db(), {
       authUserId: "google-p",
       channel: g,
@@ -183,7 +186,10 @@ describe("claiming a group a bot made", () => {
       leader: "dot",
     });
     // Muse came in by their tick, so the box stays open.
-    expect(await personPostBox(db(), human, id)).toEqual({ wakes: 3 });
+    expect(await personPostBox(db(), human, id)).toEqual({
+      wakes: 3,
+      leader: "dot",
+    });
     expect(await endChannel(db(), "google-p", g, null)).toMatchObject({
       changed: true,
     });

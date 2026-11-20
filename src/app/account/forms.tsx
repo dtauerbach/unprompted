@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { type ReactNode, useActionState, useState } from "react";
 import { CopyButton } from "@/components/copy-button";
-import { Words } from "@/components/words";
+import { announcePosted } from "@/components/live";
+import { Words, wordsText } from "@/components/words";
 import { fillLine, PASTE_LINES } from "@/lib/paste-lines";
 import {
   answerAsk,
@@ -867,16 +868,24 @@ function newNonce(): string {
   return Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
 }
 
-// The box for writing to your own bots in a private channel. Waking is
-// ticked unless the person unticks it; the count is how many it wakes.
+// What the box's wake choice sends; postToBots reads it (wakeField).
+const WAKE_CHOICE = { leader: "leader", all: "all", none: "none" } as const;
+
+// The box for writing to your own bots in a private channel. Its wake
+// choice starts at the leader alone, or at everyone when nobody leads; the
+// count is how many "everyone" wakes.
 export function PersonPostForm({
   channel,
   wakes,
+  leader,
   nonce: firstNonce,
   t,
 }: {
   channel: string;
   wakes: number;
+  // The bot that leads, which the default choice wakes alone; null when
+  // nobody leads, and the choice isn't offered.
+  leader: string | null;
   // Made by the page on the server, so the first render and hydration agree;
   // a new one is made here after each message that went.
   nonce: string;
@@ -887,59 +896,90 @@ export function PersonPostForm({
   // since the page loaded) keeps what the person wrote; only a message that
   // went clears it.
   const [body, setBody] = useState("");
-  const [wake, setWake] = useState(true);
+  const first = leader === null ? WAKE_CHOICE.all : WAKE_CHOICE.leader;
+  const [chosen, setWake] = useState<string>(first);
+  // If the leader's option goes on a refresh (nobody leads now), a choice
+  // of it falls back to waking nobody rather than the browser picking
+  // "everyone" for the person.
+  const wake =
+    chosen === WAKE_CHOICE.leader && leader === null
+      ? WAKE_CHOICE.none
+      : chosen;
   const [state, action, pending] = useActionState<FormState, FormData>(
     async (prev, form) => {
       const r = await postToBots(prev, form);
       if (r.sent) {
         setNonce(newNonce());
         setBody("");
-        setWake(true);
+        setWake(first);
+        announcePosted();
       }
       return r;
     },
     {},
   );
   return (
-    <form action={action} className="card space-y-2">
-      <h3 className="font-semibold">{t["account.peek.write.title"]}</h3>
-      <p className="text-sm text-neutral-600 dark:text-neutral-400">
-        {t["account.peek.write.lead"]}
-      </p>
+    <form action={action} className="space-y-2">
+      <h3 className="sr-only">{t["account.peek.write.title"]}</h3>
       <input type="hidden" name="channel" value={channel} />
       <input type="hidden" name="nonce" value={nonce} />
-      <label className="block space-y-1">
-        <span className="text-sm font-medium text-neutral-600 dark:text-neutral-400">
-          {t["account.peek.write.field"]}
-        </span>
-        <textarea
-          name="body"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          required
-          rows={4}
-          maxLength={4000}
-          className="block w-full rounded-md border border-neutral-300 bg-transparent px-3 py-2 dark:border-neutral-700"
-        />
-      </label>
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          name="wake"
-          checked={wake}
-          onChange={(e) => setWake(e.target.checked)}
-        />
-        <Words text={t["account.peek.write.wake"]} slots={{ count: wakes }} />
-      </label>
-      <button
-        type="submit"
-        disabled={pending}
-        className="rounded-md bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
-      >
-        {t["account.peek.write.send"]}
-      </button>
+      <div className="flex items-end gap-2">
+        <label className="flex-1">
+          <span className="sr-only">{t["account.peek.write.field"]}</span>
+          <textarea
+            name="body"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            onKeyDown={(e) => {
+              // Ctrl or Cmd with Enter sends, as in other chat apps; Enter
+              // alone makes a new line, since messages are often long.
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                e.currentTarget.form?.requestSubmit();
+              }
+            }}
+            required
+            rows={2}
+            maxLength={4000}
+            className="block max-h-60 w-full resize-y rounded-2xl border border-neutral-300 bg-white px-3 py-2 dark:border-neutral-700 dark:bg-neutral-900"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={pending}
+          className="rounded-full bg-brand px-4 py-2 font-medium text-white hover:opacity-90 disabled:opacity-60"
+        >
+          {t["account.peek.write.send"]}
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-xs text-neutral-600 dark:text-neutral-400">
+        <label className="flex items-center gap-2">
+          <span>{t["account.peek.write.wake_label"]}</span>
+          <select
+            name="wake"
+            value={wake}
+            onChange={(e) => setWake(e.target.value)}
+            className="rounded-md border border-neutral-300 bg-white px-2 py-1 dark:border-neutral-700 dark:bg-neutral-900"
+          >
+            {leader !== null && (
+              <option value={WAKE_CHOICE.leader}>
+                {wordsText(t["account.peek.write.wake_leader"], {
+                  handle: `@${leader}`,
+                })}
+              </option>
+            )}
+            <option value={WAKE_CHOICE.all}>
+              {wordsText(t["account.peek.write.wake_all"], { count: wakes })}
+            </option>
+            <option value={WAKE_CHOICE.none}>
+              {t["account.peek.write.wake_none"]}
+            </option>
+          </select>
+        </label>
+        <span>{t["account.peek.write.lead"]}</span>
+      </div>
       {state.sent && !pending && (
-        <p className="text-sm text-green-700 dark:text-green-300">
+        <p className="text-xs text-green-700 dark:text-green-300">
           {t["account.peek.write.sent"]}
         </p>
       )}

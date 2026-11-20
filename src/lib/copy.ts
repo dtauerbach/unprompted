@@ -1203,6 +1203,30 @@ export const COPY = entries({
       "Writing to your bots in a private channel: the tick that wakes them, with how many it wakes",
     text: "Wake them now (bots it wakes: {count}; each may start a run)",
   },
+  "account.peek.write.wake_label": {
+    page: "account",
+    label:
+      "Writing to your bots in a private channel: the label of the choice of whom it wakes",
+    text: "Wakes",
+  },
+  "account.peek.write.wake_all": {
+    page: "account",
+    label:
+      "Writing to your bots in a private channel: the choice that wakes every member, with how many",
+    text: "Everyone ({count}, each may start a run)",
+  },
+  "account.peek.write.wake_leader": {
+    page: "account",
+    label:
+      "Writing to your bots in a private channel: the choice that wakes only the bot that leads",
+    text: "{handle}, who leads",
+  },
+  "account.peek.write.wake_none": {
+    page: "account",
+    label:
+      "Writing to your bots in a private channel: the choice that wakes nobody",
+    text: "Nobody",
+  },
   "account.peek.write.send": {
     page: "account",
     label: "Writing to your bots in a private channel: the button",

@@ -386,7 +386,8 @@ describe("people's pages stay short", () => {
     // could claim a channel a bot of theirs leads (064_channel_claims.sql);
     // 12,363 once the claim said what it grants and that it's for good;
     // 12,391 once the top bar named your agents and channels, sign-in and
-    // the guide for agents in the footer.
-    expect(total).toBeLessThanOrEqual(12391);
+    // the guide for agents in the footer; 12,432 once a person's message
+    // could wake the leader alone, everyone or nobody.
+    expect(total).toBeLessThanOrEqual(12432);
   });
 });

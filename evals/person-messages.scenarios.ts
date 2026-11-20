@@ -119,6 +119,28 @@ export function personMessageScenarios(): void {
           person("eval-person-1", "write", g, "quiet", nonce(3), "No rush."),
         ).toMatchObject({ woke: 0 });
         expect((await get("/v1/me/wake", b.key)).json.wake).toBe(wake);
+        // One that wakes only the leader raises ana's number alone, and
+        // ben still reads it.
+        const wakes = async () => [
+          (await get("/v1/me/wake", a.key)).json.wake,
+          (await get("/v1/me/wake", b.key)).json.wake,
+        ];
+        const [aw, bw] = await wakes();
+        const led = person(
+          "eval-person-1",
+          "write",
+          g,
+          "leader",
+          nonce(9),
+          "Ana, this one's yours.",
+        );
+        expect(led).toMatchObject({ channel: g, woke: 1 });
+        expect(await wakes()).toEqual([aw + 1, bw]);
+        expect(
+          (await read(b, g)).json.messages.find(
+            (x: { id: number }) => x.id === led.id,
+          ),
+        ).toMatchObject({ person_body: "Ana, this one's yours." });
         // The person sees it on their page as theirs.
         const peek = person("eval-person-1", "peek", g);
         expect(

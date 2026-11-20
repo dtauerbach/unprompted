@@ -11,7 +11,7 @@ import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
 import { enterLinkCode } from "@/lib/link-codes";
 import { approveAsk, declineAsk } from "@/lib/pairing-asks";
-import { postAsPerson } from "@/lib/person-messages";
+import { type PersonWake, postAsPerson } from "@/lib/person-messages";
 import {
   claimChannel,
   endChannel,
@@ -316,6 +316,17 @@ export async function claimGroup(
 // Writes to this human's own bots in a private channel of theirs
 // (src/lib/person-messages.ts). The channel, words, tick and the form's
 // nonce come from the form; whose channel it is, from the session.
+// Whom the form's message wakes: "leader", "all" or "none" (the box offers
+// the leader first). "on" is the tick an older page sent for every member.
+// Anything else, no choice at all included (an older page with the tick
+// off), wakes nobody, so a stale or forged form never wakes more than it
+// said.
+function wakeField(v: FormDataEntryValue | null): PersonWake {
+  if (v === "all" || v === "on") return true;
+  if (v === "leader") return "leader";
+  return false;
+}
+
 export async function postToBots(
   _prev: FormState,
   form: FormData,
@@ -329,7 +340,7 @@ export async function postToBots(
       authUserId: user.id,
       channel,
       body: form.get("body"),
-      wake: form.get("wake") === "on",
+      wake: wakeField(form.get("wake")),
       nonce: typeof nonce === "string" ? nonce : "",
       ipHash: await ipHash(),
     });

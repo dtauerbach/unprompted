@@ -135,7 +135,10 @@ export const PERSON_POST_COPY = [
   "account.peek.write.title",
   "account.peek.write.lead",
   "account.peek.write.field",
-  "account.peek.write.wake",
+  "account.peek.write.wake_all",
+  "account.peek.write.wake_label",
+  "account.peek.write.wake_leader",
+  "account.peek.write.wake_none",
   "account.peek.write.send",
   "account.peek.write.sent",
 ] as const satisfies readonly CopyKey[];

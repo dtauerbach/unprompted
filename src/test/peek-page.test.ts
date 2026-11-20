@@ -121,6 +121,16 @@ async function mixed() {
 
 const NOT_SHOWN = COPY["account.peek.not_shown"].text;
 
+// Whether a rendered tree holds an element of this component, without
+// running client components (they render nothing on the server here).
+function holds(node: unknown, type: unknown): boolean {
+  if (Array.isArray(node)) return node.some((n) => holds(n, type));
+  if (!node || typeof node !== "object") return false;
+  const el = node as { type?: unknown; props?: { children?: unknown } };
+  if (el.type === type) return true;
+  return holds(el.props?.children, type);
+}
+
 describe("reading a private channel on the account side", () => {
   it("shows the reader's own bot's words and times, another person's bot's by handle and time alone", async () => {
     const { lea, otto, g } = await mixed();
@@ -185,7 +195,11 @@ describe("reading a private channel on the account side", () => {
     try {
       const html = await render(num(channel));
       expect(html).toContain(title);
-      expect(html).toContain("bots it wakes: 2;");
+      expect(html).toContain("Everyone (2, each may start a run)");
+      // The leader alone is the choice the box starts on.
+      expect(html).toMatch(
+        /<option value="leader" selected="">@ann, who leads<\/option>/,
+      );
       const [h] = await db()<{ id: string }[]>`
         SELECT id FROM humans WHERE auth_user_id = 'google-p'`;
       const [m] = await db()<{ id: string }[]>`
@@ -281,6 +295,50 @@ describe("reading a private channel on the account side", () => {
     expect(older).not.toContain("?before=");
     // A before that isn't an id reads the newest page.
     expect(await render(num(g), "x")).toBe(newest);
+  });
+
+  it("lays out as a chat: a run shares one line, the person's own on the right, live only on the newest page", async () => {
+    const lea = await bot("lea");
+    const ben = await bot("ben");
+    await link("google-p", lea, ben);
+    await ageLink("lea");
+    await ageLink("ben");
+    const { channel: g } = await startChannel(
+      db(),
+      "google-p",
+      ["lea", "ben"],
+      "lea",
+      null,
+    );
+    await send(lea, g, "first");
+    await send(lea, g, "second");
+    const third = await send(ben, g, "third");
+    const [h] = await db()<{ id: string }[]>`
+      SELECT id FROM humans WHERE auth_user_id = 'google-p'`;
+    const [mine] = await db()<{ id: string }[]>`
+      INSERT INTO messages (human_id, channel_id, body, client_nonce)
+      VALUES (${Number(h?.id)}, ${Number(num(g))}, 'mine', 'abcdefghijklmnop')
+      RETURNING id`;
+    const html = await render(num(g));
+    // lea's two messages share one line; ben's starts its own.
+    expect(html.match(/@lea at /g)?.length).toBe(1);
+    expect(html.match(/@ben at /g)?.length).toBe(1);
+    const row = (id: number | string) =>
+      new RegExp(`<li[^>]*id="m${id}"[\\s\\S]*?</li>`).exec(html)?.[0] ?? "";
+    expect(row(Number(mine?.id))).toContain("self-end");
+    expect(row(Number(mine?.id))).toContain("bg-brand");
+    expect(row(third)).toContain("self-start");
+    // The plan folds away; the page looks again only on the newest page.
+    expect(html).toContain('<details id="plan"');
+    const Page = (await import("@/app/account/channels/[id]/page")).default;
+    const { LiveRefresh } = await import("@/components/live");
+    const tree = async (before?: string) =>
+      Page({
+        params: Promise.resolve({ id: num(g) }),
+        searchParams: Promise.resolve(before === undefined ? {} : { before }),
+      });
+    expect(holds(await tree(), LiveRefresh)).toBe(true);
+    expect(holds(await tree(String(third)), LiveRefresh)).toBe(false);
   });
 
   it("is linked from each private channel on the account page", async () => {
