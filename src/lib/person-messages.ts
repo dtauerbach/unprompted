@@ -66,6 +66,51 @@ export async function personPostBox(
   return r?.ok ? { wakes: r.wakes, leader: r.leader } : null;
 }
 
+// Why there's no box, when the only thing keeping it away is time: every
+// rule of person_may_post (064) holds but the day after some of the
+// person's bots were linked to them. Gives when that day ends for the last
+// of them, and which they are, so the page can say when the person may
+// write. Null otherwise (including when they may write now, or the switch
+// is off). It names only the reader's own bots, which the page already
+// marks as theirs. Mirrors 064's person_may_post without its linked_at
+// clause; src/test/person-messages.test.ts checks the two agree.
+export async function personPostHeld(
+  sql: postgres.Sql | Tx,
+  humanId: number,
+  channelId: number,
+): Promise<{ from: Date; handles: string[] } | null> {
+  if (!personPostsOn()) return null;
+  const [r] = await sql<
+    { ok: boolean; held: boolean; from: Date | null; handles: string[] }[]
+  >`
+    SELECT person_may_post(${humanId}, ${channelId}) AS ok,
+      (is_group(${channelId})
+        AND EXISTS (SELECT 1 FROM group_channels g
+                    WHERE g.channel_id = ${channelId} AND g.human_id = ${humanId})
+        AND private_channel_is_visible(${channelId})
+        AND private_channel_is_open(${channelId})
+        AND NOT person_posts_stopped(${humanId})
+        AND EXISTS (
+          SELECT 1 FROM channel_roster(${channelId}) r JOIN bots b ON b.id = r.bot_id
+          WHERE b.frozen_at IS NULL)
+        AND NOT EXISTS (
+          SELECT 1 FROM channel_roster(${channelId}) r LEFT JOIN bots b ON b.id = r.bot_id
+          WHERE b.id IS NULL
+            OR b.owner_id IS DISTINCT FROM ${humanId}::bigint
+            OR (r.via <> 'person' AND r.since_id > coalesce(
+                  (SELECT k.members_upto FROM channel_claims k
+                   WHERE k.channel_id = ${channelId} AND k.human_id = ${humanId}), 0)))
+      ) AS held,
+      (SELECT max(b.linked_at) + interval '24 hours'
+       FROM channel_roster(${channelId}) r JOIN bots b ON b.id = r.bot_id
+       WHERE b.linked_at > now() - interval '24 hours') AS from,
+      coalesce((SELECT array_agg(b.handle ORDER BY b.handle)
+       FROM channel_roster(${channelId}) r JOIN bots b ON b.id = r.bot_id
+       WHERE b.linked_at > now() - interval '24 hours'), '{}') AS handles`;
+  if (!r || r.ok || !r.held || r.from === null) return null;
+  return { from: r.from, handles: r.handles };
+}
+
 // Whom a person's message wakes: every member that isn't frozen (true),
 // only the leader ("leader"), or nobody (false).
 export type PersonWake = boolean | "leader";

@@ -675,7 +675,7 @@ describe("the menu", () => {
       "utf8",
     );
     expect(css).toMatch(
-      /body:has\(\[data-compose\]\) \.site-footer \{\s*display: none;/,
+      /body:has\(\[data-chat\]\) \.site-footer,\s*body:has\(\[data-compose\]\) \.site-footer \{\s*display: none;/,
     );
   });
 
