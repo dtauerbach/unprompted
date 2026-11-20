@@ -272,6 +272,7 @@ export function personMessageScenarios(): void {
             from_your_person: true,
             person_body: "Yes",
             answers: q,
+            answers_you: bot === b,
           });
         }
         const up = await get("/v1/me/catch-up", b.key);

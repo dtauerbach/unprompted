@@ -3,6 +3,7 @@ import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
 import { POST as makeCodeRoute } from "@/app/v1/me/pairing-codes/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
+import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
 import { db } from "@/lib/db";
 import { readGroupForPerson } from "@/lib/peek";
@@ -197,6 +198,34 @@ describe("a bot asking its person yes or no", () => {
     expect(c?.n).toBe(0);
   });
 
+  it("is refused from a bot no person is linked to", async () => {
+    const { lea, ben, channel } = await own();
+    // A member no person is linked to, as one invited into a bot's group
+    // would be: the triggers that keep a person's group to linked bots are
+    // set aside for the test alone.
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE bots DISABLE TRIGGER USER`;
+      await tx`UPDATE bots SET owner_id = NULL, linked_at = NULL WHERE id = ${ben.id}`;
+      await tx`ALTER TABLE bots ENABLE TRIGGER USER`;
+    });
+    const r = await call(sendRoute, {
+      key: ben.key,
+      body: { channel, body: "Ship it?", ask: "yes_no" },
+    });
+    expect(r.status).toBe(400);
+    expect(r.body.error.message).toMatch(/linked to its person/);
+    // Its plain words still go.
+    const plain = await call(sendRoute, {
+      key: ben.key,
+      body: { channel, body: "Still here." },
+    });
+    expect(plain.status).toBe(201);
+    const [c] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE ask IS NOT NULL`;
+    expect(c?.n).toBe(0);
+    expect(lea.id).toBeGreaterThan(0);
+  });
+
   it("can't be stamped on a message the database wouldn't call a group question", async () => {
     const { lea, human, channel } = await own();
     // Not on a person's message.
@@ -244,15 +273,27 @@ describe("a person answering with a tap", () => {
         created_at: expect.any(String),
         person_body: "Yes",
         answers: q,
+        // Only the bot that asked reads it as its own.
+        answers_you: b === ben,
       });
     }
-    const up = await call(catchUpRoute, {
-      key: ben.key,
-      path: "/v1/me/catch-up",
-    });
-    expect(
-      up.body.messages.new.find((m: { id: number }) => m.id === sent.id),
-    ).toMatchObject({ from: null, person_body: "Yes", answers: q });
+    for (const [b, mine] of [
+      [ben, true],
+      [lea, false],
+    ] as const) {
+      const up = await call(catchUpRoute, {
+        key: b.key,
+        path: "/v1/me/catch-up",
+      });
+      expect(
+        up.body.messages.new.find((m: { id: number }) => m.id === sent.id),
+      ).toMatchObject({
+        from: null,
+        person_body: "Yes",
+        answers: q,
+        answers_you: mine,
+      });
+    }
     // The log names the question and how many it woke, never the answer.
     const [log] = await db()<{ detail: Record<string, unknown> }[]>`
       SELECT detail FROM action_log WHERE action = 'human.channel.message'
@@ -336,6 +377,21 @@ describe("a person answering with a tap", () => {
     expect(c?.n).toBe(0);
   });
 
+  it("can't answer a question once the bot that asked has left", async () => {
+    const { ben, channel } = await own();
+    const q = await ask(ben, channel, "Ship it?");
+    const left = await call(leaveRoute, {
+      key: ben.key,
+      params: { id: String(num(channel)) },
+      path: `/v1/private-channels/${num(channel)}/leave`,
+      body: {},
+    });
+    expect(left.status).toBe(200);
+    await expect(tap(channel, q, "Yes")).rejects.toMatchObject({
+      code: "not_yours",
+    });
+  });
+
   it("can't answer a question asked before the bot was linked to the person", async () => {
     const { ben, human, channel } = await own();
     const q = await ask(ben, channel, "Ship it?");
@@ -388,6 +444,10 @@ describe("a person answering with a tap", () => {
     const first = await tap(channel, q, "Yes", { nonce: once });
     const again = await tap(channel, q, "Yes", { nonce: once });
     expect(again).toMatchObject({ id: first.id, again: true, woke: 0 });
+    // The same form saying something else isn't the same message.
+    await expect(tap(channel, q, "No", { nonce: once })).rejects.toMatchObject({
+      code: "invalid",
+    });
     const [c] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM messages WHERE answers IS NOT NULL`;
     expect(c?.n).toBe(1);

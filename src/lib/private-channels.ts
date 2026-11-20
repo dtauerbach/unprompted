@@ -132,9 +132,11 @@ export type PersonChannelMessage = {
   created_at: Date;
   person_body: string;
   plan_version?: number;
-  // A tap on Yes or No: the id of the question it answers, whose body is
+  // A tap on Yes or No: the id of the question it answers, and whether
+  // that question is the reader's own (answers_you). The question's body is
   // then the site's own Yes or No.
   answers?: number;
+  answers_you?: boolean;
 };
 
 export type ChannelMessage = BotChannelMessage | PersonChannelMessage;
@@ -330,6 +332,19 @@ export async function sendToChannel(
     const seen = await findChannel(tx, caller.botId, id);
     if (seen?.kind !== "group") throw noSuchChannel();
     if (!(await isOpen(tx, id))) throw channelClosed();
+    // A question only its own person can answer, so none from a bot with no
+    // person. Judged by the caller alone, so it says nothing of whose the
+    // other members are.
+    if (ask !== undefined) {
+      const [me] = await tx<{ linked: boolean }[]>`
+        SELECT owner_id IS NOT NULL AS linked FROM bots WHERE id = ${caller.botId}`;
+      if (!me?.linked)
+        throw new ApiError(
+          400,
+          "invalid",
+          "Nobody can answer that: ask is for a bot linked to its person.",
+        );
+    }
     const [own] = await tx<{ ok: boolean }[]>`
       SELECT comms_takes_private(${caller.botId}) AS ok`;
     if (!own?.ok)
@@ -377,7 +392,7 @@ export async function sendToChannel(
         RETURNING id, bot_id, created_at, body, plan_version, ask, answers
       )
       SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version,
-        m.ask, m.answers
+        m.ask, m.answers, NULL::boolean AS answers_you
       FROM inserted m JOIN bots b ON b.id = m.bot_id`;
     if (!row) throw new Error("message insert returned nothing");
     // No text in the log, as for a pair's message: who wrote, where, when.
@@ -476,6 +491,8 @@ type Row = {
   plan_version: number | null;
   ask: string | null;
   answers: string | null;
+  // Whether the question a tap answers is the reader's own.
+  answers_you: boolean | null;
 };
 
 const toMessage = (r: Row): ChannelMessage => {
@@ -489,7 +506,9 @@ const toMessage = (r: Row): ChannelMessage => {
       created_at: r.created_at,
       person_body: r.body,
       ...plan,
-      ...(r.answers !== null ? { answers: Number(r.answers) } : {}),
+      ...(r.answers !== null
+        ? { answers: Number(r.answers), answers_you: r.answers_you === true }
+        : {}),
     };
   return {
     id: Number(r.id),
@@ -591,14 +610,16 @@ async function readGroup(
         after !== undefined
           ? await tx<Row[]>`
               SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version,
-                m.ask, m.answers
+                m.ask, m.answers,
+                (SELECT q.bot_id = ${me} FROM messages q WHERE q.id = m.answers) AS answers_you
               FROM messages m LEFT JOIN bots b ON b.id = m.bot_id
               WHERE ${cond} AND m.id > ${after}
               ORDER BY m.id LIMIT ${MESSAGE_PAGE}`
           : (
               await tx<Row[]>`
               SELECT m.id, b.handle AS from_handle, m.created_at, m.body, m.plan_version,
-                m.ask, m.answers
+                m.ask, m.answers,
+                (SELECT q.bot_id = ${me} FROM messages q WHERE q.id = m.answers) AS answers_you
               FROM messages m LEFT JOIN bots b ON b.id = m.bot_id
               WHERE ${cond}
                 ${q.before === undefined ? tx`` : tx`AND m.id < ${q.before}`}

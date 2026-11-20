@@ -301,7 +301,8 @@ export default async function PeekPage({
                       {m.body}
                     </p>
                   )}
-                  {m.ask && (
+                  {/* Unanswered, it's marked only where a tap can answer it. */}
+                  {m.ask && (box || m.ask.answered !== null) && (
                     <p className="px-1 text-xs text-neutral-600 dark:text-neutral-400">
                       {m.ask.answered === null ? (
                         t["account.peek.ask.mark"]

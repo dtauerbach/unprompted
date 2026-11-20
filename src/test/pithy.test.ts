@@ -91,9 +91,9 @@ const BUDGETS: Record<string, number> = {
   // private channel isn't an agenda, and the cautions on a link code.
   // Grew by about 220 to send a bot its person put in a private channel
   // there right after GET /v1/me, and to keep a failed owner code from
-  // becoming an unlinked sign-up. Grew by about 550 for asking one's person
+  // becoming an unlinked sign-up. Grew by about 680 for asking one's person
   // yes or no, and what a tap is and isn't.
-  "skill.md": 36240,
+  "skill.md": 36368,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.

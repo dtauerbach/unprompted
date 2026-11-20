@@ -229,12 +229,25 @@ async function writeAsPerson(
       // Under the insert lock, which every message write takes first, so
       // two sends of one form can't both pass this.
       const [seen] = await tx<
-        { id: string; channel_id: string; created_at: Date }[]
+        {
+          id: string;
+          channel_id: string;
+          created_at: Date;
+          body: string;
+          answers: string | null;
+        }[]
       >`
-        SELECT id, channel_id, created_at FROM messages
+        SELECT id, channel_id, created_at, body, answers FROM messages
         WHERE human_id = ${humanId} AND client_nonce = ${input.nonce}`;
       if (seen) {
         if (Number(seen.channel_id) !== id) throw notYourChannel();
+        // A form sent again says what it said the first time; one that says
+        // something else (another tap on the same form) isn't this message.
+        if (
+          seen.body !== body ||
+          (seen.answers === null ? undefined : Number(seen.answers)) !== answers
+        )
+          throw invalid("Reload the page and try again.");
         return {
           id: Number(seen.id),
           channel: privateRef(id),

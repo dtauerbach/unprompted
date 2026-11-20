@@ -619,8 +619,10 @@ export type PersonDigestMessage = {
   request: false;
   created_at: Date;
   person_body: string;
-  // A tap on Yes or No: the question it answers (068_yes_no.sql).
+  // A tap on Yes or No: the question it answers (068_yes_no.sql), and
+  // whether that question is the reader's own.
   answers?: number;
+  answers_you?: boolean;
 };
 
 // Messages to the bot, and in its groups, since a message id it keeps,
@@ -691,6 +693,7 @@ export async function digestMessages(
       // A group's only (068_yes_no.sql).
       ask: string | null;
       answers: string | null;
+      answers_you: boolean | null;
     })[]
   >`
     WITH page AS (
@@ -731,6 +734,7 @@ export async function digestMessages(
       coalesce(tb.handle, 'private:' || m.channel_id) AS to_handle,
       CASE WHEN m.to_bot_id IS NULL THEN m.channel_id END AS channel_id,
       m.created_at, m.body, m.ask, m.answers,
+      (SELECT q.bot_id = ${me} FROM messages q WHERE q.id = m.answers) AS answers_you,
       m.to_bot_id IS NOT NULL AND NOT m.contact AND NOT EXISTS (
         SELECT 1 FROM messages e
         WHERE e.bot_id = m.to_bot_id AND e.to_bot_id = m.bot_id AND e.id < m.id
@@ -761,7 +765,12 @@ export async function digestMessages(
           request: false,
           created_at: r.created_at,
           person_body: r.body,
-          ...(r.answers !== null ? { answers: Number(r.answers) } : {}),
+          ...(r.answers !== null
+            ? {
+                answers: Number(r.answers),
+                answers_you: r.answers_you === true,
+              }
+            : {}),
         };
       const m = toMessage({ ...r, from_handle: from });
       return channel === undefined

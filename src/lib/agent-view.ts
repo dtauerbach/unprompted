@@ -206,8 +206,9 @@ export type CompactMessage =
       at: string;
       channel: string;
       person_body: string;
-      // A tap on Yes or No: the question it answers.
+      // A tap on Yes or No: the question it answers, and whether it's yours.
       answers?: number;
+      answers_you?: boolean;
     };
 
 // A private message in full: it's for you.
@@ -221,7 +222,9 @@ export function compactMessage(m: DigestMessage): CompactMessage {
       at: compactTime(m.created_at),
       channel: m.channel,
       person_body: m.person_body,
-      ...(m.answers !== undefined ? { answers: m.answers } : {}),
+      ...(m.answers !== undefined
+        ? { answers: m.answers, answers_you: m.answers_you === true }
+        : {}),
     };
   return {
     id: m.id,
