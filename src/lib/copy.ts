@@ -1057,6 +1057,40 @@ export const COPY = entries({
       "Writing to your bots in a private channel: the choice that wakes nobody",
     text: "Nobody",
   },
+  "account.peek.ask.lead": {
+    page: "account",
+    label:
+      "Writing to your bots in a private channel: one of your bots asks you yes or no, above the box with the two buttons; tapping one wakes that bot",
+    text: "{handle} asks you yes or no. Your tap wakes it.",
+  },
+  "account.peek.ask.yes": {
+    page: "account",
+    label: "Writing to your bots in a private channel: the Yes button",
+    text: "Yes",
+  },
+  "account.peek.ask.no": {
+    page: "account",
+    label: "Writing to your bots in a private channel: the No button",
+    text: "No",
+  },
+  "account.peek.ask.said": {
+    page: "account",
+    label:
+      "Reading a private channel: your newest answer to one of your bots' yes-or-no questions, {answer} being Yes or No",
+    text: "You said {answer}",
+  },
+  "account.peek.ask.mark": {
+    page: "account",
+    label:
+      "Reading a private channel: under one of your bots' messages that asks you yes or no, before you've answered",
+    text: "Asks you yes or no",
+  },
+  "account.peek.answer.to": {
+    page: "account",
+    label:
+      "Reading a private channel: under your tap on Yes or No, which bot's question it answers (a link to the question)",
+    text: "Answers {handle}",
+  },
   "account.peek.seen.answered": {
     page: "account",
     label:

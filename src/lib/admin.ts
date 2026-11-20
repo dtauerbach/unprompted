@@ -341,6 +341,9 @@ export type PrivateChannelRead = {
     at: Date;
     body: string;
     plan_version: number | null;
+    // A bot's yes-or-no question (068), and the question a tap answers.
+    ask: string | null;
+    answers: number | null;
   }[];
   // A group's newest plan versions, oldest first (054_channel_plans.sql).
   plans: { version: number; by: string; at: Date; body: string }[];
@@ -464,13 +467,17 @@ export async function readPrivateChannel(
         at: Date;
         body: string;
         plan_version: number | null;
+        ask: string | null;
+        answers: string | null;
       }[]
     >`
       SELECT * FROM (
         SELECT m.id,
           -- A person's message (063) by their human id, as the record names them.
           coalesce(b.handle, 'human:' || m.human_id) AS from,
-          m.created_at AS at, m.body, m.plan_version
+          m.created_at AS at, m.body, m.plan_version,
+          -- A bot's yes-or-no question, and the question a tap answers (068).
+          m.ask, m.answers
         FROM channel_messages(${id}) m LEFT JOIN bots b ON b.id = m.bot_id
         ORDER BY m.id DESC LIMIT ${PRIVATE_READ_MESSAGES}) x
       ORDER BY id`;
@@ -514,7 +521,11 @@ export async function readPrivateChannel(
         ...m,
         from_message_id: Number(m.from_message_id),
       })),
-      messages: messages.map((m) => ({ ...m, id: Number(m.id) })),
+      messages: messages.map((m) => ({
+        ...m,
+        id: Number(m.id),
+        answers: m.answers === null ? null : Number(m.answers),
+      })),
       plans,
       closed: closed ?? null,
     };

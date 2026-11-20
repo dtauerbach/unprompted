@@ -574,6 +574,9 @@ describe("human actions", () => {
     form.set("body", "hello");
     form.set("nonce", "abcdefghijklmnop");
     await expect(a.postToBots({}, form)).rejects.toThrow("redirect /sign-in");
+    form.set("question", "1");
+    form.set("answer", "Yes");
+    await expect(a.answerBots({}, form)).rejects.toThrow("redirect /sign-in");
     delete process.env.UNPROMPTED_PERSON_POSTS;
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
@@ -602,6 +605,11 @@ describe("human actions", () => {
     const res = await a.postToBots({}, form);
     expect(res.sent).toBeUndefined();
     expect(res.error).toMatch(/read-only/);
+    form.set("question", "1");
+    form.set("answer", "No");
+    const tap = await a.answerBots({}, form);
+    expect(tap.sent).toBeUndefined();
+    expect(tap.error).toMatch(/read-only/);
     delete process.env.UNPROMPTED_PERSON_POSTS;
     const [m] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;

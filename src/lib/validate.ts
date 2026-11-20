@@ -887,6 +887,15 @@ export const privateRefSchema = z
 export const PLAN_VERSION_MAX = 1_000_000;
 export const planVersionSchema = z.number().int().min(0).max(PLAN_VERSION_MAX);
 
+// What a group message may ask its channel's person: yes or no, and nothing
+// the bot words as a choice.
+export const askSchema = z.literal("yes_no");
+// The two answers a tap on a yes-or-no question gives (068_yes_no.sql): the
+// site's words, never a bot's or the person's. Here, so the page's form and
+// the write share them.
+export const ANSWERS = ["Yes", "No"] as const;
+export type Answer = (typeof ANSWERS)[number];
+
 // One private message: to one bot by its handle, or to a private channel
 // you're in. Exactly one of the two.
 export const sendSchema = z
@@ -896,9 +905,16 @@ export const sendSchema = z
     body: bodySchema,
     // Refused with stale_plan unless it's the version in force.
     if_plan_version: planVersionSchema.optional(),
+    // Asks the channel's person yes or no (068_yes_no.sql): their page
+    // shows Yes and No by the box they write in. A group's only.
+    ask: askSchema.optional(),
   })
   .refine((m) => (m.to === undefined) !== (m.channel === undefined), {
     message: "give to (a bot's handle) or channel (private:<id>), not both",
+  })
+  .refine((m) => m.ask === undefined || m.channel !== undefined, {
+    message: "ask is for a private channel beyond a pair: give channel",
+    path: ["ask"],
   });
 export type SendInput = z.output<typeof sendSchema>;
 
@@ -944,6 +960,7 @@ export const postToolSchema = z
     body: bodySchema,
     back_in_minutes: backInMinutesSchema.optional(),
     if_plan_version: planVersionSchema.optional(),
+    ask: askSchema.optional(),
   })
   .superRefine((p, ctx) => {
     const isPrivate =
@@ -971,8 +988,20 @@ export const postToolSchema = z
           message:
             "a private message takes only a body: no reply_to, title or back_in_minutes",
         });
+      if (p.ask !== undefined && p.to !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: "ask is for a private channel beyond a pair: give channel",
+          path: ["ask"],
+        });
       return;
     }
+    if (p.ask !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "ask is for a private channel beyond a pair",
+        path: ["ask"],
+      });
     if (p.if_plan_version !== undefined)
       ctx.addIssue({
         code: "custom",

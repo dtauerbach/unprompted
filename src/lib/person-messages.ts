@@ -11,7 +11,7 @@ import {
 import { logAction } from "./log";
 import { notYourChannel, privateRef, refId } from "./private-channels";
 import { antiAbuse } from "./settings";
-import { bodySchema } from "./validate";
+import { ANSWERS, bodySchema } from "./validate";
 
 // A person writes to their own bots in a private channel, signed in on the
 // account page (063_person_messages.sql, docs/MODEL.md's Person). Their
@@ -112,8 +112,31 @@ export async function personPostHeld(
 }
 
 // Whom a person's message wakes: every member that isn't frozen (true),
-// only the leader ("leader"), or nobody (false).
+// only the leader ("leader"), or nobody (false). A tap on Yes or No wakes
+// the bot that asked, and only it.
 export type PersonWake = boolean | "leader";
+
+// Whether this person may answer that question now: a bot's yes-or-no
+// question in this group, from a bot that is still a member, theirs, not
+// frozen, and was theirs when it asked. 068's trigger holds the same.
+async function askerOf(
+  sql: postgres.Sql | Tx,
+  humanId: number,
+  channelId: number,
+  question: number,
+): Promise<number | null> {
+  const [r] = await sql<{ bot_id: string }[]>`
+    SELECT q.bot_id FROM messages q JOIN bots b ON b.id = q.bot_id
+    WHERE q.id = ${question}
+      AND q.ask = 'yes_no'
+      AND q.channel_id = ${channelId}
+      AND q.to_bot_id IS NULL
+      AND b.frozen_at IS NULL
+      AND b.owner_id = ${humanId}
+      AND b.linked_at <= q.created_at
+      AND channel_has(${channelId}, q.bot_id)`;
+  return r ? Number(r.bot_id) : null;
+}
 
 export type PersonPost = {
   id: number;
@@ -146,15 +169,58 @@ export async function postAsPerson(
     ipHash: string | null;
   },
 ): Promise<PersonPost> {
+  const parsed = bodySchema.safeParse(input.body);
+  if (!parsed.success)
+    throw invalid(parsed.error.issues[0]?.message ?? "body is invalid");
+  return writeAsPerson(sql, { ...input, body: parsed.data });
+}
+
+// A tap on Yes or No under a bot's question: a person's message whose body
+// is the site's Yes or No, naming the question it answers, that wakes the
+// bot that asked. Every rule of a person's message holds, and the question
+// must be one they can answer now; any that isn't is the same not_yours.
+export async function answerAsPerson(
+  sql: postgres.Sql,
+  input: {
+    authUserId: string;
+    channel: string;
+    question: unknown;
+    answer: unknown;
+    nonce: string;
+    ipHash: string | null;
+  },
+): Promise<PersonPost> {
+  const answer = ANSWERS.find((a) => a === input.answer);
+  if (answer === undefined) throw invalid("Answer Yes or No.");
+  const question = Number(input.question);
+  if (!Number.isSafeInteger(question) || question <= 0) throw notYourChannel();
+  return writeAsPerson(sql, {
+    ...input,
+    body: answer,
+    wake: true,
+    answers: question,
+  });
+}
+
+async function writeAsPerson(
+  sql: postgres.Sql,
+  input: {
+    authUserId: string;
+    channel: string;
+    body: string;
+    wake: PersonWake;
+    nonce: string;
+    ipHash: string | null;
+    answers?: number;
+  },
+): Promise<PersonPost> {
   if (!personPostsOn()) throw notYourChannel();
   const id = refId(input.channel);
   if (id === undefined) throw notYourChannel();
   if (!NONCE_RE.test(input.nonce))
     throw invalid("Reload the page and try again.");
-  const parsed = bodySchema.safeParse(input.body);
-  if (!parsed.success)
-    throw invalid(parsed.error.issues[0]?.message ?? "body is invalid");
-  const body = parsed.data;
+  const body = input.body;
+  const answers = input.answers;
   const humanId = await findHuman(sql, input.authUserId);
   if (humanId === undefined) throw notYourChannel();
   try {
@@ -163,12 +229,25 @@ export async function postAsPerson(
       // Under the insert lock, which every message write takes first, so
       // two sends of one form can't both pass this.
       const [seen] = await tx<
-        { id: string; channel_id: string; created_at: Date }[]
+        {
+          id: string;
+          channel_id: string;
+          created_at: Date;
+          body: string;
+          answers: string | null;
+        }[]
       >`
-        SELECT id, channel_id, created_at FROM messages
+        SELECT id, channel_id, created_at, body, answers FROM messages
         WHERE human_id = ${humanId} AND client_nonce = ${input.nonce}`;
       if (seen) {
         if (Number(seen.channel_id) !== id) throw notYourChannel();
+        // A form sent again says what it said the first time; one that says
+        // something else (another tap on the same form) isn't this message.
+        if (
+          seen.body !== body ||
+          (seen.answers === null ? undefined : Number(seen.answers)) !== answers
+        )
+          throw invalid("Reload the page and try again.");
         return {
           id: Number(seen.id),
           channel: privateRef(id),
@@ -179,6 +258,9 @@ export async function postAsPerson(
       }
       const box = await personPostBox(tx, humanId, id);
       if (!box) throw notYourChannel();
+      const asker =
+        answers === undefined ? null : await askerOf(tx, humanId, id, answers);
+      if (answers !== undefined && asker === null) throw notYourChannel();
       const limits = await antiAbuse(tx);
       await consume(tx, personMessageRules(humanId, limits));
       // Counted before the members' rows and the group's lock, as a group
@@ -190,13 +272,15 @@ export async function postAsPerson(
       // the share locks hold each row), so the trigger wakes exactly the
       // bots counted here.
       const woke =
-        input.wake === "leader"
-          ? box.leader === null
-            ? 0
-            : 1
-          : input.wake
-            ? box.wakes
-            : 0;
+        asker !== null
+          ? 1
+          : input.wake === "leader"
+            ? box.leader === null
+              ? 0
+              : 1
+            : input.wake
+              ? box.wakes
+              : 0;
       if (woke > 0)
         await consume(tx, groupWakeRules(personOwner(humanId), limits), woke);
       const locked = await tx<{ id: string }[]>`
@@ -212,9 +296,16 @@ export async function postAsPerson(
       const same =
         (now?.ids ?? []).map(Number).join(",") ===
         locked.map((r) => Number(r.id)).join(",");
+      // A question that can't be answered now (its bot left, was frozen or
+      // moved on since) is no channel of theirs, as before the lock.
+      if (
+        answers !== undefined &&
+        (await askerOf(tx, humanId, id, answers)) !== asker
+      )
+        throw notYourChannel();
       if (
         !same ||
-        (input.wake === true && again.wakes !== woke) ||
+        (asker === null && input.wake === true && again.wakes !== woke) ||
         (input.wake === "leader" && again.leader !== box.leader)
       )
         throw new ApiError(
@@ -224,9 +315,11 @@ export async function postAsPerson(
         );
       const [row] = await tx<{ id: string; created_at: Date }[]>`
         INSERT INTO messages
-          (human_id, channel_id, body, wakes, wakes_leader_only, client_nonce)
+          (human_id, channel_id, body, wakes, wakes_leader_only, client_nonce,
+           answers)
         VALUES (${humanId}, ${id}, ${body}, ${input.wake !== false},
-          ${input.wake === "leader"}, ${input.nonce})
+          ${asker === null && input.wake === "leader"}, ${input.nonce},
+          ${answers ?? null})
         RETURNING id, created_at`;
       if (!row) throw new Error("person message insert returned nothing");
       await logAction(tx, {
@@ -240,7 +333,12 @@ export async function postAsPerson(
         detail: {
           message: Number(row.id),
           woke,
-          ...(input.wake === "leader" ? { leader_only: true } : {}),
+          ...(asker === null && input.wake === "leader"
+            ? { leader_only: true }
+            : {}),
+          // Which question a tap answers; its Yes or No is the message's
+          // text, so it isn't here either.
+          ...(answers !== undefined ? { answers } : {}),
         },
       });
       return {

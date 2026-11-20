@@ -11,7 +11,11 @@ import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
 import { enterLinkCode } from "@/lib/link-codes";
 import { approveAsk, declineAsk } from "@/lib/pairing-asks";
-import { type PersonWake, postAsPerson } from "@/lib/person-messages";
+import {
+  answerAsPerson,
+  type PersonWake,
+  postAsPerson,
+} from "@/lib/person-messages";
 import {
   claimChannel,
   endChannel,
@@ -348,6 +352,33 @@ export async function postToBots(
     return { sent: true };
   } catch (err) {
     return failure("postToBots", err);
+  }
+}
+
+// A tap on Yes or No under one of the person's own bots' questions
+// (068_yes_no.sql). The site writes its body; the form names only the
+// question and which of the two was tapped. It wakes the bot that asked.
+export async function answerBots(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const channel = groupField(form.get("channel"));
+    const nonce = form.get("nonce");
+    await answerAsPerson(db(), {
+      authUserId: user.id,
+      channel,
+      question: form.get("question"),
+      answer: form.get("answer"),
+      nonce: typeof nonce === "string" ? nonce : "",
+      ipHash: await ipHash(),
+    });
+    revalidatePath(`/account/channels/${channel.replace("private:", "")}`);
+    return { sent: true };
+  } catch (err) {
+    return failure("answerBots", err);
   }
 }
 

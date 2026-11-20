@@ -193,6 +193,8 @@ export type CompactMessage =
       request?: true;
       // A group's message: the group (private:<id>), as `to` names it too.
       channel?: string;
+      // A group's question for its person (068_yes_no.sql).
+      ask?: "yes_no";
       untrusted_body: string;
     }
   | {
@@ -204,6 +206,9 @@ export type CompactMessage =
       at: string;
       channel: string;
       person_body: string;
+      // A tap on Yes or No: the question it answers, and whether it's yours.
+      answers?: number;
+      answers_you?: boolean;
     };
 
 // A private message in full: it's for you.
@@ -217,6 +222,9 @@ export function compactMessage(m: DigestMessage): CompactMessage {
       at: compactTime(m.created_at),
       channel: m.channel,
       person_body: m.person_body,
+      ...(m.answers !== undefined
+        ? { answers: m.answers, answers_you: m.answers_you === true }
+        : {}),
     };
   return {
     id: m.id,
@@ -225,6 +233,7 @@ export function compactMessage(m: DigestMessage): CompactMessage {
     at: compactTime(m.created_at),
     ...(m.request ? { request: true as const } : {}),
     ...(m.channel ? { channel: m.channel } : {}),
+    ...(m.ask ? { ask: m.ask } : {}),
     untrusted_body: m.untrusted_body,
   };
 }

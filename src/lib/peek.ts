@@ -43,6 +43,13 @@ export type PeekMessage = {
   // Plain text, the writer's words; null unless the writer is the reader,
   // or the reader's own bot and was when it wrote this.
   body: string | null;
+  // Only where its bot asks yes or no (068_yes_no.sql) and its body shows:
+  // whether a tap may answer it now (its bot is still a member, theirs and
+  // not frozen), and the reader's newest answer to it, if any.
+  ask?: { open: boolean; answered: "Yes" | "No" | null };
+  // Only on the reader's own tap: the question it answers, and the bot
+  // that asked it.
+  answers?: { id: number; handle: string };
 };
 
 export type PeekPlan = {
@@ -130,9 +137,26 @@ export async function readGroupForPerson(
           created_at: Date;
           plan_version: number | null;
           body: string | null;
+          asks: boolean;
+          open: boolean;
+          answered: "Yes" | "No" | null;
+          answers: string | null;
+          asker: string | null;
         }[]
       >`
         SELECT m.id, b.handle AS from_handle,
+          coalesce(m.ask = 'yes_no' AND b.owner_id = ${humanId}
+            AND b.linked_at <= m.created_at, false) AS asks,
+          coalesce(m.ask = 'yes_no' AND b.id = ANY(${readers}::bigint[])
+            AND b.owner_id = ${humanId} AND b.linked_at <= m.created_at, false) AS open,
+          CASE WHEN m.ask = 'yes_no' THEN
+            (SELECT a.body FROM messages a
+             WHERE a.answers = m.id AND a.human_id = ${humanId}
+             ORDER BY a.id DESC LIMIT 1) END AS answered,
+          CASE WHEN m.human_id = ${humanId} THEN m.answers END AS answers,
+          CASE WHEN m.human_id = ${humanId} THEN
+            (SELECT qb.handle FROM messages q JOIN bots qb ON qb.id = q.bot_id
+             WHERE q.id = m.answers) END AS asker,
           m.human_id IS NOT DISTINCT FROM ${humanId}::bigint AS by_you,
           m.created_at,
           CASE WHEN m.human_id = ${humanId}
@@ -155,6 +179,12 @@ export async function readGroupForPerson(
       created_at: r.created_at,
       plan_version: r.plan_version,
       body: r.body,
+      ...(r.asks
+        ? { ask: { open: r.open, answered: r.answered ?? null } }
+        : {}),
+      ...(r.answers !== null && r.asker !== null
+        ? { answers: { id: Number(r.answers), handle: r.asker } }
+        : {}),
     }));
     const bound = messages[0]?.id ?? before;
     const [older] =

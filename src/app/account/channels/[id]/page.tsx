@@ -17,8 +17,8 @@ import { PEEK_MAX_PAGES, readGroupForPerson } from "@/lib/peek";
 import { personPostBox, personPostHeld } from "@/lib/person-messages";
 import { privateRef } from "@/lib/private-channels";
 import { parseId } from "@/lib/validate";
-import { PERSON_POST_COPY } from "../../copy-keys";
-import { PersonPostForm } from "../../forms";
+import { PERSON_ANSWER_COPY, PERSON_POST_COPY } from "../../copy-keys";
+import { PersonAnswerForm, PersonPostForm } from "../../forms";
 
 // The words under the person's newest message for each of their bots.
 const SEEN: Record<SeenKind, CopyKey> = {
@@ -107,6 +107,12 @@ export default async function PeekPage({
   const held = box ? null : await personPostHeld(db(), humanId, id);
   const handle = (h: string) => `@${h}`;
   const last = page.messages.at(-1)?.id ?? null;
+  // The newest yes-or-no question on the newest page that a tap may still
+  // answer: its Yes and No sit above the box (068_yes_no.sql).
+  const question =
+    box && before === undefined
+      ? page.messages.findLast((m) => m.ask?.open === true)
+      : undefined;
   return (
     <div data-chat className="mx-auto flex max-w-2xl flex-col gap-4">
       <header className="space-y-1">
@@ -295,6 +301,34 @@ export default async function PeekPage({
                       {m.body}
                     </p>
                   )}
+                  {/* Unanswered, it's marked only where a tap can answer it. */}
+                  {m.ask && (box || m.ask.answered !== null) && (
+                    <p className="px-1 text-xs text-neutral-600 dark:text-neutral-400">
+                      {m.ask.answered === null ? (
+                        t["account.peek.ask.mark"]
+                      ) : (
+                        <Words
+                          text={t["account.peek.ask.said"]}
+                          slots={{
+                            answer:
+                              m.ask.answered === "Yes"
+                                ? t["account.peek.ask.yes"]
+                                : t["account.peek.ask.no"],
+                          }}
+                        />
+                      )}
+                    </p>
+                  )}
+                  {m.answers && (
+                    <p className="px-1 text-xs text-neutral-600 dark:text-neutral-400">
+                      <a href={`#m${m.answers.id}`} className="underline">
+                        <Words
+                          text={t["account.peek.answer.to"]}
+                          slots={{ handle: handle(m.answers.handle) }}
+                        />
+                      </a>
+                    </p>
+                  )}
                   {page.seen?.message_id === m.id &&
                     page.seen.bots.length > 0 && (
                       <p className="px-1 text-xs text-neutral-600 dark:text-neutral-400">
@@ -349,6 +383,18 @@ export default async function PeekPage({
           data-compose
           className="sticky bottom-0 -mx-4 border-t border-neutral-200 bg-page px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:border-neutral-800 dark:bg-neutral-950"
         >
+          {question && (
+            <div className="mb-3">
+              <PersonAnswerForm
+                channel={page.channel}
+                question={question.id}
+                asker={question.from ?? ""}
+                answered={question.ask?.answered ?? null}
+                nonce={randomBytes(18).toString("hex")}
+                t={pick(t, PERSON_ANSWER_COPY)}
+              />
+            </div>
+          )}
           <PersonPostForm
             channel={page.channel}
             wakes={box.wakes}
