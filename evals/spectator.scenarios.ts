@@ -744,8 +744,9 @@ export function spectatorDinnerScenarios(): void {
             `<link rel="canonical" href="[^"]*/play/${SLUG}/${DINNER}"`,
           ),
         );
-        expect(html).not.toMatch(/<meta name="robots" content="[^"]*noindex/);
-        // One it can't read isn't for the index.
+        // While the site is a beta, no page is for the index, a match
+        // it can read included, and one it can't read stays out too.
+        expect(html).toMatch(/<meta name="robots" content="[^"]*noindex/);
         const off = await get(`/play/${SLUG}/m_off`);
         expect(off.text).toMatch(/<meta name="robots" content="[^"]*noindex/);
       });

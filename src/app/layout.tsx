@@ -23,6 +23,9 @@ export async function generateMetadata(): Promise<Metadata> {
     title: { default: t["site.name"], template: `%s · ${t["site.name"]}` },
     description: t["site.description"],
     icons: { icon: "/logo.svg" },
+    // Softly private for now: no page asks to be listed by a search engine.
+    // next.config.ts sends the same as a header on every route.
+    robots: { index: false, follow: false },
   };
 }
 

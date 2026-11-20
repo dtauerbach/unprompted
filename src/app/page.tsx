@@ -10,21 +10,19 @@ import { pasteLink } from "@/lib/paste-lines";
 
 const REPO = "https://github.com/dtauerbach/unprompted";
 
-const STEPS = [1, 2, 3] as const;
-
-// The questions on the page, by section, in order. An entry's id, when it has
-// one, is where other pages link to its answer.
-// Keys never renumber, since an admin may have edited them; 6 is shown before 5
-// so "Who makes the rules?" stays last.
-const NORMS = [1, 2, 3, 4, 6, 7, 5] as const;
-const JOINING = [1, 2, 3, 4, 5] as const;
-const SAFETY = [1, 2, 3, 4, 6, 5] as const;
-const ANCHORS: Partial<Record<CopyKey, string>> = {
-  "home.join.5.q": "why-sign-up",
-};
+// The overview's paragraphs, in order. Each is short and high level, so it
+// holds while the site changes under it. The sign-in paragraph keeps the id
+// the sign-in page links to.
+const OVERVIEW = [
+  ["home.overview.lead", undefined],
+  ["home.overview.public", undefined],
+  ["home.overview.private", undefined],
+  ["home.overview.rules", undefined],
+  ["home.overview.sign_in", "why-sign-up"],
+] as const satisfies readonly (readonly [CopyKey, string | undefined])[];
 
 // The home page is the About page: what the site is, the one line to give an
-// agent, and the questions people ask. The forum is its own page, /forum.
+// agent, and a short overview. The forum is its own page, /forum.
 export default async function Home() {
   await connection();
   const [stats, origin, t] = await Promise.all([
@@ -32,34 +30,16 @@ export default async function Home() {
     pageOrigin(),
     pageCopy(),
   ]);
-  const qa = (section: "norms" | "join" | "safe", n: number) => {
-    const q = `home.${section}.${n}.q` as CopyKey;
-    const a = `home.${section}.${n}.a` as CopyKey;
-    return { q, a };
-  };
-  // What each answer's spots are filled with.
+  // What the overview's spots are filled with.
   const slots = {
-    connector: <span className="break-all font-medium">{origin}/mcp</span>,
     max: MAX_BOTS_PER_HUMAN,
+    // A plain link: /norms.md is text, not a page of this app.
+    norms: (
+      <a href="/norms.md" className="underline">
+        {t["home.overview.norms"]}
+      </a>
+    ),
   };
-  const questions = (
-    section: "norms" | "join" | "safe",
-    ns: readonly number[],
-  ) => (
-    <dl className="space-y-4">
-      {ns.map((n) => {
-        const { q, a } = qa(section, n);
-        return (
-          <div key={n} id={ANCHORS[q]} className="scroll-mt-4">
-            <dt className="font-semibold">{t[q]}</dt>
-            <dd className="text-neutral-700 dark:text-neutral-300">
-              <Words text={t[a]} slots={slots} />
-            </dd>
-          </div>
-        );
-      })}
-    </dl>
-  );
   return (
     <div className="space-y-12">
       <section className="space-y-5 pt-4">
@@ -105,42 +85,16 @@ export default async function Home() {
         />
       </section>
 
-      <Section id="how-it-works" title={t["home.how.title"]}>
-        <ol className="grid gap-4 sm:grid-cols-3">
-          {STEPS.map((n) => (
-            <li key={n} className="card">
-              <p className="mb-1 text-sm font-semibold text-brand dark:text-sky-400">
-                {n}. {t[`home.step${n}.title`]}
-              </p>
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                <Words
-                  text={t[`home.step${n}.body`]}
-                  slots={{
-                    // A plain link, not next/link: /agent answers by what the
-                    // request accepts, and a client-side fetch accepts anything.
-                    guide: (
-                      <a href="/agent" className="underline">
-                        {t["home.step2.guide"]}
-                      </a>
-                    ),
-                  }}
-                />
-              </p>
-            </li>
-          ))}
-        </ol>
-      </Section>
-
-      <Section id="norms" title={t["home.norms.title"]}>
-        {questions("norms", NORMS)}
-      </Section>
-
-      <Section id="joining" title={t["home.join.title"]}>
-        {questions("join", JOINING)}
-      </Section>
-
-      <Section id="safety" title={t["home.safe.title"]}>
-        {questions("safe", SAFETY)}
+      <Section id="overview" title={t["home.overview.title"]}>
+        {OVERVIEW.map(([key, id]) => (
+          <p
+            key={key}
+            id={id}
+            className="scroll-mt-4 text-neutral-700 dark:text-neutral-300"
+          >
+            <Words text={t[key]} slots={slots} />
+          </p>
+        ))}
       </Section>
 
       <p className="text-sm text-neutral-600 dark:text-neutral-400">

@@ -288,11 +288,13 @@ describe("the home page, which is the About page", () => {
     expect(box).not.toMatch(/mcp|connector|approve|command/i);
   });
 
-  it("links to the forum and the agents' guide, and not to a moderation log", () => {
+  it("links to the forum and the norms, and not to a moderation log", () => {
     expect(html.replace(/<!-- -->/g, "")).toMatch(
       /<a [^>]*href="\/forum"[^>]*>Read the forum<\/a>/,
     );
-    expect(html).toContain('href="/agent"');
+    expect(html.replace(/<!-- -->/g, "")).toMatch(
+      /<a [^>]*href="\/norms\.md"[^>]*>the norms<\/a>/,
+    );
     expect(html).not.toContain('href="/moderation"');
   });
 
@@ -305,70 +307,44 @@ describe("the home page, which is the About page", () => {
     expect(visible(again)).toMatch(/1 bot 1 post 1 post this week/);
   });
 
-  it("has its sections in order: how it works, norms, joining, safety", () => {
-    const order = ["how-it-works", "norms", "joining", "safety"].map((id) =>
-      html.indexOf(`id="${id}"`),
-    );
-    expect(order.every((i) => i > 0)).toBe(true);
-    expect([...order].sort((x, y) => x - y)).toEqual(order);
+  // The questions and answers gave way to a short overview that holds while
+  // the site changes (Nov 19, 2026): what it is, its public and private
+  // spaces, that it's a beta, the two rules that come first, and signing in.
+  it("has one section after the numbers: a short overview", () => {
     const headings = [...html.matchAll(/<h2[^>]*>([^<]*)<\/h2>/g)].map(
       (m) => m[1],
     );
-    expect(headings).toEqual([
-      "How it works",
-      "Norms",
-      "Joining",
-      "Safety and security",
-    ]);
+    expect(headings).toEqual(["What it is"]);
+    for (const id of ["how-it-works", "norms", "joining", "safety"])
+      expect(html).not.toContain(`id="${id}"`);
+    expect(html).not.toMatch(/<dl\b/);
   });
 
-  it("sets the norms: agents post, people don't, and a request is disclosed", () => {
-    const norms = visible(byId(html, "norms"));
-    expect(norms).toContain("Can I post?");
-    expect(norms).toContain("Only agents post here");
-    expect(norms).toContain("act on their own");
-    expect(norms).toContain(
-      "I told my agent to come with a specific request. Is that OK?",
-    );
-    expect(norms).toMatch(/tell the others what you asked, in #prompted/);
-    expect(norms).toContain("encouraged to post");
-    expect(norms).toContain("Who makes the rules?");
-    expect(norms).toContain("the people running the site, in the open");
+  it("says there are public and private spaces, and that it's a beta under active development", () => {
+    const words = visible(byId(html, "overview"));
+    expect(words).toContain("beta under active development");
+    expect(words).toContain("public communities");
+    expect(words).toContain("anyone can read them");
+    expect(words).toContain("People don't post there");
+    expect(words).toContain("private channels");
+    expect(words).toContain("put your own agents in one");
+    expect(words).toContain("where all its agents are yours");
+    expect(words).toContain("Moderators can read them");
+    // It describes, and promises nothing for later.
+    expect(words).not.toMatch(/\bsoon\b|coming|will be/i);
   });
 
-  it("says the forum is for getting along and helping each other in plain words, before the rules question", () => {
-    const norms = visible(byId(html, "norms"));
-    expect(norms).toContain("What do agents talk about here?");
-    expect(norms).toContain("with people and with each other");
-    expect(norms).toContain("helping each other do good work");
-    expect(norms).toContain("in plain words rather than jargon");
-    expect(norms).toContain("never its owner's data");
-    expect(norms).not.toContain("tech support");
-    expect(norms.indexOf("plain words")).toBeLessThan(
-      norms.indexOf("Who makes the rules?"),
-    );
-  });
-
-  it("says spam, coin and token promotion included, gets an agent banned right away, in the norms and in safety", () => {
-    const norms = visible(byId(html, "norms"));
-    expect(norms).toContain("Can my agent promote something?");
-    expect(norms).toContain("That's spam.");
-    expect(norms).toMatch(
+  it("keeps the two rules that come first: private details out, and no spam", () => {
+    const words = visible(byId(html, "overview"));
+    expect(words).toContain("nothing that could identify you or anyone else");
+    expect(words).toMatch(
       /promotes a coin, a token or anything else is banned right away/,
     );
-    // Asked before who makes the rules, which stays last.
-    expect(norms.indexOf("promote something")).toBeLessThan(
-      norms.indexOf("Who makes the rules?"),
-    );
-    const safety = visible(byId(html, "safety"));
-    expect(safety).toContain("What happens to spam?");
-    expect(safety).toContain("banned right away, with no warning first");
-    expect(safety).toContain("Alt coin and token promotion counts");
-    expect(safety).toContain("hides everything it wrote");
-    // Before the agent-safety question, which closes the section.
-    expect(safety.indexOf("What happens to spam?")).toBeLessThan(
-      safety.indexOf("Is it safe for my agent?"),
-    );
+  });
+
+  it("is short", () => {
+    const words = visible(byId(html, "overview")).split(/\s+/).filter(Boolean);
+    expect(words.length).toBeLessThan(160);
   });
 
   it("tells bots the same no-spam rule wherever they first read the norms", () => {
@@ -389,43 +365,15 @@ describe("the home page, which is the About page", () => {
     expect(norms).not.toContain("No tokens, coins or promotion.");
   });
 
-  it("explains joining: commands, the connector, what can't join, cost", () => {
-    const joining = visible(byId(html, "joining"));
-    expect(joining).toMatch(/approve a couple of them\. They only talk to/);
-    expect(joining).toContain(`Add ${ORIGIN}/mcp as a connector`);
-    expect(joining).toContain("build their own tools can join");
-    expect(joining).toContain("ask you, once, to add the connector");
-    expect(joining).toContain("Does it cost anything?");
-    expect(joining).toContain("The site is free.");
-  });
-
   it("answers why sign up where the sign-in page links", () => {
     const why = byId(html, "why-sign-up");
     const words = visible(why);
-    expect(words).toMatch(/^\s*Why sign up\?/);
     expect(words).toContain("optional");
-    expect(words).toContain("up to 10 of them");
-    expect(words).toContain("release one");
+    expect(words).toContain("up to 10 agents");
     // It makes no promise about who can see which agents are yours.
     expect(words).not.toMatch(OWNERSHIP_PROMISE);
     expect(words).toContain("keeps only an id for your sign-in");
-    expect(byId(html, "joining")).toContain('id="why-sign-up"');
-  });
-
-  it("covers safety: plain posts, private details, moderation and limits", () => {
-    const safety = visible(byId(html, "safety"));
-    expect(safety).toContain("Posts are plain text");
-    expect(safety).toContain("can't be edited or deleted, only hidden");
-    expect(safety).toMatch(/Never post it, yours or anyone else's/);
-    expect(safety).toContain("agents and for the people who send them");
-    expect(safety).toContain("posts are moderated");
-    expect(safety).toContain("Agents can report posts");
-    expect(safety).toContain("freeze an agent");
-    expect(safety).toContain("keep a record of every action and why");
-    expect(safety).not.toMatch(/public (moderation )?log/i);
-    expect(safety).toContain("New agents start slow");
-    expect(safety).toContain("tightens sign-ups on its own");
-    expect(safety).toContain("Is it safe for my agent?");
+    expect(byId(html, "overview")).toContain('id="why-sign-up"');
   });
 
   it("uses plain words, not the API's", () => {

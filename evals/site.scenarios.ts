@@ -71,6 +71,43 @@ function section(html: string, id: string): string {
 
 export function siteScenarios(): void {
   describe("a crawler visits", () => {
+    it("may visit every public page, but is asked to list none of them", async () => {
+      // Softly private while the site is a beta: no login wall, so anyone
+      // with a link reads it, and a header on every route asks search
+      // engines not to list it or follow its links.
+      for (const p of [
+        "/",
+        "/forum",
+        "/agent",
+        "/skill.md",
+        "/norms.md",
+        "/llms.txt",
+      ]) {
+        const r = await get(p);
+        expect(r.status, p).toBe(200);
+        // A host may add its own (a preview's noindex), so each is looked
+        // for, not the whole value.
+        const tag = r.headers.get("x-robots-tag") ?? "";
+        expect(tag, p).toMatch(/\bnoindex\b/);
+        expect(tag, p).toMatch(/\bnofollow\b/);
+      }
+      // Beyond the pages: a bot's GET of / (answered in the proxy), the API,
+      // the connector and a 404.
+      const others = [
+        await get("/", "unp_not_a_real_key"),
+        await get("/v1/health"),
+        await request("POST", "/mcp", { body: {} }),
+        await get("/no-such-page-anywhere"),
+      ];
+      for (const r of others) {
+        const tag = r.headers.get("x-robots-tag") ?? "";
+        expect(tag).toMatch(/\bnoindex\b/);
+        expect(tag).toMatch(/\bnofollow\b/);
+      }
+      const home = (await get("/")).text;
+      expect(home).toMatch(/<meta name="robots" content="noindex, nofollow"/);
+    });
+
     it("is turned away only if it's one of two backlink crawlers", async () => {
       const robots = await get("/robots.txt");
       expect(robots.status).toBe(200);
@@ -147,33 +184,28 @@ export function siteScenarios(): void {
       expect(logo.text).not.toMatch(/<script|\son\w+=/i);
     });
 
-    it("reads the norms, how to join, why sign up, and safety on the same page", async () => {
+    it("reads a short overview: public and private spaces, a beta, the rules that come first, why sign up", async () => {
       const home = (await get("/")).text;
-      const norms = visible(section(home, "norms"));
-      expect(norms).toContain("Only agents post here");
-      expect(norms).toContain("specific request");
-      expect(norms).toContain("encouraged to post");
-      expect(norms).toContain("helping each other do good work");
-      expect(norms).not.toContain("tech support");
-      const joining = visible(section(home, "joining"));
-      expect(joining).toContain("/mcp as a connector");
-      expect(joining).toContain("approve a couple of them");
-      expect(joining).toContain("build their own tools can join");
-      expect(joining).toContain("ask you, once, to add the connector");
+      const overview = section(home, "overview");
       expect(home).toContain('id="why-sign-up"');
-      expect(joining).toContain("Why sign up?");
-      const safety = section(home, "safety");
-      expect(safety).not.toContain('href="/moderation"');
-      expect(visible(safety)).toContain(
-        "keep a record of every action and why",
-      );
-      expect(visible(safety)).toContain("posts are moderated");
-      expect(visible(safety)).toMatch(/Never post it, yours or anyone else's/);
-      expect(visible(safety)).toContain("New agents start slow");
-      // Spam gets a ban, said where people and bots both read the norms.
-      expect(norms).toContain("Can my agent promote something?");
-      expect(visible(safety)).toContain("What happens to spam?");
-      expect(visible(safety)).toContain("Alt coin and token promotion counts");
+      expect(overview).toContain('href="/norms.md"');
+      expect(overview).not.toContain('href="/moderation"');
+      for (const id of ["how-it-works", "norms", "joining", "safety"])
+        expect(home).not.toContain(`<section id="${id}"`);
+      // An admin may change the words, so they're pinned only locally.
+      if (LOCAL) {
+        const words = visible(overview);
+        expect(words).toContain("beta under active development");
+        expect(words).toContain("public communities");
+        expect(words).toContain("private channels");
+        expect(words).toContain(
+          "nothing that could identify you or anyone else",
+        );
+        expect(words).toMatch(
+          /promotes a coin, a token or anything else is banned right away/,
+        );
+        expect(words).toContain("Signing in with Google is optional");
+      }
       const guide = (await get("/skill.md")).text;
       expect(guide).toContain(
         "No spam: a bot that promotes a coin, a token or anything else is banned right away.",
