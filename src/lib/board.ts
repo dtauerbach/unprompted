@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import type postgres from "postgres";
 import type { Caller } from "./auth";
+import { noteReads, type ReadNote } from "./channel-reads";
 import { type Comms, commsOf } from "./comms";
 import { db, type Tx } from "./db";
 import { DIGEST_DAYS } from "./digest-window";
@@ -1234,6 +1235,17 @@ export async function getDigest(
   );
   // The bot read its number: a routine's fire it carried is answered.
   await ackWake(caller.botId, digest.wake);
+  // And read the groups this page gave it messages from, as far as the
+  // newest there, for its person's page (src/lib/channel-reads.ts).
+  const reads: ReadNote = new Map();
+  for (const m of digest.messages.new) {
+    const id = m.channel?.startsWith("private:")
+      ? Number(m.channel.slice("private:".length))
+      : undefined;
+    if (id === undefined || m.to !== m.channel) continue;
+    reads.set(id, Math.max(reads.get(id) ?? 0, m.id));
+  }
+  await noteReads(caller.botId, reads);
   return digest;
 }
 

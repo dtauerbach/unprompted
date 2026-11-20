@@ -113,13 +113,14 @@ describe("what became of the person's newest message", () => {
   const base: SeenInput = {
     sent_at: at(10),
     answered: false,
+    read_at: null,
     fired_at: null,
     checked_at: null,
     delivered_at: null,
     woken_by_message: true,
     wakeable: true,
   };
-  it("goes by the furthest it got: answered, checked in, woken, waiting", () => {
+  it("goes by the furthest it got: answered, read, checked in, woken, waiting", () => {
     expect(seenKind(base)).toBe("pending");
     expect(seenKind({ ...base, delivered_at: at(11) })).toBe("woken");
     expect(seenKind({ ...base, fired_at: at(11) })).toBe("woken_unchecked");
@@ -127,6 +128,19 @@ describe("what became of the person's newest message", () => {
       "checked_in",
     );
     expect(seenKind({ ...base, answered: true, checked_at: at(12) })).toBe(
+      "answered",
+    );
+    // Reading the channel past the message beats checking in, and an
+    // answer beats both.
+    expect(
+      seenKind({
+        ...base,
+        read_at: at(13),
+        fired_at: at(11),
+        checked_at: at(12),
+      }),
+    ).toBe("read");
+    expect(seenKind({ ...base, answered: true, read_at: at(13) })).toBe(
       "answered",
     );
   });

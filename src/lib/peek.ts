@@ -73,8 +73,10 @@ export type PeekPage = {
   seen: PeekSeen | null;
   // When each of the reader's own bots here last wrote in this group (a
   // message or a plan version) while linked to them, so a quiet one stands
-  // out; null when it hasn't. Handle order. Only ever their own bots.
-  last_word: { handle: string; at: Date | null }[];
+  // out; null when it hasn't. read_at is when it last read the group
+  // while linked to them, null when it hasn't. Handle order. Only ever
+  // their own bots.
+  last_word: { handle: string; at: Date | null; read_at: Date | null }[];
 };
 
 export type PeekSeen = {
@@ -187,7 +189,12 @@ export async function readGroupForPerson(
     // came into the group this time (its membership row in force), so a bot
     // that left and came back isn't said to have written something its page
     // no longer shows. The message half walks messages_channel backwards.
-    const lastWord = await tx<{ handle: string; at: Date | null }[]>`
+    // And when it last read the group while linked to the reader
+    // (channel_reads, 067), so a bot that reads without writing doesn't
+    // look quiet.
+    const lastWord = await tx<
+      { handle: string; at: Date | null; read_at: Date | null }[]
+    >`
       SELECT b.handle, GREATEST(
         (SELECT m.created_at FROM messages m
          WHERE m.channel_id = ${channelId} AND m.to_bot_id IS NULL
@@ -197,7 +204,10 @@ export async function readGroupForPerson(
         (SELECT max(p.created_at) FROM channel_plans p
          WHERE p.channel_id = ${channelId} AND p.bot_id = b.id
            AND p.created_at >= b.linked_at
-           AND p.version > coalesce(cm.from_plan_version, 0))) AS at
+           AND p.version > coalesce(cm.from_plan_version, 0))) AS at,
+        (SELECT cr.read_at FROM channel_reads cr
+         WHERE cr.channel_id = ${channelId} AND cr.bot_id = b.id
+           AND cr.read_at >= b.linked_at) AS read_at
       FROM bots b
       CROSS JOIN LATERAL (
         SELECT m.from_message_id, m.from_plan_version FROM channel_members m
@@ -218,7 +228,11 @@ export async function readGroupForPerson(
       messages,
       next_before: older?.any && bound !== undefined ? bound : null,
       seen,
-      last_word: lastWord.map((r) => ({ handle: r.handle, at: r.at })),
+      last_word: lastWord.map((r) => ({
+        handle: r.handle,
+        at: r.at,
+        read_at: r.read_at,
+      })),
     };
   });
 }
@@ -253,6 +267,7 @@ async function seenFor(
     {
       handle: string;
       answered: boolean;
+      read_at: Date | null;
       fired_at: Date | null;
       checked_at: Date | null;
       delivered_at: Date | null;
@@ -264,6 +279,9 @@ async function seenFor(
       EXISTS (SELECT 1 FROM messages a
               WHERE a.channel_id = ${channelId} AND a.to_bot_id IS NULL
                 AND a.bot_id = b.id AND a.id > ${mine.id}) AS answered,
+      (SELECT cr.read_at FROM channel_reads cr
+       WHERE cr.channel_id = ${channelId} AND cr.bot_id = b.id
+         AND cr.read_upto >= ${mine.id} AND cr.read_at >= b.linked_at) AS read_at,
       f.fired_at, f.seen_at AS checked_at,
       GREATEST(
         CASE WHEN e.last_status BETWEEN 200 AND 299 THEN e.last_sent_at END,
@@ -286,6 +304,7 @@ async function seenFor(
       const kind = seenKind({
         sent_at: mine.created_at,
         answered: r.answered,
+        read_at: r.read_at,
         fired_at: r.fired_at,
         checked_at: r.checked_at,
         delivered_at: r.delivered_at,
@@ -293,13 +312,15 @@ async function seenFor(
         wakeable: r.wakeable,
       });
       const at =
-        kind === "checked_in"
-          ? r.checked_at
-          : kind === "woken_unchecked"
-            ? r.fired_at
-            : kind === "woken"
-              ? r.delivered_at
-              : null;
+        kind === "read"
+          ? r.read_at
+          : kind === "checked_in"
+            ? r.checked_at
+            : kind === "woken_unchecked"
+              ? r.fired_at
+              : kind === "woken"
+                ? r.delivered_at
+                : null;
       return { handle: r.handle, kind, at };
     }),
   };
