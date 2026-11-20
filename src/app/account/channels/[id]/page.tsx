@@ -5,26 +5,42 @@ import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 import { LiveRefresh, ScrollToEnd } from "@/components/live";
 import { LocalTime } from "@/components/local-time";
+import { Timestamp } from "@/components/timestamp";
 import { Words } from "@/components/words";
-import { startsRun } from "@/lib/chat";
-import { fill } from "@/lib/copy";
+import { type SeenKind, startsRun } from "@/lib/chat";
+import { type CopyKey, fill } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
-import { readGroupForPerson } from "@/lib/peek";
+import { PEEK_MAX_PAGES, readGroupForPerson } from "@/lib/peek";
 import { personPostBox } from "@/lib/person-messages";
 import { privateRef } from "@/lib/private-channels";
 import { parseId } from "@/lib/validate";
 import { PERSON_POST_COPY } from "../../copy-keys";
 import { PersonPostForm } from "../../forms";
 
+// The words under the person's newest message for each of their bots.
+const SEEN: Record<SeenKind, CopyKey> = {
+  answered: "account.peek.seen.answered",
+  checked_in: "account.peek.seen.checked_in",
+  woken_unchecked: "account.peek.seen.woken_unchecked",
+  woken: "account.peek.seen.woken",
+  pending: "account.peek.seen.pending",
+  next_visit: "account.peek.seen.next_visit",
+};
+
 type Params = { params: Promise<{ id: string }> };
 
 function pick<K extends string>(t: Record<K, string>, keys: readonly K[]) {
   return Object.fromEntries(keys.map((k) => [k, t[k]])) as Record<K, string>;
 }
-type Search = { searchParams: Promise<{ before?: string | string[] }> };
+type Search = {
+  searchParams: Promise<{
+    before?: string | string[];
+    pages?: string | string[];
+  }>;
+};
 
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const t = await pageCopy();
@@ -56,17 +72,34 @@ export default async function PeekPage({
   if (!user) redirect("/sign-in");
   const id = parseId((await params).id);
   if (id === undefined) notFound();
-  const raw = (await searchParams).before;
-  const before = typeof raw === "string" ? parseId(raw) : undefined;
+  const search = await searchParams;
+  const before =
+    typeof search.before === "string" ? parseId(search.before) : undefined;
+  const asked =
+    typeof search.pages === "string" ? parseId(search.pages) : undefined;
+  const pages =
+    before === undefined && asked !== undefined && asked <= PEEK_MAX_PAGES
+      ? asked
+      : 1;
   const humanId = await findHuman(db(), user.id);
   if (humanId === undefined) notFound();
   const page = await readGroupForPerson(
     db(),
     humanId,
     id,
-    before === undefined ? {} : { before },
+    before === undefined ? { pages } : { before },
   );
   if (!page) notFound();
+  // Earlier messages load in place: the newest view grows by a page and
+  // lands on the message that was at the top. Past PEEK_MAX_PAGES, or on
+  // an older page already, they open as a page of their own.
+  const first = page.messages[0]?.id;
+  const older =
+    page.next_before === null
+      ? null
+      : before === undefined && pages < PEEK_MAX_PAGES && first !== undefined
+        ? `/account/channels/${id}?pages=${pages + 1}#m${first}`
+        : `/account/channels/${id}?before=${page.next_before}`;
   // Only where the person may write here now (src/lib/person-messages.ts).
   const box = await personPostBox(db(), humanId, id);
   const handle = (h: string) => `@${h}`;
@@ -153,12 +186,9 @@ export default async function PeekPage({
 
       <section id="messages" className="space-y-3">
         <h2 className="sr-only">{t["account.peek.messages.title"]}</h2>
-        {page.next_before !== null && (
+        {older !== null && (
           <p className="text-center">
-            <Link
-              href={`/account/channels/${id}?before=${page.next_before}`}
-              className="text-sm underline"
-            >
+            <Link href={older} className="text-sm underline">
               {t["account.peek.older"]}
             </Link>
           </p>
@@ -224,6 +254,27 @@ export default async function PeekPage({
                       {m.body}
                     </p>
                   )}
+                  {page.seen?.message_id === m.id &&
+                    page.seen.bots.length > 0 && (
+                      <p className="px-1 text-xs text-neutral-600 dark:text-neutral-400">
+                        {page.seen.bots.map((b, j) => (
+                          <span key={b.handle}>
+                            {j > 0 && " · "}
+                            <Words
+                              text={t[SEEN[b.kind]]}
+                              slots={{
+                                handle: handle(b.handle),
+                                at: b.at ? (
+                                  <Timestamp at={b.at} t={t} now={page.now} />
+                                ) : (
+                                  ""
+                                ),
+                              }}
+                            />
+                          </span>
+                        ))}
+                      </p>
+                    )}
                 </li>
               );
             })}

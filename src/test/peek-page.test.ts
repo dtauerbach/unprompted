@@ -8,7 +8,7 @@ import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
-import { PEEK_PAGE } from "@/lib/peek";
+import { PEEK_MAX_PAGES, PEEK_PAGE } from "@/lib/peek";
 import { startChannel } from "@/lib/private-channels";
 import { ageLink, call, register, resetDb } from "./helpers";
 
@@ -57,13 +57,20 @@ const plain = (html: string) =>
     .replaceAll("&quot;", '"')
     .replaceAll("<!-- -->", "");
 
-async function render(id: string, before?: string): Promise<string> {
+async function render(
+  id: string,
+  before?: string,
+  pages?: string,
+): Promise<string> {
   const Page = (await import("@/app/account/channels/[id]/page")).default;
+  const search: { before?: string; pages?: string } = {};
+  if (before !== undefined) search.before = before;
+  if (pages !== undefined) search.pages = pages;
   return plain(
     renderToStaticMarkup(
       await Page({
         params: Promise.resolve({ id }),
-        searchParams: Promise.resolve(before === undefined ? {} : { before }),
+        searchParams: Promise.resolve(search),
       }),
     ),
   );
@@ -284,10 +291,23 @@ describe("reading a private channel on the account side", () => {
     const newest = await render(num(g));
     expect(newest).not.toContain("message 0<");
     expect(newest).toContain(`message ${PEEK_PAGE}<`);
+    // Earlier messages load in place: the view grows by a page and lands
+    // on the message that was at the top.
     expect(newest).toContain(
-      `href="/account/channels/${num(g)}?before=${sent[1]}"`,
+      `href="/account/channels/${num(g)}?pages=2#m${sent[1]}"`,
     );
     expect(newest).not.toContain(COPY["account.peek.newest"].text);
+    const grown = await render(num(g), undefined, "2");
+    expect(grown).toContain("message 0<");
+    expect(grown).toContain(`message ${PEEK_PAGE}<`);
+    expect(grown).not.toContain(COPY["account.peek.older"].text);
+    expect(grown).not.toContain(COPY["account.peek.newest"].text);
+    // A pages that isn't a count from 1 to the cap reads one page.
+    expect(await render(num(g), undefined, "0")).toBe(newest);
+    expect(await render(num(g), undefined, String(PEEK_MAX_PAGES + 1))).toBe(
+      newest,
+    );
+    expect(await render(num(g), undefined, "2x")).toBe(newest);
     const older = await render(num(g), String(sent[1]));
     expect(older).toContain("message 0<");
     expect(older).not.toContain("message 1<");
@@ -295,6 +315,48 @@ describe("reading a private channel on the account side", () => {
     expect(older).not.toContain("?before=");
     // A before that isn't an id reads the newest page.
     expect(await render(num(g), "x")).toBe(newest);
+  });
+
+  it("grows in place up to the cap, then opens older messages as a page of their own", async () => {
+    const lea = await bot("lea");
+    const ben = await bot("ben");
+    await link("google-p", lea, ben);
+    const { channel: g } = await startChannel(
+      db(),
+      "google-p",
+      ["lea", "ben"],
+      "lea",
+      null,
+    );
+    const total = PEEK_PAGE * PEEK_MAX_PAGES + 3;
+    const made = (
+      await db()<{ id: string }[]>`
+        INSERT INTO messages (bot_id, channel_id, key_id, body)
+        SELECT b.id, ${num(g)}, k.id, 'bulk ' || n
+        FROM generate_series(0, ${total - 1}) n,
+          bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+        WHERE b.handle = 'lea'
+        ORDER BY n
+        RETURNING id`
+    )
+      .map((r) => Number(r.id))
+      .sort((a, b) => a - b);
+    expect(made).toHaveLength(total);
+    const most = await render(num(g), undefined, String(PEEK_MAX_PAGES));
+    expect(most).toContain(`bulk ${total - 1}<`);
+    expect(most).toContain(`bulk 3<`);
+    expect(most).not.toContain("bulk 2<");
+    // At the cap the link pages back instead of growing the view.
+    expect(most).toContain(
+      `href="/account/channels/${num(g)}?before=${made[3]}"`,
+    );
+    expect(most).not.toContain(`?pages=${PEEK_MAX_PAGES + 1}`);
+    const rest = await render(num(g), String(made[3]));
+    expect(rest).toContain("bulk 0<");
+    expect(rest).toContain("bulk 2<");
+    expect(rest).not.toContain("bulk 3<");
+    // pages has no effect on an older page.
+    expect(await render(num(g), String(made[3]), "5")).toBe(rest);
   });
 
   it("lays out as a chat: a run shares one line, the person's own on the right, live only on the newest page", async () => {

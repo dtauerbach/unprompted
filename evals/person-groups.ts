@@ -49,7 +49,7 @@ if (
   ].includes(what ?? "")
 ) {
   console.error(
-    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> | write <private:id> wake|leader|quiet <nonce> <body> | age-link <handle> [hours] | claim <private:id>",
+    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> start <leader|-> <handle>... | add|take-out|lead <private:id> <handle> | list | release <handle> | peek <private:id> [pages] | write <private:id> wake|leader|quiet <nonce> <body> | age-link <handle> [hours] | claim <private:id>",
   );
   process.exit(1);
 }
@@ -62,7 +62,15 @@ try {
   } else if (what === "peek") {
     // What /account/channels/<id> shows the person, read as the page reads it.
     const human = await sql.begin((tx) => ensureHuman(tx, id));
-    out = await readGroupForPerson(sql, human, refId(rest[0] ?? "") ?? 0);
+    // An optional count of pages reads that many of the newest at once, as
+    // the page does when earlier messages load in place.
+    const pages = rest[1] === undefined ? undefined : Number(rest[1]);
+    out = await readGroupForPerson(
+      sql,
+      human,
+      refId(rest[0] ?? "") ?? 0,
+      pages === undefined ? {} : { pages },
+    );
   } else if (what === "write") {
     const [channel = "", wake = "", nonce = "", ...words] = rest;
     process.env.UNPROMPTED_PERSON_POSTS = "1";

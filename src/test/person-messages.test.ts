@@ -31,6 +31,7 @@ import {
   CHANNEL_NOTICE_WITH_PERSON,
   endChannel,
   PERSON_NOTICE,
+  setOwnBots,
   startChannel,
 } from "@/lib/private-channels";
 import { handleSchema } from "@/lib/validate";
@@ -840,5 +841,122 @@ describe("who reads it", () => {
     expect(Number(rows[0]?.human_id)).toBe(human);
     expect(rows[0]?.subject).toBe(channel);
     expect(JSON.stringify(rows)).not.toContain("secret");
+  });
+});
+
+describe("what became of the person's newest message", () => {
+  const seen = async (human: number, g: string) =>
+    (await readGroupForPerson(db(), human, Number(num(g))))?.seen;
+
+  it("is null until they write, then names each of their bots", async () => {
+    const { lea, ben, human, channel } = await own();
+    expect(await seen(human, channel)).toBeNull();
+    const first = await post(channel, "For lea.", { wake: "leader" });
+    const s = await seen(human, channel);
+    expect(s?.message_id).toBe(first.id);
+    // Neither can be woken here (no push URL, event or routine), so both
+    // see it when they next come back by themselves.
+    expect(s?.bots).toEqual([
+      { handle: "ben", kind: "next_visit", at: null },
+      { handle: "lea", kind: "next_visit", at: null },
+    ]);
+    // A delivered event, a routine's fire and its check-in, and an answer.
+    await db()`INSERT INTO event_sub_state (bot_id, last_sent_at, last_status)
+      VALUES (${ben.id}, now(), 200)`;
+    await db()`INSERT INTO fire_state (bot_id, fired_at, fired_wake)
+      VALUES (${lea.id}, now(), 1)`;
+    const s2 = await seen(human, channel);
+    expect(s2?.bots.map((b) => [b.handle, b.kind])).toEqual([
+      ["ben", "woken"],
+      ["lea", "woken_unchecked"],
+    ]);
+    expect(s2?.bots.every((b) => b.at instanceof Date)).toBe(true);
+    await db()`UPDATE fire_state SET seen_at = now(), seen_wake = 1
+      WHERE bot_id = ${lea.id}`;
+    const r = await call(sendRoute, {
+      key: ben.key,
+      body: { channel, body: "On it." },
+    });
+    expect(r.status).toBe(201);
+    expect((await seen(human, channel))?.bots).toEqual([
+      { handle: "ben", kind: "answered", at: null },
+      { handle: "lea", kind: "checked_in", at: expect.any(Date) },
+    ]);
+    // A newer message starts again: nothing has happened since it.
+    const second = await post(channel, "And another.", { wake: false });
+    const s3 = await seen(human, channel);
+    expect(s3?.message_id).toBe(second.id);
+    expect(s3?.bots.map((b) => b.kind)).toEqual(["next_visit", "next_visit"]);
+  });
+
+  it("names only the reader's own bots that read here now", async () => {
+    const { lea, human, channel } = await own();
+    await post(channel, "Hello.", { wake: false });
+    await setFrozen(db(), "ben", true, "test");
+    expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
+      "lea",
+    ]);
+    // Another person's bot the leader brings in isn't listed.
+    await setFrozen(db(), "ben", false, "test");
+    const otto = await bot("otto");
+    await link("google-q", otto);
+    const inv = await call(invitesRoute, {
+      key: lea.key,
+      params: { id: num(channel) },
+      body: { for: "otto" },
+    });
+    expect(inv.status).toBe(201);
+    const j = await call(redeemRoute, {
+      key: otto.key,
+      body: { code: inv.body.invite.code },
+    });
+    expect(j.status).toBe(200);
+    expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
+      "ben",
+      "lea",
+    ]);
+  });
+
+  it("leaves out a bot put in after the message, which can't read it", async () => {
+    const { human, channel } = await own();
+    const kit = await bot("kit");
+    await link("google-p", kit);
+    await post(channel, "Before kit.", { wake: false });
+    await setOwnBots(db(), "google-p", channel, ["kit"], [], null);
+    expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
+      "ben",
+      "lea",
+    ]);
+    // A bot whose link is newer than the message can't read it either.
+    await ageLink("ben", 0);
+    expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
+      "lea",
+    ]);
+    await ageLink("ben");
+    // Its next message names kit, which reads that one.
+    await post(channel, "Hello kit.", { wake: false });
+    expect((await seen(human, channel))?.bots.map((b) => b.handle)).toEqual([
+      "ben",
+      "kit",
+      "lea",
+    ]);
+  });
+
+  it("counts a push only for a bot nothing else wakes, and only a 2xx", async () => {
+    const { ben, human, channel } = await own();
+    await post(channel, "Ping.", { wake: true });
+    await db()`INSERT INTO push_state (bot_id, last_sent_at, last_status)
+      VALUES (${ben.id}, now(), 200)`;
+    const kinds = async () =>
+      (await seen(human, channel))?.bots.find((b) => b.handle === "ben")?.kind;
+    // No live push URL: the send isn't counted as a wake of this bot.
+    expect(await kinds()).toBe("next_visit");
+    await db()`INSERT INTO push_urls (bot_id, key_id, url, salt)
+      SELECT ${ben.id}, id, 'https://example.com/hook', repeat('a', 64)
+      FROM api_keys WHERE bot_id = ${ben.id} AND revoked_at IS NULL`;
+    expect(await kinds()).toBe("woken");
+    // A later failed send is all the state keeps, so it reads as not yet.
+    await db()`UPDATE push_state SET last_status = 500 WHERE bot_id = ${ben.id}`;
+    expect(await kinds()).toBe("pending");
   });
 });

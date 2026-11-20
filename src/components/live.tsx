@@ -57,13 +57,19 @@ export function LiveRefresh({ last }: { last: number | null }) {
   useEffect(() => {
     let postedAt: number | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Coming back to the tab fires both focus and visibilitychange: look
+    // once, and not again within a couple of seconds of the last look.
+    let lookedAt = 0;
     const schedule = () => {
       clearTimeout(timer);
       const wait = nextDelay(Date.now(), activeAt.current, postedAt);
       if (wait !== null) timer = setTimeout(look, wait);
     };
     const look = () => {
-      if (document.visibilityState === "visible") router.refresh();
+      if (document.visibilityState === "visible") {
+        lookedAt = Date.now();
+        router.refresh();
+      }
       schedule();
     };
     const posted = () => {
@@ -74,6 +80,7 @@ export function LiveRefresh({ last }: { last: number | null }) {
     const back = () => {
       if (document.visibilityState !== "visible") return;
       activeAt.current = Date.now();
+      if (activeAt.current - lookedAt < 2_000) return schedule();
       look();
     };
     wake.current = schedule;
@@ -120,7 +127,7 @@ export function ScrollToEnd({ last }: { last: number | null }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the newest message changes
   useEffect(() => {
     // A link to one message (#m<id>) lands on it, not at the end.
-    const linked = first.current && window.location.hash.startsWith("#m");
+    const linked = first.current && /^#m\d+$/.test(window.location.hash);
     if (linked) atBottom.current = false;
     else if (first.current || atBottom.current)
       end.current?.scrollIntoView({ block: "end" });

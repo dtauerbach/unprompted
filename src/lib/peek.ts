@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { type SeenKind, seenKind } from "./chat";
 import { privateRef } from "./private-channels";
 
 // A person peeking into a group one of their own bots is in: its members,
@@ -23,6 +24,10 @@ import { privateRef } from "./private-channels";
 
 // Messages on one page, newest page first.
 export const PEEK_PAGE = 50;
+// How many pages the newest view may grow to as the person loads earlier
+// messages in place (`pages`); past it, older ones open as a page of their
+// own (`before`), so one view never reads more than this many pages.
+export const PEEK_MAX_PAGES = 10;
 
 export type PeekMessage = {
   id: number;
@@ -62,21 +67,38 @@ export type PeekPage = {
   // Pass as before for the page older than this one; null when there's
   // nothing older the reader may see.
   next_before: number | null;
+  // What became of the reader's newest message here, for each of their own
+  // bots that reads here now (src/lib/chat.ts); null when they've written
+  // nothing here. Only ever their own bots: nothing about another person's.
+  seen: PeekSeen | null;
+};
+
+export type PeekSeen = {
+  message_id: number;
+  // Handle order.
+  bots: { handle: string; kind: SeenKind; at: Date | null }[];
 };
 
 const isId = (n: unknown): n is number =>
   typeof n === "number" && Number.isSafeInteger(n) && n > 0;
 
 // A group for this person, or null. `before` pages back from a message id;
-// anything but a positive integer reads the newest page.
+// anything but a positive integer reads the newest page. `pages` (1 to
+// PEEK_MAX_PAGES, else 1) reads that many pages' worth of the newest
+// messages at once, so earlier ones load in place above what's shown; it
+// has no effect with `before`.
 export async function readGroupForPerson(
   sql: postgres.Sql,
   humanId: number,
   channelId: number,
-  opts: { before?: number } = {},
+  opts: { before?: number; pages?: number } = {},
 ): Promise<PeekPage | null> {
   if (!isId(humanId) || !isId(channelId)) return null;
   const before = isId(opts.before) ? opts.before : undefined;
+  const pages =
+    before === undefined && isId(opts.pages) && opts.pages <= PEEK_MAX_PAGES
+      ? opts.pages
+      : 1;
   return sql.begin("isolation level repeatable read read only", async (tx) => {
     const [ok] = await tx<{ ok: boolean }[]>`
       SELECT is_group(${channelId}) AND private_channel_is_visible(${channelId}) AS ok`;
@@ -116,7 +138,7 @@ export async function readGroupForPerson(
         FROM messages m LEFT JOIN bots b ON b.id = m.bot_id
         WHERE ${readable}
           ${before === undefined ? tx`` : tx`AND m.id < ${before}`}
-        ORDER BY m.id DESC LIMIT ${PEEK_PAGE}`
+        ORDER BY m.id DESC LIMIT ${PEEK_PAGE * pages}`
     ).reverse();
     const messages: PeekMessage[] = rows.map((r) => ({
       id: Number(r.id),
@@ -156,6 +178,7 @@ export async function readGroupForPerson(
       SELECT now() AS now,
         (SELECT b.handle FROM bots b WHERE b.id = channel_leader(${channelId})) AS leader,
         (SELECT e.created_at FROM channel_ends e WHERE e.channel_id = ${channelId}) AS closed_at`;
+    const seen = await seenFor(tx, humanId, channelId, readers);
     return {
       now: info?.now ?? new Date(),
       channel: privateRef(channelId),
@@ -168,6 +191,89 @@ export async function readGroupForPerson(
         : null,
       messages,
       next_before: older?.any && bound !== undefined ? bound : null,
+      seen,
     };
   });
+}
+
+// The reader's newest message here and, for each of their bots in `readers`
+// (members now, not frozen, theirs), what became of it. The leader is the
+// one now: a post to the leader alone that went before the lead changed
+// counts as waking the new one, which the line under it can get wrong until
+// someone answers. A push URL's last send counts only for a bot nothing
+// else can wake, since push_state.last_sent_at marks whichever method went.
+// Only bots that can read the message are named (one put in, or relinked,
+// after it can't). Known limits, since the state keeps only the last send:
+// a later failed send turns "woken" back into "not woken yet"; a push claim
+// reads as sent a moment before it lands; a bot's own test push reads as a
+// wake; and a send in the same instant as the message counts as after it.
+async function seenFor(
+  tx: postgres.TransactionSql,
+  humanId: number,
+  channelId: number,
+  readers: string[],
+): Promise<PeekSeen | null> {
+  const [mine] = await tx<
+    { id: string; created_at: Date; wakes: boolean; leader_only: boolean }[]
+  >`
+    SELECT m.id, m.created_at, m.wakes, m.wakes_leader_only AS leader_only
+    FROM messages m
+    WHERE m.channel_id = ${channelId} AND m.to_bot_id IS NULL
+      AND m.human_id = ${humanId}
+    ORDER BY m.id DESC LIMIT 1`;
+  if (!mine) return null;
+  const rows = await tx<
+    {
+      handle: string;
+      answered: boolean;
+      fired_at: Date | null;
+      checked_at: Date | null;
+      delivered_at: Date | null;
+      leads: boolean;
+      wakeable: boolean;
+    }[]
+  >`
+    SELECT b.handle,
+      EXISTS (SELECT 1 FROM messages a
+              WHERE a.channel_id = ${channelId} AND a.to_bot_id IS NULL
+                AND a.bot_id = b.id AND a.id > ${mine.id}) AS answered,
+      f.fired_at, f.seen_at AS checked_at,
+      GREATEST(
+        CASE WHEN e.last_status BETWEEN 200 AND 299 THEN e.last_sent_at END,
+        CASE WHEN p.last_status BETWEEN 200 AND 299 AND push_url_live(b.id)
+               AND NOT event_sub_live(b.id) AND NOT fire_trigger_live(b.id)
+             THEN p.last_sent_at END) AS delivered_at,
+      b.id = channel_leader(${channelId}) AS leads,
+      wake_method_live(b.id) AS wakeable
+    FROM bots b
+    LEFT JOIN fire_state f ON f.bot_id = b.id
+    LEFT JOIN event_sub_state e ON e.bot_id = b.id
+    LEFT JOIN push_state p ON p.bot_id = b.id
+    WHERE b.id = ANY(${readers}::bigint[]) AND b.owner_id = ${humanId}
+      AND EXISTS (SELECT 1 FROM messages m
+                  WHERE m.id = ${mine.id} AND group_message_readable(m, b.id))
+    ORDER BY b.handle`;
+  return {
+    message_id: Number(mine.id),
+    bots: rows.map((r) => {
+      const kind = seenKind({
+        sent_at: mine.created_at,
+        answered: r.answered,
+        fired_at: r.fired_at,
+        checked_at: r.checked_at,
+        delivered_at: r.delivered_at,
+        woken_by_message: mine.wakes && (!mine.leader_only || r.leads),
+        wakeable: r.wakeable,
+      });
+      const at =
+        kind === "checked_in"
+          ? r.checked_at
+          : kind === "woken_unchecked"
+            ? r.fired_at
+            : kind === "woken"
+              ? r.delivered_at
+              : null;
+      return { handle: r.handle, kind, at };
+    }),
+  };
 }
