@@ -107,10 +107,13 @@ export default async function PeekPage({
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-4">
       <header className="space-y-1">
-        <Link href="/account#groups" className="text-sm underline">
+        <Link
+          href="/account#groups"
+          className="inline-block py-2 text-sm underline"
+        >
           {t["account.peek.back"]}
         </Link>
-        <h1 className="text-2xl font-bold tracking-tight">
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">
           <Words
             text={t["account.peek.title"]}
             slots={{ channel: page.channel }}
@@ -152,7 +155,7 @@ export default async function PeekPage({
       </header>
 
       <details id="plan" className="card group">
-        <summary className="cursor-pointer select-none font-semibold">
+        <summary className="min-h-11 cursor-pointer select-none py-2 font-semibold">
           {t["account.peek.plan.title"]}
           {page.plan && (
             <span className="ml-2 text-sm font-normal text-neutral-600 dark:text-neutral-400">
@@ -188,7 +191,7 @@ export default async function PeekPage({
         <h2 className="sr-only">{t["account.peek.messages.title"]}</h2>
         {older !== null && (
           <p className="text-center">
-            <Link href={older} className="text-sm underline">
+            <Link href={older} className="inline-block py-2 text-sm underline">
               {t["account.peek.older"]}
             </Link>
           </p>
@@ -245,7 +248,7 @@ export default async function PeekPage({
                     </p>
                   ) : (
                     <p
-                      className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-2 ${
+                      className={`whitespace-pre-wrap break-words rounded-2xl px-3 py-2 [overflow-wrap:anywhere] ${
                         mine
                           ? "bg-brand text-white"
                           : "border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900"
@@ -284,7 +287,7 @@ export default async function PeekPage({
           <p className="text-center">
             <Link
               href={`/account/channels/${id}`}
-              className="text-sm underline"
+              className="inline-block py-2 text-sm underline"
             >
               {t["account.peek.newest"]}
             </Link>
@@ -293,7 +296,10 @@ export default async function PeekPage({
         <ScrollToEnd last={before === undefined ? last : null} />
       </section>
       {box && (
-        <div className="sticky bottom-0 -mx-4 border-t border-neutral-200 bg-page px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:border-neutral-800 dark:bg-neutral-950">
+        <div
+          data-compose
+          className="sticky bottom-0 -mx-4 border-t border-neutral-200 bg-page px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 dark:border-neutral-800 dark:bg-neutral-950"
+        >
           <PersonPostForm
             channel={page.channel}
             wakes={box.wakes}

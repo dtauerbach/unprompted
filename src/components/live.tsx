@@ -99,38 +99,140 @@ export function LiveRefresh({ last }: { last: number | null }) {
   return null;
 }
 
+// Whether the newest message is in view, or close to it: its end marker's
+// bottom is within slackPx of the top of the compose box, or of the visible
+// area's bottom (viewBottom, in the marker's coordinates) when there's no box. Measured against the marker rather than
+// the document, so the compose box and footer below it don't count as being
+// away from the end. Pure, so a test pins the numbers.
+export function nearEnd(
+  endBottom: number,
+  viewBottom: number,
+  composeHeight: number,
+  slackPx = 160,
+): boolean {
+  return endBottom - (viewBottom - composeHeight) < slackPx;
+}
+
+// The pinned compose box, if this page has one (data-compose), and its height.
+function composeHeight(): number {
+  const box = document.querySelector<HTMLElement>("[data-compose]");
+  return box ? box.getBoundingClientRect().height : 0;
+}
+
+// Whether a shrink of the visible area is a phone's keyboard opening for the
+// compose box, not the address bar coming back or a pinch-zoom: it shrank by
+// a keyboard's height from its tallest (so a keyboard that slides up in
+// several steps still counts), at no zoom, while the person is typing in the
+// box. Pure, so a test pins the numbers.
+export function keyboardOpened(
+  tallest: number,
+  after: number,
+  scale: number,
+  composing: boolean,
+  minPx = 120,
+): boolean {
+  return composing && Math.abs(scale - 1) < 0.01 && tallest - after > minPx;
+}
+
+// Follows the visible area's height through resizes: true for each shrink
+// that keyboardOpened counts, measured from the tallest it has been, which
+// rises whenever it grows. Every step of a keyboard sliding up past a
+// keyboard's height counts, so the newest message follows it to the end.
+export function keyboardTracker(start: number) {
+  let tallest = start;
+  return (height: number, scale: number, composing: boolean): boolean => {
+    if (height > tallest) {
+      tallest = height;
+      return false;
+    }
+    return keyboardOpened(tallest, height, scale, composing);
+  };
+}
+
+// The bottom of what's visible, in the same coordinates as
+// getBoundingClientRect: on a phone with the keyboard up, or when zoomed in,
+// that's the visual viewport's bottom (its offset plus its height), which can
+// sit above the window's.
+function viewBottom(): number {
+  const v = window.visualViewport;
+  return v ? v.offsetTop + v.height : window.innerHeight;
+}
+
+// Whether the person is typing in the pinned compose box.
+function composing(): boolean {
+  const active = document.activeElement;
+  return !!active?.closest("[data-compose]");
+}
+
 // Keeps a chat scrolled to its newest message: on first load (unless the
-// address names one message), after the person posts, and when a new
-// message arrives while they were already at the bottom. Someone scrolled
-// up to read stays where they are.
+// address names one message), after the person posts, when a new message
+// arrives while they were already at the bottom, when a phone's keyboard
+// opens for the compose box, and when the box grows with a long draft, while
+// they were. The newest message lands just above the pinned compose box, not
+// under it. Someone scrolled up to read stays where they are, and the address
+// bar coming and going or a pinch-zoom never moves them.
 export function ScrollToEnd({ last }: { last: number | null }) {
   const end = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const first = useRef(true);
+  const toEnd = useRef<() => void>(() => {});
   useEffect(() => {
+    toEnd.current = () => {
+      const el = end.current;
+      if (!el) return;
+      el.style.scrollMarginBottom = `${Math.ceil(composeHeight()) + 8}px`;
+      el.scrollIntoView({ block: "end" });
+    };
     const onScroll = () => {
-      const gap =
-        document.documentElement.scrollHeight -
-        (window.scrollY + window.innerHeight);
-      atBottom.current = gap < 160;
+      const el = end.current;
+      if (!el) return;
+      atBottom.current = nearEnd(
+        el.getBoundingClientRect().bottom,
+        viewBottom(),
+        composeHeight(),
+      );
     };
     const posted = () => {
       atBottom.current = true;
     };
+    const v = window.visualViewport;
+    const keyboard = keyboardTracker(v?.height ?? 0);
+    const resized = () => {
+      if (!v) return;
+      if (keyboard(v.height, v.scale, composing()) && atBottom.current)
+        toEnd.current();
+    };
     window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener(POSTED_EVENT, posted);
+    v?.addEventListener("resize", resized);
     return () => {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener(POSTED_EVENT, posted);
+      v?.removeEventListener("resize", resized);
     };
   }, []);
+  // The compose box grows with a long draft; keep the newest message above
+  // it. Looked for on every refresh, since the box can first appear on one.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: looks again when the newest message changes
+  useEffect(() => {
+    const box = document.querySelector<HTMLElement>("[data-compose]");
+    if (!box || typeof ResizeObserver === "undefined") return;
+    let boxHeight = box.getBoundingClientRect().height;
+    const grew = new ResizeObserver(() => {
+      const h = box.getBoundingClientRect().height;
+      const bigger = h > boxHeight;
+      boxHeight = h;
+      if (bigger && atBottom.current) toEnd.current();
+    });
+    grew.observe(box);
+    return () => grew.disconnect();
+  }, [last]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs when the newest message changes
   useEffect(() => {
     // A link to one message (#m<id>) lands on it, not at the end.
     const linked = first.current && /^#m\d+$/.test(window.location.hash);
     if (linked) atBottom.current = false;
-    else if (first.current || atBottom.current)
-      end.current?.scrollIntoView({ block: "end" });
+    else if (first.current || atBottom.current) toEnd.current();
     first.current = false;
   }, [last]);
   return <div ref={end} aria-hidden="true" />;

@@ -1,10 +1,19 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import { SiteNav } from "@/components/nav";
 import { navWho } from "@/lib/nav-who";
 import { pageCopy } from "@/lib/page-copy";
 import { isReadOnly } from "@/lib/settings";
 import "./globals.css";
+
+// On a phone, the on-screen keyboard shrinks the page rather than covering
+// it (Android Chrome), so a chat's pinned compose box rides above the
+// keyboard. iOS ignores it; the chat page follows visualViewport instead.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  interactiveWidget: "resizes-content",
+};
 
 // Every page's tab ends with the site's name, and every word here is the
 // copy store's (src/lib/copy.ts).
@@ -62,7 +71,7 @@ export default async function RootLayout({
             </p>
           )}
           <main>{children}</main>
-          <footer className="mt-12 flex flex-wrap gap-x-4 gap-y-1 border-t border-neutral-200 pt-3 text-sm text-neutral-600 dark:text-neutral-400 dark:border-neutral-800">
+          <footer className="site-footer mt-12 flex flex-wrap gap-x-4 gap-y-1 border-t border-neutral-200 pt-3 text-sm text-neutral-600 dark:text-neutral-400 dark:border-neutral-800">
             <Link href="/" className="underline">
               {t["site.footer.about"]}
             </Link>

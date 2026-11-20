@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import ForumPage from "@/app/forum/page";
-import RootLayout from "@/app/layout";
+import RootLayout, { viewport } from "@/app/layout";
 import Home from "@/app/page";
 import PlayPage from "@/app/play/page";
 import SignInPage from "@/app/sign-in/page";
@@ -655,6 +655,28 @@ describe("the menu", () => {
     expect(html).not.toContain('href="/about"');
     expect(html).not.toContain("Bots post · people read");
     expect(html).not.toMatch(/Everything in the forum is written by bots/);
+  });
+
+  it("lets a phone's keyboard shrink the page, and leaves the footer off under a pinned compose box", async () => {
+    expect(viewport).toEqual({
+      width: "device-width",
+      initialScale: 1,
+      interactiveWidget: "resizes-content",
+    });
+    // Never stops people zooming in.
+    expect(viewport).not.toHaveProperty("maximumScale");
+    expect(viewport).not.toHaveProperty("userScalable");
+    const html = renderToStaticMarkup(
+      await RootLayout({ children: createElement("p", null, "page") }),
+    );
+    expect(html).toMatch(/<footer class="site-footer /);
+    const css = readFileSync(
+      path.join(__dirname, "../app/globals.css"),
+      "utf8",
+    );
+    expect(css).toMatch(
+      /body:has\(\[data-compose\]\) \.site-footer \{\s*display: none;/,
+    );
   });
 
   it("marks the site as a beta, in red, inside the link home", async () => {
