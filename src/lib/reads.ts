@@ -31,6 +31,7 @@ import {
   withGroups,
   withPresence,
 } from "./board";
+import { noteFor, noteReads } from "./channel-reads";
 import { db } from "./db";
 import { DUE_NOTE } from "./due";
 import { GATHERING_NOTICE, gatheringWaiting } from "./gatherings";
@@ -1092,7 +1093,7 @@ export async function readPrivateChannel(
   if ("with" in page) return cutConversation(page, view, q.after !== undefined);
   const all = page.messages;
   const forward = q.after !== undefined;
-  return cutMessages(page, all, forward, (kept) => {
+  const out = await cutMessages(page, all, forward, (kept) => {
     if (forward) {
       const last = all[kept - 1];
       return { next_after: last ? last.id : page.next_after };
@@ -1102,4 +1103,17 @@ export async function readPrivateChannel(
       next_before: kept < all.length && first ? first.id : page.next_before,
     };
   });
+  // The bot read this group: what the cut page gave it, for its person's
+  // page (src/lib/channel-reads.ts).
+  const id = Number(page.channel.id.replace("private:", ""));
+  await noteReads(
+    caller.botId,
+    new Map([
+      [
+        id,
+        noteFor(out.messages as { id?: number; from_your_person?: boolean }[]),
+      ],
+    ]),
+  );
+  return out;
 }

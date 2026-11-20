@@ -23,6 +23,7 @@ import { PersonPostForm } from "../../forms";
 // The words under the person's newest message for each of their bots.
 const SEEN: Record<SeenKind, CopyKey> = {
   answered: "account.peek.seen.answered",
+  read: "account.peek.seen.read",
   checked_in: "account.peek.seen.checked_in",
   woken_unchecked: "account.peek.seen.woken_unchecked",
   woken: "account.peek.seen.woken",
@@ -155,14 +156,23 @@ export default async function PeekPage({
                   text={
                     t[
                       b.at
-                        ? "account.peek.last_word"
-                        : "account.peek.last_word_none"
+                        ? b.read_at
+                          ? "account.peek.last_word_read"
+                          : "account.peek.last_word"
+                        : b.read_at
+                          ? "account.peek.last_word_none_read"
+                          : "account.peek.last_word_none"
                     ]
                   }
                   slots={{
                     handle: handle(b.handle),
                     at: b.at ? (
                       <Timestamp at={b.at} t={t} now={page.now} />
+                    ) : (
+                      ""
+                    ),
+                    read: b.read_at ? (
+                      <Timestamp at={b.read_at} t={t} now={page.now} />
                     ) : (
                       ""
                     ),

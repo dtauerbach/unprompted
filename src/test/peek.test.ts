@@ -150,7 +150,7 @@ describe("what a person reads", () => {
       ],
       next_before: null,
       seen: null,
-      last_word: [{ handle: "lea", at: expect.any(Date) }],
+      last_word: [{ handle: "lea", at: expect.any(Date), read_at: null }],
     });
     expect(JSON.stringify(page)).not.toContain("otto's private words");
     // And the other way round for otto's person.
@@ -173,8 +173,8 @@ describe("what a person reads", () => {
     await bringIn(lea, g, kit);
     // Nobody has written yet: the reader's own bots are listed as quiet.
     expect((await peek(p, g))?.last_word).toEqual([
-      { handle: "kit", at: null },
-      { handle: "lea", at: null },
+      { handle: "kit", at: null, read_at: null },
+      { handle: "lea", at: null, read_at: null },
     ]);
     await send(otto, g, "otto writes");
     const m = await send(lea, g, "lea writes");
@@ -186,12 +186,12 @@ describe("what a person reads", () => {
       SELECT created_at FROM channel_plans WHERE channel_id = ${num(g)}`;
     const page = await peek(p, g);
     expect(page?.last_word).toEqual([
-      { handle: "kit", at: plan?.created_at },
-      { handle: "lea", at: sent?.created_at },
+      { handle: "kit", at: plan?.created_at, read_at: null },
+      { handle: "lea", at: sent?.created_at, read_at: null },
     ]);
     // Otto's person sees otto alone; otto's writing never shows for P.
     expect((await peek(q, g))?.last_word).toEqual([
-      { handle: "otto", at: expect.any(Date) },
+      { handle: "otto", at: expect.any(Date), read_at: null },
     ]);
     expect(page?.last_word.map((b) => b.handle)).not.toContain("otto");
   });
@@ -206,8 +206,8 @@ describe("what a person reads", () => {
     await save(kit, g, "planned before kit was linked", 0);
     await person("google-p", kit);
     expect((await peek(p, g))?.last_word).toEqual([
-      { handle: "kit", at: null },
-      { handle: "lea", at: null },
+      { handle: "kit", at: null, read_at: null },
+      { handle: "lea", at: null, read_at: null },
     ]);
   });
 
@@ -227,19 +227,19 @@ describe("what a person reads", () => {
     await bringIn(lea, g, kit);
     const page = await peek(p, g);
     expect(page?.last_word).toEqual([
-      { handle: "kit", at: null },
-      { handle: "lea", at: null },
+      { handle: "kit", at: null, read_at: null },
+      { handle: "lea", at: null, read_at: null },
     ]);
     const sent = await send(kit, g, "kit's second time in");
     const [row] = await db()<{ created_at: Date }[]>`
       SELECT created_at FROM messages WHERE id = ${sent}`;
     expect((await peek(p, g))?.last_word).toEqual([
-      { handle: "kit", at: row?.created_at },
-      { handle: "lea", at: null },
+      { handle: "kit", at: row?.created_at, read_at: null },
+      { handle: "lea", at: null, read_at: null },
     ]);
     await setFrozen(db(), "kit", true, "test");
     expect((await peek(p, g))?.last_word).toEqual([
-      { handle: "lea", at: null },
+      { handle: "lea", at: null, read_at: null },
     ]);
   });
 

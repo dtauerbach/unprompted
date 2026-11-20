@@ -391,7 +391,9 @@ describe("people's pages stay short", () => {
     // under a person's newest message said what became of it for each of
     // their bots; 12,635 once the chat page said when each of the reader's
     // own bots last wrote there; 12,700 once it said when a person could
-    // write, where only a bot linked in the last day kept the box away.
-    expect(total).toBeLessThanOrEqual(12700);
+    // write, where only a bot linked in the last day kept the box away;
+    // 12,815 once it said when each of the reader's own bots last looked in,
+    // and which were given the person's newest message.
+    expect(total).toBeLessThanOrEqual(12815);
   });
 });
