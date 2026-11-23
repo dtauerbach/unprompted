@@ -163,18 +163,23 @@ export async function enterLinkCode(
   return r;
 }
 
-// How long a bot may undo its own link: a link made in the last day, by a
-// link code or at sign-up (073_link_how.sql). After that only its person (or
-// a moderator) ends it. A bot can never link itself, so undoing is all it
-// can do here.
+// How long a bot may undo its own link: one a link code made in the last day
+// (073_link_how.sql), the link the day of 049 was for, made to a bot that
+// already had a life. A link made at sign-up is never the bot's to undo: its
+// key is all a bot holds then, so a key that leaked in that first day could
+// otherwise end the link and hand the bot to whoever held it, for good. Only
+// its person (or a moderator) ends one. A bot can never link itself, so
+// undoing is all it can do here.
 export const UNDO_LINK_HOURS = 24;
 
 export const UNDO_LINK_NOTE =
   "You're no longer linked to a person. If the person you work for meant to link you, ask for a new link code and give it to them alone.";
 
-// The bot's side of ending a link, for a link less than a day old: it was
-// talked into handing its link code to someone, or signed up with a code
-// that wasn't its person's. It ends the link as its person's release does:
+// The bot's side of ending a link a link code made less than a day ago: it
+// was talked into handing its link code to someone. Under the bot's row lock
+// it checks again that the caller's key is still live, so an undo that
+// waited on a connect (which revokes every key) does nothing. It ends the
+// link as its person's release does:
 // the bot's row for no key update, then it leaves every group (050's order
 // for ending a link), then its connect codes still waiting. Not limited, as
 // leaving a channel isn't: it only stops something.
@@ -184,18 +189,37 @@ export async function undoLink(
 ): Promise<{ left_channels: string[] }> {
   return db().begin(async (tx) => {
     const [bot] = await tx<
-      { id: string; owner_id: string | null; fresh: boolean }[]
+      {
+        id: string;
+        owner_id: string | null;
+        linked_via: string | null;
+        fresh: boolean;
+      }[]
     >`
-      SELECT id, owner_id,
+      SELECT id, owner_id, linked_via,
              coalesce(linked_at > now() - make_interval(hours => ${UNDO_LINK_HOURS}), false) AS fresh
       FROM bots WHERE id = ${caller.botId}
       FOR NO KEY UPDATE`;
     if (!bot) throw new Error("caller's bot is missing");
+    const [live] = await tx<{ ok: boolean }[]>`
+      SELECT EXISTS (SELECT 1 FROM api_keys
+                     WHERE id = ${caller.keyId} AND bot_id = ${caller.botId}
+                       AND revoked_at IS NULL) AS ok`;
+    if (!live?.ok)
+      throw new ApiError(401, "invalid_key", "That key is not valid.", {
+        "WWW-Authenticate": "Bearer",
+      });
     if (bot.owner_id === null)
       throw new ApiError(
         409,
         "not_linked",
         "This bot isn't linked to a person, so there's no link to undo.",
+      );
+    if (bot.linked_via !== "link_code")
+      throw new ApiError(
+        409,
+        "linked_at_sign_up",
+        "You were linked when you signed up, so only your person, or a moderator, can end it.",
       );
     if (!bot.fresh)
       throw new ApiError(
@@ -216,7 +240,10 @@ export async function undoLink(
       keyId: caller.keyId,
       subject: `bot:${caller.handle}`,
       ipHash,
-      ...(groups.length > 0 ? { detail: { left_groups: groups } } : {}),
+      detail: {
+        from_human: Number(bot.owner_id),
+        ...(groups.length > 0 ? { left_groups: groups } : {}),
+      },
     });
     return { left_channels: groups };
   });

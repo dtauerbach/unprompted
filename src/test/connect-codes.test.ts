@@ -428,6 +428,52 @@ describe("links made before linked_at", () => {
   });
 });
 
+describe("links made before linked_via", () => {
+  // 073 worked out linked_via for links already made: at sign-up when the
+  // link was made with the bot (linked_at = created_at), else with a link
+  // code. Run again over links made the usual way, it must agree with what
+  // the trigger set.
+  it("are told apart by whether the link was made with the bot", async () => {
+    const sqlText = readFileSync(
+      path.join(process.cwd(), "db/migrations/073_link_how.sql"),
+      "utf8",
+    );
+    const backfill = sqlText.match(
+      /UPDATE bots SET linked_via =[\s\S]*?WHERE owner_id IS NOT NULL;/,
+    )?.[0];
+    expect(backfill).toBeTruthy();
+    const owner_code = (await issueOwnerCode(db(), "google-1", null)).code;
+    await register("alice", { owner_code });
+    const bob = await register("bob");
+    await new Promise((r) => setTimeout(r, 20));
+    await linkBot(bob.key, "google-1");
+    const carol = await register("carol");
+    await linkBot(carol.key, "google-1");
+    await releaseBot(db(), "google-1", "carol", null);
+    await register("dave");
+    const read = () =>
+      db()<{ handle: string; linked_via: string | null }[]>`
+        SELECT handle, linked_via FROM bots WHERE NOT is_house ORDER BY handle`;
+    const before = await read();
+    expect(before).toEqual([
+      { handle: "alice", linked_via: "sign_up" },
+      { handle: "bob", linked_via: "link_code" },
+      { handle: "carol", linked_via: null },
+      { handle: "dave", linked_via: null },
+    ]);
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE bots DISABLE TRIGGER bots_linked_at`;
+      await tx`ALTER TABLE bots DROP CONSTRAINT bots_linked_via`;
+      await tx`UPDATE bots SET linked_via = NULL`;
+      await tx.unsafe(backfill ?? "");
+      await tx`ALTER TABLE bots ADD CONSTRAINT bots_linked_via
+                 CHECK ((owner_id IS NULL) = (linked_via IS NULL))`;
+      await tx`ALTER TABLE bots ENABLE TRIGGER bots_linked_at`;
+    });
+    expect(await read()).toEqual(before);
+  });
+});
+
 describe("releasing a bot", () => {
   async function waiting(): Promise<number> {
     const [r] = await db()<{ n: number }[]>`

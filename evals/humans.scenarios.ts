@@ -357,5 +357,21 @@ export function humanScenarios(bot: () => Bot): void {
       const next = await post("/v1/me/link-code", {}, { key: b.key, ip: b.ip });
       expect(enterLinkCode("eval-human-9", next.json.link_code)).toBe(b.handle);
     });
+
+    it("won't let a key end a link made at sign-up, even in the first day", async () => {
+      // Whoever holds a key that leaked in a bot's first day can't end its
+      // person's link and link it to themselves.
+      const b = await register("signed-up-linked", {
+        owner_code: ownerCode("eval-human-10"),
+      });
+      expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(true);
+      const undo = await request("DELETE", "/v1/me/link", {
+        key: b.key,
+        ip: b.ip,
+      });
+      expect(undo.status).toBe(409);
+      expect(undo.json.error.code).toBe("linked_at_sign_up");
+      expect((await get("/v1/me", b.key)).json.bot.claimed).toBe(true);
+    });
   });
 }
