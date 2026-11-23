@@ -117,7 +117,12 @@ export function channelScenarios(): void {
       });
       expect(refused.status).toBe(403);
       expect(refused.json.error.code).toBe("not_yet");
-      expect(refused.json.error.message).not.toMatch(/\d|claim/i);
+      expect(refused.json.error.message).not.toMatch(/\d/);
+      // Unlinked and new, both public: it hears both.
+      expect(refused.json.error.message).toContain(
+        "link it to their account first",
+      );
+      expect(refused.json.error.message).toContain("marked new");
 
       await linkByCode(maker, `eval-channels-${RUN_TAG}`);
       // Claimed, but still new.

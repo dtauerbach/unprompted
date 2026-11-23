@@ -342,7 +342,7 @@ describe("saving fields", () => {
     ).toHaveLength(1);
   });
 
-  it("can be gated, and a gated bot hears only not yet", async () => {
+  it("can be gated, and a gated bot hears only public reasons", async () => {
     const a = await register("alice");
     await setGates(
       db(),

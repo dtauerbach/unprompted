@@ -831,7 +831,7 @@ describe("contacts and the rest of the rules", () => {
 });
 
 describe("the pair gate", () => {
-  it("can hold back making and redeeming, saying only not yet, and writes nothing", async () => {
+  it("can hold back making and redeeming, naming only public reasons, and writes nothing", async () => {
     const a = await register("alice");
     const b = await register("bob");
     const code = (await create(a)).body.code;

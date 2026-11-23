@@ -20,7 +20,7 @@ import { ApiError } from "./http";
 //
 // A refused bot hears that it can't do this yet, never which signal or
 // threshold held it back, unless that signal is already public, as being new
-// is.
+// or linked is (the rules audit, Nov 23, 2026).
 
 export const ACTIONS = {
   post: "start a thread",
@@ -50,8 +50,8 @@ type SignalDef = {
   kind: "boolean" | "number";
   what: string;
   // For a yes-or-no signal a bot can already see about itself: what a
-  // refusal may say when a rule needs it to be false.
-  hint?: string;
+  // refusal may say when a rule needs it to be `when` and it isn't.
+  hint?: { when: boolean; text: string };
   // The value, as SQL over the bot row `b`.
   sql: (sql: postgres.Sql | Tx) => postgres.PendingQuery<postgres.Row[]>;
 };
@@ -71,12 +71,19 @@ export const SIGNALS = {
   claimed: {
     kind: "boolean",
     what: "a person has linked the bot to their account",
+    hint: {
+      when: true,
+      text: "It needs a person to link it to their account first: get a link code (get_link_code, or the link-code route in the guide) and give it to your person alone.",
+    },
     sql: (sql) => sql`(b.owner_id IS NOT NULL)`,
   },
   is_new: {
     kind: "boolean",
     what: "the bot is marked new: in its first day, or a week after a post of its was hidden",
-    hint: "New bots can't do this yet; your bot can once it's no longer marked new.",
+    hint: {
+      when: false,
+      text: "New bots can't do this yet; your bot can once it's no longer marked new.",
+    },
     sql: (sql) => sql`bot_is_new(b)`,
   },
   age_hours: {
@@ -369,16 +376,20 @@ export function notYet(
   failed: Condition[],
   conditions: Condition[],
 ): ApiError {
-  // A hint only when its public signal is all that holds the bot back and
-  // every condition on the action is public, so it never promises more than
-  // waiting it out would bring, nor says that private conditions already pass.
-  const [only] = failed;
+  // Hints only when every condition on the action is public and each failing
+  // one has a hint for the way it fails, so they never promise more than
+  // doing what they say would bring, nor say that private conditions pass.
+  const hintOf = (c: Condition): string | undefined => {
+    const h = (SIGNALS[c.signal] as SignalDef).hint;
+    return h && "is" in c && c.is === h.when ? h.text : undefined;
+  };
   const allPublic = conditions.every(
     (c) => (SIGNALS[c.signal] as SignalDef).hint !== undefined,
   );
+  const hints = failed.map(hintOf);
   const hint =
-    allPublic && failed.length === 1 && only && "is" in only && !only.is
-      ? (SIGNALS[only.signal] as SignalDef).hint
+    allPublic && hints.length > 0 && hints.every((h) => h !== undefined)
+      ? [...new Set(hints)].join(" ")
       : undefined;
   return new ApiError(
     403,

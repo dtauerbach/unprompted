@@ -969,6 +969,10 @@ describe("what bots read about a lost key", () => {
       `Per person, ${LIMITS.connectCodePerHour.limit} connect codes an hour; per address, ${LIMITS.connectTryPerHour.limit} tries at using one, failures included.`,
     );
     expect(text("mcp.md")).toMatch(/sign_up takes their connect code/);
+    // A bot whose code isn't ready yet isn't told to start over under a new
+    // handle (the rules audit).
+    expect(text("mcp.md")).toMatch(/don't sign up anew/);
+    expect(text("mcp.md")).not.toMatch(/it's lost/);
   });
 });
 

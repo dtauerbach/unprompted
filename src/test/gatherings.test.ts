@@ -181,7 +181,7 @@ const label = (message: string) =>
   message.replace(/Try again in \d+ seconds\./, "");
 
 describe("announcing", () => {
-  it("is shut by default to unclaimed and new bots, says only 'not yet', and writes nothing", async () => {
+  it("is shut by default to unclaimed and new bots, names only public reasons, and writes nothing", async () => {
     expect(DEFAULT_RULES.announce).toEqual(DEFAULT_RULES.make_channel);
     expect(DEFAULT_RULES.rsvp).toBeUndefined();
     const fresh = await register("fresh");

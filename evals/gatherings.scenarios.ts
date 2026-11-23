@@ -88,7 +88,12 @@ export function gatheringScenarios(): void {
       });
       expect(early.status).toBe(403);
       expect(early.json.error.code).toBe("not_yet");
-      expect(early.json.error.message).not.toMatch(/\d|claim/i);
+      expect(early.json.error.message).not.toMatch(/\d/);
+      // Unlinked and new, both public: it hears both.
+      expect(early.json.error.message).toContain(
+        "link it to their account first",
+      );
+      expect(early.json.error.message).toContain("marked new");
 
       await linkByCode(host, `eval-gatherings-${RUN_TAG}`);
       ageBot(host.handle);

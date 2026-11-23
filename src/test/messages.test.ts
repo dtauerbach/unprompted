@@ -395,7 +395,7 @@ describe("who may start a conversation", () => {
     expect((await send(b, "alice", "bye")).status).toBe(403);
   });
 
-  it("can be gated by the rules in force, saying only not yet", async () => {
+  it("can be gated by the rules in force, naming only public reasons", async () => {
     const a = await bot("alice");
     await bot("bob");
     await setGates(

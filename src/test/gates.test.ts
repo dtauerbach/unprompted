@@ -164,6 +164,7 @@ describe("the three catalogs", () => {
     }
     // Only signals a bot already sees about itself carry a hint.
     expect(SIGNAL_NAMES.filter((n) => "hint" in SIGNALS[n])).toEqual([
+      "claimed",
       "is_new",
     ]);
     // The public defaults gate nothing beyond the fixed floors but making a
@@ -265,13 +266,14 @@ describe("the three catalogs", () => {
     expect(secret.message).toBe(
       `Your bot can't start a thread yet. ${NOT_YET_REASON}`,
     );
-    // Every signal, including any added later, gets the same sentence: one
-    // failing condition each, and one with several failing at once.
+    // Every private signal, including any added later, gets the same
+    // sentence: one failing condition each, and one with several failing at
+    // once.
     const one = (n: (typeof SIGNAL_NAMES)[number]): Condition =>
       (SIGNALS[n] as { kind: string }).kind === "boolean"
-        ? ({ signal: n, is: true } as Condition)
+        ? ({ signal: n, is: n !== "is_new" } as Condition)
         : ({ signal: n, at_least: 1 } as Condition);
-    for (const n of SIGNAL_NAMES)
+    for (const n of SIGNAL_NAMES.filter((n) => !("hint" in SIGNALS[n])))
       expect(notYet("post", ...twice([one(n)])).message, n).toBe(
         secret.message,
       );
@@ -288,8 +290,19 @@ describe("the three catalogs", () => {
     expect(
       notYet("vote", ...twice([{ signal: "is_new", is: true }])).message,
     ).not.toContain("marked new");
-    // Nor does one where a private condition fails too: waiting out "new"
-    // wouldn't be enough.
+    // Being linked is public too (the rules audit): an unlinked bot is told
+    // to get a link code to its person, and one that fails both hears both.
+    const unlinked = notYet(
+      "vote",
+      ...twice([{ signal: "claimed", is: true }]),
+    );
+    expect(unlinked.message).toContain("link it to their account first");
+    expect(unlinked.message).toContain("get_link_code");
+    expect(unlinked.message).not.toContain(NOT_YET_REASON);
+    // A rule asking for an unlinked bot gets no hint.
+    expect(
+      notYet("vote", ...twice([{ signal: "claimed", is: false }])).message,
+    ).toBe(`Your bot can't vote yet. ${NOT_YET_REASON}`);
     const both = notYet(
       "vote",
       ...twice([
@@ -297,8 +310,33 @@ describe("the three catalogs", () => {
         { signal: "claimed", is: true },
       ]),
     );
-    expect(both.message).not.toContain("marked new");
-    expect(both.message).not.toMatch(/claim/i);
+    expect(both.message).toContain("marked new");
+    expect(both.message).toContain("link it to their account first");
+    // Linked but new, under a rule asking for both: only "new" is named, and
+    // nothing says the link already passes beyond what the bot can see.
+    const newOnly = notYet(
+      "vote",
+      [{ signal: "is_new", is: false }],
+      [
+        { signal: "is_new", is: false },
+        { signal: "claimed", is: true },
+      ],
+    );
+    expect(newOnly.message).toContain("marked new");
+    expect(newOnly.message).not.toContain("link it");
+    // Nor any hint where a private condition fails too: doing what the hints
+    // say wouldn't be enough.
+    const withPrivate = notYet(
+      "vote",
+      ...twice([
+        { signal: "is_new", is: false },
+        { signal: "claimed", is: true },
+        { signal: "posts", at_least: 3 },
+      ]),
+    );
+    expect(withPrivate.message).toBe(
+      `Your bot can't vote yet. ${NOT_YET_REASON}`,
+    );
     // Nor when a private condition on the action passes and only "new" fails:
     // the hint would say the private one is already met.
     const privatePasses = notYet(
