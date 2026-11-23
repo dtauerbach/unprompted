@@ -224,35 +224,51 @@ describe("a link only just made", () => {
     (await db()<{ n: number }[]>`SELECT count(*)::int AS n FROM rate_limits`)[0]
       ?.n;
 
-  it("gets no connect code at once, however it was made, and the refusal writes nothing", async () => {
+  it("gets no connect code at once when linked with a link code, and the refusal writes nothing", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     // Linked the other way round: the bot hands its person a link code.
     const alice = await register("alice");
     await linkBot(alice.key, "google-1");
-    // Linked at sign-up, with its person's owner code.
-    const owner_code = (await issueOwnerCode(db(), "google-1", null)).code;
-    await register("bob", { owner_code });
     const before = await snapshot();
     const limits = await limitRows();
-    for (const handle of ["alice", "bob"]) {
-      const err = await issueConnectCode(db(), "google-1", handle, null).catch(
-        (e) => e,
-      );
-      expect(err).toBeInstanceOf(ApiError);
-      expect(err.status).toBe(403);
-      expect(err.code).toBe("linked_recently");
-      expect(err.message).toContain(
-        `A bot linked in the last ${CONNECT_LINK_HOURS} hours can't be connected`,
-      );
-      expect(err.message).toContain(`@${handle}`);
-      expect(err.message).toMatch(/Try again in about 24 hours\./);
-    }
+    const err = await issueConnectCode(db(), "google-1", "alice", null).catch(
+      (e) => e,
+    );
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(403);
+    expect(err.code).toBe("linked_recently");
+    expect(err.message).toContain(
+      `A bot linked with a link code in the last ${CONNECT_LINK_HOURS} hours can't be connected`,
+    );
+    expect(err.message).toContain("@alice");
+    expect(err.message).toMatch(/Try again in about 24 hours\./);
     expect(CONNECT_LINK_HOURS).toBe(24);
     expect(await snapshot()).toEqual(before);
     expect(await limitRows()).toBe(limits);
     expect(
       (await db()`SELECT count(*)::int AS n FROM connect_codes`)[0]?.n,
     ).toBe(0);
+  });
+
+  it("gets one at once when linked at sign-up, which had no life before its person (rules audit)", async () => {
+    const owner_code = (await issueOwnerCode(db(), "google-1", null)).code;
+    const bob = await register("bob", { owner_code });
+    const [row] = await db()<{ linked_via: string }[]>`
+      SELECT linked_via FROM bots WHERE handle = 'bob'`;
+    expect(row?.linked_via).toBe("sign_up");
+    const code = await codeFor("bob");
+    expect(code).toMatch(CONNECT_CODE_RE);
+    const res = await connect({ handle: "bob", code });
+    expect(res.status).toBe(200);
+    expect((await me(bob.key)).status).toBe(401);
+    // Released and linked again with a link code: the day holds once more.
+    const fresh = res.body.api_key as string;
+    await releaseBot(db(), "google-1", "bob", null);
+    await linkBot(fresh, "google-1");
+    const [again] = await db()<{ linked_via: string }[]>`
+      SELECT linked_via FROM bots WHERE handle = 'bob'`;
+    expect(again?.linked_via).toBe("link_code");
+    expect((await codeFor("bob").catch((e) => e)).code).toBe("linked_recently");
   });
 
   it("gets one once the link has stood 24 hours, and not an hour before", async () => {
@@ -307,6 +323,24 @@ describe("a link only just made", () => {
       UPDATE bots SET linked_at = NULL WHERE handle = 'alice'`).rejects.toThrow(
       /only when its link does/,
     );
+    // Nor can a writer say a link was made at sign-up to skip the day.
+    await expect(db()`
+      UPDATE bots SET linked_via = 'sign_up' WHERE handle = 'alice'`).rejects.toThrow(
+      /only when its link does/,
+    );
+    // A bot made linked is 'sign_up' whatever the insert says, and the
+    // database lets its person make a code at once.
+    const [h1] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-8') RETURNING id`;
+    const [made] = await db()<{ id: string; linked_via: string }[]>`
+      INSERT INTO bots (handle, owner_id, linked_via)
+      VALUES ('made-linked', ${h1?.id ?? null}, 'link_code')
+      RETURNING id, linked_via`;
+    expect(made?.linked_via).toBe("sign_up");
+    await db()`
+      INSERT INTO connect_codes (bot_id, human_id, code_hash, expires_at)
+      VALUES (${made?.id ?? null}, ${h1?.id ?? null}, ${hashKey("now")},
+              now() + interval '5 minutes')`;
     // Setting the owner sets the clock, whatever the update says.
     const [h] = await db()<{ id: string }[]>`
       INSERT INTO humans (auth_user_id) VALUES ('google-9') RETURNING id`;
@@ -342,7 +376,9 @@ describe("a link only just made", () => {
       SELECT id FROM api_keys WHERE revoked_at IS NULL`;
     await expect(db()`
       UPDATE connect_codes SET used_at = now(), used_key_id = ${k?.id ?? null}
-      WHERE code_hash = ${hashKey(code)}`).rejects.toThrow(/for 24 hours/);
+      WHERE code_hash = ${hashKey(code)}`).rejects.toThrow(
+      /a day old if made with a link code/,
+    );
   });
 });
 
@@ -964,7 +1000,10 @@ describe("what bots read about a lost key", () => {
     const t = text("skill.md");
     expect(t).toContain("POST /v1/connect");
     expect(t).toContain("`connect_code`");
-    expect(t).toMatch(/linked you a day or more ago/);
+    expect(t).toMatch(
+      /linked you when you signed up, or with a link code a day or more ago/,
+    );
+    expect(text("mcp.md")).not.toMatch(/connect code after a day/);
     expect(t).toContain(
       `Per person, ${LIMITS.connectCodePerHour.limit} connect codes an hour; per address, ${LIMITS.connectTryPerHour.limit} tries at using one, failures included.`,
     );

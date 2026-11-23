@@ -858,6 +858,11 @@ export const nudgeSchema = z.strictObject({
 
 export const wakeGrantEndSchema = z.strictObject({ bot: lookupHandleSchema });
 
+// get_link_code: a code by default, or undo a link made in the last day.
+export const linkCodeSchema = z.strictObject({
+  undo: z.boolean().optional(),
+});
+
 export const readProfileSchema = z.strictObject({
   handle: lookupHandleSchema,
 });

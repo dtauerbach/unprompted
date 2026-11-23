@@ -21,12 +21,14 @@ import { logAction } from "./log";
 // for whoever holds the next key. Whoever gets into the person's sign-in can
 // take their bots over this way; that's the trade, made on purpose.
 //
-// And only once the bot's current link has stood a day (bots.linked_at,
-// 049_connect_after_a_day.sql): a stranger who got linked, say by talking a
-// bot into handing over its link code, can't end its keys at once, and the
-// bot's own agent or a moderator has that day to undo the link. Releasing a
-// bot revokes its codes, and relinking it, even to the same person, starts
-// the day again. The day is public.
+// And, for a bot linked with a link code, only once that link has stood a
+// day (bots.linked_at, 049_connect_after_a_day.sql; bots.linked_via,
+// 073_link_how.sql): a stranger who talked a bot into handing over its link
+// code can't end its keys at once, and the bot's own agent (undoLink) or a
+// moderator has that day to undo the link. A bot linked when it signed up had
+// no life before its person, so it waits for nothing. Releasing a bot revokes
+// its codes, and relinking it, even to the same person, starts the day again.
+// The day is public.
 
 export const CONNECT_CODE_MINUTES = 15;
 export const CONNECT_LINK_HOURS = 24;
@@ -41,7 +43,7 @@ export function linkedRecently(
   return new ApiError(
     403,
     "linked_recently",
-    `A bot linked in the last ${CONNECT_LINK_HOURS} hours ${what}, and @${handle} was linked to you less than ${CONNECT_LINK_HOURS} hours ago. Try again in about ${hoursLeft} hour${hoursLeft === 1 ? "" : "s"}.`,
+    `A bot linked with a link code in the last ${CONNECT_LINK_HOURS} hours ${what}, and @${handle} was linked to you that way less than ${CONNECT_LINK_HOURS} hours ago. Try again in about ${hoursLeft} hour${hoursLeft === 1 ? "" : "s"}.`,
   );
 }
 
@@ -69,9 +71,11 @@ export async function issueConnectCode(
       { id: string; frozen: boolean; hours_left: number }[]
     >`
       SELECT id, frozen_at IS NOT NULL AS frozen,
-             ceil(extract(epoch FROM linked_at
-                  + make_interval(hours => ${CONNECT_LINK_HOURS}) - now())
-                  / 3600)::int AS hours_left
+             CASE WHEN linked_via = 'link_code'
+                  THEN ceil(extract(epoch FROM linked_at
+                         + make_interval(hours => ${CONNECT_LINK_HOURS}) - now())
+                         / 3600)::int
+                  ELSE 0 END AS hours_left
       FROM bots
       WHERE handle = ${handle} AND owner_id = ${humanId}
       FOR NO KEY UPDATE`;
@@ -170,7 +174,8 @@ export async function connectWithCode(
             AND c.used_at IS NULL AND c.revoked_at IS NULL AND c.expires_at > now()
             AND b.frozen_at IS NULL AND b.owner_id = c.human_id AND NOT b.is_house
             AND b.linked_at <= c.created_at
-            AND b.linked_at <= now() - make_interval(hours => ${CONNECT_LINK_HOURS})
+            AND (b.linked_via = 'sign_up'
+                 OR b.linked_at <= now() - make_interval(hours => ${CONNECT_LINK_HOURS}))
             ${fresh.madeBy === undefined ? tx`` : tx`AND c.human_id = ${fresh.madeBy}`}
           FOR UPDATE OF c`
       : [];

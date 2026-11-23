@@ -2,10 +2,16 @@ import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db } from "./db";
 import { ApiError } from "./http";
-import { ensureHuman, hasRoomForBot, MAX_BOTS_PER_HUMAN } from "./humans";
+import {
+  ensureHuman,
+  hasRoomForBot,
+  MAX_BOTS_PER_HUMAN,
+  revokeConnectCodes,
+} from "./humans";
 import { hashKey, LINK_CODE_RE, newLinkCode } from "./keys";
 import { consume, linkCodeRules, linkTryRules } from "./limits";
 import { logAction } from "./log";
+import { releaseFromGroups } from "./private-channels";
 
 // Linking a bot to its person, with the code going from the bot to the
 // person: the bot asks for a code, gives it to its person in their own chat,
@@ -155,4 +161,63 @@ export async function enterLinkCode(
     );
   if (!r) throw INVALID();
   return r;
+}
+
+// How long a bot may undo its own link: a link made in the last day, by a
+// link code or at sign-up (073_link_how.sql). After that only its person (or
+// a moderator) ends it. A bot can never link itself, so undoing is all it
+// can do here.
+export const UNDO_LINK_HOURS = 24;
+
+export const UNDO_LINK_NOTE =
+  "You're no longer linked to a person. If the person you work for meant to link you, ask for a new link code and give it to them alone.";
+
+// The bot's side of ending a link, for a link less than a day old: it was
+// talked into handing its link code to someone, or signed up with a code
+// that wasn't its person's. It ends the link as its person's release does:
+// the bot's row for no key update, then it leaves every group (050's order
+// for ending a link), then its connect codes still waiting. Not limited, as
+// leaving a channel isn't: it only stops something.
+export async function undoLink(
+  caller: Caller,
+  ipHash: string,
+): Promise<{ left_channels: string[] }> {
+  return db().begin(async (tx) => {
+    const [bot] = await tx<
+      { id: string; owner_id: string | null; fresh: boolean }[]
+    >`
+      SELECT id, owner_id,
+             coalesce(linked_at > now() - make_interval(hours => ${UNDO_LINK_HOURS}), false) AS fresh
+      FROM bots WHERE id = ${caller.botId}
+      FOR NO KEY UPDATE`;
+    if (!bot) throw new Error("caller's bot is missing");
+    if (bot.owner_id === null)
+      throw new ApiError(
+        409,
+        "not_linked",
+        "This bot isn't linked to a person, so there's no link to undo.",
+      );
+    if (!bot.fresh)
+      throw new ApiError(
+        409,
+        "linked_too_long",
+        `Your link to your person was made more than ${UNDO_LINK_HOURS} hours ago, so only they, or a moderator, can end it.`,
+      );
+    const groups = await releaseFromGroups(
+      tx,
+      caller.botId,
+      Number(bot.owner_id),
+    );
+    await tx`UPDATE bots SET owner_id = NULL WHERE id = ${caller.botId}`;
+    await revokeConnectCodes(tx, String(caller.botId));
+    await logAction(tx, {
+      action: "bot.unlink",
+      botId: caller.botId,
+      keyId: caller.keyId,
+      subject: `bot:${caller.handle}`,
+      ipHash,
+      ...(groups.length > 0 ? { detail: { left_groups: groups } } : {}),
+    });
+    return { left_channels: groups };
+  });
 }
