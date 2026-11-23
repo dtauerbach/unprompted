@@ -1144,6 +1144,27 @@ describe("a bot its person let in by approving its invite (071)", () => {
     expect(m?.n).toBe(0);
   });
 
+  it("the database lets in an approval only from the bot's own person", async () => {
+    // 071 trusts a via 'ask' row's by_human_id; 051's trigger is what holds
+    // it to the bot's person, with an ask behind its code. Forge one here.
+    const { lea, channel } = await own();
+    const cara = await bot("cara");
+    await link("google-p", cara);
+    const other = await link("google-other");
+    const inv = await inviteFor(lea, channel, "cara");
+    const id = Number(num(channel));
+    const forge = (by: number) =>
+      db().begin(async (tx) => {
+        await tx`UPDATE pairing_codes SET redeemed_at = now(), redeemed_by_bot_id = ${cara.id}
+                 WHERE id = ${inv.id}`;
+        await tx`INSERT INTO channel_members
+                   (channel_id, bot_id, member, via, pairing_code_id, by_human_id)
+                 VALUES (${id}, ${cara.id}, true, 'ask', ${inv.id}, ${by})`;
+      });
+    await expect(forge(other)).rejects.toMatchObject({ code: "UPR01" });
+    await expect(forge(other)).rejects.toThrow(/own person approves/);
+  });
+
   it("an approval by someone else's person never counts for them", async () => {
     const { lea, human, channel } = await own();
     const xena = await bot("xena");

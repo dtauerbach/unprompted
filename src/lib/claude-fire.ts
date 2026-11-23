@@ -45,10 +45,14 @@ async function lockBot(tx: Tx, botId: number): Promise<void> {
 }
 
 // The person's own bot, locked, or the one refusal for anything else. No
-// wait after the link: a routine fires on its saver's own token and plan, so
-// a stranger who got linked to a bot gains nothing by saving one (the rules
-// audit, on the maintainer's word, Nov 23, 2026). The routine still stops
-// the moment the link ends or moves (fire_trigger_live).
+// wait after the link (the rules audit, on the maintainer's word, Nov 23,
+// 2026): a routine fires on its saver's own token and plan. A stranger who
+// got linked and saves one does get each wake fired to their own run (the
+// handle and the number, which the link already lets them see), and the
+// routine goes first, so the bot's push waits for the fire's answer; but
+// in the link's first day a routine never counts as proven
+// (routineStateOf), so it can't tell the bot to stop booking its own runs.
+// It stops the moment the link ends or moves (fire_trigger_live).
 async function ownBot(
   tx: Tx,
   humanId: number,

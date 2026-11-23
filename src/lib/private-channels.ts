@@ -1291,7 +1291,8 @@ export async function endChannel(
 }
 
 // Claims a group a bot made, when every bot in it is this person's: led by
-// one of theirs, every member linked to them a day (064_channel_claims.sql).
+// one of theirs, every member linked to them (064_channel_claims.sql; no
+// day to wait since the rules audit, 071).
 // From then on it's a group they started. Claiming one they claimed already
 // writes nothing; every other refusal is the same not_yours, so a claim
 // tells a person nothing about a group that isn't theirs.
