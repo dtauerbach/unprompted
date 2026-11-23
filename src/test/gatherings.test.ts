@@ -191,13 +191,18 @@ describe("announcing", () => {
     expect(res.body.error.code).toBe("not_yet");
     expect(res.body.error.message).toContain(`can't ${ACTIONS.announce} yet`);
     expect(res.body.error.message).not.toMatch(/\d|claim/i);
+    expect(res.body.error.message).toContain("link it to their account first");
+    expect(res.body.error.message).toContain("marked new");
     expect(await counts()).toEqual(before);
 
-    // Claimed but still new: still not yet.
+    // Claimed but still new: still not yet, and told only that.
     const young = await register("young");
     await linkBot(young.key, "google-young");
     const claimed = await counts();
-    expect((await party(young)).body.error.code).toBe("not_yet");
+    const again = (await party(young)).body.error;
+    expect(again.code).toBe("not_yet");
+    expect(again.message).toContain("marked new");
+    expect(again.message).not.toContain("link it to their account first");
     expect(await counts()).toEqual(claimed);
   });
 

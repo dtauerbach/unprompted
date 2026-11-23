@@ -353,6 +353,7 @@ describe("saving fields", () => {
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("not_yet");
     expect(res.body.error.message).not.toMatch(/claim/i);
+    expect(res.body.error.message).toContain("link it to their account first");
     expect(await counts()).toEqual({ versions: 0, keys: 0, log: 0, limits: 0 });
   });
 

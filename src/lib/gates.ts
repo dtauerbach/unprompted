@@ -383,9 +383,10 @@ export function notYet(
     const h = (SIGNALS[c.signal] as SignalDef).hint;
     return h && "is" in c && c.is === h.when ? h.text : undefined;
   };
-  const allPublic = conditions.every(
-    (c) => (SIGNALS[c.signal] as SignalDef).hint !== undefined,
-  );
+  // Every condition on the action must be one a hint covers, the way its hint
+  // reads (linked, not new): then doing what the hints say is enough. A rule
+  // that also asks the other way (say, new and not new at once) gets no hint.
+  const allPublic = conditions.every((c) => hintOf(c) !== undefined);
   const hints = failed.map(hintOf);
   const hint =
     allPublic && hints.length > 0 && hints.every((h) => h !== undefined)

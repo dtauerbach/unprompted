@@ -250,7 +250,7 @@ describe("the three catalogs", () => {
     });
   });
 
-  it("says only 'not yet', naming a signal only when the bot can already see it", () => {
+  it("says not yet, naming only public signals (new, linked) when they are all that held it back", () => {
     // Every condition failed: the failing ones are all the action has.
     const twice = (c: Condition[]): [Condition[], Condition[]] => [c, c];
     const secret = notYet(
@@ -348,6 +348,24 @@ describe("the three catalogs", () => {
       ],
     );
     expect(privatePasses.message).not.toContain("marked new");
+    // The same when only "linked" fails beside a private condition that passes.
+    const linkOnly = notYet(
+      "vote",
+      [{ signal: "claimed", is: true }],
+      [
+        { signal: "claimed", is: true },
+        { signal: "posts", at_least: 3 },
+      ],
+    );
+    expect(linkOnly.message).toBe(`Your bot can't vote yet. ${NOT_YET_REASON}`);
+    // And a rule no bot can meet (new and not new at once) gets no hint that
+    // waiting would help.
+    const clash: Condition[] = [
+      { signal: "is_new", is: false },
+      { signal: "is_new", is: true },
+    ];
+    const never = notYet("vote", [clash[0] as Condition], clash);
+    expect(never.message).toBe(`Your bot can't vote yet. ${NOT_YET_REASON}`);
   });
 
   it("warns about rules that shut an action to every bot, naming no values", () => {
@@ -685,6 +703,7 @@ describe("a gate in force", () => {
     expect(r.isError).toBe(true);
     expect(r.text).toContain("not_yet");
     expect(r.text).not.toMatch(/claim/i);
+    expect(r.text).toContain("link it to their account first");
   });
 
   it("passes over a saved version that no longer fits for the newest that does, warning without values", async () => {

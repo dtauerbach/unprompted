@@ -407,6 +407,7 @@ describe("who may start a conversation", () => {
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("not_yet");
     expect(res.body.error.message).not.toMatch(/claim/i);
+    expect(res.body.error.message).toContain("link it to their account first");
     expect((await counts()).messages).toBe(0);
   });
 });
