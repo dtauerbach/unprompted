@@ -73,13 +73,19 @@ const num = (ref: string) => ref.replace("private:", "");
 function post(
   channel: string,
   body: string,
-  opts: { wake?: PersonWake; nonce?: string; who?: string } = {},
+  opts: {
+    wake?: PersonWake;
+    leader?: string;
+    nonce?: string;
+    who?: string;
+  } = {},
 ) {
   return postAsPerson(db(), {
     authUserId: opts.who ?? "google-p",
     channel,
     body,
     wake: opts.wake ?? true,
+    ...(opts.leader !== undefined ? { leader: opts.leader } : {}),
     nonce: opts.nonce ?? nonce(),
     ipHash: null,
   });
@@ -378,6 +384,41 @@ describe("a person writing to their own bots", () => {
     });
     expect(again.woke).toBe(1);
     expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0, b0 + 1]);
+  });
+
+  it("refuses, writing nothing, a send naming a leader that isn't the one now", async () => {
+    const { lea, ben, human, channel } = await own();
+    const l0 = await wakeOf(lea);
+    const b0 = await wakeOf(ben);
+    const q0 = await quota();
+    // The box showed lea, but ben leads by the time it's sent.
+    await db()`INSERT INTO channel_leaders (channel_id, bot_id, human_id)
+      VALUES (${Number(num(channel))}, ${ben.id}, ${human})`;
+    await expect(
+      post(channel, "For lea.", { wake: "leader", leader: "lea" }),
+    ).rejects.toMatchObject({ status: 409, code: "channel_changed" });
+    // A name no member has is refused the same way.
+    await expect(
+      post(channel, "For kit.", { wake: "leader", leader: "kit" }),
+    ).rejects.toMatchObject({ status: 409, code: "channel_changed" });
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+    expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0, b0]);
+    // Refused before its limit rows, so it used none of the person's quota.
+    expect(await quota()).toEqual(q0);
+    // Naming the leader now, it goes and wakes that one.
+    const sent = await post(channel, "For ben.", {
+      wake: "leader",
+      leader: "ben",
+    });
+    expect(sent.woke).toBe(1);
+    expect([await wakeOf(lea), await wakeOf(ben)]).toEqual([l0, b0 + 1]);
+    // The name only binds a send to the leader: waking everyone or nobody
+    // ignores it, as an older page sends none.
+    expect(
+      (await post(channel, "All.", { wake: true, leader: "lea" })).woke,
+    ).toBe(2);
   });
 
   it("keeps leader-only waking to a person's message that wakes, in the database too", async () => {
@@ -879,7 +920,7 @@ describe("what became of the person's newest message", () => {
     });
     expect(r.status).toBe(201);
     expect((await seen(human, channel))?.bots).toEqual([
-      { handle: "ben", kind: "answered", at: null },
+      { handle: "ben", kind: "posted_since", at: null },
       { handle: "lea", kind: "checked_in", at: expect.any(Date) },
     ]);
     // A newer message starts again: nothing has happened since it.
@@ -940,6 +981,84 @@ describe("what became of the person's newest message", () => {
       "kit",
       "lea",
     ]);
+  });
+
+  it("shows a bot's last look only from its membership in force", async () => {
+    const { ben, human, channel } = await own();
+    const lookOf = async () =>
+      (
+        await readGroupForPerson(db(), human, Number(num(channel)))
+      )?.last_word.find((w) => w.handle === "ben")?.read_at ?? null;
+    expect((await read(ben, channel)).status).toBe(200);
+    expect(await lookOf()).toBeInstanceOf(Date);
+    // Taken out and put back: the look was in a membership that ended.
+    await setOwnBots(db(), "google-p", channel, [], ["ben"], null);
+    await setOwnBots(db(), "google-p", channel, ["ben"], [], null);
+    expect(await lookOf()).toBeNull();
+    expect((await read(ben, channel)).status).toBe(200);
+    expect(await lookOf()).toBeInstanceOf(Date);
+  });
+
+  it("counts a read receipt only from the bot's membership in force", async () => {
+    const { ben, human, channel } = await own();
+    const mine = await post(channel, "Read me.", { wake: false });
+    const kindOf = async () =>
+      (await seen(human, channel))?.bots.find((b) => b.handle === "ben")?.kind;
+    // A note older than ben's membership row, as one left over from before
+    // it was taken out and put back would be. Such a note can't reach the
+    // page through reads alone (a bot put back after the message can't read
+    // it), so this holds the rule itself.
+    await db()`INSERT INTO channel_reads
+        (channel_id, bot_id, read_upto, read_at, person_upto, person_at)
+      VALUES (${Number(num(channel))}, ${ben.id}, ${mine.id},
+        now() - interval '1 hour', ${mine.id}, now() - interval '1 hour')`;
+    expect(await kindOf()).toBe("next_visit");
+    // A read in this membership of the person's next message counts.
+    await post(channel, "And this one.", { wake: false });
+    expect((await read(ben, channel)).status).toBe(200);
+    expect(await kindOf()).toBe("read");
+  });
+
+  it("says when each bot last wrote by the same rule as the messages the page shows (parity)", async () => {
+    const { lea, ben, human, channel } = await own();
+    const say = async (b: Bot, body: string) =>
+      expect(
+        (await call(sendRoute, { key: b.key, body: { channel, body } })).status,
+      ).toBe(201);
+    // One fixture with each case: a bot that wrote, left and came back
+    // (its old message is still on the page through lea, but isn't its
+    // word in this membership), a message written before a relink, and a
+    // bot quiet in its membership in force.
+    await say(lea, "Lea, first.");
+    await say(ben, "Ben, before leaving.");
+    await setOwnBots(db(), "google-p", channel, [], ["ben"], null);
+    await setOwnBots(db(), "google-p", channel, ["ben"], [], null);
+    await say(lea, "Lea, again.");
+    const page = await readGroupForPerson(db(), human, Number(num(channel)));
+    expect(page).not.toBeNull();
+    const rows = await db()<{ handle: string; from_message_id: string }[]>`
+      SELECT b.handle, r.from_message_id FROM channel_roster(${Number(num(channel))}) r
+      JOIN bots b ON b.id = r.bot_id`;
+    const since = new Map(
+      rows.map((r) => [r.handle, Number(r.from_message_id)]),
+    );
+    for (const w of page?.last_word ?? []) {
+      const shown = (page?.messages ?? []).filter(
+        (m) =>
+          m.from === w.handle &&
+          m.body !== null &&
+          m.id > (since.get(w.handle) ?? 0),
+      );
+      const newest = shown.at(-1)?.created_at ?? null;
+      expect([w.handle, w.at?.getTime() ?? null]).toEqual([
+        w.handle,
+        newest?.getTime() ?? null,
+      ]);
+    }
+    expect(page?.last_word.find((w) => w.handle === "ben")?.at).toBeNull();
+    expect(
+      page?.messages.some((m) => m.from === "ben" && m.body !== null),
+    ).toBe(true);
   });
 
   it("counts a push only for a bot nothing else wakes, and only a 2xx", async () => {

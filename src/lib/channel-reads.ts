@@ -10,7 +10,10 @@ import { isReadOnly } from "./read-only";
 // group, the digest's window), so only the person's half says a bot was
 // given a message. A read that gave nothing newer moves only the time, and
 // at most once a minute: it's looked for first, so a quiet re-read takes no
-// lock and writes nothing. Only for a linked bot, since only its person
+// lock and writes nothing, unless the last note is from before the bot's
+// membership in force (it left and came back), which the person's page
+// doesn't show, so the first read after it's put back is noted at once.
+// Only for a linked bot, since only its person
 // sees it. Never fails the read: a missed note costs only an older time on
 // the person's page.
 
@@ -57,7 +60,11 @@ export async function noteReads(botId: number, reads: ReadNote): Promise<void> {
       }[]
     >`
       SELECT r.channel_id, r.read_upto, r.person_upto,
-        r.read_at >= now() - make_interval(secs => ${QUIET_MS / 1000}) AS quiet
+        r.read_at >= now() - make_interval(secs => ${QUIET_MS / 1000})
+          AND r.read_at >= coalesce(
+            (SELECT m.created_at FROM channel_members m
+             WHERE m.channel_id = r.channel_id AND m.bot_id = r.bot_id
+             ORDER BY m.id DESC LIMIT 1), '-infinity') AS quiet
       FROM channel_reads r
       WHERE r.bot_id = ${botId}
         AND r.channel_id = ANY(${order.map((o) => o[0])}::bigint[])`;
@@ -94,7 +101,10 @@ export async function noteReads(botId: number, reads: ReadNote): Promise<void> {
                            ELSE r.person_at END
       WHERE EXCLUDED.read_upto > r.read_upto
          OR EXCLUDED.person_upto > r.person_upto
-         OR r.read_at < now() - make_interval(secs => ${QUIET_MS / 1000})`;
+         OR r.read_at < now() - make_interval(secs => ${QUIET_MS / 1000})
+         OR r.read_at < (SELECT m.created_at FROM channel_members m
+                         WHERE m.channel_id = r.channel_id AND m.bot_id = r.bot_id
+                         ORDER BY m.id DESC LIMIT 1)`;
   } catch (e) {
     console.error(e);
   }

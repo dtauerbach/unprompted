@@ -45,7 +45,8 @@ export type PeekMessage = {
   body: string | null;
   // Only where its bot asks yes or no (068_yes_no.sql) and its body shows:
   // whether a tap may answer it now (its bot is still a member, theirs and
-  // not frozen), and the reader's newest answer to it, if any.
+  // not frozen, and asked it in its membership in force, 070), and the
+  // reader's newest answer to it, if any.
   ask?: { open: boolean; answered: "Yes" | "No" | null };
   // Only on the reader's own tap: the question it answers, and the bot
   // that asked it.
@@ -148,7 +149,10 @@ export async function readGroupForPerson(
           coalesce(m.ask = 'yes_no' AND b.owner_id = ${humanId}
             AND b.linked_at <= m.created_at, false) AS asks,
           coalesce(m.ask = 'yes_no' AND b.id = ANY(${readers}::bigint[])
-            AND b.owner_id = ${humanId} AND b.linked_at <= m.created_at, false) AS open,
+            AND b.owner_id = ${humanId} AND b.linked_at <= m.created_at
+            AND m.id > (SELECT coalesce(r.from_message_id, 0)
+                        FROM channel_roster(${channelId}) r WHERE r.bot_id = b.id),
+            false) AS open,
           CASE WHEN m.ask = 'yes_no' THEN
             (SELECT a.body FROM messages a
              WHERE a.answers = m.id AND a.human_id = ${humanId}
@@ -219,9 +223,10 @@ export async function readGroupForPerson(
     // came into the group this time (its membership row in force), so a bot
     // that left and came back isn't said to have written something its page
     // no longer shows. The message half walks messages_channel backwards.
-    // And when it last read the group while linked to the reader
-    // (channel_reads, 067), so a bot that reads without writing doesn't
-    // look quiet.
+    // And when it last read the group while linked to the reader and in
+    // this membership (channel_reads, 067), so a bot that reads without
+    // writing doesn't look quiet, and a read from before it left and came
+    // back, or from before its link, isn't shown as this one's.
     const lastWord = await tx<
       { handle: string; at: Date | null; read_at: Date | null }[]
     >`
@@ -237,10 +242,11 @@ export async function readGroupForPerson(
            AND p.version > coalesce(cm.from_plan_version, 0))) AS at,
         (SELECT cr.read_at FROM channel_reads cr
          WHERE cr.channel_id = ${channelId} AND cr.bot_id = b.id
-           AND cr.read_at >= b.linked_at) AS read_at
+           AND cr.read_at >= b.linked_at AND cr.read_at >= cm.created_at) AS read_at
       FROM bots b
       CROSS JOIN LATERAL (
-        SELECT m.from_message_id, m.from_plan_version FROM channel_members m
+        SELECT m.from_message_id, m.from_plan_version, m.created_at
+        FROM channel_members m
         WHERE m.channel_id = ${channelId} AND m.bot_id = b.id
         ORDER BY m.id DESC LIMIT 1) cm
       WHERE b.id = ANY(${readers}::bigint[]) AND b.owner_id = ${humanId}
@@ -296,7 +302,7 @@ async function seenFor(
   const rows = await tx<
     {
       handle: string;
-      answered: boolean;
+      posted_since: boolean;
       read_at: Date | null;
       fired_at: Date | null;
       checked_at: Date | null;
@@ -308,10 +314,13 @@ async function seenFor(
     SELECT b.handle,
       EXISTS (SELECT 1 FROM messages a
               WHERE a.channel_id = ${channelId} AND a.to_bot_id IS NULL
-                AND a.bot_id = b.id AND a.id > ${mine.id}) AS answered,
+                AND a.bot_id = b.id AND a.id > ${mine.id}) AS posted_since,
       (SELECT cr.person_at FROM channel_reads cr
        WHERE cr.channel_id = ${channelId} AND cr.bot_id = b.id
-         AND cr.person_upto >= ${mine.id} AND cr.person_at >= b.linked_at) AS read_at,
+         AND cr.person_upto >= ${mine.id} AND cr.person_at >= b.linked_at
+         AND cr.person_at >= (SELECT cm.created_at FROM channel_members cm
+                              WHERE cm.channel_id = ${channelId} AND cm.bot_id = b.id
+                              ORDER BY cm.id DESC LIMIT 1)) AS read_at,
       f.fired_at, f.seen_at AS checked_at,
       GREATEST(
         CASE WHEN e.last_status BETWEEN 200 AND 299 THEN e.last_sent_at END,
@@ -333,7 +342,7 @@ async function seenFor(
     bots: rows.map((r) => {
       const kind = seenKind({
         sent_at: mine.created_at,
-        answered: r.answered,
+        posted_since: r.posted_since,
         read_at: r.read_at,
         fired_at: r.fired_at,
         checked_at: r.checked_at,

@@ -926,6 +926,9 @@ export function PersonPostForm({
       <h3 className="sr-only">{t["account.peek.write.title"]}</h3>
       <input type="hidden" name="channel" value={channel} />
       <input type="hidden" name="nonce" value={nonce} />
+      {/* The leader named in the choice below, so a send after the lead
+          moved is refused rather than waking a bot the person didn't see. */}
+      {leader !== null && <input type="hidden" name="leader" value={leader} />}
       <div className="flex items-end gap-2">
         <label className="flex-1">
           <span className="sr-only">{t["account.peek.write.field"]}</span>
@@ -1008,6 +1011,7 @@ export function PersonPostForm({
 export function PersonAnswerForm({
   channel,
   question,
+  text,
   asker,
   answered,
   nonce: firstNonce,
@@ -1015,6 +1019,9 @@ export function PersonAnswerForm({
 }: {
   channel: string;
   question: number;
+  // The question's own words, beside the buttons, so a refresh that brings
+  // a newer question can't leave Yes and No under the older one's wording.
+  text: string;
   asker: string;
   answered: "Yes" | "No" | null;
   nonce: string;
@@ -1061,6 +1068,14 @@ export function PersonAnswerForm({
         <a href={`#m${question}`} className="underline">
           {wordsText(t["account.peek.ask.lead"], { handle: `@${asker}` })}
         </a>
+      </p>
+      {/* The whole question, never clipped: a condition in its last
+          line must be in front of the person before Yes or No is. */}
+      <p
+        data-question-text
+        className="w-full whitespace-pre-wrap break-words text-sm text-neutral-900 dark:text-neutral-100"
+      >
+        {text}
       </p>
       <div className="flex gap-2">
         {ANSWERS.map((value) =>

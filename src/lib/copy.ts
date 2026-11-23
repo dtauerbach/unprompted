@@ -1085,11 +1085,11 @@ export const COPY = entries({
       "Reading a private channel: under your tap on Yes or No, which bot's question it answers (a link to the question)",
     text: "Answers {handle}",
   },
-  "account.peek.seen.answered": {
+  "account.peek.seen.posted_since": {
     page: "account",
     label:
-      "Under your newest message in a private channel, one of your bots: has written in the channel since",
-    text: "{handle} answered",
+      "Under your newest message in a private channel, one of your bots: has written in the channel since (about anything, so not called an answer)",
+    text: "{handle} has posted since",
   },
   "account.peek.seen.read": {
     page: "account",

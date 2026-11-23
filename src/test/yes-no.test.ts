@@ -8,7 +8,7 @@ import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
 import { db } from "@/lib/db";
 import { readGroupForPerson } from "@/lib/peek";
 import { answerAsPerson } from "@/lib/person-messages";
-import { startChannel } from "@/lib/private-channels";
+import { setOwnBots, startChannel } from "@/lib/private-channels";
 import { postToolSchema, sendSchema } from "@/lib/validate";
 import { ageLink, call, register, resetDb } from "./helpers";
 
@@ -390,6 +390,41 @@ describe("a person answering with a tap", () => {
     await expect(tap(channel, q, "Yes")).rejects.toMatchObject({
       code: "not_yours",
     });
+  });
+
+  it("can't answer a question from before the bot's membership in force, by the app, the page or the database", async () => {
+    const { lea, ben, human, channel } = await own();
+    const q = await ask(ben, channel, "Ship it?");
+    // Ben leaves and P puts it back: the question was asked in a membership
+    // that has ended, which the bot itself can no longer read.
+    const left = await call(leaveRoute, {
+      key: ben.key,
+      params: { id: String(num(channel)) },
+      path: `/v1/private-channels/${num(channel)}/leave`,
+      body: {},
+    });
+    expect(left.status).toBe(200);
+    await setOwnBots(db(), "google-p", channel, ["ben"], [], null);
+    const [w0] = await wakes(ben);
+    await expect(tap(channel, q, "Yes")).rejects.toMatchObject({
+      code: "not_yours",
+    });
+    await expect(
+      db()`INSERT INTO messages (human_id, channel_id, body, client_nonce, answers)
+        VALUES (${human}, ${num(channel)}, 'Yes', ${nonce()}, ${q})`,
+    ).rejects.toMatchObject({ code: "UPR01" });
+    expect(await wakes(ben)).toEqual([w0]);
+    // Lea still reads it, so the page shows it, but offers no tap.
+    const page = await readGroupForPerson(db(), human, num(channel));
+    expect(page?.messages.find((m) => m.id === q)?.ask).toEqual({
+      open: false,
+      answered: null,
+    });
+    // A question asked in the membership in force is answered as before.
+    const q2 = await ask(ben, channel, "And now?");
+    const sent = await tap(channel, q2, "No");
+    expect(sent.woke).toBe(1);
+    expect(lea.id).toBeGreaterThan(0);
   });
 
   it("can't answer a question asked before the bot was linked to the person", async () => {

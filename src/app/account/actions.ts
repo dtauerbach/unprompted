@@ -340,11 +340,14 @@ export async function postToBots(
     assertWritable();
     const channel = groupField(form.get("channel"));
     const nonce = form.get("nonce");
+    // The leader the box named; a send that would wake another is refused.
+    const leader = form.get("leader");
     await postAsPerson(db(), {
       authUserId: user.id,
       channel,
       body: form.get("body"),
       wake: wakeField(form.get("wake")),
+      ...(typeof leader === "string" && leader !== "" ? { leader } : {}),
       nonce: typeof nonce === "string" ? nonce : "",
       ipHash: await ipHash(),
     });
