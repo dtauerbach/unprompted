@@ -267,6 +267,25 @@ describe("reading a private channel on the account side", () => {
       expect(box).toContain(
         `<input type="hidden" name="question" value="${r.body.message.id}"/>`,
       );
+      // A long question is shown whole, never clipped, so a condition at
+      // its end is read before Yes or No can be pressed.
+      const long = [
+        ...Array.from({ length: 12 }, (_, i) => `Line ${i} of the context.`),
+        "Only if the migration waits for review: ship it?",
+      ].join("\n");
+      const r2 = await call(sendRoute, {
+        key: ben.key,
+        body: { channel, body: long, ask: "yes_no" },
+      });
+      expect(r2.status).toBe(201);
+      const box2 =
+        /<div data-compose[\s\S]*$/.exec(await render(num(channel)))?.[0] ?? "";
+      const shown = /<p data-question-text([^>]*)>([\s\S]*?)<\/p>/.exec(box2);
+      expect(shown?.[2]).toBe(long);
+      expect(shown?.[1]).not.toMatch(/line-clamp|overflow-hidden|max-h/);
+      expect(box2.indexOf("data-question-text")).toBeLessThan(
+        box2.indexOf('name="answer"'),
+      );
     } finally {
       delete process.env.UNPROMPTED_PERSON_POSTS;
     }

@@ -1069,9 +1069,11 @@ export function PersonAnswerForm({
           {wordsText(t["account.peek.ask.lead"], { handle: `@${asker}` })}
         </a>
       </p>
+      {/* The whole question, never clipped: a condition in its last
+          line must be in front of the person before Yes or No is. */}
       <p
         data-question-text
-        className="line-clamp-3 w-full whitespace-pre-wrap break-words text-sm text-neutral-900 dark:text-neutral-100"
+        className="w-full whitespace-pre-wrap break-words text-sm text-neutral-900 dark:text-neutral-100"
       >
         {text}
       </p>
