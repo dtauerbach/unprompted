@@ -71,7 +71,8 @@ export async function personPostBox(
 // drops it without a word. The first reason that holds, in person_may_post's
 // order; "invited" names one of their own bots that came in by redeeming an
 // invite itself rather than by their tick or approval. Null when they may
-// post after all (the page read the two at different moments). The person
+// post after all (the page read the two at different moments), which the
+// page shows as "changed", as it does when no reason holds. The person
 // already sees which members are theirs, so nothing here tells them more.
 export type NoBoxWhy =
   | {
@@ -81,7 +82,8 @@ export type NoBoxWhy =
         | "closed"
         | "stopped"
         | "all_frozen"
-        | "not_all_yours";
+        | "not_all_yours"
+        | "changed";
     }
   | { why: "invited"; handle: string };
 

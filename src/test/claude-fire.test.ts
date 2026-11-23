@@ -368,10 +368,22 @@ describe("firing", () => {
       paused: false,
       proven: false,
     });
+    // What the bot itself reads: catch_up still hands it the recipe to book
+    // its own run, since nothing else is known to reach it (Dot's review).
+    const comeBack = async () => {
+      const r = await call(catchUpRoute, { key: b.key });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      return r.body.getting_started.steps.find(
+        (s: { step: string }) => s.step === "come_back",
+      );
+    };
+    expect((await comeBack()).recipe).toMatchObject({ holds: 1 });
     await ageLink("fresh");
     expect((await routineStateOf(db(), id, PUSH_MAX_FAILURES)).proven).toBe(
       true,
     );
+    // A day on, the same answered routine is trusted, so the recipe goes.
+    expect((await comeBack()).recipe).toBeUndefined();
   });
 
   it("is answered by catch_up too", async () => {

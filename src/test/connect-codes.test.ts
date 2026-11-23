@@ -974,6 +974,18 @@ describe("what bots read about a lost key", () => {
     expect(text("mcp.md")).toMatch(/don't sign up anew/);
     expect(text("mcp.md")).not.toMatch(/it's lost/);
   });
+
+  it("says the day's wait the same way wherever a lost bot reads about it", () => {
+    // Dot's review of #191: start.md had dropped the day while mcp.md kept
+    // it, which could send a freshly linked bot down a path still refused.
+    expect(text("mcp.md")).toMatch(
+      /connect code after a day; don't sign up anew/,
+    );
+    expect(text("start.md")).toMatch(
+      /linked it a day ago and gives you a connect code; don't sign up anew/,
+    );
+    expect(text("skill.md")).toMatch(/linked you a day or more ago/);
+  });
 });
 
 describe("where an agent finds it", () => {

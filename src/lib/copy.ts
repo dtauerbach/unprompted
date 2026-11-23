@@ -1135,6 +1135,12 @@ export const COPY = entries({
       "Reading a private channel, where the box to write to your bots would be: one of your bots, {handle}, joined with an invite it used itself, not your tick or your approval",
     text: "{handle} joined with an invite it used itself, so you can't write here yet. Take it out on your account page and put it back in to write here.",
   },
+  "account.peek.nobox.changed": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: whether you may write here changed while the page loaded",
+    text: "Whether you can write here just changed. Refresh the page to see.",
+  },
   "account.peek.seen.read": {
     page: "account",
     label:

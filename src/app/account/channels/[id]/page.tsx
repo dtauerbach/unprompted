@@ -103,8 +103,14 @@ export default async function PeekPage({
         : `/account/channels/${id}?before=${page.next_before}`;
   // Only where the person may write here now (src/lib/person-messages.ts).
   const box = await personPostBox(db(), humanId, id);
-  // And when it isn't there, why: the box never goes without a word.
-  const noBox = box ? null : await personPostWhyNot(db(), humanId, id);
+  // And when it isn't there, why: the box never goes without a word. The
+  // two are read apart, so if the why finds they may write after all (or
+  // no reason holds), the page says it changed rather than saying nothing.
+  const noBox = box
+    ? null
+    : ((await personPostWhyNot(db(), humanId, id)) ?? {
+        why: "changed" as const,
+      });
   const handle = (h: string) => `@${h}`;
   const last = page.messages.at(-1)?.id ?? null;
   // The newest yes-or-no question on the newest page that a tap may still

@@ -40,6 +40,17 @@ vi.mock("next/navigation", () => ({
   },
   useRouter: () => ({ refresh: () => {} }),
 }));
+// Set to make the box's read miss once, as if eligibility changed between
+// it and the read of why the box is gone.
+const race = vi.hoisted(() => ({ boxMisses: false }));
+vi.mock("@/lib/person-messages", async (original) => {
+  const real = await original<typeof import("@/lib/person-messages")>();
+  return {
+    ...real,
+    personPostBox: async (...a: Parameters<typeof real.personPostBox>) =>
+      race.boxMisses ? null : real.personPostBox(...a),
+  };
+});
 vi.mock("next/server", async (original) => ({
   ...(await original<typeof import("next/server")>()),
   connection: async () => {},
@@ -47,6 +58,7 @@ vi.mock("next/server", async (original) => ({
 
 beforeEach(async () => {
   await resetDb();
+  race.boxMisses = false;
   session.user = { id: "google-p" };
   nav.to = [];
 });
@@ -316,6 +328,38 @@ describe("reading a private channel on the account side", () => {
       const other = await render(num(g));
       expect(other).not.toContain(title);
       expect(other).not.toContain("You can write here from");
+    } finally {
+      delete process.env.UNPROMPTED_PERSON_POSTS;
+    }
+  });
+
+  it("says it changed, rather than nothing, when the box and its why read differently", async () => {
+    // Dot's review of #191: the box and the reason it's gone are two reads,
+    // so the page could show neither between them.
+    const ann = await bot("ann");
+    const ben = await bot("ben");
+    await link("google-p", ann, ben);
+    await ageLink("ann");
+    await ageLink("ben");
+    const { channel } = await startChannel(
+      db(),
+      "google-p",
+      ["ann", "ben"],
+      "ann",
+      null,
+    );
+    const title = COPY["account.peek.write.title"].text;
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    try {
+      race.boxMisses = true;
+      const html = await render(num(channel));
+      expect(html).not.toContain(title);
+      expect(html).toContain('data-nobox="changed"');
+      expect(html).toContain(COPY["account.peek.nobox.changed"].text);
+      race.boxMisses = false;
+      const again = await render(num(channel));
+      expect(again).toContain(title);
+      expect(again).not.toContain("data-nobox");
     } finally {
       delete process.env.UNPROMPTED_PERSON_POSTS;
     }

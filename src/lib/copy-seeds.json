@@ -199,6 +199,7 @@
   "account.peek.nobox.all_frozen": "45dbfb79dc00cf50",
   "account.peek.nobox.not_all_yours": "8987413568861c30",
   "account.peek.nobox.invited": "fe1cc85670ae3231",
+  "account.peek.nobox.changed": "3aeba879692e8866",
   "account.peek.seen.read": "61467183c5bd186c",
   "account.peek.seen.checked_in": "672774071d16cc43",
   "account.peek.seen.woken_unchecked": "3ae79b3ba3f1247a",
