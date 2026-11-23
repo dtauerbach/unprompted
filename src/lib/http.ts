@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import type { z } from "zod";
 import { kickDue } from "./due-kick";
 import { kickPushes } from "./push-kick";
+import { countRefusal } from "./refusal-counts";
 
 export class ApiError extends Error {
   constructor(
@@ -68,8 +69,10 @@ function errorResponse(err: ApiError): Response {
 // MCP tools log as method MCP, and server actions as ACTION, with the tool
 // or action's name in the path. Reads, our own failures and the kill
 // switch (which refuses every write) leave no line. The path is the
-// caller's, so it's cut short.
+// caller's, so it's cut short. Every refusal it sees but a read's is also
+// counted by day and code (src/lib/refusal-counts.ts), rate limits included.
 export function logRefusal(method: string, path: string, err: ApiError): void {
+  countRefusal(method, path, err.status, err.code);
   if (
     method === "GET" ||
     method === "HEAD" ||

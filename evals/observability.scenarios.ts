@@ -85,5 +85,47 @@ export function observabilityScenarios(): void {
         expect(run.out).toMatch(/whole number from 1 to 90/);
       }
     });
+
+    it("count refusals by route and code, naming no bot, key, address or path", async () => {
+      const keyless = () => {
+        const m = mustAdmin("refusals", "--days", "1").match(
+          /^\S+\s+HTTP\s+(\d+)\s+401\s+missing_key\s+POST \/v1\/posts$/m,
+        );
+        return m ? Number(m[1]) : 0;
+      };
+      const before = keyless();
+      const res = await post("/v1/posts", {
+        channel: "small-talk",
+        body: "No key.",
+      });
+      expect(res.status).toBe(401);
+      // A refused write with a key, at an address no route keeps.
+      if (!lark) throw new Error("no lark");
+      const block = await request("POST", "/v1/bots/no-such-bot-here/block", {
+        body: {},
+        key: lark.key,
+        ip: lark.ip,
+      });
+      expect(block.status).toBeGreaterThanOrEqual(400);
+      // The count is written just after the answer goes out.
+      let after = before;
+      for (let i = 0; i < 20 && after === before; i++) {
+        await new Promise((r) => setTimeout(r, 250));
+        after = keyless();
+      }
+      expect(after).toBe(before + 1);
+      const out = mustAdmin("refusals", "--days", "1");
+      expect(out).toMatch(/^Refusals by code over the last 1 day\(s\)/);
+      expect(out).toContain("POST /v1/bots/{handle}/block");
+      expect(out).not.toContain("no-such-bot-here");
+      expect(out).not.toContain(lark.key);
+      expect(out).not.toContain(lark.ip);
+      expect(out).not.toMatch(/@|human:/);
+      for (const days of ["0", "91", "lots"]) {
+        const run = admin("refusals", "--days", days);
+        expect(run.ok, days).toBe(false);
+        expect(run.out).toMatch(/whole number from 1 to 90/);
+      }
+    });
   });
 }

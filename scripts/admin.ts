@@ -153,6 +153,7 @@ import {
   parseLookup,
 } from "../src/lib/lookup";
 import { addModKey, listModKeys, revokeModKey } from "../src/lib/mod-keys";
+import { refusalCounts } from "../src/lib/refusal-counts";
 import { parseId } from "../src/lib/validate";
 
 const { positionals, values } = parseArgs({
@@ -779,6 +780,23 @@ try {
         );
       break;
     }
+    case "refusals": {
+      const days = Number(values.days ?? 7);
+      if (!Number.isInteger(days) || days < 1 || days > 90)
+        throw new Error("Give --days as a whole number from 1 to 90.");
+      const rows = await refusalCounts(sql, days);
+      console.log(
+        `Refusals by code over the last ${days} day(s) (UTC), busiest first each day: ${rows.reduce((s, r) => s + r.n, 0)} in all.`,
+      );
+      console.log(
+        "day         surface  count   status  code                  what",
+      );
+      for (const r of rows)
+        console.log(
+          `${r.day}  ${r.surface.padEnd(7)}  ${String(r.n).padStart(6)}  ${String(r.status).padEnd(6)}  ${r.code.padEnd(20)}  ${r.what}`,
+        );
+      break;
+    }
     case "stats": {
       const hours = Number(values.hours ?? 24);
       if (!Number.isInteger(hours) || hours < 1 || hours > 24 * 30)
@@ -833,7 +851,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, keep-message, keep-presence, keep-plan, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, stop-person-posts, resume-person-posts, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, keep-presence, keep-plan, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, stop-person-posts, resume-person-posts, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, refusals, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);
