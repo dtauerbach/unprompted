@@ -4,6 +4,7 @@ import { POST as registerRoute } from "@/app/v1/bots/route";
 import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as pairingCodesRoute } from "@/app/v1/me/pairing-codes/route";
 import { GET as me } from "@/app/v1/me/route";
+import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import { db } from "@/lib/db";
@@ -513,6 +514,16 @@ describe("a human's bots", () => {
 // one takes its human from the session and does nothing without one.
 const session = vi.hoisted(() => ({ user: null as null | { id: string } }));
 const nav = vi.hoisted(() => ({ redirects: [] as string[] }));
+// Each time a write starts sending wakes (src/lib/push-kick.ts). Outside a
+// request the real one does nothing, so counting it loses nothing.
+const kicks = vi.hoisted(() => ({ n: 0 }));
+vi.mock("@/lib/push-kick", () => ({
+  KICK_ROUND_MS: 40_000,
+  KICK_STALE_MS: 60_000,
+  kickPushes: () => {
+    kicks.n++;
+  },
+}));
 // What the auth server answers when a sign-in starts; undefined means sign-in
 // isn't set up.
 const google = vi.hoisted(() => ({
@@ -1027,6 +1038,84 @@ describe("group actions", () => {
       expect(n?.n).toBe(6);
     } finally {
       delete process.env.UNPROMPTED_PERSON_POSTS;
+    }
+  });
+
+  it("send the wakes a write from the page raised right away, as a bot's write does", async () => {
+    const a = await import("@/app/account/actions");
+    const keys: Record<string, string> = {};
+    for (const [h, who] of [
+      ["alice", "google-1"],
+      ["bob", "google-1"],
+      ["xena", "google-2"],
+    ] as const) {
+      const r = await call(registerRoute, {
+        body: { handle: h, owner_code: await code(who) },
+      });
+      keys[h] = r.body.api_key;
+    }
+    session.user = { id: "google-1" };
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    const box = (channel: string, nonce: string) => {
+      const f = new FormData();
+      f.set("channel", channel);
+      f.set("body", "Over to you.");
+      f.set("nonce", nonce);
+      f.set("wake", "all");
+      return f;
+    };
+    try {
+      kicks.n = 0;
+      // Starting a group raises its bots' wake numbers.
+      const started = await a.startGroup({}, forms().start);
+      const channel = started.group as string;
+      expect(kicks.n).toBe(1);
+      // A message from the box.
+      expect(await a.postToBots({}, box(channel, "nonce-kick-000001"))).toEqual(
+        { sent: true },
+      );
+      expect(kicks.n).toBe(2);
+      // A tap on Yes under a bot's question wakes the bot that asked.
+      const q = await call(sendRoute, {
+        key: keys.bob,
+        body: { channel, body: "Ship it?", ask: "yes_no" },
+      });
+      expect(q.status).toBe(201);
+      kicks.n = 0;
+      const tap = new FormData();
+      tap.set("channel", channel);
+      tap.set("question", String(q.body.message.id));
+      tap.set("answer", "Yes");
+      tap.set("nonce", "nonce-kick-000002");
+      expect(await a.answerBots({}, tap)).toEqual({ sent: true });
+      expect(kicks.n).toBe(1);
+      // Taking a bot out or picking a leader wakes nobody, and sends nothing.
+      const f = forms(channel);
+      expect(await a.pickGroupLeader({}, f.lead)).toEqual({ saved: true });
+      expect(await a.changeGroupBots({}, f.out)).toEqual({ saved: true });
+      expect(kicks.n).toBe(1);
+      // Putting one back in raises its number.
+      const back = new FormData();
+      back.set("channel", channel);
+      back.set("handle", "alice");
+      back.set("op", "add");
+      expect(await a.changeGroupBots({}, back)).toEqual({ saved: true });
+      expect(kicks.n).toBe(2);
+      // A refused write sends nothing: someone else's channel, or the box
+      // under the kill switch.
+      session.user = { id: "google-2" };
+      expect(
+        (await a.postToBots({}, box(channel, "nonce-kick-000003"))).error,
+      ).toEqual(expect.any(String));
+      session.user = { id: "google-1" };
+      process.env.UNPROMPTED_READ_ONLY = "1";
+      expect(
+        (await a.postToBots({}, box(channel, "nonce-kick-000004"))).error,
+      ).toMatch(/read-only/);
+      expect(kicks.n).toBe(2);
+    } finally {
+      delete process.env.UNPROMPTED_PERSON_POSTS;
+      delete process.env.UNPROMPTED_READ_ONLY;
     }
   });
 

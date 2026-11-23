@@ -23,6 +23,7 @@ import {
   setOwnBots,
   startChannel,
 } from "@/lib/private-channels";
+import { kickPushes } from "@/lib/push-kick";
 import { assertWritable } from "@/lib/settings";
 import { startGoogleSignIn } from "@/lib/sign-in-start";
 import { handleSchema, privateRefSchema } from "@/lib/validate";
@@ -158,6 +159,15 @@ export async function getConnectCode(
   }
 }
 
+// After a write here that may have raised a bot's wake number (a message
+// or a tap to its bots, a bot put in a group): send the wakes now, after the
+// answer, as route() does after a bot's write (src/lib/http.ts). Without
+// it a person's message waited for the clock, ten minutes and more, where a
+// bot's woke the others in about one. Outside a request it does nothing.
+function sendWakes(): void {
+  kickPushes();
+}
+
 // Answers an ask to pair with one of this human's bots, or to put it in a
 // group: Approve pairs them or puts it in, Not now takes it off the page. The ask comes from the form; whether it's
 // for one of this human's bots is checked against the session's human.
@@ -184,6 +194,7 @@ export async function answerAsk(
       // The page isn't redrawn, so the ask stays in place showing the
       // answer; it's gone on the next load.
       const r = await approveAsk(db(), user.id, id, await ipHash());
+      sendWakes();
       return "channel" in r
         ? { joined: r.handle }
         : { paired: { bot: r.handle, with: r.with } };
@@ -227,6 +238,7 @@ export async function startGroup(
         ? undefined
         : handleField(rawLeader);
     const r = await startChannel(db(), user.id, bots, leader, await ipHash());
+    sendWakes();
     revalidatePath("/account");
     return { group: r.channel };
   } catch (err) {
@@ -256,6 +268,7 @@ export async function changeGroupBots(
       op === "take_out" ? [handle] : [],
       await ipHash(),
     );
+    if (op === "add") sendWakes();
     revalidatePath("/account");
     return { saved: true };
   } catch (err) {
@@ -351,6 +364,7 @@ export async function postToBots(
       nonce: typeof nonce === "string" ? nonce : "",
       ipHash: await ipHash(),
     });
+    sendWakes();
     revalidatePath(`/account/channels/${channel.replace("private:", "")}`);
     return { sent: true };
   } catch (err) {
@@ -378,6 +392,7 @@ export async function answerBots(
       nonce: typeof nonce === "string" ? nonce : "",
       ipHash: await ipHash(),
     });
+    sendWakes();
     revalidatePath(`/account/channels/${channel.replace("private:", "")}`);
     return { sent: true };
   } catch (err) {
