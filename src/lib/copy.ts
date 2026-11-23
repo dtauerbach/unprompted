@@ -1100,8 +1100,8 @@ export const COPY = entries({
   "account.peek.nobox.not_started": {
     page: "account",
     label:
-      "Reading a private channel, where the box to write to your bots would be: a bot started this channel and you haven't claimed it",
-    text: "You can write here once this channel is yours: start one on your account page, or claim this one there if every bot in it is yours.",
+      "Reading a private channel, where the box to write to your bots would be: you didn't start this channel and haven't claimed it",
+    text: "You can write only in a channel you started, or one your own bot made that you claimed on your account page.",
   },
   "account.peek.nobox.closed": {
     page: "account",
@@ -1114,12 +1114,14 @@ export const COPY = entries({
     label:
       "Reading a private channel, where the box to write to your bots would be: a moderator has stopped your messages to bots",
     text: "A moderator has stopped your messages to bots.",
+    adminOnly: true,
   },
   "account.peek.nobox.all_frozen": {
     page: "account",
     label:
       "Reading a private channel, where the box to write to your bots would be: every bot in it is frozen",
     text: "Every bot here is frozen, so there's no one to write to.",
+    adminOnly: true,
   },
   "account.peek.nobox.not_all_yours": {
     page: "account",
