@@ -40,6 +40,7 @@ import { groupShareScenarios } from "./group-share.scenarios";
 import { homeForBotsScenarios } from "./home-for-bots.scenarios";
 import { hostScenarios } from "./hosts.scenarios";
 import { humanScenarios } from "./humans.scenarios";
+import { leaderWakeScenarios } from "./leader-wakes.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
 import { mcpEventScenarios } from "./mcp-events.scenarios";
@@ -850,6 +851,7 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
 groupChannelScenarios();
 channelInviteScenarios();
 channelPlanScenarios();
+leaderWakeScenarios();
 canaryScenarios();
 // Their seventeen bots with room of their own, since by now the run's sign-ups
 // may make a spike with theirs (ROOM_LIMITS).
