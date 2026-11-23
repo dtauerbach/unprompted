@@ -6,8 +6,11 @@ import { OPERATIONS } from "@/lib/openapi";
 import {
   countedAs,
   countRefusal,
+  FLUSH_GAP_MS,
   flushRefusals,
+  kickRefusals,
   refusalCounts,
+  resetRefusalFlush,
   waitingRefusals,
 } from "@/lib/refusal-counts";
 import { call, register, resetDb } from "./helpers";
@@ -28,6 +31,7 @@ const rows = () =>
 beforeEach(async () => {
   // Whatever another file noted stays in memory; drop it before each test.
   await flushRefusals(db());
+  resetRefusalFlush();
   await resetDb();
   delete process.env.UNPROMPTED_READ_ONLY;
 });
@@ -166,8 +170,12 @@ describe("counting", () => {
   it("holds a bounded number of rows in memory", async () => {
     for (let i = 0; i < 600; i++)
       countRefusal("POST", `/v1/nowhere/${i}`, 404, "no_such_route");
-    // Each distinct path is its own entry until written; the oldest go first.
-    expect(waitingRefusals()).toBeLessThanOrEqual(500);
+    // Each distinct path is its own entry until written; past the bound a new
+    // one is noted as a path no route has, so nothing is dropped and nothing
+    // real is pushed out.
+    expect(waitingRefusals()).toBe(600);
+    countRefusal("POST", "/v1/posts/7/report", 429, "rate_limited");
+    expect(waitingRefusals()).toBe(601);
     await flushRefusals(db());
     expect(await rows()).toEqual([
       {
@@ -175,7 +183,14 @@ describe("counting", () => {
         what: "other",
         code: "no_such_route",
         status: 404,
-        n: "500",
+        n: "600",
+      },
+      {
+        surface: "HTTP",
+        what: "other",
+        code: "rate_limited",
+        status: 429,
+        n: "1",
       },
     ]);
   });
@@ -250,5 +265,69 @@ describe("counting", () => {
       db()`INSERT INTO refusal_counts (day, surface, what, code, status, n)
         VALUES (current_date, 'HTTP', 'other', 'x', 200, 1)`,
     ).rejects.toThrow();
+  });
+
+  it("keeps what a failed write held, for the next one", async () => {
+    countRefusal("MCP", "/mcp post", 403, "not_yet");
+    const broken = Object.assign(
+      () => Promise.reject(new Error("database down")),
+      { array: (x: unknown[]) => x },
+    ) as unknown as Parameters<typeof flushRefusals>[0];
+    await expect(flushRefusals(broken)).rejects.toThrow("database down");
+    countRefusal("MCP", "/mcp post", 403, "not_yet");
+    expect(waitingRefusals()).toBe(2);
+    await flushRefusals(db());
+    expect((await rows()).find((r) => r.surface === "MCP")?.n).toBe("2");
+  });
+});
+
+describe("when the count is written", () => {
+  it("writes at most once a gap per process, one write at a time", async () => {
+    const tasks: (() => Promise<void>)[] = [];
+    const schedule = (t: () => Promise<void>) => {
+      tasks.push(t);
+    };
+    const t0 = Date.now();
+    // Nothing waiting: nothing scheduled.
+    kickRefusals(t0, schedule);
+    expect(tasks.length).toBe(0);
+    countRefusal("MCP", "/mcp post", 403, "not_yet");
+    kickRefusals(t0, schedule);
+    // A second kick while the first write hasn't run waits for it.
+    kickRefusals(t0 + 1000, schedule);
+    expect(tasks.length).toBe(1);
+    await tasks[0]?.();
+    expect(waitingRefusals()).toBe(0);
+    expect((await rows()).length).toBe(1);
+    // Inside the gap after a write, a new refusal waits.
+    countRefusal("MCP", "/mcp vote", 403, "not_yet");
+    kickRefusals(Date.now() + 1000, schedule);
+    expect(tasks.length).toBe(1);
+    // After the gap, any request writes it, refused or not.
+    kickRefusals(Date.now() + FLUSH_GAP_MS + 1, schedule);
+    expect(tasks.length).toBe(2);
+    await tasks[1]?.();
+    expect((await rows()).length).toBe(2);
+  });
+
+  it("takes a write that never finished as gone after a minute", () => {
+    const tasks: (() => Promise<void>)[] = [];
+    const schedule = (t: () => Promise<void>) => {
+      tasks.push(t);
+    };
+    const t0 = Date.now();
+    countRefusal("MCP", "/mcp post", 403, "not_yet");
+    kickRefusals(t0, schedule);
+    // The first never runs (the platform cut its after() off).
+    kickRefusals(t0 + 59_000, schedule);
+    expect(tasks.length).toBe(1);
+    kickRefusals(t0 + 61_000, schedule);
+    expect(tasks.length).toBe(2);
+  });
+
+  it("schedules nothing outside a request, and doesn't throw", () => {
+    countRefusal("MCP", "/mcp post", 403, "not_yet");
+    expect(() => kickRefusals()).not.toThrow();
+    expect(waitingRefusals()).toBe(1);
   });
 });

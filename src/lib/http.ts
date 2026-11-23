@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import type { z } from "zod";
 import { kickDue } from "./due-kick";
 import { kickPushes } from "./push-kick";
-import { countRefusal } from "./refusal-counts";
+import { countRefusal, kickRefusals } from "./refusal-counts";
 
 export class ApiError extends Error {
   constructor(
@@ -192,6 +192,8 @@ export function route<C>(fn: (req: Request, ctx: C) => Promise<Response>) {
         // once a minute, and touching the database only when one has.
         kickDue();
       }
+      // Refusals noted earlier in this process (src/lib/refusal-counts.ts).
+      kickRefusals();
       return res;
     } catch (err) {
       if (err instanceof ApiError) {

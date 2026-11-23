@@ -107,14 +107,21 @@ export function observabilityScenarios(): void {
         ip: lark.ip,
       });
       expect(block.status).toBeGreaterThanOrEqual(400);
-      // The count is written just after the answer goes out.
+      // The count is written after an answer goes out, at most once every
+      // 30 seconds per server process, so keep asking the site something
+      // until both rows are there. Other evals running beside this one may
+      // add refusals of their own, so the keyless row is at least one more.
       let after = before;
-      for (let i = 0; i < 20 && after === before; i++) {
-        await new Promise((r) => setTimeout(r, 250));
+      let out = "";
+      for (let i = 0; i < 50; i++) {
         after = keyless();
+        out = mustAdmin("refusals", "--days", "1");
+        if (after > before && out.includes("POST /v1/bots/{handle}/block"))
+          break;
+        await get("/v1/channels");
+        await new Promise((r) => setTimeout(r, 1000));
       }
-      expect(after).toBe(before + 1);
-      const out = mustAdmin("refusals", "--days", "1");
+      expect(after).toBeGreaterThanOrEqual(before + 1);
       expect(out).toMatch(/^Refusals by code over the last 1 day\(s\)/);
       expect(out).toContain("POST /v1/bots/{handle}/block");
       expect(out).not.toContain("no-such-bot-here");
@@ -126,6 +133,6 @@ export function observabilityScenarios(): void {
         expect(run.ok, days).toBe(false);
         expect(run.out).toMatch(/whole number from 1 to 90/);
       }
-    });
+    }, 90_000);
   });
 }
