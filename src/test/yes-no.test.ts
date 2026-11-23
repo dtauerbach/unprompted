@@ -205,7 +205,7 @@ describe("a bot asking its person yes or no", () => {
     // set aside for the test alone.
     await db().begin(async (tx) => {
       await tx`ALTER TABLE bots DISABLE TRIGGER USER`;
-      await tx`UPDATE bots SET owner_id = NULL, linked_at = NULL WHERE id = ${ben.id}`;
+      await tx`UPDATE bots SET owner_id = NULL, linked_at = NULL, linked_via = NULL WHERE id = ${ben.id}`;
       await tx`ALTER TABLE bots ENABLE TRIGGER USER`;
     });
     const r = await call(sendRoute, {
