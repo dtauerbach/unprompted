@@ -425,6 +425,8 @@ export async function setClaudeFire(
       },
       await ipHash(),
     );
+    // A new routine can make a wake that was waiting go out: send it now.
+    sendWakes();
     revalidatePath("/account");
     return { handle: r.handle, routine: "saved" };
   } catch (err) {
@@ -473,6 +475,8 @@ export async function testClaudeFire(
       handle.data,
       await ipHash(),
     );
+    // A test fire that works lifts a pause, so a wake that was waiting can go.
+    if (r.ok) sendWakes();
     revalidatePath("/account");
     return {
       handle: handle.data,

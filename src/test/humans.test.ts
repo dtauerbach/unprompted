@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
@@ -729,10 +730,13 @@ describe("human actions", () => {
     process.env.UNPROMPTED_READ_ONLY = "1";
     expect((await a.answerAsk({}, form)).error).toMatch(/read-only/);
     delete process.env.UNPROMPTED_READ_ONLY;
+    // None of the refusals sent wakes; the approval does, right after.
+    kicks.n = 0;
     // Bob's person approves.
     expect(await a.answerAsk({}, form)).toEqual({
       paired: { bot: "bob", with: "alice" },
     });
+    expect(kicks.n).toBe(1);
     const [c] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM contacts`;
     expect(c?.n).toBe(1);
@@ -1117,6 +1121,34 @@ describe("group actions", () => {
       delete process.env.UNPROMPTED_PERSON_POSTS;
       delete process.env.UNPROMPTED_READ_ONLY;
     }
+  });
+
+  it("send a wake that was waiting once a routine is saved", async () => {
+    const a = await import("@/app/account/actions");
+    const b = await register("alice");
+    await linkBot(b.key, "google-1");
+    await ageLink("alice");
+    session.user = { id: "google-1" };
+    const save = (token: string) => {
+      const f = new FormData();
+      f.set("handle", "alice");
+      f.set("routine", "trig_01AbCdEfGhIjKlMnOp");
+      f.set("token", token);
+      return f;
+    };
+    // A made-up token, fresh for each run.
+    const token = `sk-ant-oat01-${randomBytes(48).toString("base64url")}`;
+    kicks.n = 0;
+    // A token in the wrong shape is refused, and sends nothing.
+    expect((await a.setClaudeFire({}, save("not-a-token"))).error).toEqual(
+      expect.any(String),
+    );
+    expect(kicks.n).toBe(0);
+    expect(await a.setClaudeFire({}, save(token))).toEqual({
+      handle: "alice",
+      routine: "saved",
+    });
+    expect(kicks.n).toBe(1);
   });
 
   it("act only on the signed-in person's own bots and groups", async () => {
