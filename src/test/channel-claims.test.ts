@@ -13,7 +13,11 @@ import { readPrivateChannel, setPrivateChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { lookupHuman } from "@/lib/lookup";
 import { readGroupForPerson } from "@/lib/peek";
-import { personPostBox, postAsPerson } from "@/lib/person-messages";
+import {
+  personPostBox,
+  personPostWhyNot,
+  postAsPerson,
+} from "@/lib/person-messages";
 import {
   claimChannel,
   endChannel,
@@ -25,7 +29,8 @@ import {
 import { ageLink, call, register, resetDb } from "./helpers";
 
 // Claiming (064_channel_claims.sql): a person claims a group a bot of
-// theirs made and leads, when every bot in it is theirs and linked a day.
+// theirs made and leads, when every bot in it is theirs (no wait after the
+// link since 071).
 // From then on it's a group they started: they put their bots in, pick its
 // leader, end it and write to it. Every refusal is the same not_yours and
 // writes nothing.
@@ -224,7 +229,7 @@ describe("claiming a group a bot made", () => {
     expect(await claims()).toBe(1);
   });
 
-  it("refuses alike, writing nothing, unless every bot in it is theirs and linked a day", async () => {
+  it("refuses alike, writing nothing, unless every bot in it is theirs", async () => {
     const notYours = { status: 404, code: "not_yours" };
 
     // A stranger's bot is in it.
@@ -239,23 +244,27 @@ describe("claiming a group a bot made", () => {
     }
     expect(await claims()).toBe(0);
 
-    // One of theirs was linked less than a day ago.
+    // One of theirs was linked just now: no wait since 071.
     await resetDb();
     {
       const lea = await bot("lea");
       const dot = await bot("dot");
-      await link("google-p", [lea]);
+      await link("google-p", [lea], { fresh: true });
       await link("google-p", [dot], { fresh: true });
       const g = await make(lea);
       await bringIn(lea, g, dot);
-      await expect(claim(g)).rejects.toMatchObject(notYours);
       const [h] = await db()<
         { id: string }[]
       >`SELECT id FROM humans WHERE auth_user_id = 'google-p'`;
       const listed = await listPersonChannels(db(), Number(h?.id));
-      expect(listed[0]?.claimable).toBe(false);
+      expect(listed[0]?.claimable).toBe(true);
+      expect(await claim(g)).toMatchObject({ channel: g, changed: true });
+      // And they write there at once.
+      expect(
+        await personPostBox(db(), Number(h?.id), Number(num(g))),
+      ).not.toBeNull();
     }
-    expect(await claims()).toBe(0);
+    expect(await claims()).toBe(1);
 
     // Closed by its leader.
     await resetDb();
@@ -594,7 +603,7 @@ describe("claiming, at the edges", () => {
     expect(await claims()).toBe(0);
   });
 
-  it("is refused by the database for a closed, hidden or freshly linked group", async () => {
+  it("is refused by the database for a closed or hidden group, or one with a stranger's bot", async () => {
     const insert = (id: number, human: number) =>
       db()`INSERT INTO channel_claims (channel_id, human_id) VALUES (${id}, ${human})`;
     {
@@ -613,7 +622,7 @@ describe("claiming, at the edges", () => {
       const lea = await bot("lea");
       const dot = await bot("dot");
       const human = await link("google-p", [lea]);
-      await link("google-p", [dot], { fresh: true });
+      await link("google-x", [dot], { fresh: true });
       const g = await make(lea);
       await bringIn(lea, g, dot);
       await expect(insert(Number(num(g)), human)).rejects.toMatchObject(upr01);
@@ -672,7 +681,7 @@ describe("claiming, at the edges", () => {
       });
     }
 
-    // One of their own, linked under a day, invited after the claim.
+    // One of their own, invited after the claim, that used the invite itself.
     await resetDb();
     {
       const { lea, human, g, id } = await team();
@@ -681,6 +690,11 @@ describe("claiming, at the edges", () => {
       await link("google-p", [fern], { fresh: true });
       await bringIn(lea, g, fern);
       expect(await personPostBox(db(), human, id)).toBeNull();
+      // The page says why, naming the bot.
+      expect(await personPostWhyNot(db(), human, id)).toEqual({
+        why: "invited",
+        handle: "fern",
+      });
       // A day on, it still came in by an invite, not their tick.
       await ageLink("fern");
       expect(await personPostBox(db(), human, id)).toBeNull();

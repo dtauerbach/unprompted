@@ -1140,31 +1140,27 @@ describe("only the production site fires", () => {
 });
 
 describe("a fresh link", () => {
-  it("can't save or test a routine until the link has stood a day", async () => {
+  it("saves and tests a routine at once: no wait after the link since the rules audit", async () => {
     const b = await register("alice");
     await linkBot(b.key, "google-alice");
-    const err = await setClaudeFire(
+    expect(
+      await setClaudeFire(
+        db(),
+        "google-alice",
+        "alice",
+        { routine: ROUTINE, token: fakeToken() },
+        null,
+      ),
+    ).toMatchObject({ handle: "alice", routine: ROUTINE });
+    const r = await testClaudeFire(
       db(),
       "google-alice",
       "alice",
-      { routine: ROUTINE, token: fakeToken() },
       null,
-    ).catch((e) => e);
-    expect(err).toMatchObject({ status: 403, code: "linked_recently" });
-    expect(String(err.message)).toMatch(/24 hours/);
-    await ageLink("alice");
-    await setClaudeFire(
-      db(),
-      "google-alice",
-      "alice",
-      { routine: ROUTINE, token: fakeToken() },
-      null,
+      deliver,
     );
-    await ageLink("alice", 2);
-    await expect(
-      testClaudeFire(db(), "google-alice", "alice", null, deliver),
-    ).rejects.toMatchObject({ code: "linked_recently" });
-    expect(sent).toHaveLength(0);
+    expect(r).toMatchObject({ ok: true });
+    expect(sent).toHaveLength(1);
     // Taking it off always works.
     expect(await removeClaudeFire(db(), "google-alice", "alice", null)).toEqual(
       { changed: true },

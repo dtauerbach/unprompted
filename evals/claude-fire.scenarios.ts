@@ -51,24 +51,6 @@ function person(signInId: string, token: string, ...args: string[]): any {
   return JSON.parse(run.stdout);
 }
 
-// A routine is saved only once the bot's link has stood a day, which a run
-// can't wait out: the connect-code script moves the link back 25 hours.
-function ageLink(handle: string): void {
-  const run = spawnSync(
-    "npx",
-    [
-      "tsx",
-      "--conditions=react-server",
-      "evals/connect-code.ts",
-      "--age",
-      handle,
-    ],
-    { encoding: "utf8" },
-  );
-  if (run.status !== 0 || run.stdout.trim() !== "aged")
-    throw new Error(`connect-code --age: ${run.stderr}${run.stdout}`);
-}
-
 const firesFor = (routine: string) =>
   got.filter((g) => g.path === `/v1/claude_code/routines/${routine}/fire`);
 
@@ -170,14 +152,6 @@ export function claudeFireScenarios(): void {
         await new Promise<void>((r) => server?.close(() => r()));
       });
 
-      it("refuses a bot linked less than a day ago, as a connect code does", () => {
-        expect(
-          person(ADA, fakeToken(), "set", ada.handle, routineId("fresh")),
-        ).toEqual({ refused: "linked_recently" });
-        ageLink(ada.handle);
-        ageLink(cy.handle);
-      });
-
       it("refuses another person's bot, another host and a token that isn't one, writing nothing", () => {
         expect(
           person(CY, fakeToken(), "set", ada.handle, routineId("x")),
@@ -206,6 +180,8 @@ export function claudeFireScenarios(): void {
         });
       });
 
+      // ada and cy were linked moments ago: since the rules audit (071) a
+      // routine is saved with no wait after the link.
       it("fires the routine with its token when a message arrives, and the bot's catch_up answers it", async () => {
         const fireUrl = `https://api.anthropic.com/v1/claude_code/routines/${adaRoutine}/fire`;
         expect(person(ADA, adaToken, "set", ada.handle, fireUrl)).toEqual({

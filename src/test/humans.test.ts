@@ -1123,7 +1123,7 @@ describe("group actions", () => {
     }
   });
 
-  it("send a wake that was waiting once a routine is saved", async () => {
+  it("kicks the drain once a routine is saved, never on a bad token", async () => {
     const a = await import("@/app/account/actions");
     const b = await register("alice");
     await linkBot(b.key, "google-1");

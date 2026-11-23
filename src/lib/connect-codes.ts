@@ -31,9 +31,8 @@ import { logAction } from "./log";
 export const CONNECT_CODE_MINUTES = 15;
 export const CONNECT_LINK_HOURS = 24;
 
-// The refusal for a link that hasn't stood CONNECT_LINK_HOURS yet, here and
-// wherever else the same day holds (saving or firing a Claude routine,
-// src/lib/claude-fire.ts).
+// The refusal for a link that hasn't stood CONNECT_LINK_HOURS yet, when a
+// connect code is asked for or used.
 export function linkedRecently(
   handle: string,
   hoursLeft: number,

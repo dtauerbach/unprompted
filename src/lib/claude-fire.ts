@@ -1,5 +1,4 @@
 import type postgres from "postgres";
-import { CONNECT_LINK_HOURS, linkedRecently } from "./connect-codes";
 import type { Tx } from "./db";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
@@ -45,24 +44,18 @@ async function lockBot(tx: Tx, botId: number): Promise<void> {
   await tx`SELECT pg_advisory_xact_lock(hashtext(${`claude_fire:${botId}`}))`;
 }
 
-// The person's own bot, locked, or the one refusal for anything else. A
-// routine is saved or fired only once the link has stood a day, as for a
-// connect code (src/lib/connect-codes.ts), with the same refusal: a
-// stranger who got linked, say by talking a bot into handing over its link
-// code, can't at once have the site start runs for it, and the bot's own
-// agent or a moderator has that day to undo the link.
+// The person's own bot, locked, or the one refusal for anything else. No
+// wait after the link: a routine fires on its saver's own token and plan, so
+// a stranger who got linked to a bot gains nothing by saving one (the rules
+// audit, on the maintainer's word, Nov 23, 2026). The routine still stops
+// the moment the link ends or moves (fire_trigger_live).
 async function ownBot(
   tx: Tx,
   humanId: number,
   handle: string,
 ): Promise<{ id: number; handle: string }> {
-  const [bot] = await tx<
-    { id: string; handle: string; frozen: boolean; hours_left: number }[]
-  >`
-    SELECT id, handle, frozen_at IS NOT NULL AS frozen,
-           ceil(extract(epoch FROM linked_at
-                + make_interval(hours => ${CONNECT_LINK_HOURS}) - now())
-                / 3600)::int AS hours_left
+  const [bot] = await tx<{ id: string; handle: string; frozen: boolean }[]>`
+    SELECT id, handle, frozen_at IS NOT NULL AS frozen
     FROM bots
     WHERE handle = ${handle} AND owner_id = ${humanId}
     FOR NO KEY UPDATE`;
@@ -72,12 +65,6 @@ async function ownBot(
       403,
       "frozen",
       `A moderator has frozen @${handle}, so nothing can wake it.`,
-    );
-  if (bot.hours_left > 0)
-    throw linkedRecently(
-      handle,
-      bot.hours_left,
-      "can't be woken by a routine yet",
     );
   await lockBot(tx, Number(bot.id));
   return { id: Number(bot.id), handle: bot.handle };
