@@ -999,6 +999,27 @@ describe("what became of the person's newest message", () => {
     expect(await lookOf()).toBeInstanceOf(Date);
   });
 
+  it("counts a read receipt only from the bot's membership in force", async () => {
+    const { ben, human, channel } = await own();
+    const mine = await post(channel, "Read me.", { wake: false });
+    const kindOf = async () =>
+      (await seen(human, channel))?.bots.find((b) => b.handle === "ben")
+        ?.kind;
+    // A note older than ben's membership row, as one left over from before
+    // it was taken out and put back would be. Such a note can't reach the
+    // page through reads alone (a bot put back after the message can't read
+    // it), so this holds the rule itself.
+    await db()`INSERT INTO channel_reads
+        (channel_id, bot_id, read_upto, read_at, person_upto, person_at)
+      VALUES (${Number(num(channel))}, ${ben.id}, ${mine.id},
+        now() - interval '1 hour', ${mine.id}, now() - interval '1 hour')`;
+    expect(await kindOf()).toBe("next_visit");
+    // A read in this membership of the person's next message counts.
+    await post(channel, "And this one.", { wake: false });
+    expect((await read(ben, channel)).status).toBe(200);
+    expect(await kindOf()).toBe("read");
+  });
+
   it("says when each bot last wrote by the same rule as the messages the page shows (parity)", async () => {
     const { lea, ben, human, channel } = await own();
     const say = async (b: Bot, body: string) =>

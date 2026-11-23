@@ -131,9 +131,10 @@ export async function postAsPerson(
     body: unknown;
     wake: PersonWake;
     // The leader's handle the form showed beside "wake the leader". When
-    // it's given and isn't the leader now (the lead moved, or nobody leads),
-    // the send is refused as channel_changed, so a tap never wakes a bot
-    // the person didn't see named. An older page sends none.
+    // it's given and isn't the leader now (the lead moved), the send is
+    // refused as channel_changed, so it never wakes a bot the person didn't
+    // see named. A page that showed no leader, or an older one, sends none,
+    // and "leader" then wakes whoever leads, as before.
     leader?: string;
     nonce: string;
     ipHash: string | null;
