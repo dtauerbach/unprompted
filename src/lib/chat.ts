@@ -16,7 +16,8 @@ export function startsRun(prev: Said | undefined, cur: Said): boolean {
 
 // What became of the person's newest message for one of their own bots, as
 // chat apps show "seen" under a message, from what the site already keeps:
-// - answered: the bot has written in the channel since.
+// - posted_since: the bot has written in the channel since. Not "answered":
+//   what it wrote may be about something else.
 // - read: it read the channel as far as the message, in its own read of the
 //   channel or a page of what's new (channel_reads, 067), at read_at.
 // - checked_in: it read its wake number since (fire_state.seen_at, kept only
@@ -30,7 +31,7 @@ export function startsRun(prev: Said | undefined, cur: Said): boolean {
 //   one that wakes nobody) or nothing can wake it: it reads the message
 //   when it next comes back by itself.
 export type SeenKind =
-  | "answered"
+  | "posted_since"
   | "read"
   | "checked_in"
   | "woken_unchecked"
@@ -43,7 +44,7 @@ export type SeenInput = {
   sent_at: Date;
   // Whether the bot has written in the channel since (by message id, since
   // messages commit in id order).
-  answered: boolean;
+  posted_since: boolean;
   // When it read the channel as far as the message; null when it hasn't.
   read_at: Date | null;
   // Its routine's last delivered fire, its last read of its number after a
@@ -61,7 +62,7 @@ const after = (at: Date | null, t: Date) =>
   at !== null && at.getTime() >= t.getTime();
 
 export function seenKind(s: SeenInput): SeenKind {
-  if (s.answered) return "answered";
+  if (s.posted_since) return "posted_since";
   if (s.read_at !== null) return "read";
   if (after(s.checked_at, s.sent_at)) return "checked_in";
   if (after(s.fired_at, s.sent_at)) return "woken_unchecked";

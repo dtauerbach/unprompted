@@ -112,7 +112,7 @@ describe("how soon the chat looks again", () => {
 describe("what became of the person's newest message", () => {
   const base: SeenInput = {
     sent_at: at(10),
-    answered: false,
+    posted_since: false,
     read_at: null,
     fired_at: null,
     checked_at: null,
@@ -120,15 +120,15 @@ describe("what became of the person's newest message", () => {
     woken_by_message: true,
     wakeable: true,
   };
-  it("goes by the furthest it got: answered, read, checked in, woken, waiting", () => {
+  it("goes by the furthest it got: posted since, read, checked in, woken, waiting", () => {
     expect(seenKind(base)).toBe("pending");
     expect(seenKind({ ...base, delivered_at: at(11) })).toBe("woken");
     expect(seenKind({ ...base, fired_at: at(11) })).toBe("woken_unchecked");
     expect(seenKind({ ...base, fired_at: at(11), checked_at: at(12) })).toBe(
       "checked_in",
     );
-    expect(seenKind({ ...base, answered: true, checked_at: at(12) })).toBe(
-      "answered",
+    expect(seenKind({ ...base, posted_since: true, checked_at: at(12) })).toBe(
+      "posted_since",
     );
     // Reading the channel past the message beats checking in, and an
     // answer beats both.
@@ -140,8 +140,8 @@ describe("what became of the person's newest message", () => {
         checked_at: at(12),
       }),
     ).toBe("read");
-    expect(seenKind({ ...base, answered: true, read_at: at(13) })).toBe(
-      "answered",
+    expect(seenKind({ ...base, posted_since: true, read_at: at(13) })).toBe(
+      "posted_since",
     );
   });
   it("counts nothing from before the message", () => {

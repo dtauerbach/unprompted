@@ -73,7 +73,8 @@ export type PersonWake = boolean | "leader";
 
 // Whether this person may answer that question now: a bot's yes-or-no
 // question in this group, from a bot that is still a member, theirs, not
-// frozen, and was theirs when it asked. 068's trigger holds the same.
+// frozen, and was theirs when it asked, asked during its membership in
+// force (after its from_message_id). 070's trigger holds the same.
 async function askerOf(
   sql: postgres.Sql | Tx,
   humanId: number,
@@ -82,6 +83,7 @@ async function askerOf(
 ): Promise<number | null> {
   const [r] = await sql<{ bot_id: string }[]>`
     SELECT q.bot_id FROM messages q JOIN bots b ON b.id = q.bot_id
+    JOIN channel_roster(${channelId}) r ON r.bot_id = q.bot_id
     WHERE q.id = ${question}
       AND q.ask = 'yes_no'
       AND q.channel_id = ${channelId}
@@ -89,7 +91,7 @@ async function askerOf(
       AND b.frozen_at IS NULL
       AND b.owner_id = ${humanId}
       AND b.linked_at <= q.created_at
-      AND channel_has(${channelId}, q.bot_id)`;
+      AND q.id > coalesce(r.from_message_id, 0)`;
   return r ? Number(r.bot_id) : null;
 }
 
@@ -102,6 +104,14 @@ export type PersonPost = {
   // The form was sent before: this is the message it made then.
   again?: true;
 };
+
+function changed(): ApiError {
+  return new ApiError(
+    409,
+    "channel_changed",
+    "Your bots in this channel changed while you were sending. Send it again.",
+  );
+}
 
 function invalid(message: string): ApiError {
   return new ApiError(400, "invalid", message);
@@ -120,6 +130,11 @@ export async function postAsPerson(
     channel: string;
     body: unknown;
     wake: PersonWake;
+    // The leader's handle the form showed beside "wake the leader". When
+    // it's given and isn't the leader now (the lead moved, or nobody leads),
+    // the send is refused as channel_changed, so a tap never wakes a bot
+    // the person didn't see named. An older page sends none.
+    leader?: string;
     nonce: string;
     ipHash: string | null;
   },
@@ -164,6 +179,7 @@ async function writeAsPerson(
     channel: string;
     body: string;
     wake: PersonWake;
+    leader?: string;
     nonce: string;
     ipHash: string | null;
     answers?: number;
@@ -216,6 +232,9 @@ async function writeAsPerson(
       const asker =
         answers === undefined ? null : await askerOf(tx, humanId, id, answers);
       if (answers !== undefined && asker === null) throw notYourChannel();
+      const shown =
+        asker === null && input.wake === "leader" ? input.leader : undefined;
+      if (shown !== undefined && shown !== box.leader) throw changed();
       const limits = await antiAbuse(tx);
       await consume(tx, personMessageRules(humanId, limits));
       // Counted before the members' rows and the group's lock, as a group
@@ -263,11 +282,7 @@ async function writeAsPerson(
         (asker === null && input.wake === true && again.wakes !== woke) ||
         (input.wake === "leader" && again.leader !== box.leader)
       )
-        throw new ApiError(
-          409,
-          "channel_changed",
-          "Your bots in this channel changed while you were sending. Send it again.",
-        );
+        throw changed();
       const [row] = await tx<{ id: string; created_at: Date }[]>`
         INSERT INTO messages
           (human_id, channel_id, body, wakes, wakes_leader_only, client_nonce,

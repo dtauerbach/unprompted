@@ -158,7 +158,7 @@ export function personMessageScenarios(): void {
         );
         expect(
           peek.seen.bots.find((x: { handle: string }) => x.handle === a.handle),
-        ).toMatchObject({ kind: "answered" });
+        ).toMatchObject({ kind: "posted_since" });
         expect(
           peek.messages.find((x: { id: number }) => x.id === sent.id),
         ).toMatchObject({
@@ -447,6 +447,73 @@ export function personMessageScenarios(): void {
           expect(
             person(who, "write", where, "wake", nonce(n), "hi"),
           ).toMatchObject({ refused: "not_yours" });
+      });
+
+      it("answers only a question from the asker's membership in force, and wakes only the leader the box named", async () => {
+        // A group of its own, so the shared cast's membership stays put.
+        const c = await register("pm-cai");
+        const d = await register("pm-dev");
+        for (const bot of [c, d]) await linkByCode(bot, "eval-person-1");
+        const { channel: k } = person(
+          "eval-person-1",
+          "start",
+          c.handle,
+          c.handle,
+          d.handle,
+        );
+        const asked = await post(
+          "/v1/messages",
+          { channel: k, body: "Merge the outline?", ask: "yes_no" },
+          { key: d.key, ip: d.ip },
+        );
+        expect(asked.status).toBe(201);
+        const q = String(asked.json.message.id);
+        // It leaves and its person puts it back: the old question is from a
+        // membership that has ended, so no tap answers it, and the page
+        // offers none.
+        const left = await post(
+          `/v1/private-channels/${idOf(k)}/leave`,
+          {},
+          { key: d.key, ip: d.ip },
+        );
+        expect(left.status).toBe(200);
+        person("eval-person-1", "add", k, d.handle);
+        const dw = (await get("/v1/me/wake", d.key)).json.wake;
+        expect(
+          person("eval-person-1", "answer", k, q, "Yes", nonce(21)),
+        ).toMatchObject({ refused: "not_yours" });
+        expect((await get("/v1/me/wake", d.key)).json.wake).toBe(dw);
+        expect(
+          person("eval-person-1", "peek", k).messages.find(
+            (x: { id: number }) => String(x.id) === q,
+          ),
+        ).toMatchObject({ ask: { open: false } });
+        // A send naming a leader that no longer leads writes nothing.
+        person("eval-person-1", "lead", k, d.handle);
+        expect(
+          person(
+            "eval-person-1",
+            "write",
+            k,
+            `leader:${c.handle}`,
+            nonce(22),
+            "For cai.",
+          ),
+        ).toMatchObject({ refused: "channel_changed" });
+        const cw = (await get("/v1/me/wake", c.key)).json.wake;
+        const dw2 = (await get("/v1/me/wake", d.key)).json.wake;
+        expect(
+          person(
+            "eval-person-1",
+            "write",
+            k,
+            `leader:${d.handle}`,
+            nonce(23),
+            "For dev.",
+          ),
+        ).toMatchObject({ woke: 1 });
+        expect((await get("/v1/me/wake", d.key)).json.wake).toBe(dw2 + 1);
+        expect((await get("/v1/me/wake", c.key)).json.wake).toBe(cw);
       });
     },
   );

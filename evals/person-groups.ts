@@ -8,7 +8,7 @@
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> list
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> release <handle>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> peek <private:id>
-//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> write <private:id> wake|leader|quiet <nonce> <body>
+//   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> write <private:id> wake|leader[:<handle>]|quiet <nonce> <body>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> answer <private:id> <question-id> Yes|No <nonce>
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> age-link <handle> [hours]
 //   npx tsx --conditions=react-server evals/person-groups.ts <sign-in-id> claim <private:id>
@@ -80,7 +80,9 @@ try {
       authUserId: id,
       channel,
       body: words.join(" "),
-      wake: wake === "leader" ? "leader" : wake === "wake",
+      // "leader:<handle>" wakes the leader the box named, as the page sends.
+      wake: wake.startsWith("leader") ? "leader" : wake === "wake",
+      ...(wake.startsWith("leader:") ? { leader: wake.slice(7) } : {}),
       nonce,
       ipHash: null,
     });

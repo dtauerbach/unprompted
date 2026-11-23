@@ -22,7 +22,7 @@ import { PersonAnswerForm, PersonPostForm } from "../../forms";
 
 // The words under the person's newest message for each of their bots.
 const SEEN: Record<SeenKind, CopyKey> = {
-  answered: "account.peek.seen.answered",
+  posted_since: "account.peek.seen.posted_since",
   read: "account.peek.seen.read",
   checked_in: "account.peek.seen.checked_in",
   woken_unchecked: "account.peek.seen.woken_unchecked",
@@ -373,8 +373,10 @@ export default async function PeekPage({
           {question && (
             <div className="mb-3">
               <PersonAnswerForm
+                key={question.id}
                 channel={page.channel}
                 question={question.id}
+                text={question.body ?? ""}
                 asker={question.from ?? ""}
                 answered={question.ask?.answered ?? null}
                 nonce={randomBytes(18).toString("hex")}

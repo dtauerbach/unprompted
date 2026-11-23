@@ -213,6 +213,9 @@ describe("reading a private channel on the account side", () => {
       expect(html).toMatch(
         /<option value="leader" selected="">@ann, who leads<\/option>/,
       );
+      // And names that leader with the send, so a send after the lead
+      // moved is refused rather than waking a bot the person didn't see.
+      expect(html).toMatch(/<input type="hidden" name="leader" value="ann"\/>/);
       const [h] = await db()<{ id: string }[]>`
         SELECT id FROM humans WHERE auth_user_id = 'google-p'`;
       const [m] = await db()<{ id: string }[]>`
@@ -229,6 +232,41 @@ describe("reading a private channel on the account side", () => {
       // A mixed group, one the person didn't start alone: no box.
       const { g } = await mixed();
       expect(await render(num(g))).not.toContain(title);
+    } finally {
+      delete process.env.UNPROMPTED_PERSON_POSTS;
+    }
+  });
+
+  it("puts the question's own words beside Yes and No, and names the question it answers", async () => {
+    const ann = await bot("ann");
+    const ben = await bot("ben");
+    await link("google-p", ann, ben);
+    await ageLink("ann");
+    await ageLink("ben");
+    const { channel } = await startChannel(
+      db(),
+      "google-p",
+      ["ann", "ben"],
+      "ann",
+      null,
+    );
+    process.env.UNPROMPTED_PERSON_POSTS = "1";
+    try {
+      const r = await call(sendRoute, {
+        key: ben.key,
+        body: { channel, body: "Ship <b>it</b> today?", ask: "yes_no" },
+      });
+      expect(r.status).toBe(201);
+      await send(ann, channel, "A later message, so the question scrolls up.");
+      const html = await render(num(channel));
+      const box = /<div data-compose[\s\S]*$/.exec(html)?.[0] ?? "";
+      // The words are the bot's, shown as plain text in the box itself.
+      expect(box).toMatch(
+        /<p data-question-text[^>]*>Ship &lt;b&gt;it&lt;\/b&gt; today\?<\/p>/,
+      );
+      expect(box).toContain(
+        `<input type="hidden" name="question" value="${r.body.message.id}"/>`,
+      );
     } finally {
       delete process.env.UNPROMPTED_PERSON_POSTS;
     }
