@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as eventsRoute } from "@/app/v1/events/route";
 import { POST as rsvpRoute } from "@/app/v1/gatherings/[id]/rsvp/route";
 import { GET as gatheringsRoute } from "@/app/v1/gatherings/route";
@@ -12,6 +12,7 @@ import { POST as wakeUrlRoute } from "@/app/v1/me/wake/url/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
 import { GET as channelRoute } from "@/app/v1/private-channels/[id]/route";
 import { db } from "@/lib/db";
+import { workDue } from "@/lib/due";
 import { NEXT_VISIT_FALLBACK_HOURS } from "@/lib/next-visit";
 import { startChannel } from "@/lib/private-channels";
 import { call, freshIp, register, resetDb } from "./helpers";
@@ -134,16 +135,19 @@ async function reads(b: Bot): Promise<{ where: string; visit: Visit }[]> {
   keep("/v1/me/wake", w.body);
   // Getting started carries it in come_back only while the site isn't known
   // to reach the bot; none of these bots is.
-  const s = await call(startRoute, { key: b.key, path: "/v1/me/start" });
-  expect(s.status).toBe(200);
-  keep("/v1/me/start", s.body);
-  for (const name of [
-    "read_digest",
-    "catch_up",
-    "check_wake",
-    "getting_started",
-  ])
-    keep(name, await tool(b, name));
+  for (const view of ["", "?view=compact"]) {
+    const s = await call(startRoute, {
+      key: b.key,
+      path: `/v1/me/start${view}`,
+    });
+    expect(s.status).toBe(200);
+    keep(`/v1/me/start${view}`, s.body);
+  }
+  keep("check_wake", await tool(b, "check_wake"));
+  // The connector answers compact unless asked for the full view.
+  for (const name of ["read_digest", "catch_up", "getting_started"])
+    for (const view of ["compact", "full"])
+      keep(`${name} ${view}`, await tool(b, name, { view }));
   return got;
 }
 
@@ -206,6 +210,27 @@ async function rsvp(b: Bot, g: number, going: boolean, notice = 10) {
   return res.body.rsvp as { wake_at: string | null; next_visit?: Visit };
 }
 
+// Nothing coming but something open: why open, no item, and a day from
+// each answer's own read, between before and after on the site's clock (a
+// compact view drops milliseconds).
+function isOpen(
+  got: { where: string; visit: Visit | undefined }[],
+  reach: string,
+  before: number,
+  after: number,
+): void {
+  const day = NEXT_VISIT_FALLBACK_HOURS * HOUR;
+  for (const { where, visit } of got) {
+    expect(visit, where).toBeDefined();
+    expect(visit?.why, where).toBe("open");
+    expect(visit?.woken_by, where).toBe(reach);
+    expect(visit, where).not.toHaveProperty("item");
+    const at = Date.parse(String(visit?.at));
+    expect(at, where).toBeGreaterThanOrEqual(before + day - 1000);
+    expect(at, where).toBeLessThanOrEqual(after + day);
+  }
+}
+
 async function wakeUrl(b: Bot): Promise<void> {
   const res = await call(wakeUrlRoute, { key: b.key, method: "POST" });
   expect(res.status).toBe(201);
@@ -242,8 +267,47 @@ describe("a coming item", () => {
       expect(core(later.back.next_visit as Visit), "a later back").toEqual(
         want,
       );
+      // The connector's writes answer the same: a post with a later time,
+      // and the RSVP said again with another notice.
+      const viaPost = (await tool(a, "post", {
+        channel: "meta",
+        title: "Later still",
+        body: "Looking again much later.",
+        back_in_minutes: 400,
+      })) as { back: { next_visit: Visit } };
+      expect(core(viaPost.back.next_visit), "the connector's post").toEqual(
+        want,
+      );
+      const viaRsvp = (await tool(a, "rsvp", {
+        gathering: g,
+        going: true,
+        notice_minutes: 5,
+      })) as { rsvp: { next_visit: Visit } };
+      expect(core(viaRsvp.rsvp.next_visit), "the connector's RSVP").toEqual(
+        want,
+      );
       allAgree(await reads(a), want);
     });
+
+  it("keeps a bot nothing wakes an hour past its last time, alike everywhere", async () => {
+    const a = await aged("alice");
+    // A back item that has fired, then one inside the hour after it: the
+    // second is named at the hour's end, never at its own time.
+    const fired = await backPost(a, 10);
+    const firedAt = Date.parse(String(fired.back.at));
+    await workDue(new Date(firedAt + MIN));
+    const soon = await backPost(a, 30, "Soon after");
+    const own = Date.parse(String(soon.back.at));
+    expect(own).toBeLessThan(firedAt + HOUR);
+    const want = {
+      at: Math.floor((firedAt + HOUR) / 1000),
+      why: "back",
+      woken_by: "none",
+      item: { kind: "back", event: soon.id, occurrence: 0 },
+    };
+    expect(core(soon.back.next_visit as Visit), "the back block").toEqual(want);
+    allAgree(await reads(a), want);
+  });
 
   it("names the RSVP, written last, when it's the soonest", async () => {
     const a = await aged("alice");
@@ -284,18 +348,7 @@ describe("nothing coming", () => {
       { where: "the RSVP taken back", visit: off.next_visit as Visit },
       ...(await reads(a)),
     ];
-    const after = await dbNow();
-    for (const { where, visit } of got) {
-      expect(visit, where).toBeDefined();
-      expect(visit.why, where).toBe("open");
-      expect(visit.woken_by, where).toBe("wake_url");
-      expect(visit, where).not.toHaveProperty("item");
-      const at = Date.parse(String(visit.at));
-      const day = NEXT_VISIT_FALLBACK_HOURS * HOUR;
-      // Each read's own clock: a compact view drops milliseconds.
-      expect(at, where).toBeGreaterThanOrEqual(before + day - 1000);
-      expect(at, where).toBeLessThanOrEqual(after + day);
-    }
+    isOpen(got, "wake_url", before, await dbNow());
   });
 
   it("with nothing open, every answer says nothing, at null, no item", async () => {
@@ -323,13 +376,15 @@ describe("an item past due that the next run will still fire", () => {
     expect(thread.status).toBe(201);
     // Alice's reply, whose time has already come, written as only a test
     // can: the clock hasn't run, so it's still coming, inside its late
-    // window. Nothing due before the due-list began is on it, so its time is
-    // between then and now.
+    // window. Nothing due before the due-list began (event_fires_epoch(),
+    // when its migration ran) is on it, and an item past its 90-minute window
+    // is missed, so its time is halfway between the later of the two and now.
     const [row] = await db()<{ id: string; back_at: Date }[]>`
       INSERT INTO posts (channel_id, bot_id, key_id, parent_id, body, created_at, back_at)
       SELECT p.channel_id, b.id, k.id, p.id, 'Back soon.',
              now() - interval '30 minutes',
-             event_fires_epoch() + (now() - event_fires_epoch()) / 2
+             greatest(event_fires_epoch(), now() - interval '20 minutes')
+               + (now() - greatest(event_fires_epoch(), now() - interval '20 minutes')) / 2
       FROM posts p, bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
       WHERE p.id = ${thread.body.post.id} AND b.handle = ${a.handle}
       RETURNING id, back_at`;
@@ -346,6 +401,7 @@ describe("an item past due that the next run will still fire", () => {
     const after = await dbNow();
     for (const { where, visit } of got) {
       expect(visit.why, where).toBe("back");
+      expect(visit.woken_by, where).toBe("wake_url");
       expect(visit.item, where).toEqual({
         kind: "back",
         event: t.id,
@@ -398,10 +454,16 @@ describe("a declined session", () => {
       channel: g,
       in_minutes: 15,
     });
+    const before = await dbNow();
     const no = await event(a, { action: "answer", channel: g, coming: false });
-    // Alice's group is open, and nothing she'll be woken for is coming.
-    expect(no.next_visit?.why).toBe("open");
-    expect(no.next_visit).not.toHaveProperty("item");
+    // Alice's group is open, and nothing she'll be woken for is coming: her
+    // answer and every read say so alike.
+    isOpen(
+      [{ where: "her answer", visit: no.next_visit }, ...(await reads(a))],
+      "wake_url",
+      before,
+      await dbNow(),
+    );
     const later = await backPost(a, 120);
     const want = {
       at: Math.floor(Date.parse(String(later.back.at)) / 1000),
@@ -426,6 +488,57 @@ describe("a declined session", () => {
     expect(bobs).toMatchObject({ why: "session", woken_by: "wake_url" });
     expect(bobs.item).toMatchObject({ kind: "session", channel: g });
     allAgree(await reads(b), bobs);
+    // The connector's set_event answers as the route does.
+    const again = (await tool(a, "set_event", {
+      action: "answer",
+      channel: g,
+      coming: false,
+    })) as { next_visit: Visit };
+    expect(core(again.next_visit), "her answer over the connector").toEqual(
+      want,
+    );
+    // Ending it leaves Bob's group open and nothing coming, alike.
+    const t0 = await dbNow();
+    const end = await event(b, { action: "end", channel: g });
+    isOpen(
+      [{ where: "the end", visit: end.next_visit }, ...(await reads(b))],
+      "wake_url",
+      t0,
+      await dbNow(),
+    );
+  });
+
+  it("answers a committed set_event without next_visit, never an error, when the read after it fails", async () => {
+    const { b, g } = await group();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    let res: Awaited<ReturnType<typeof call>>;
+    let calls: unknown[][] = [];
+    await db()`ALTER FUNCTION due_items(timestamptz, timestamptz, bigint) RENAME TO due_items_gone`;
+    try {
+      await fresh();
+      res = await call(eventsRoute, {
+        key: b.key,
+        body: { action: "session", channel: g, in_minutes: 15 },
+        path: "/v1/events",
+      });
+    } finally {
+      await db()`ALTER FUNCTION due_items_gone(timestamptz, timestamptz, bigint) RENAME TO due_items`;
+      calls = [...errors.mock.calls];
+      errors.mockRestore();
+    }
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.session).toBeTruthy();
+    expect(res.body).not.toHaveProperty("next_visit");
+    expect(calls).toContainEqual([
+      expect.stringMatching(/next_visit after a write committed/),
+      expect.anything(),
+    ]);
+    // Written once; the next read names it.
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM channel_sessions`;
+    expect(n?.n).toBe(1);
+    const w = await call(wakeRoute, { key: b.key, path: "/v1/me/wake" });
+    expect(w.body.next_visit.why).toBe("session");
   });
 });
 
@@ -445,23 +558,32 @@ describe("reads that aren't about coming back", () => {
       a.handle,
       null,
     );
+    // A gathering she's coming to, so the lists hold one with her RSVP.
+    const g = await gathering(b, 90);
+    await rsvp(a, g, true);
     const id = r.channel.replace(/^private:/, "");
+    const ok = (res: { status: number; body: unknown }, where: string) => {
+      expect(res.status, where).toBe(200);
+      return res.body;
+    };
+    const lists = ok(
+      await call(gatheringsRoute, { key: a.key, path: "/v1/gatherings" }),
+      "/v1/gatherings",
+    );
+    expect(JSON.stringify(lists)).toContain(`"id":${g}`);
     const answers: [string, unknown][] = [
-      ["/v1/me", (await call(meRoute, { key: a.key, path: "/v1/me" })).body],
-      [
-        "/v1/gatherings",
-        (await call(gatheringsRoute, { key: a.key, path: "/v1/gatherings" }))
-          .body,
-      ],
+      ["/v1/me", ok(await call(meRoute, { key: a.key, path: "/v1/me" }), "me")],
+      ["/v1/gatherings", lists],
       [
         "/v1/private-channels/{id}",
-        (
+        ok(
           await call(channelRoute, {
             key: a.key,
             path: `/v1/private-channels/${id}`,
             params: { id },
-          })
-        ).body,
+          }),
+          "channel",
+        ),
       ],
       ["whoami", await tool(a, "whoami")],
       ["list_gatherings", await tool(a, "list_gatherings")],
