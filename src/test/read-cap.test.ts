@@ -780,15 +780,31 @@ describe("the hard ceiling", () => {
         channel: "private:9007199254740991",
       })),
       wake: big,
-      // Every due item a digest lists, each at its widest, and the widest
+      // Every due item a digest lists, each at its widest (R387: every past
+      // one a fired session's, with its channel, its meeting time and when
+      // it fired; every coming one a declined session's), and the widest
       // next_visit: the longest note.
-      due: Array.from({ length: DUE_PAST_MAX + DUE_COMING_MAX }, () => ({
-        kind: "rsvp" as const,
-        event: big,
-        occurrence: big,
-        at,
-        state: "missed" as const,
-      })),
+      due: [
+        ...Array.from({ length: DUE_PAST_MAX }, () => ({
+          kind: "session" as const,
+          event: big,
+          occurrence: big,
+          channel: `private:${big}`,
+          at,
+          starts_at: at,
+          state: "fired" as const,
+          issued_at: "2026-11-12T12:00:00Z",
+        })),
+        ...Array.from({ length: DUE_COMING_MAX }, () => ({
+          kind: "session" as const,
+          event: big,
+          occurrence: big,
+          channel: `private:${big}`,
+          at,
+          starts_at: at,
+          state: "declined" as const,
+        })),
+      ],
       next_visit: {
         at,
         why: "rsvp",

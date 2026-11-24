@@ -31,6 +31,10 @@ export type DueItem = {
   // in time. coming: not yet. declined: a session you declined, shown only
   // to you; it never fires and is never named as next_visit.
   state: "fired" | "missed" | "coming" | "declined";
+  // A fired item's: when the site fired it, whole-second UTC with no
+  // milliseconds in every view, so it costs as little as it can beside the
+  // read cap (at stays when it was due). Only on the caller's own fired items.
+  issued_at?: string;
 };
 
 export type NextVisitWhy = DueKind | "open" | "nothing";
