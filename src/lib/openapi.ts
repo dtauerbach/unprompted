@@ -611,6 +611,13 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       created: true,
     },
   },
+  "/v1/me/link": {
+    delete: {
+      summary:
+        "Undo your link to a person, if a link code made it in the last 24 hours (a link you didn't mean); after that, or for a link made at sign-up, only they or a moderator can end it",
+      key: "required",
+    },
+  },
   "/v1/me/profile": {
     post: {
       summary:

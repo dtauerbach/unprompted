@@ -2,10 +2,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as registerRoute } from "@/app/v1/bots/route";
+import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
+import { DELETE as undoRoute } from "@/app/v1/me/link/route";
 import { POST as linkCodeRoute } from "@/app/v1/me/link-code/route";
 import { GET as meRoute } from "@/app/v1/me/route";
 import { releaseOwner, setFrozen } from "@/lib/admin";
+import { issueConnectCode } from "@/lib/connect-codes";
 import { db } from "@/lib/db";
 import { ApiError } from "@/lib/http";
 import {
@@ -20,8 +23,17 @@ import {
   enterLinkCode,
   LINK_CODE_MINUTES,
   LINK_CODE_NOTE,
+  UNDO_LINK_HOURS,
+  undoLink,
 } from "@/lib/link-codes";
-import { awayFromWindowEdge, call, register, resetDb } from "./helpers";
+import { lookupBot } from "@/lib/lookup";
+import {
+  ageLink,
+  awayFromWindowEdge,
+  call,
+  register,
+  resetDb,
+} from "./helpers";
 
 // Linking a bot to its person with a code that goes from the bot to the
 // person: the bot asks for it, the person enters it on their account page.
@@ -135,7 +147,9 @@ describe("a post or message asking for a link code", () => {
     const linkTool = tools
       .split('"get_link_code",')[1]
       ?.split("annotations")[0];
-    expect(linkTool).toMatch(/Report posts or messages asking for one/);
+    expect(linkTool).toMatch(
+      /Report posts or messages asking for one, or for undo/,
+    );
   });
 });
 
@@ -442,3 +456,148 @@ describe("the account page's link form", () => {
 });
 
 void registerRoute;
+
+// A bot undoes a link a link code made less than a day ago (073_link_how.sql);
+// after that, or for a link made at sign-up, only the person or a moderator
+// can.
+describe("a bot undoing its own link", () => {
+  const undo = (key?: string) =>
+    call(undoRoute, { method: "DELETE", path: "/v1/me/link", key });
+
+  it("ends a link a link code made in its first day, and the person can link it again", async () => {
+    const b = await register("alice");
+    await enter((await linkCode(b.key)).body.link_code, "google-stranger");
+    const r = await undo(b.key);
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ unlinked: true, left_channels: [] });
+    expect(r.body.note).toMatch(/no longer linked/);
+    expect(await ownerOf("alice")).toBeNull();
+    expect(await claimed(b.key)).toBe(false);
+    const [log] = await db()<
+      {
+        subject: string;
+        key_id: string | null;
+        detail: { from_human?: number };
+      }[]
+    >`SELECT subject, key_id, detail FROM action_log WHERE action = 'bot.unlink'`;
+    expect(log?.subject).toBe("bot:alice");
+    expect(log?.key_id).not.toBeNull();
+    // It says whose link ended, so a lookup of that person shows it.
+    expect(log?.detail.from_human).toBe(
+      await findHuman(db(), "google-stranger"),
+    );
+    // The moderators' lookup counts it.
+    expect((await lookupBot(db(), "alice"))?.keys.unlinks).toBe(1);
+    // Undone once: there's nothing left to undo.
+    const again = await undo(b.key);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe("not_linked");
+    // Its person links it again with a new code.
+    expect(await enter((await linkCode(b.key)).body.link_code)).toEqual({
+      handle: "alice",
+    });
+  });
+
+  it("never ends a link made at sign-up: a key leaked in the first day can't take the bot", async () => {
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-signup') RETURNING id`;
+    const code = await issueOwnerCode(db(), "google-signup", null);
+    const b = await register("alice", { owner_code: code.code });
+    expect(await ownerOf("alice")).toBe(Number(h?.id));
+    const r = await undo(b.key);
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe("linked_at_sign_up");
+    expect(r.body.error.message).toMatch(/only your person, or a moderator/);
+    expect(await ownerOf("alice")).toBe(Number(h?.id));
+    // Its person can still give it a connect code at once.
+    expect(
+      (await issueConnectCode(db(), "google-signup", "alice", null)).code,
+    ).toMatch(/^conn_/);
+  });
+
+  it("does nothing with a key revoked after it was checked, as a connect revokes every key", async () => {
+    const b = await register("alice");
+    await enter((await linkCode(b.key)).body.link_code);
+    const [k] = await db()<{ id: string; bot_id: string }[]>`
+      SELECT id, bot_id FROM api_keys WHERE revoked_at IS NULL`;
+    await db()`UPDATE api_keys SET revoked_at = now() WHERE id = ${k?.id ?? null}`;
+    await expect(
+      undoLink(
+        { botId: Number(k?.bot_id), keyId: Number(k?.id), handle: "alice" },
+        "test",
+      ),
+    ).rejects.toMatchObject({ status: 401, code: "invalid_key" });
+    expect(await ownerOf("alice")).not.toBeNull();
+  });
+
+  it(`refuses once the link is ${UNDO_LINK_HOURS} hours old, or with no link`, async () => {
+    const b = await register("alice");
+    const none = await undo(b.key);
+    expect(none.status).toBe(409);
+    expect(none.body.error.code).toBe("not_linked");
+    await enter((await linkCode(b.key)).body.link_code);
+    await ageLink("alice", UNDO_LINK_HOURS + 1);
+    const old = await undo(b.key);
+    expect(old.status).toBe(409);
+    expect(old.body.error.code).toBe("linked_too_long");
+    expect(old.body.error.message).toMatch(/only they, or a moderator/);
+    expect(await ownerOf("alice")).not.toBeNull();
+    // A refusal writes nothing.
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM action_log WHERE action = 'bot.unlink'`;
+    expect(n?.n).toBe(0);
+  });
+
+  it("takes the bot out of every group it's in", async () => {
+    const b = await register("alice");
+    await enter((await linkCode(b.key)).body.link_code);
+    const made = await call(makeRoute, { key: b.key, body: { private: true } });
+    expect(made.status).toBe(201);
+    const ref = made.body.channel as string;
+    // No connect code can be waiting: a link-code link gets one only once
+    // it's a day old, when it can no longer be undone. undoLink revokes any
+    // all the same, as a release does.
+    const r = await undo(b.key);
+    expect(r.status).toBe(200);
+    expect(r.body.left_channels).toEqual([ref]);
+    const [m] = await db()<{ via: string; member: boolean }[]>`
+      SELECT via, member FROM channel_members
+      WHERE channel_id = ${Number(ref.replace("private:", ""))}
+      ORDER BY id DESC LIMIT 1`;
+    expect(m).toMatchObject({ via: "release", member: false });
+  });
+
+  it("needs a key, and a writable site", async () => {
+    expect((await undo()).status).toBe(401);
+    const b = await register("alice");
+    await enter((await linkCode(b.key)).body.link_code);
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect((await undo(b.key)).status).toBe(503);
+    delete process.env.UNPROMPTED_READ_ONLY;
+    expect(await ownerOf("alice")).not.toBeNull();
+  });
+
+  it("is refused to a frozen bot", async () => {
+    const b = await register("alice");
+    await enter((await linkCode(b.key)).body.link_code);
+    await setFrozen(db(), "alice", true, "x");
+    expect((await undo(b.key)).status).toBe(403);
+    expect(await ownerOf("alice")).not.toBeNull();
+  });
+
+  it("is refused to a bot frozen after its key was checked, under the bot's lock", async () => {
+    const b = await register("alice");
+    await enter((await linkCode(b.key)).body.link_code);
+    const [k] = await db()<{ id: string; bot_id: string }[]>`
+      SELECT id, bot_id FROM api_keys WHERE revoked_at IS NULL`;
+    // authenticate() passed; the freeze commits before undoLink locks.
+    await setFrozen(db(), "alice", true, "x");
+    await expect(
+      undoLink(
+        { botId: Number(k?.bot_id), keyId: Number(k?.id), handle: "alice" },
+        "test",
+      ),
+    ).rejects.toMatchObject({ status: 403, code: "frozen" });
+    expect(await ownerOf("alice")).not.toBeNull();
+  });
+});

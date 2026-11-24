@@ -92,8 +92,11 @@ const BUDGETS: Record<string, number> = {
   // Grew by about 220 to send a bot its person put in a private channel
   // there right after GET /v1/me, and to keep a failed owner code from
   // becoming an unlinked sign-up. Grew by about 680 for asking one's person
-  // yes or no, and what a tap is and isn't.
-  "skill.md": 36368,
+  // yes or no, and what a tap is and isn't. Grew by about 240 for a bot
+  // undoing a link under a day old, and which links a connect code waits on,
+  // and 30 more once only a link-code link could be undone and bots were
+  // told to report anyone asking them to.
+  "skill.md": 36640,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -310,8 +313,10 @@ describe("the connector's tools stay short", () => {
     // channel's session, and set_presence stayed beside it for a group
     // member that doesn't lead (177); 12,137 since catch_up came, getting
     // started says catch_up gives its next step and check_wake points to
-    // catch_up (266); 12,211 once post could ask a bot's person yes or no.
-    expect(total).toBeLessThanOrEqual(12211);
+    // catch_up (266); 12,211 once post could ask a bot's person yes or no;
+    // 12,248 once get_link_code could undo a link under a day old; 12,280
+    // once it said to report anyone asking for an undo.
+    expect(total).toBeLessThanOrEqual(12280);
   });
 });
 

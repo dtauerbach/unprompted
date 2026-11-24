@@ -646,11 +646,7 @@ describe("human actions", () => {
     form.set("handle", "<script>");
     expect((await a.getConnectCode({}, form)).error).toBeDefined();
     form.set("handle", "alice");
-    // Linked moments ago: the account page says to wait out the day.
-    const soon = await a.getConnectCode({}, form);
-    expect(soon.code).toBeUndefined();
-    expect(soon.error).toMatch(/linked in the last 24 hours/);
-    await ageLink("alice");
+    // Linked at sign-up moments ago: no day to wait (073_link_how.sql).
     const mine = await a.getConnectCode({}, form);
     expect(mine.code).toMatch(CONNECT_CODE_RE);
     expect(mine.handle).toBe("alice");

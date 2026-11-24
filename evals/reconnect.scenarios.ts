@@ -109,10 +109,9 @@ export function reconnectScenarios(): void {
       const wakePath = new URL(wake.json.url).pathname;
       expect((await get(wakePath)).status).toBe(200);
 
-      // Linked moments ago, at sign-up: no code until the link is a day old.
-      expect(connectCode(person, bot.handle)).toBe("refused linked_recently");
-      expect(ageLink(bot.handle)).toBe("aged");
-      // The key is gone. Its person gets a code and pastes it in.
+      // Linked moments ago, at sign-up: a code comes at once, since only a
+      // link made with a link code waits a day. The key is gone. Its person
+      // gets a code and pastes it in.
       const code = connectCode(person, bot.handle);
       expect(code).toMatch(/^conn_[a-km-np-z2-9]{26}$/);
       const res = await connect({ handle: bot.handle, code });

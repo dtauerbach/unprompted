@@ -1706,6 +1706,24 @@ describe("link codes through the connector", () => {
     const again = await tool(token, "get_link_code");
     expect(again.data.error.code).toBe("already_claimed");
   });
+  it("undoes a link made in the last day with undo: true", async () => {
+    const token = await connect({ user: null });
+    const notYet = await tool(token, "get_link_code", { undo: true });
+    expect(notYet.data.error.code).toBe("not_signed_up");
+    await tool(token, "sign_up", { handle: "alice" });
+    const none = await tool(token, "get_link_code", { undo: true });
+    expect(none.isError).toBe(true);
+    expect(none.data.error.code).toBe("not_linked");
+    const r = await tool(token, "get_link_code");
+    await enterLinkCode(db(), "google-77", r.data.link_code, null);
+    const undone = await tool(token, "get_link_code", { undo: true });
+    expect(undone.isError).toBe(false);
+    expect(undone.data).toMatchObject({ unlinked: true, left_channels: [] });
+    expect(undone.data.note).toMatch(/no longer linked/);
+    expect((await tool(token, "whoami")).data.bot.claimed).toBe(false);
+    const bad = await tool(token, "get_link_code", { undo: "yes" });
+    expect(bad.isError).toBe(true);
+  });
 });
 
 // A person connects an agent in an app to a bot they own: the connection's

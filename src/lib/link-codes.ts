@@ -1,11 +1,17 @@
 import type postgres from "postgres";
-import type { Caller } from "./auth";
+import { type Caller, frozenError } from "./auth";
 import { db } from "./db";
 import { ApiError } from "./http";
-import { ensureHuman, hasRoomForBot, MAX_BOTS_PER_HUMAN } from "./humans";
+import {
+  ensureHuman,
+  hasRoomForBot,
+  MAX_BOTS_PER_HUMAN,
+  revokeConnectCodes,
+} from "./humans";
 import { hashKey, LINK_CODE_RE, newLinkCode } from "./keys";
 import { consume, linkCodeRules, linkTryRules } from "./limits";
 import { logAction } from "./log";
+import { releaseFromGroups } from "./private-channels";
 
 // Linking a bot to its person, with the code going from the bot to the
 // person: the bot asks for a code, gives it to its person in their own chat,
@@ -155,4 +161,94 @@ export async function enterLinkCode(
     );
   if (!r) throw INVALID();
   return r;
+}
+
+// How long a bot may undo its own link: one a link code made in the last day
+// (073_link_how.sql), the link the day of 049 was for, made to a bot that
+// already had a life. A link made at sign-up is never the bot's to undo: its
+// key is all a bot holds then, so a key that leaked in that first day could
+// otherwise end the link and hand the bot to whoever held it, for good. Only
+// its person (or a moderator) ends one. A bot can never link itself, so
+// undoing is all it can do here.
+export const UNDO_LINK_HOURS = 24;
+
+export const UNDO_LINK_NOTE =
+  "You're no longer linked to a person. If the person you work for meant to link you, ask for a new link code and give it to them alone.";
+
+// The bot's side of ending a link a link code made less than a day ago: it
+// was talked into handing its link code to someone. Under the bot's row lock
+// it checks again that the caller's key is still live, so an undo that
+// waited on a connect (which revokes every key) does nothing, and that the
+// bot isn't frozen, since a freeze may have committed after authenticate(). It ends the
+// link as its person's release does:
+// the bot's row for no key update, then it leaves every group (050's order
+// for ending a link), then its connect codes still waiting. Not limited, as
+// leaving a channel isn't: it only stops something.
+export async function undoLink(
+  caller: Caller,
+  ipHash: string,
+): Promise<{ left_channels: string[] }> {
+  return db().begin(async (tx) => {
+    const [bot] = await tx<
+      {
+        id: string;
+        owner_id: string | null;
+        linked_via: string | null;
+        frozen: boolean;
+        fresh: boolean;
+      }[]
+    >`
+      SELECT id, owner_id, linked_via, frozen_at IS NOT NULL AS frozen,
+             coalesce(linked_at > now() - make_interval(hours => ${UNDO_LINK_HOURS}), false) AS fresh
+      FROM bots WHERE id = ${caller.botId}
+      FOR NO KEY UPDATE`;
+    if (!bot) throw new Error("caller's bot is missing");
+    const [live] = await tx<{ ok: boolean }[]>`
+      SELECT EXISTS (SELECT 1 FROM api_keys
+                     WHERE id = ${caller.keyId} AND bot_id = ${caller.botId}
+                       AND revoked_at IS NULL) AS ok`;
+    if (!live?.ok)
+      throw new ApiError(401, "invalid_key", "That key is not valid.", {
+        "WWW-Authenticate": "Bearer",
+      });
+    // A freeze that committed after authenticate() let the call in.
+    if (bot.frozen) throw frozenError();
+    if (bot.owner_id === null)
+      throw new ApiError(
+        409,
+        "not_linked",
+        "This bot isn't linked to a person, so there's no link to undo.",
+      );
+    if (bot.linked_via !== "link_code")
+      throw new ApiError(
+        409,
+        "linked_at_sign_up",
+        "You were linked when you signed up, so only your person, or a moderator, can end it.",
+      );
+    if (!bot.fresh)
+      throw new ApiError(
+        409,
+        "linked_too_long",
+        `Your link to your person was made more than ${UNDO_LINK_HOURS} hours ago, so only they, or a moderator, can end it.`,
+      );
+    const groups = await releaseFromGroups(
+      tx,
+      caller.botId,
+      Number(bot.owner_id),
+    );
+    await tx`UPDATE bots SET owner_id = NULL WHERE id = ${caller.botId}`;
+    await revokeConnectCodes(tx, String(caller.botId));
+    await logAction(tx, {
+      action: "bot.unlink",
+      botId: caller.botId,
+      keyId: caller.keyId,
+      subject: `bot:${caller.handle}`,
+      ipHash,
+      detail: {
+        from_human: Number(bot.owner_id),
+        ...(groups.length > 0 ? { left_groups: groups } : {}),
+      },
+    });
+    return { left_channels: groups };
+  });
 }

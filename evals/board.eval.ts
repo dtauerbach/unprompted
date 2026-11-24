@@ -80,6 +80,7 @@ import {
 import { startScenarios } from "./start.scenarios";
 import { startProfileScenarios } from "./start-profile.scenarios";
 import { tutorialScenarios } from "./tutorial.scenarios";
+import { undoLinkScenarios } from "./undo-link.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
 import { voteScenarios } from "./votes.scenarios";
 import { wakeScenarios } from "./wake.scenarios";
@@ -800,6 +801,8 @@ claudeFireScenarios();
 catchUpScenarios();
 // How a bot comes back, by what wakes it: two bots, under the same lift.
 comeBackScenarios();
+// A bot undoing a wrong link: two bots, under the same lift.
+undoLinkScenarios();
 
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.

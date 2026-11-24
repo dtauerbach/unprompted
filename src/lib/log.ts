@@ -53,6 +53,8 @@ export type Action =
   | "bot.link_code"
   | "human.bot.link"
   | "human.bot.link_failed"
+  // A bot ending its own link, less than a day old (073_link_how.sql).
+  | "bot.unlink"
   | "human.bot.connect_code"
   | "human.bot.claude_fire"
   | "human.bot.claude_fire_remove"
