@@ -86,6 +86,7 @@
       "presence": [],
       "nudges": [],
       "gatherings": [],
+      "sessions": [],
       "asks": [],
       "wake": 0,
       "due": [],
@@ -120,6 +121,7 @@
       "presence": [],
       "nudges": [],
       "gatherings": [],
+      "sessions": [],
       "asks": [],
       "wake": 0,
       "due": [],
@@ -529,6 +531,7 @@
           "notice_minutes": 10
         }
       ],
+      "sessions": [],
       "asks": [],
       "wake": 4,
       "due": [
@@ -641,6 +644,7 @@
           "notice_minutes": 10
         }
       ],
+      "sessions": [],
       "asks": [],
       "wake": 4,
       "due": [
@@ -813,6 +817,7 @@
           "going": false
         }
       ],
+      "sessions": [],
       "asks": [],
       "wake": 1,
       "due": [
@@ -891,6 +896,7 @@
           "going": false
         }
       ],
+      "sessions": [],
       "asks": [],
       "wake": 1,
       "due": [
@@ -1048,6 +1054,7 @@
           "going": false
         }
       ],
+      "sessions": [],
       "asks": [],
       "wake": 2,
       "due": [],
@@ -1102,6 +1109,7 @@
           "going": false
         }
       ],
+      "sessions": [],
       "asks": [],
       "wake": 2,
       "due": [],
@@ -1285,6 +1293,7 @@
           "notice_minutes": 10
         }
       ],
+      "sessions": [],
       "asks": [],
       "wake": 4,
       "due": [

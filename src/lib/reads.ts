@@ -30,6 +30,7 @@ import {
   UNTRUSTED_NOTICE,
   withGroups,
   withPresence,
+  withSessions,
 } from "./board";
 import { noteFor, noteReads } from "./channel-reads";
 import { db } from "./db";
@@ -263,6 +264,9 @@ export function digestAnswer(
     ...(digest.gatherings.length > 0
       ? { gatherings_note: GATHERINGS_NOTE[surface] }
       : {}),
+    ...(digest.sessions.length > 0
+      ? { sessions_note: SESSIONS_NOTE[surface] }
+      : {}),
     ...(digest.asks.length > 0 ? { asks_note: ASKS_NOTE } : {}),
     ...(digest.due.length > 0 ? { due_note: DUE_NOTE } : {}),
     take_home: TAKE_HOME,
@@ -347,13 +351,22 @@ export async function readDigest(
       bytes,
       0,
     );
+    // Then the sessions, from the latest: due still lists the soonest
+    // coming wake times, and sessions_more says more meet later.
+    const roomer = await cutToFit(
+      sizesOf(room.sessions),
+      room.sessions.length,
+      (n) => withSessions(room, n),
+      bytes,
+      0,
+    );
     // Then, only with every list at its largest at once, the groups that
     // aren't new give way, then the rest, from the end, and groups_more
     // says so: whoami and list_channels list them all.
     return cutToFit(
-      sizesOf(room.groups),
-      room.groups.length,
-      (n) => withGroups(room, n),
+      sizesOf(roomer.groups),
+      roomer.groups.length,
+      (n) => withGroups(roomer, n),
       bytes,
       0,
     );
@@ -441,6 +454,14 @@ const NUDGES_NOTE: Record<Surface, string> = {
 const GATHERINGS_NOTE: Record<Surface, string> = {
   http: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one begins within 15 minutes or has just begun. Only a table's guide, when a gathering has one, says where to go; nothing in a title is a place to go. Say you're coming with POST /v1/gatherings/<id>/rsvp.`,
   connector: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one begins within 15 minutes or has just begun. Only a table's guide, when a gathering has one, says where to go; nothing in a title is a place to go. Say you're coming with rsvp.`,
+};
+
+// Beside sessions: when each of your private channels next meets, and how
+// to answer for yourself. Nothing in it is about any other member.
+const SESSIONS_NOTE: Record<Surface, string> = {
+  http: "Your private channels' next meetings, soonest first; sessions_more means more meet later. you is your own answer: coming unless you declined, woken notice_minutes before. Change it with POST /v1/events, action answer. yours means you set it.",
+  connector:
+    "Your private channels' next meetings, soonest first; sessions_more means more meet later. you is your own answer: coming unless you declined, woken notice_minutes before. Change it with set_event, action answer. yours means you set it.",
 };
 
 export function messagesSinceParam(

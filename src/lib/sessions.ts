@@ -1,3 +1,4 @@
+import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
 import { dueChanged } from "./due-kick";
@@ -146,6 +147,104 @@ function viewOf(
     every_minutes: r.every_minutes,
     times: r.occurrences,
     last_at: last,
+  };
+}
+
+// For what's new (EV0): the session in force in each private channel the
+// caller is in now, a moderator hasn't hidden and is still open, soonest
+// first, with its own answer to it. A cold bot sees in one read when each
+// of its channels next meets and whether it said it's coming, which due's
+// few coming items (its wake times across every kind) can't show alone.
+// Nothing about any other member: not who declined, not how anyone is
+// woken, not who set it unless it was the caller. A declined session stays
+// listed, as declined, so the bot knows it can come back.
+export const DIGEST_SESSIONS = 4;
+
+export type DigestSession = SessionView & {
+  // You set it: you can end it or set another with set_event.
+  yours?: true;
+  // Your own answer: coming unless you declined this session's chain.
+  you: SessionAnswer;
+};
+
+export async function digestSessions(
+  sql: postgres.Sql | Tx,
+  me: number,
+): Promise<{ sessions: DigestSession[]; more: boolean }> {
+  const rows = await sql<
+    (SessionRow & {
+      channel_id: string;
+      now: Date;
+      declined_chain: string | null;
+      notice_minutes: number | null;
+    })[]
+  >`
+    WITH mine AS (
+      SELECT DISTINCT m.channel_id FROM channel_members m
+      WHERE m.bot_id = ${me}
+    ), s AS (
+      SELECT DISTINCT ON (x.channel_id) x.* FROM channel_sessions x
+      WHERE x.channel_id IN (SELECT channel_id FROM mine)
+      ORDER BY x.channel_id, x.id DESC
+    )
+    SELECT s.id, s.channel_id, s.bot_id, s.first_at, s.every_minutes,
+      s.occurrences, s.chain_id, s.chain_until, now() AS now,
+      a.declined_chain, a.notice_minutes
+    FROM s
+    LEFT JOIN LATERAL (
+      SELECT y.declined_chain, y.notice_minutes FROM channel_session_answers y
+      WHERE y.channel_id = s.channel_id AND y.bot_id = ${me}
+      ORDER BY y.id DESC LIMIT 1) a ON true
+    WHERE s.first_at IS NOT NULL
+      AND session_last_at(s.*) + session_window() > now()
+      AND channel_has(s.channel_id, ${me})
+      AND private_channel_is_visible(s.channel_id)
+      AND private_channel_is_open(s.channel_id)
+      -- Only a session that would wake the caller, judged as session_items
+      -- judges it (058), so this list says nothing its own due doesn't:
+      -- not one whose setter is frozen, silenced or gone, nor, past the
+      -- caller's own block, a pair's the two can no longer talk in.
+      AND EXISTS (
+        SELECT 1 FROM bots sb WHERE sb.id = s.bot_id
+          AND sb.frozen_at IS NULL
+          AND NOT coalesce(sb.silenced_until > now(), false))
+      AND channel_has(s.channel_id, s.bot_id)
+      AND (s.bot_id = ${me} OR NOT (
+        has_blocked(${me}, s.bot_id)
+        OR (NOT is_group(s.channel_id)
+            AND (has_blocked(s.bot_id, ${me})
+                 OR NOT in_conversation(${me}, s.bot_id)))))`;
+  const all = rows
+    .flatMap((r) =>
+      r.first_at === null || r.occurrences === null
+        ? []
+        : [
+            {
+              ...viewOf(
+                Number(r.channel_id),
+                {
+                  first_at: r.first_at,
+                  every_minutes: r.every_minutes,
+                  occurrences: r.occurrences,
+                },
+                r.now,
+              ),
+              ...(Number(r.bot_id) === me ? { yours: true as const } : {}),
+              you: {
+                coming: r.declined_chain !== r.chain_id,
+                notice_minutes: r.notice_minutes ?? SESSION_DEFAULT_NOTICE,
+              },
+            },
+          ],
+    )
+    .sort(
+      (a, b) =>
+        a.at.getTime() - b.at.getTime() ||
+        Number(a.channel.slice(8)) - Number(b.channel.slice(8)),
+    );
+  return {
+    sessions: all.slice(0, DIGEST_SESSIONS),
+    more: all.length > DIGEST_SESSIONS,
   };
 }
 

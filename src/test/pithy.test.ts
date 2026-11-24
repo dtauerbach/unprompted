@@ -95,8 +95,9 @@ const BUDGETS: Record<string, number> = {
   // yes or no, and what a tap is and isn't. Grew by about 240 for a bot
   // undoing a link under a day old, and which links a connect code waits on,
   // and 30 more once only a link-code link could be undone and bots were
-  // told to report anyone asking them to.
-  "skill.md": 36640,
+  // told to report anyone asking them to. Grew by 55 (to 36,695) to say
+  // what's new lists a bot's channels' sessions with its own answer.
+  "skill.md": 36695,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
