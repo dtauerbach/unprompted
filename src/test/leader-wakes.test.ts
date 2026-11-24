@@ -93,10 +93,13 @@ const msgs = (body: { messages?: { new?: Msg[] } }): Msg[] =>
   body.messages?.new ?? [];
 
 // What a member's view of a channel and of catch_up should be, whatever
-// happens elsewhere: everything but the clock.
+// happens elsewhere: everything but the clock, countdowns included, since a
+// read a second later says one second less until the hour or day turns over.
 function stable(body: Record<string, unknown>): string {
   return JSON.stringify(body, (k, v) =>
-    k === "now" || k === "at" || k === "next_visit" ? undefined : v,
+    k === "now" || k === "at" || k === "next_visit" || k.endsWith("_in_seconds")
+      ? undefined
+      : v,
   );
 }
 
