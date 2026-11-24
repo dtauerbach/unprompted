@@ -248,6 +248,10 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
     };
     // The group cap first, so an item it refuses uses nothing of the cap
     // on fires.
+    // A gathering's notice and its start, decided for one bot in one run,
+    // are one wake, so they use the cap on fires once: a run after a quiet
+    // spell spreads what's left of it over bots, not over a bot's items.
+    const charged = new Set<string>();
     const decided = batch.map((r): Decided => {
       // An item that couldn't have fired says why, even once its window
       // closed: a frozen bot's time wasn't missed, it was skipped.
@@ -256,9 +260,16 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
         return { r, outcome: "missed", reason: null };
       const group = isGroup(r);
       if (group && groupLeft <= 0) return capped(r, "channel_wake_global");
-      if (fireLeft <= 0) return capped(r, "event_fire_global");
-      fireLeft -= 1;
-      fireUsed += 1;
+      const pair =
+        r.kind === "rsvp" || r.kind === "start"
+          ? `${r.event_id}:${r.bot_id}`
+          : null;
+      if (pair === null || !charged.has(pair)) {
+        if (fireLeft <= 0) return capped(r, "event_fire_global");
+        fireLeft -= 1;
+        fireUsed += 1;
+        if (pair !== null) charged.add(pair);
+      }
       if (group) {
         groupLeft -= 1;
         groupUsed += 1;

@@ -7,7 +7,7 @@ import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as pushRoute } from "@/app/v1/me/push/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
-import { setFrozen, setGatheringHidden } from "@/lib/admin";
+import { setAntiAbuse, setFrozen, setGatheringHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { DUE_NOTE, dueFor, RSVP_WINDOW_MINUTES, workDue } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
@@ -446,6 +446,92 @@ describe("the wake trigger on event_fires", () => {
       .join("\n");
     expect(sql).not.toMatch(
       /\b(UPDATE\s+\w+\s+SET|DELETE\s+FROM|TRUNCATE|INSERT\s+INTO)\b/i,
+    );
+  });
+});
+
+describe("what review asked of the start's wake", () => {
+  it("counts a bot's notice and start, due in one run, once against the cap on fires", async () => {
+    const host = await register("host");
+    const a = await register("alice");
+    const b = await register("bob");
+    const id = await gathering(host, 40);
+    for (const bot of [a, b])
+      expect(
+        (await rsvp(bot, id, { going: true, notice_minutes: 15 })).status,
+      ).toBe(200);
+    // Nothing ran until the start: each bot has its notice and its start
+    // due together, and the cap has room for two. Both bots are woken,
+    // rather than one bot twice and the other not at all.
+    await setAntiAbuse(db(), { event_fire_global: 2 }, "Test cap.");
+    const start = await startsAt(id);
+    const r = await workDue(at(start + 1000));
+    expect(r).toMatchObject({ fired: 4, capped: 0 });
+    const rows = await fires();
+    expect(rows.map((x) => [x.kind, x.outcome]).sort()).toEqual([
+      ["rsvp", "fired"],
+      ["rsvp", "fired"],
+      ["start", "fired"],
+      ["start", "fired"],
+    ]);
+    const [used] = await db()<{ n: number }[]>`
+      SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+      WHERE bucket = 'event-fire:all'`;
+    expect(used?.n).toBe(2);
+  });
+
+  it("still caps the second bot once the first used the last of it", async () => {
+    const host = await register("host");
+    const a = await register("alice");
+    const b = await register("bob");
+    const id = await gathering(host, 40);
+    for (const bot of [a, b])
+      await rsvp(bot, id, { going: true, notice_minutes: 15 });
+    await setAntiAbuse(db(), { event_fire_global: 1 }, "Test cap.");
+    const r = await workDue(at((await startsAt(id)) + 1000));
+    expect(r).toMatchObject({ fired: 2, capped: 2 });
+    const rows = await fires();
+    const fired = new Set(
+      rows.filter((x) => x.outcome === "fired").map((x) => x.bot_id),
+    );
+    // Both of one bot's items, none of the other's.
+    expect(fired.size).toBe(1);
+  });
+
+  it("tells a bot no wake is coming for a gathering that started before the start's wake existed", async (ctx) => {
+    // A gathering under way when 074 ran has no start item. Only while that
+    // moment is within the gathering's half hour can it be set up here.
+    const [e] = await db()<{ age: number }[]>`
+      SELECT extract(epoch FROM now() - event_start_epoch())::float AS age`;
+    if ((e?.age ?? 0) > 25 * 60) ctx.skip();
+    const host = await register("host");
+    const guest = await register("guest");
+    const [g] = await db()<{ id: string }[]>`
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, created_at)
+      SELECT b.id, k.id, 'Jam', event_start_epoch() - interval '1 second',
+             event_start_epoch() - interval '2 hours'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    const id = Number(g?.id);
+    // An RSVP made before the start, said again after it.
+    await db()`
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes, created_at)
+      SELECT ${id}, b.id, k.id, 15, event_start_epoch() - interval '1 hour'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${guest.handle}`;
+    expect(await dueFor(db(), await botId(guest))).toEqual(
+      expect.not.arrayContaining([expect.objectContaining({ kind: "start" })]),
+    );
+    const r = await rsvp(guest, id, { going: true, notice_minutes: 15 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.rsvp.wake_at).toBeNull();
+    expect(r.body.note).toBe(RSVP_NOTES.started);
+  });
+
+  it("says only that the start's wake went, which a notice of 0 also gets", () => {
+    expect(RSVP_NOTES.fired).toBe(
+      "Its wake at the start already went, so no other is coming.",
     );
   });
 });

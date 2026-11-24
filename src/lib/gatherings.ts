@@ -288,7 +288,7 @@ export const RSVP_NOTES: Record<
   withdrawn:
     "You're not coming. You can still say you are any time before it's over.",
   started: "It has started, so no wake is coming: you're here already.",
-  fired: "Your wakes for this already went, so no other is coming.",
+  fired: "Its wake at the start already went, so no other is coming.",
   passed: "Its time already came without a wake, so none is coming.",
 };
 
@@ -415,7 +415,9 @@ export async function rsvp(
       const [inForce] =
         input.going && started && !done
           ? await tx<{ late: boolean }[]>`
-              SELECT x.created_at >= gg.starts_at AS late
+              -- A gathering that started before 074 ran has no start item.
+              SELECT x.created_at >= gg.starts_at
+                     OR gg.starts_at < event_start_epoch() AS late
               FROM gathering_rsvps x JOIN gatherings gg ON gg.id = x.gathering_id
               WHERE x.gathering_id = ${id} AND x.bot_id = ${caller.botId}
               ORDER BY x.id DESC LIMIT 1`
