@@ -567,4 +567,103 @@ export function sessionScenarios(): void {
       expect(announce.isError).toBe(true);
     });
   });
+
+  // EV18: one meeting of a series, declined by one member over the
+  // connector, and nothing anyone else reads changes. No waiting.
+  describe.runIf(LOCAL && MODERATOR)("declining one meeting", () => {
+    it("skips that meeting alone for the decliner, and the others read the same", async () => {
+      const ana = await register("occ-ana");
+      const ben = await register("occ-ben");
+      const cy = await register("occ-cy");
+      for (const b of [ana, ben, cy]) await linkByCode(b, "eval-occurrence-1");
+      const g = person(
+        "eval-occurrence-1",
+        "start",
+        ben.handle,
+        ana.handle,
+        ben.handle,
+        cy.handle,
+      ).channel as string;
+      const set = await tool(ben, "set_event", {
+        action: "session",
+        channel: g,
+        in_minutes: 120,
+        every_minutes: 30,
+        times: 3,
+      });
+      expect(set.isError, set.raw).toBe(false);
+      const view = async (b: Bot) => {
+        const up = await tool(b, "catch_up", {});
+        expect(up.isError, up.raw).toBe(false);
+        return JSON.stringify({
+          due: up.data.due,
+          sessions: up.data.sessions,
+          next_visit: up.data.next_visit,
+          wake: up.data.wake,
+        });
+      };
+      const before = { ben: await view(ben), cy: await view(cy) };
+
+      // Ana names the second meeting as her due names it.
+      const mine = await tool(ana, "catch_up", {});
+      const second = (
+        mine.data.due as {
+          kind: string;
+          event: number;
+          occurrence: number;
+          channel?: string;
+        }[]
+      ).find(
+        (d) => d.kind === "session" && d.channel === g && d.occurrence === 1,
+      );
+      expect(second).toBeDefined();
+      const no = await tool(ana, "set_event", {
+        action: "answer",
+        channel: g,
+        event: second?.event,
+        occurrence: 1,
+        coming: false,
+      });
+      expect(no.isError, no.raw).toBe(false);
+      expect(no.data.note).toBe(
+        "You declined this occurrence only. Your answers for the rest of the series did not change.",
+      );
+      expect(no.data.yours.coming).toBe(true);
+      const after = await tool(ana, "catch_up", {});
+      const states = (
+        after.data.due as {
+          kind: string;
+          channel?: string;
+          occurrence: number;
+          state: string;
+        }[]
+      )
+        .filter((d) => d.kind === "session" && d.channel === g)
+        .map((d) => [d.occurrence, d.state]);
+      expect(states).toContainEqual([1, "skipping"]);
+      expect(states).toContainEqual([0, "coming"]);
+
+      // Nothing Ben (the setter) or Cy reads changed.
+      expect(await view(ben)).toBe(before.ben);
+      expect(await view(cy)).toBe(before.cy);
+
+      // Set again, it's a new meeting: the old one's number is refused.
+      await tool(ben, "set_event", {
+        action: "session",
+        channel: g,
+        in_minutes: 121,
+        every_minutes: 30,
+        times: 3,
+      });
+      const stale = await tool(ana, "set_event", {
+        action: "answer",
+        channel: g,
+        event: second?.event,
+        occurrence: 2,
+        coming: false,
+      });
+      expect(stale.isError).toBe(true);
+      expect(JSON.stringify(stale.data)).toContain("session_changed");
+    });
+  });
 }
