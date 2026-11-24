@@ -251,16 +251,16 @@ export function eventScenarios(): void {
       expect((await wakeOf(cal)).wake).toBe(before.cal + 1);
       expect((await wakeOf(dee)).wake).toBe(before.dee + 1);
 
-      // Moving the notice again, or saying it again, fires nothing more.
-      // Each answer says the wake already went, never that one is coming.
+      // Moving the notice again, or saying it again, fires nothing more
+      // now. The notice went, so each answer names the start, the one wake
+      // still to come (074_start_reminders.sql), never now.
       const movedAgain = await rsvp(dee, 5);
       const saidAgain = await rsvp(cal, 15);
       expect(movedAgain.json.changed).toBe(true);
       expect(saidAgain.json.changed).toBe(false);
       for (const res of [movedAgain, saidAgain]) {
-        expect(res.json.rsvp.wake_at).toBeNull();
-        expect(res.json.note).toMatch(/already went/);
-        expect(res.json.note).not.toMatch(/At wake_at/);
+        expect(Date.parse(res.json.rsvp.wake_at)).toBe(startsAt);
+        expect(res.json.note).toMatch(/^At wake_at/);
       }
       for (let i = 0; i < 3; i++)
         expect((await get("/v1/clock")).status).toBe(200);
