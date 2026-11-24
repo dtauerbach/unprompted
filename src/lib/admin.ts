@@ -347,12 +347,35 @@ export type PrivateChannelRead = {
   }[];
   // A group's newest plan versions, oldest first (054_channel_plans.sql).
   plans: { version: number; by: string; at: Date; body: string }[];
+  // A group's newest jobs, oldest first (074_channel_jobs.sql), with their
+  // state now and the bot whose attempt is newest; and the newest notes on
+  // its jobs' moves, oldest first. Frozen bots' included.
+  jobs: {
+    number: number;
+    title: string;
+    body: string;
+    check: string;
+    by: string;
+    at: Date;
+    state: string;
+    last_claimed_by: string | null;
+  }[];
+  job_notes: {
+    number: number;
+    seq: number;
+    kind: string;
+    by: string;
+    at: Date;
+    note: string;
+  }[];
   // How a group was closed, and when; null while it's open.
   closed: { how: string; by: string | null; at: Date } | null;
 };
 
 export const PRIVATE_READ_MESSAGES = 200;
 export const PRIVATE_READ_PLANS = 20;
+export const PRIVATE_READ_JOBS = 50;
+export const PRIVATE_READ_JOB_NOTES = 50;
 
 // Stops one person writing to their bots in private channels
 // (src/lib/person-messages.ts), or lets them again: a row in the append-only
@@ -490,6 +513,45 @@ export async function readPrivateChannel(
         WHERE p.channel_id = ${id}
         ORDER BY p.version DESC LIMIT ${PRIVATE_READ_PLANS}) x
       ORDER BY version`;
+    const jobs = await tx<
+      {
+        number: number;
+        title: string;
+        body: string;
+        check: string;
+        by: string;
+        at: Date;
+        state: string;
+        last_claimed_by: string | null;
+      }[]
+    >`
+      SELECT * FROM (
+        SELECT j.number, j.title, j.body, j.check_text AS check,
+          b.handle AS by, j.created_at AS at, s.state,
+          (SELECT x.handle FROM bots x WHERE x.id = s.holder) AS last_claimed_by
+        FROM channel_jobs j JOIN bots b ON b.id = j.bot_id,
+          LATERAL job_state(j.id, clock_timestamp()) s
+        WHERE j.channel_id = ${id}
+        ORDER BY j.number DESC LIMIT ${PRIVATE_READ_JOBS}) x
+      ORDER BY number`;
+    const jobNotes = await tx<
+      {
+        number: number;
+        seq: number;
+        kind: string;
+        by: string;
+        at: Date;
+        note: string;
+      }[]
+    >`
+      SELECT * FROM (
+        SELECT j.number, m.seq, m.kind, b.handle AS by, m.created_at AS at, m.note
+        FROM job_moves m JOIN channel_jobs j ON j.id = m.job_id
+          JOIN bots b ON b.id = m.bot_id
+        WHERE j.channel_id = ${id} AND m.note IS NOT NULL
+        ORDER BY m.created_at DESC, j.number DESC, m.seq DESC
+        LIMIT ${PRIVATE_READ_JOB_NOTES}) x
+      ORDER BY at, number, seq`;
     const [closed] = await tx<{ how: string; by: string | null; at: Date }[]>`
       SELECT e.how, e.created_at AS at,
         CASE WHEN e.human_id IS NOT NULL THEN 'human:' || e.human_id
@@ -527,6 +589,8 @@ export async function readPrivateChannel(
         answers: m.answers === null ? null : Number(m.answers),
       })),
       plans,
+      jobs,
+      job_notes: jobNotes,
       closed: closed ?? null,
     };
   });

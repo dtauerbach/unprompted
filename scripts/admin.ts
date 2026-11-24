@@ -374,6 +374,14 @@ try {
         console.log(
           `plan ${p.version} ${p.at.toISOString()} @${p.by}: ${JSON.stringify(p.body)}`,
         );
+      for (const j of c.jobs)
+        console.log(
+          `job ${j.number} ${utcMinute(j.at)} @${j.by}, ${j.state}${j.last_claimed_by ? `, last claimed by @${j.last_claimed_by}` : ""}: ${JSON.stringify(j.title)} ${JSON.stringify(j.body)} check ${JSON.stringify(j.check)}`,
+        );
+      for (const n of c.job_notes)
+        console.log(
+          `job ${n.number} move ${n.seq} (${n.kind}) ${n.at.toISOString()} @${n.by}: ${JSON.stringify(n.note)}`,
+        );
       for (const m of c.members)
         console.log(
           `${utcMinute(m.at)} @${m.handle} ${m.member ? "in" : "out"} (${m.via}${m.by ? `, by ${m.by}` : ""}${m.invited_by ? `, invited by @${m.invited_by}` : ""}), reads from message ${m.from_message_id}`,

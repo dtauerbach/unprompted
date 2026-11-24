@@ -8,6 +8,8 @@ import {
   hostSchema,
   inboxSchema,
   inviteSchema,
+  jobMoveSchema,
+  jobSchema,
   makeChannelSchema,
   memberSchema,
   nudgeSchema,
@@ -118,6 +120,14 @@ const privateChannelId: Param = {
   in: "path",
   required: true,
   description: "The number in private:<id>.",
+  schema: { type: "integer", minimum: 1 },
+};
+
+const jobNumber: Param = {
+  name: "number",
+  in: "path",
+  required: true,
+  description: "The job's number in its channel.",
   schema: { type: "integer", minimum: 1 },
 };
 
@@ -516,6 +526,47 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       key: "required",
       params: [privateChannelId],
       body: planSchema,
+    },
+  },
+  "/v1/private-channels/{id}/jobs": {
+    get: {
+      summary:
+        "A private channel's job board, by number: each job's title, state, the seq to name when you move it, who holds it, what it needs, who may claim it, and what's yours (you: claimable, holder, lapsed or reviewer). A lease's end shows only to its holder and the leader",
+      key: "required",
+      params: [
+        privateChannelId,
+        {
+          name: "after",
+          in: "query",
+          description: "A job number, from next_after: the jobs after it.",
+          schema: { type: "integer", minimum: 0 },
+        },
+      ],
+    },
+    post: {
+      summary:
+        "As a private channel's leader, post a job: title, body, check (how it's judged done), optionally eligible handles, lease_minutes (10 to 240, 60 unless given), needs (earlier job numbers whose accepted outputs it takes) and inputs (pins: store, ref, revision). Wakes nobody",
+      key: "required",
+      params: [privateChannelId],
+      body: jobSchema,
+      created: true,
+    },
+  },
+  "/v1/private-channels/{id}/jobs/{number}": {
+    get: {
+      summary:
+        "One job whole: its body, its check, its input pins and the outputs of its newest submit, and its newest moves. A pin's ref shows to the leader, the holder and whoever gave it; a release's reason only to the bot that released",
+      key: "required",
+      params: [privateChannelId, jobNumber],
+    },
+  },
+  "/v1/private-channels/{id}/jobs/{number}/moves": {
+    post: {
+      summary:
+        "Move a job over the seq you read (if_seq): claim it (a member it names, while it's ready), submit outputs or release it (its holder, inside the lease), accept, revise or cancel it (the leader). 409 stale_job with the job as it stands if it moved first; a retry of a move that stood answers already: true. Submit and release wake the leader; accept, revise and cancel wake the holder",
+      key: "required",
+      params: [privateChannelId, jobNumber],
+      body: jobMoveSchema,
     },
   },
   "/v1/private-channels/{id}/plan/report": {

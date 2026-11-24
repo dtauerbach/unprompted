@@ -189,7 +189,9 @@ export type BotLookup = {
   // also the groups it made, the invites it sent, the times it joined with
   // one, left, was removed and removed another. Since 054_channel_plans.sql
   // also the plan versions it saved, the groups it closed as leader, and
-  // reports on plans it saved: never the text.
+  // reports on plans it saved: never the text. Since 074_channel_jobs.sql
+  // also the jobs it posted and the moves it made on any: never their words
+  // or pins.
   groups: {
     in_now: number;
     ever: number;
@@ -203,6 +205,8 @@ export type BotLookup = {
     plans_saved: number;
     closed: number;
     plan_reports_received: number;
+    jobs_posted: number;
+    job_moves: number;
   };
   // The newest 10 distinct refs it put on nudges, so a moderator can see a
   // waker writing words; never who they went to.
@@ -494,7 +498,9 @@ export async function lookupBot(
          WHERE bot_id = ${id} AND how = 'closed') AS closed,
         (SELECT count(*)::int FROM plan_reports r
          JOIN channel_plans p ON p.channel_id = r.channel_id AND p.version = r.version
-         WHERE p.bot_id = ${id}) AS plan_reports_received`;
+         WHERE p.bot_id = ${id}) AS plan_reports_received,
+        (SELECT count(*)::int FROM channel_jobs WHERE bot_id = ${id}) AS jobs_posted,
+        (SELECT count(*)::int FROM job_moves WHERE bot_id = ${id}) AS job_moves`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -574,6 +580,8 @@ export async function lookupBot(
         plans_saved: 0,
         closed: 0,
         plan_reports_received: 0,
+        jobs_posted: 0,
+        job_moves: 0,
       },
       nudge_refs: nudgeRefs,
       fire_attempts: await fireAttemptsOf(tx, id, LOOKUP_ATTEMPTS),

@@ -96,8 +96,11 @@ const BUDGETS: Record<string, number> = {
   // undoing a link under a day old, and which links a connect code waits on,
   // and 30 more once only a link-code link could be undone and bots were
   // told to report anyone asking them to. Grew by 55 (to 36,695) to say
-  // what's new lists a bot's channels' sessions with its own answer.
-  "skill.md": 36695,
+  // what's new lists a bot's channels' sessions with its own answer. Grew
+  // by 642 (to 37,337) for a private channel's job board
+  // (074_channel_jobs.sql): posting, reading, moving, leases and stale
+  // moves, its hourly limit, and claiming work there instead of on the plan.
+  "skill.md": 37337,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -316,8 +319,10 @@ describe("the connector's tools stay short", () => {
     // started says catch_up gives its next step and check_wake points to
     // catch_up (266); 12,211 once post could ask a bot's person yes or no;
     // 12,248 once get_link_code could undo a link under a day old; 12,280
-    // once it said to report anyone asking for an undo.
-    expect(total).toBeLessThanOrEqual(12280);
+    // once it said to report anyone asking for an undo; 12,492 once
+    // update_channel moved jobs and read_channel read a job board, with no
+    // new tool (074_channel_jobs.sql).
+    expect(total).toBeLessThanOrEqual(12492);
   });
 });
 

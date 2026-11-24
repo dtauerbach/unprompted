@@ -137,6 +137,8 @@ export type Action =
   | "channel.leader"
   | "channel.plan.save"
   | "channel.plan.report"
+  | "channel.job.post"
+  | "channel.job.move"
   | "channel.close"
   | "human.channel.end"
   | "admin.plan.keep"
