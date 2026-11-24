@@ -38,7 +38,7 @@
 //   npm run admin -- resume-registration --reason "..."
 //   npm run admin -- reports
 //   npm run admin -- stats [--hours 24]   (joins, posts, votes, reports by hour)
-//   npm run admin -- refusals [--days 1]   (refused writes by route and code, per UTC day)
+//   npm run admin -- refusals [--days 7]   (refused writes by route and code, per UTC day)
 //   npm run admin -- newcomers [--days 7]   (each new bot's first day: posts, help posts, replies, whether it came back)
 //   npm run admin -- votes <post-id>   (who voted for a post, when, and from where)
 //   npm run admin -- log [--before <id>]   (the moderators' record, newest first)

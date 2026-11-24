@@ -167,31 +167,73 @@ describe("counting", () => {
     expect(all).toContain("POST /v1/bots/{handle}/block");
   });
 
-  it("holds a bounded number of rows in memory", async () => {
-    for (let i = 0; i < 600; i++)
+  it("holds nothing a caller chose, so a flood of junk paths can't hide real routes", async () => {
+    // Fable's review of #192: a keyless flood of distinct ids once filled the
+    // waiting map, so real refusals behind it were filed as other. Paths are
+    // matched to their template when noted, so the flood is one entry.
+    for (let i = 0; i < 3000; i++)
+      countRefusal("POST", `/v1/posts/${i}/vote`, 401, "missing_key");
+    for (let i = 0; i < 3000; i++)
       countRefusal("POST", `/v1/nowhere/${i}`, 404, "no_such_route");
-    // Each distinct path is its own entry until written; past the bound a new
-    // one is noted as a path no route has, so nothing is dropped and nothing
-    // real is pushed out.
-    expect(waitingRefusals()).toBe(600);
+    for (let i = 0; i < 3000; i++)
+      countRefusal("MCP", `/mcp junk_${i}`, 400, "bad_request");
+    for (let i = 0; i < 3000; i++)
+      countRefusal("ACTION", `junk${i}`, 403, "not_yours");
     countRefusal("POST", "/v1/posts/7/report", 429, "rate_limited");
-    expect(waitingRefusals()).toBe(601);
+    expect(waitingRefusals()).toBe(12001);
     await flushRefusals(db());
     expect(await rows()).toEqual([
+      {
+        surface: "ACTION",
+        what: "other",
+        code: "not_yours",
+        status: 403,
+        n: "3000",
+      },
+      {
+        surface: "HTTP",
+        what: "POST /v1/posts/{id}/report",
+        code: "rate_limited",
+        status: 429,
+        n: "1",
+      },
+      {
+        surface: "HTTP",
+        what: "POST /v1/posts/{id}/vote",
+        code: "missing_key",
+        status: 401,
+        n: "3000",
+      },
       {
         surface: "HTTP",
         what: "other",
         code: "no_such_route",
         status: 404,
-        n: "600",
+        n: "3000",
       },
       {
-        surface: "HTTP",
+        surface: "MCP",
         what: "other",
-        code: "rate_limited",
-        status: 429,
-        n: "1",
+        code: "bad_request",
+        status: 400,
+        n: "3000",
       },
+    ]);
+  });
+
+  it("puts a failed write's counts back, all of them, for the next", async () => {
+    countRefusal("POST", "/v1/posts/7/report", 429, "rate_limited");
+    countRefusal("MCP", "/mcp post", 403, "not_yet");
+    const broken = Object.assign(() => Promise.reject(new Error("down")), {
+      array: (a: unknown[]) => a,
+    }) as unknown as Parameters<typeof flushRefusals>[0];
+    await expect(flushRefusals(broken)).rejects.toThrow("down");
+    expect(waitingRefusals()).toBe(2);
+    countRefusal("POST", "/v1/posts/8/report", 429, "rate_limited");
+    expect(await flushRefusals(db())).toBe(3);
+    expect((await rows()).map((r) => [r.what, r.n])).toEqual([
+      ["POST /v1/posts/{id}/report", "2"],
+      ["/mcp post", "1"],
     ]);
   });
 

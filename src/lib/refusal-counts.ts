@@ -1,5 +1,6 @@
 import { after } from "next/server";
 import type postgres from "postgres";
+import { OPERATIONS } from "./openapi";
 import { isReadOnly } from "./read-only";
 
 // Refusals counted by day and code (db/migrations/072_refusal_counts.sql),
@@ -7,15 +8,17 @@ import { isReadOnly } from "./read-only";
 // write rolls back, so the count is kept apart: logRefusal() in http.ts
 // notes each one here, in memory, and the request's after() work adds what's
 // waiting to the table in one statement. A server that stops before then
-// loses what it held, which a rough count can bear. Nothing here names a bot,
-// a person, an address, a key or what was sent: an HTTP path is kept only as
-// the template of the route it matched, or 'other'.
+// loses what it held, and a write whose answer was lost after it committed
+// is written again, which a rough count can bear. Nothing here names a bot,
+// a person, an address, a key or what was sent: an HTTP path is matched to
+// the template of its route when it's noted, or 'other', so nothing a caller
+// chose is held even in memory, and what's waiting is bounded by the routes,
+// tools and actions and their codes, not by what callers send.
 
 export type Surface = "HTTP" | "MCP" | "ACTION";
-type Key = { surface: Surface; what: string; code: string; status: number };
 type Noted = {
-  method: string;
-  path: string;
+  surface: Surface;
+  what: string;
   code: string;
   status: number;
   n: number;
@@ -30,7 +33,9 @@ const waiting = new Map<string, Noted>();
 // FLUSH_STALE_MS, as push-kick.ts does with its rounds.
 export const FLUSH_GAP_MS = 30_000;
 const FLUSH_STALE_MS = 60_000;
-const MAX_WAITING = 500;
+// The routes, tools and actions times their codes stay far under this; it's
+// a backstop, past which a new entry is noted as its surface's 'other'.
+const MAX_WAITING = 2000;
 const flushing: { since: number | null; last: number | null } = {
   since: null,
   last: null,
@@ -84,19 +89,28 @@ export function countRefusal(
   if (code === "internal" || code === "read_only" || isReadOnly()) return;
   if (!CODE_RE.test(code) || status < 400 || status > 599) return;
   if (method === "GET" || method === "HEAD") return;
-  // The path is matched to a template when it's written, so only its shape
-  // is held here, cut short. Past MAX_WAITING distinct paths, a new one is
-  // noted as a path no route has, so junk paths can't push out real counts.
-  let cut = path.slice(0, 200);
-  let k = `${method}\n${cut}\n${code}\n${status}`;
-  if (!waiting.has(k) && waiting.size >= MAX_WAITING) {
-    cut = "";
-    k = `${method}\n\n${code}\n${status}`;
-  }
-  const had = waiting.get(k);
-  if (had) had.n++;
-  else waiting.set(k, { method, path: cut, code, status, n: 1 });
+  const at = countedAs(method, path, OPERATIONS);
+  if (
+    !waiting.has(keyOf({ ...at, code, status })) &&
+    waiting.size >= MAX_WAITING
+  )
+    at.what = "other";
+  note({ ...at, code, status, n: 1 });
   kickRefusals();
+}
+
+// One entry per surface, what, code and status. The table's key has no
+// status (a code is answered with one status), so if one ever came with two,
+// its row keeps the latest written.
+function keyOf(k: Omit<Noted, "n">): string {
+  return `${k.surface}\n${k.what}\n${k.code}\n${k.status}`;
+}
+
+function note(t: Noted): void {
+  const k = keyOf(t);
+  const had = waiting.get(k);
+  if (had) had.n += t.n;
+  else waiting.set(k, { ...t });
 }
 
 // After the answer has gone, writes what's waiting, unless a write is in
@@ -138,14 +152,12 @@ export async function flushRefusals(
   if (waiting.size === 0) return 0;
   const taken = [...waiting.values()];
   waiting.clear();
-  const { OPERATIONS } = await import("./openapi");
-  const rows = new Map<string, Key & { n: number }>();
+  const rows = new Map<string, Noted>();
   for (const t of taken) {
-    const { surface, what } = countedAs(t.method, t.path, OPERATIONS);
-    const k = `${surface}\n${what}\n${t.code}`;
+    const k = `${t.surface}\n${t.what}\n${t.code}`;
     const had = rows.get(k);
     if (had) had.n += t.n;
-    else rows.set(k, { surface, what, code: t.code, status: t.status, n: t.n });
+    else rows.set(k, { ...t });
   }
   const list = [...rows.values()];
   // The database's day, as the moderators' read takes it, unless a test says.
@@ -165,14 +177,9 @@ export async function flushRefusals(
     ON CONFLICT (day, surface, what, code)
     DO UPDATE SET n = refusal_counts.n + EXCLUDED.n, status = EXCLUDED.status`;
   } catch (e) {
-    // Put them back for the next write; a later refusal of the same kind adds
-    // to them.
-    for (const t of taken) {
-      const k = `${t.method}\n${t.path}\n${t.code}\n${t.status}`;
-      const had = waiting.get(k);
-      if (had) had.n += t.n;
-      else if (waiting.size < MAX_WAITING) waiting.set(k, { ...t });
-    }
+    // Put them back for the next write, all of them: what's waiting is
+    // bounded by the routes and codes, so there's always room.
+    for (const t of taken) note(t);
     throw e;
   }
   return list.reduce((s, r) => s + r.n, 0);
