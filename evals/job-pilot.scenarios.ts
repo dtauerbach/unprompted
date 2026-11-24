@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, register } from "./client";
 import { tool } from "./group-channels.scenarios";
 import { linkByCode } from "./humans.scenarios";
-import { MODERATOR } from "./moderator";
+import { lapseJob, MODERATOR } from "./moderator";
 
 // The job board's pilot script (B4e, Dot's R184 cases with R215's
 // given/when/then), against what the site has today: a leader L posts J and
@@ -10,13 +10,16 @@ import { MODERATOR } from "./moderator";
 // step compares what each reader can act on (a job's `you`) apart from the
 // chat, which the board never changes.
 //
-// Today's site covers case 1 (accept, then a cold read) and case 3 (an
-// explicit release frees the job at once, and a replay moves nothing).
-// Cases 2, 4 and 5 wait on what isn't built yet, named in their todos: a
-// lease can't be run out on a running site's wall clock inside an eval (the
-// unit tests in src/test/channel-jobs.test.ts run it out), offers come with
-// B4b, an access check on a pin with B4c, and catch_up's owed rows for jobs,
-// not built yet.
+// Today's site covers case 1 (accept, then a cold read), case 2 (a silent
+// holder's lease runs out and the job is offered to someone else once,
+// however many passes run) and case 3 (an explicit release frees the job at
+// once, and a replay moves nothing). A ready job is offered to one eligible
+// member at a time (079_job_offers.sql): A, the lowest, after a post; the
+// next member after a release or a lapse. A lease can't run out on a
+// running site's wall clock inside an eval, so a moderator plays it
+// (evals/lapse-job.ts). Cases 4 and 5 wait on what isn't built yet, named in
+// their todos: an access check on a pin with B4c, and catch_up's owed rows
+// for jobs.
 
 type Group = { lea: Bot; ana: Bot; bo: Bot; cy: Bot; g: string };
 let made = 0;
@@ -97,7 +100,9 @@ export function jobPilotScenarios(): void {
         [J, "ready", undefined],
         [D, "waiting", undefined],
       ]);
-      expect(await actionable(s.ana, s.g)).toEqual([[J, "claimable"]]);
+      // Posting offered J to A, the lowest who may claim it; B may claim it
+      // all the same.
+      expect(await actionable(s.ana, s.g)).toEqual([[J, "offered"]]);
       expect(await actionable(s.bo, s.g)).toEqual([[J, "claimable"]]);
       expect(await actionable(s.cy, s.g)).toEqual([]);
       // D can't be claimed while it waits; C can't claim J.
@@ -183,8 +188,13 @@ export function jobPilotScenarios(): void {
       ]);
       expect(after.find((j) => j.number === D)?.inputs).toBe(1);
       const dRead = await tool(s.lea, "read_channel", { channel: s.g, job: D });
+      // The accepted output whole: store, ref and revision, as A gave it.
       expect(dRead.data.job.inputs).toEqual([
-        expect.objectContaining({ store: X.store, ref: X.ref }),
+        expect.objectContaining({
+          store: X.store,
+          ref: X.ref,
+          revision: X.revision,
+        }),
       ]);
 
       // B's cold read: the chat assignment is still there to read, but the
@@ -197,6 +207,8 @@ export function jobPilotScenarios(): void {
       const bJ = (await board(s.bo, s.g)).find((j) => j.number === J);
       expect(bJ).toMatchObject({ state: "done" });
       expect(bJ?.holder).toBeUndefined();
+      // The accept made D ready, and it was offered to A, the lowest.
+      expect(await actionable(s.ana, s.g)).toEqual([[D, "offered"]]);
       expect(await actionable(s.bo, s.g)).toEqual([[D, "claimable"]]);
       expect(await actionable(s.cy, s.g)).toEqual([]);
       const old = await job(s.bo, s.g, { number: J, move: "claim", if_seq: 3 });
@@ -222,6 +234,7 @@ export function jobPilotScenarios(): void {
       const c = await job(s.ana, s.g, { number: J, move: "claim", if_seq: 0 });
       expect(c.isError).toBe(false);
       const before = await wake(s.lea);
+      const boBefore = await wake(s.bo);
       const rel = await job(s.ana, s.g, {
         number: J,
         move: "release",
@@ -237,10 +250,12 @@ export function jobPilotScenarios(): void {
         [D, "waiting", undefined],
       ]);
       expect(await wake(s.lea)).toBe(before + 1);
+      // The release offered J to B, woken once; never back to A.
+      expect(await wake(s.bo)).toBe(boBefore + 1);
       expect((await board(s.ana, s.g)).find((j) => j.number === J)?.you).toBe(
         "claimable",
       );
-      expect(await actionable(s.bo, s.g)).toEqual([[J, "claimable"]]);
+      expect(await actionable(s.bo, s.g)).toEqual([[J, "offered"]]);
 
       // The same release again: already, no second move or wake.
       const again = await job(s.ana, s.g, {
@@ -254,6 +269,7 @@ export function jobPilotScenarios(): void {
         2,
       );
       expect(await wake(s.lea)).toBe(before + 1);
+      expect(await wake(s.bo)).toBe(boBefore + 1);
 
       // A sees its own reason; L, B and C see none.
       const mine = await tool(s.ana, "read_channel", { channel: s.g, job: J });
@@ -282,9 +298,65 @@ export function jobPilotScenarios(): void {
       expect(stale.data.error.code).toBe("stale_job");
     });
 
-    it.todo(
-      "case 2: a silent holder's lease runs out, one dispatch pass offers the job once (needs a controlled clock on a running site, and offers and dispatch from B4b)",
-    );
+    it("case 2: a silent holder's lease runs out, and the job is offered to the next taker once, however many passes run", async () => {
+      const s = await group();
+      const { J, D } = await postBoth(s);
+      const c = await job(s.ana, s.g, { number: J, move: "claim", if_seq: 0 });
+      expect(c.isError).toBe(false);
+      // A goes silent past its lease: nothing is written, J reads ready.
+      lapseJob(s.g, J);
+      const boBefore = await wake(s.bo);
+      const cyBefore = await wake(s.cy);
+      const anaBefore = await wake(s.ana);
+      // A dispatch pass runs after any job write in the channel, and on the
+      // clock: the leader posts K for C, and the clock is called as a cron
+      // would, three times over.
+      const k = await job(s.lea, s.g, {
+        title: "Check the links",
+        body: "Every link in the outline.",
+        check: "None broken.",
+        eligible: [s.cy.handle],
+      });
+      expect(k.isError, JSON.stringify(k.data)).toBe(false);
+      const K = k.data.job.number as number;
+      for (let i = 0; i < 3; i += 1) await get("/v1/clock");
+      // J went to B alone, once; K to C; A, whose lease ran out, wasn't
+      // offered its own job back.
+      expect(await wake(s.bo)).toBe(boBefore + 1);
+      expect(await wake(s.cy)).toBe(cyBefore + 1);
+      expect(await wake(s.ana)).toBe(anaBefore);
+      const now = await board(s.lea, s.g);
+      expect(now.map((j) => [j.number, j.state, j.holder])).toEqual([
+        [J, "ready", undefined],
+        [D, "waiting", undefined],
+        [K, "ready", undefined],
+      ]);
+      expect(await actionable(s.ana, s.g)).toEqual([[J, "lapsed"]]);
+      expect(await actionable(s.bo, s.g)).toEqual([[J, "offered"]]);
+      expect(await actionable(s.cy, s.g)).toEqual([[K, "offered"]]);
+      // A's attempt can't move J now; B's claim opens the next.
+      const late = await job(s.ana, s.g, {
+        number: J,
+        move: "submit",
+        if_seq: 1,
+        outputs: [X],
+      });
+      expect(late.data.error.code).toBe("lease_over");
+      const bClaim = await job(s.bo, s.g, {
+        number: J,
+        move: "claim",
+        if_seq: 1,
+      });
+      expect(bClaim.data.job).toMatchObject({
+        holder: s.bo.handle,
+        attempt: 2,
+        seq: 2,
+      });
+      // Held again, it's offered to nobody else, however the clock runs.
+      for (let i = 0; i < 2; i += 1) await get("/v1/clock");
+      expect(await wake(s.cy)).toBe(cyBefore + 1);
+      expect(await wake(s.ana)).toBe(anaBefore);
+    });
     it.todo(
       "case 4: a worker who can't read the exact pin gets its own blocker and another can claim (needs the access check from B4c)",
     );

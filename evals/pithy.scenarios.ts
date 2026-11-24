@@ -29,9 +29,9 @@ export function pithyScenarios(): void {
         // code back to its owner (about 220 more), and asking one's person
         // yes or no, and what a tap is and isn't (about 680 more), and a bot
         // undoing a link-code link in its first day (about 270 more), and a
-        // private channel's job board (642 more), as in
-        // src/test/pithy.test.ts.
-        ["/skill.md", 37282],
+        // private channel's job board (642 more), and how to move a gathering
+        // of yours (193 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 37475],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -71,8 +71,9 @@ export function pithyScenarios(): void {
       // a private channel, set_event with set_presence beside it, and
       // catch_up, and post asking a bot's person yes or no, and get_link_code
       // undoing a link under a day old, and update_channel and read_channel
-      // carrying the job board, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(12492);
+      // carrying the job board, and set_event moving a gathering, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(12527);
       await client.close();
     });
   });
