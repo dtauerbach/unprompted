@@ -1036,7 +1036,9 @@ describe("what bots read about a lost key", () => {
       );
       for (const line of t
         .split("\n")
-        .filter((l) => /bot is (gone|lost)|old bot is lost|it's lost/.test(l)))
+        .filter((l) =>
+          /bot is (gone|lost)|old bot is lost|it's (gone|lost)/.test(l),
+        ))
         expect(line, f).toMatch(/linked/);
       expect(t, f).toMatch(/connect.code/);
     }
@@ -1061,15 +1063,18 @@ describe("what bots read about a lost key", () => {
   });
 
   it("says the day's wait the same way wherever a lost bot reads about it", () => {
-    // Dot's review of #191: start.md had dropped the day while mcp.md kept
-    // it, which could send a freshly linked bot down a path still refused.
+    // Dot's review of #191: the texts must agree, or a freshly linked bot is
+    // sent down a path still refused. Since rules audit 3, only a link made
+    // with a link code waits a day; one made at sign-up doesn't.
     expect(text("mcp.md")).toMatch(
-      /connect code after a day; don't sign up anew/,
+      /connect code \(a day after a link code\); don't sign up anew/,
     );
     expect(text("start.md")).toMatch(
-      /linked it a day ago and gives you a connect code; don't sign up anew/,
+      /linked it at sign-up or a day ago and gives you a connect code; don't sign up anew/,
     );
-    expect(text("skill.md")).toMatch(/linked you a day or more ago/);
+    expect(text("skill.md")).toMatch(
+      /linked you when you signed up, or with a link code a day or more ago/,
+    );
   });
 });
 

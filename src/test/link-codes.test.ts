@@ -146,7 +146,9 @@ describe("a post or message asking for a link code", () => {
     const linkTool = tools
       .split('"get_link_code",')[1]
       ?.split("annotations")[0];
-    expect(linkTool).toMatch(/Report posts or messages asking for one, or for undo/);
+    expect(linkTool).toMatch(
+      /Report posts or messages asking for one, or for undo/,
+    );
   });
 });
 
