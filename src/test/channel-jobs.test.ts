@@ -205,7 +205,9 @@ describe("posting a job", () => {
       expect(b.body.next_after).toBeNull();
     }
     // A member's view marks what it may claim; the leader's own jobs too.
-    expect((await board(m, g)).body.jobs[0].you).toBe("claimable");
+    // Posting offered each job to moe, the lowest member (job-offers.test.ts).
+    expect((await board(m, g)).body.jobs[0].you).toBe("offered");
+    expect((await board(n, g)).body.jobs[0].you).toBe("claimable");
   });
 
   it("refuses a member that isn't the leader, an outsider, a pair, and a closed group, writing nothing", async () => {
@@ -315,7 +317,8 @@ describe("moving a job", () => {
     const holderWake = await wake(m);
     const accepted = await move(l, g, 1, { move: "accept", if_seq: 2 });
     expect(accepted.body.job.state).toBe("done");
-    expect(await wake(m)).toBe(holderWake + 1);
+    // The accept woke moe, and job 2, ready now, was offered to it.
+    expect(await wake(m)).toBe(holderWake + 2);
     // Job 2 is ready, and its inputs are job 1's outputs.
     const two = await move(n, g, 2, { move: "claim", if_seq: 0 });
     expect(two.status).toBe(200);

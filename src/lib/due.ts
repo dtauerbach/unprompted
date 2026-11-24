@@ -82,7 +82,9 @@ export async function soonestDue(
         (SELECT min(s.decide_at) FROM shorts_due(
            now() - make_interval(mins => ${RUN_LOOKBACK_MINUTES}), 'infinity') s
          JOIN gatherings g ON g.id = s.gathering_id
-         WHERE g.starts_at + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > now())
+         WHERE g.starts_at + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > now()),
+        -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
+        job_dispatch_soonest()
       ) AS next,
       (SELECT min(g.starts_at) FROM gatherings g
        WHERE g.starts_at > now() - make_interval(mins => ${RSVP_WINDOW_MINUTES})

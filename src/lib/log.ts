@@ -141,6 +141,7 @@ export type Action =
   | "channel.plan.report"
   | "channel.job.post"
   | "channel.job.move"
+  | "channel.job.offer"
   | "channel.close"
   | "human.channel.end"
   | "admin.plan.keep"

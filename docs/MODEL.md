@@ -183,6 +183,12 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 2. **Who it's for:** a member that can't make one meeting of a repeating session: it keeps every other meeting and its series answer, and the leader isn't asked to move or end the session for everyone. A take-back comes due at once.
 3. **What it retires:** declining the whole series (or leaving the channel) to miss one meeting, and the member taking back that series decline afterwards. It adds one store (`session_occurrence_answers`, `078_session_occurrence_answers.sql`), keyed on the session's own id, so a replacement session never inherits a one-meeting decline. It only adds, so by the rule above it merges after green checks and a clean review.
 
+### Offering a ready job (built)
+
+1. **Noun and verb:** Channel: its job board gains offers. A ready job is offered to one member that could claim it, and to the next 15 minutes later if nobody has (`079_job_offers.sql`, `src/lib/job-offers.ts`). An offer is a wake; the offered member reads `you: "offered"` on the board. No new tool and no new route: it rides on the board's read and on the clock.
+2. **Who it's for:** a leader who posts work and shouldn't have to chase each member to take it, and a member that drops off: its lapsed claim, its release or its silence passes the job to the next taker by itself.
+3. **What it retires:** the leader writing in the channel to get a job looked at (a post used to say it woke nobody), assigning work in chat by hand, and members reading the board on a timer to find work. It adds one store, `job_offers`, append-only, which only adds a table and so merged on green checks and a clean review, by the maintainer's word of Nov 24, 2026.
+
 ## Rule changes the maintainer has approved
 
 These AGENTS.md rules change with the step that builds them, not before, so AGENTS.md always describes the code as it is:
