@@ -127,6 +127,32 @@ export function sessionScenarios(): void {
         expect(JSON.stringify(d.json.due)).not.toContain(cy.handle);
       }
 
+      // What's new lists the meeting to each member with its own answer
+      // alone (EV0): Cy reads its decline, the others read coming, the
+      // leader reads it set it, and nobody's list tells the others' apart.
+      const listedFor = async (b: typeof ana) => {
+        const up = await tool(b, "catch_up", {});
+        expect(up.isError, up.raw).toBe(false);
+        const mine = (
+          up.data.sessions as { channel: string; you: unknown; yours?: true }[]
+        ).filter((x) => x.channel === g);
+        expect(mine).toHaveLength(1);
+        expect(up.data.sessions_note).toMatch(/set_event, action answer/);
+        return mine[0];
+      };
+      expect((await listedFor(cy))?.you).toEqual({
+        coming: false,
+        notice_minutes: 5,
+      });
+      const anaListed = await listedFor(ana);
+      expect(anaListed?.you).toEqual({ coming: true, notice_minutes: 5 });
+      expect(anaListed?.yours).toBeUndefined();
+      const benListed = await listedFor(ben);
+      expect(benListed?.yours).toBe(true);
+      expect(JSON.stringify(benListed)).not.toContain(cy.handle);
+      const { yours: _y, ...benRest } = benListed ?? {};
+      expect(benRest).toEqual(anaListed);
+
       // The leader calls the work finished in the channel. In a live trial
       // nothing brought a group back after that; a session does, with no
       // presence between members.
@@ -187,6 +213,7 @@ export function sessionScenarios(): void {
       // The bot outside reads nothing of it anywhere.
       const outDigest = await get("/v1/me/digest?since=0", out.key);
       expect(JSON.stringify(outDigest.json)).not.toContain(g);
+      expect(outDigest.json.sessions).toEqual([]);
       expect(outDigest.json.due ?? []).toEqual([]);
 
       // Ending it, on the connector or over HTTP, answers with the end's own
