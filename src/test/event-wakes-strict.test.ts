@@ -62,10 +62,15 @@ async function withPush(name: string, url: string): Promise<Bot> {
 
 // A gathering written straight to the table, starting at an exact time, so
 // the guest's T can sit anywhere in a minute.
-async function gatheringAt(host: Bot, startsAt: number): Promise<number> {
+async function gatheringAt(
+  host: Bot,
+  startsAt: number,
+  needs: number | null = null,
+): Promise<number> {
   const [g] = await db()<{ id: string }[]>`
-    INSERT INTO gatherings (bot_id, key_id, title, starts_at, created_at)
-    SELECT b.id, k.id, 'Strict', ${new Date(startsAt)}, now() - interval '1 hour'
+    INSERT INTO gatherings (bot_id, key_id, title, starts_at, created_at, needs)
+    SELECT b.id, k.id, 'Strict', ${new Date(startsAt)}, now() - interval '1 hour',
+           ${needs}
     FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
     WHERE b.handle = ${host.handle}
     RETURNING id`;
@@ -98,8 +103,10 @@ async function dueOf(b: Bot): Promise<Due[]> {
 }
 
 async function firesFor(b: Bot) {
-  return db()<{ event_id: string; due_at: Date; outcome: string }[]>`
-    SELECT f.event_id, f.due_at, f.outcome FROM event_fires f
+  return db()<
+    { kind: string; event_id: string; due_at: Date; outcome: string }[]
+  >`
+    SELECT f.kind, f.event_id, f.due_at, f.outcome FROM event_fires f
     JOIN bots b ON b.id = f.bot_id WHERE b.handle = ${b.handle}
     ORDER BY f.id`;
 }
@@ -176,8 +183,8 @@ async function checkReads(s: Awaited<ReturnType<typeof scene>>) {
   ]);
   expect(Date.parse(due[0]?.at ?? "")).toBe(s.t);
   const rows = await firesFor(s.guest);
-  expect(rows.map((r) => [Number(r.event_id), r.outcome])).toEqual([
-    [s.id, "fired"],
+  expect(rows.map((r) => [r.kind, Number(r.event_id), r.outcome])).toEqual([
+    ["rsvp", s.id, "fired"],
   ]);
   expect(rows[0]?.due_at.getTime()).toBe(s.t);
 
@@ -286,4 +293,37 @@ describe("an event's wake on a controlled clock: [T, T + 60s)", () => {
         await checkCounters(s);
         await checkReads(s);
       });
+
+  // A gathering that needs more than are coming is decided short 15 minutes
+  // before it starts, the same moment a 15-minute notice comes due. A check
+  // landing on that moment ends it first, so the guest is woken once, by
+  // the short end, and never told it fired as an RSVP.
+  it("a check at exactly the short decision ends the gathering before a 15-minute notice can fire", async () => {
+    const host = await register("host");
+    const guest = await withPush("guest", GUEST_URL);
+    const boundary = Math.ceil((Date.now() + 20 * MIN) / MIN) * MIN;
+    const startsAt = boundary + 15 * MIN;
+    const id = await gatheringAt(host, startsAt, 3);
+    const r = await rsvp(guest, id, { going: true, notice_minutes: 15 });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    const t = Date.parse(r.body.rsvp.wake_at);
+    expect(t).toBe(boundary);
+    const wake = await wakeOf(guest);
+    expect(await tick(t)).toBe("worked");
+    const [end] = await db()<{ kind: string }[]>`
+      SELECT kind FROM gathering_ends WHERE gathering_id = ${id}`;
+    expect(end?.kind).toBe("short");
+    const rows = await firesFor(guest);
+    expect(rows.map((x) => [x.kind, Number(x.event_id), x.outcome])).toEqual([
+      ["short", id, "fired"],
+    ]);
+    expect(toGuest()).toHaveLength(1);
+    expect(toGuest()[0]?.at).toBe(t);
+    expect(await wakeOf(guest)).toBe(wake + 1);
+    // The next minute adds nothing.
+    await tick(t + MIN);
+    expect(await firesFor(guest)).toHaveLength(1);
+    expect(toGuest()).toHaveLength(1);
+    expect(await wakeOf(guest)).toBe(wake + 1);
+  });
 });

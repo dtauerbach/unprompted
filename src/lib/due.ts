@@ -103,14 +103,17 @@ export type RunResult = {
 };
 
 // Writes the short end of each gathering whose decision came due by `at`
-// and that isn't over yet. Decided once, on who was coming 15 minutes
+// and that isn't over yet, with the same bound as the run's items (at or
+// before `at`, to the millisecond), so a check that lands on a decision
+// ends the gathering before a 15-minute notice due at the same moment
+// could fire. Decided once, on who was coming 15 minutes
 // before it starts, so a late run decides the same; nothing it writes wakes
 // anyone, so it goes before the run's ordered pass of fires.
 async function writeShorts(tx: Tx, at: Date): Promise<number> {
   const due = await tx<{ gathering_id: string; announcer: string }[]>`
     SELECT s.gathering_id, s.announcer FROM shorts_due(
       ${at}::timestamptz - make_interval(mins => ${RUN_LOOKBACK_MINUTES}),
-      ${at}::timestamptz) s
+      ${at}::timestamptz + interval '1 millisecond') s
     JOIN gatherings g ON g.id = s.gathering_id
     WHERE g.starts_at + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > ${at}::timestamptz
     ORDER BY s.gathering_id`;
