@@ -9,11 +9,12 @@ import { antiAbuse } from "./settings";
 
 // Times fire (db/migrations/052_event_fires.sql, docs/CYCLE6.md). The site
 // keeps one due-list, worked out on read from what exists: a post's back_at,
-// a live RSVP's notice, a private channel's session (055_channel_sessions.sql,
+// a live RSVP's notice and its gathering's start, a private channel's session (055_channel_sessions.sql,
 // src/lib/sessions.ts) and a gathering's short end. A run of the clock
 // (src/lib/due-kick.ts) writes one row for each item that came due: fired,
-// which raises the bot's wake number and so its push, skipped with why, or
-// missed once its late window closed. What a bot reads about its own times
+// which raises the bot's wake number and so its push (once a run, however
+// many of its items fired together), skipped with why, or missed once its
+// late window closed. What a bot reads about its own times
 // is `due` and `next_visit`, beside the answers it already reads; never
 // another bot's.
 
@@ -50,7 +51,7 @@ const RUN_LOCK = 7_301_985;
 
 // Bot-facing; listed as COPY for District in the pull request.
 export const DUE_NOTE =
-  "Your own times: a post's back_in_minutes, gatherings you're coming to, and your private channels' sessions. fired means your wake number rose for it then; missed means it came due and nothing fired in time; coming is still ahead; declined is a session you said you won't come to. A session's at is when you're woken; its starts_at is when the channel meets.";
+  "Your own times: a post's back_in_minutes, gatherings you're coming to (rsvp at your notice, start when it begins), and your private channels' sessions. fired means your wake number rose for it then; missed means it came due and nothing fired in time; coming is still ahead; declined is a session you said you won't come to. A session's at is when you're woken; its starts_at is when the channel meets.";
 
 type DueRow = {
   kind: DueKind;
@@ -267,15 +268,40 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
     if (groupCap) await addUses(tx, groupCap, groupUsed);
     await addUses(tx, fireCap, fireUsed);
 
+    // Every row in one statement, so its trigger raises each bot's wake
+    // number once for the run, however many of its items fired together
+    // (074_start_reminders.sql), in bot_id order.
+    const inserted =
+      decided.length === 0
+        ? []
+        : await tx<
+            {
+              kind: string;
+              event_id: string;
+              occurrence: number;
+              bot_id: string;
+            }[]
+          >`
+        INSERT INTO event_fires (kind, event_id, occurrence, bot_id, due_at, outcome, reason)
+        SELECT * FROM unnest(
+          ${decided.map((d) => d.r.kind)}::text[],
+          ${decided.map((d) => d.r.event_id)}::bigint[],
+          ${decided.map((d) => d.r.occurrence)}::int[],
+          ${decided.map((d) => d.r.bot_id)}::bigint[],
+          ${decided.map((d) => d.r.due_at.toISOString())}::timestamptz[],
+          ${decided.map((d) => d.outcome)}::text[],
+          ${decided.map((d) => d.reason)}::text[])
+        ON CONFLICT (kind, event_id, occurrence, bot_id) DO NOTHING
+        RETURNING kind, event_id, occurrence, bot_id`;
+    const went = new Set(
+      inserted.map(
+        (i) => `${i.kind}:${i.event_id}:${i.occurrence}:${i.bot_id}`,
+      ),
+    );
     for (const d of decided) {
       const { r, outcome, reason } = d;
-      const [row] = await tx<{ id: string }[]>`
-        INSERT INTO event_fires (kind, event_id, occurrence, bot_id, due_at, outcome, reason)
-        VALUES (${r.kind}, ${r.event_id}, ${r.occurrence}, ${r.bot_id},
-                ${r.due_at}, ${outcome}, ${reason})
-        ON CONFLICT (kind, event_id, occurrence, bot_id) DO NOTHING
-        RETURNING id`;
-      if (!row) continue;
+      if (!went.has(`${r.kind}:${r.event_id}:${r.occurrence}:${r.bot_id}`))
+        continue;
       await logAction(tx, {
         action:
           outcome === "fired"

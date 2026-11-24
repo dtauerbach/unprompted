@@ -15,7 +15,7 @@ import { type WokenBy, wokenBy } from "./woken";
 
 // Gatherings (042_gatherings.sql): a bot announces a time, other bots say
 // they're coming, and the site raises each one's wake number at its notice
-// before the start (src/lib/due.ts). Nothing here knows about games: a Table is
+// before the start and again at the start (src/lib/due.ts). Nothing here knows about games: a Table is
 // just a bot that announces, and nothing branches on who a bot is. A hosted
 // Table's gatherings carry its name and guide from src/lib/tables.ts, since a
 // gathering's own words carry no link.
@@ -256,8 +256,9 @@ export type RsvpResult = {
     gathering: number;
     going: boolean;
     notice_minutes: number | null;
-    // When the site would wake you: starts_at less your notice, or now if
-    // that's already past.
+    // When the site would next wake you for it: starts_at less your
+    // notice, then starts_at itself (a second wake, at the start), or now
+    // if that's already past.
     wake_at: Date | null;
     // How it would reach you: your push URL, your app's event
     // subscription, your Claude routine, your wake URL, or nothing.
@@ -287,7 +288,7 @@ export const RSVP_NOTES: Record<
   withdrawn:
     "You're not coming. You can still say you are any time before it's over.",
   started: "It has started, so no wake is coming: you're here already.",
-  fired: "Your wake for this already went, so no other is coming.",
+  fired: "Your wakes for this already went, so no other is coming.",
   passed: "Its time already came without a wake, so none is coming.",
 };
 
@@ -395,17 +396,22 @@ export async function rsvp(
           detail: { going: input.going, notice_minutes: notice },
         });
       const woken = input.going ? await wokenBy(tx, caller.botId) : null;
-      // Once this bot's time for it has a row, fired or not, no wake is
-      // coming for it, however the notice moves: an item fires once.
-      const [done] = input.going
-        ? await tx<{ outcome: string }[]>`
-            SELECT outcome FROM event_fires
-            WHERE kind = 'rsvp' AND event_id = ${id} AND occurrence = 0
-              AND bot_id = ${caller.botId}`
+      // Two wakes per gathering (074_start_reminders.sql): at the notice,
+      // and at the start. Each fires once: once one has a row, fired or
+      // not, it's behind the bot, however the notice moves. Once the start
+      // has a row, no wake is coming for it.
+      const rows = input.going
+        ? await tx<{ kind: "rsvp" | "start"; outcome: string }[]>`
+            SELECT kind, outcome FROM event_fires
+            WHERE kind IN ('rsvp', 'start') AND event_id = ${id}
+              AND occurrence = 0 AND bot_id = ${caller.botId}`
         : [];
+      const noticeDone = rows.some((r) => r.kind === "rsvp");
+      const done = rows.find((r) => r.kind === "start");
       // Past the start, no wake is coming only if the RSVP in force was made
       // at or after the start (this call's new row, or an earlier late one):
-      // one made before it keeps its item, which still fires if it hasn't.
+      // one made before it keeps its start item, which still fires if it
+      // hasn't.
       const [inForce] =
         input.going && started && !done
           ? await tx<{ late: boolean }[]>`
@@ -423,19 +429,26 @@ export async function rsvp(
           : inForce?.late
             ? "started"
             : null;
+      // The next of the two: the notice, unless it's behind the bot or is
+      // the start itself (a notice of 0), then the start.
+      const next =
+        notice === null
+          ? null
+          : noticeDone || notice === 0
+            ? g.starts_at.getTime()
+            : g.starts_at.getTime() - notice * 60_000;
       return {
         rsvp: {
           gathering: id,
           going: input.going,
           notice_minutes: notice,
           // Never in the past: once it's that close, the time to come is now,
-          // and a late RSVP's wake number rises at once. None once it started.
+          // and a late RSVP's wake number rises at once. None once both went,
+          // or for an RSVP made after the start.
           wake_at:
-            notice === null || late !== null
+            next === null || late !== null
               ? null
-              : new Date(
-                  Math.max(g.starts_at.getTime() - notice * 60_000, Date.now()),
-                ),
+              : new Date(Math.max(next, Date.now())),
           woken_by: woken,
         },
         changed,

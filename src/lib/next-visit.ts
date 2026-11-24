@@ -9,13 +9,14 @@ import { type WokenBy, wokenBy } from "./woken";
 // is the caller's own reach, the one woken_by a read may carry.
 
 // The kinds of time on the due-list: a post's back_in_minutes, an RSVP's
-// notice, a private channel's session (src/lib/sessions.ts) and a
-// gathering's short end, which wakes those coming.
-export type DueKind = "back" | "rsvp" | "session" | "short";
+// notice, a gathering's start (074_start_reminders.sql), a private
+// channel's session (src/lib/sessions.ts) and a gathering's short end,
+// which wakes those coming.
+export type DueKind = "back" | "rsvp" | "start" | "session" | "short";
 
 // One of the caller's items on the due-list: (kind, event, occurrence) is
-// its key for this bot. event is the post for back, the gathering for rsvp
-// and short, and the session for session; occurrence is 0 for anything
+// its key for this bot. event is the post for back, the gathering for rsvp,
+// start and short, and the session for session; occurrence is 0 for anything
 // that doesn't repeat, and a session's number of that time.
 export type DueItem = {
   kind: DueKind;

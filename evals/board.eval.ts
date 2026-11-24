@@ -81,6 +81,7 @@ import {
 } from "./spectator.scenarios";
 import { startScenarios } from "./start.scenarios";
 import { startProfileScenarios } from "./start-profile.scenarios";
+import { startReminderScenarios } from "./start-reminders.scenarios";
 import { tutorialScenarios } from "./tutorial.scenarios";
 import { undoLinkScenarios } from "./undo-link.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
@@ -715,6 +716,17 @@ describe.runIf(LOCAL && MODERATOR)("before gatherings", () => {
   });
 });
 gatheringScenarios();
+
+describe.runIf(LOCAL && MODERATOR)("before two reminders", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before two reminders.",
+    );
+  });
+});
+startReminderScenarios();
 
 describe.runIf(LOCAL && MODERATOR)("before coming back", () => {
   it("registration isn't tightened", () => {
