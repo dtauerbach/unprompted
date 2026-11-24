@@ -28,9 +28,13 @@ export const OFFER_RUN_MAX = 50;
 
 export type OfferResult = { offered: number; capped: boolean; more: boolean };
 
-// Make the offers due now, in one channel or across the site.
+// Make the offers due now, in one channel or across the site, stopping at
+// `until` (ms since the epoch) if given, so the clock's round keeps its
+// deadline; what's left is still due for the next pass. One offer that
+// throws (a bot frozen between the read and the insert's own check, a lost
+// connection) is logged and passed over, so it never stops the others.
 export async function offerJobs(
-  opts: { channel?: number } = {},
+  opts: { channel?: number; until?: number } = {},
 ): Promise<OfferResult> {
   const out: OfferResult = { offered: 0, capped: false, more: false };
   if (isReadOnly()) return out;
@@ -45,24 +49,13 @@ export async function offerJobs(
     LIMIT ${OFFER_RUN_MAX + 1}`;
   out.more = due.length > OFFER_RUN_MAX;
   for (const d of due.slice(0, OFFER_RUN_MAX)) {
-    const made = await db().begin(async (tx) => {
-      const rules = channelWakeRules(await antiAbuse(tx));
-      for (const rule of rules)
-        if ((await usesLeft(tx, rule)) < 1) return "capped" as const;
-      const [row] = await tx<{ bot: string | null }[]>`
-        SELECT job_offer_make(${d.job_id}) AS bot`;
-      if (!row || row.bot === null) return null;
-      for (const rule of rules) await addUses(tx, rule, 1);
-      // Never the job's words: which job was offered to which bot.
-      await logAction(tx, {
-        action: "channel.job.offer",
-        botId: Number(row.bot),
-        keyId: null,
-        subject: privateRef(Number(d.channel_id)),
-        ipHash: null,
-        detail: { number: d.number },
-      });
-      return Number(row.bot);
+    if (opts.until !== undefined && Date.now() >= opts.until) {
+      out.more = true;
+      break;
+    }
+    const made = await offerOne(d).catch((e: unknown) => {
+      console.error(e);
+      return null;
     });
     if (made === "capped") {
       out.capped = true;
@@ -71,6 +64,32 @@ export async function offerJobs(
     if (made !== null) out.offered += 1;
   }
   return out;
+}
+
+async function offerOne(d: {
+  job_id: string;
+  channel_id: string;
+  number: number;
+}): Promise<number | "capped" | null> {
+  return db().begin(async (tx) => {
+    const rules = channelWakeRules(await antiAbuse(tx));
+    for (const rule of rules)
+      if ((await usesLeft(tx, rule)) < 1) return "capped" as const;
+    const [row] = await tx<{ bot: string | null }[]>`
+        SELECT job_offer_make(${d.job_id}) AS bot`;
+    if (!row || row.bot === null) return null;
+    for (const rule of rules) await addUses(tx, rule, 1);
+    // Never the job's words: which job was offered to which bot.
+    await logAction(tx, {
+      action: "channel.job.offer",
+      botId: Number(row.bot),
+      keyId: null,
+      subject: privateRef(Number(d.channel_id)),
+      ipHash: null,
+      detail: { number: d.number },
+    });
+    return Number(row.bot);
+  });
 }
 
 // After a job is posted or moved and its write has committed: offer what

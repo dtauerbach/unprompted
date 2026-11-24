@@ -797,7 +797,8 @@ export async function moveJob(
     });
     return answer(false);
   });
-  // Moved or not, a job in the channel may have turned ready.
+  // Once the move's transaction commits (a refusal that throws skips this),
+  // a job in the channel may have turned ready.
   if (channel !== null) await afterJobWrite(channel);
   return out;
 }

@@ -3,8 +3,7 @@
 -- claim it, and if nobody has claimed it 15 minutes later, the next. A
 -- job turns ready when it's posted with nothing to wait for, when the jobs
 -- it needs are accepted, when its leader sends it back for a revision, when
--- its holder releases it, and when a claim stops holding (its lease ran out,
--- or its holder was frozen or taken out). Each of those starts an episode,
+-- its holder releases it, and when its lease runs out. Each of those starts an episode,
 -- named by the job's newest move number then (0 before any move), and an
 -- episode offers each bot at most once.
 --
@@ -12,7 +11,7 @@
 -- eligible member, offered or not, and nothing about the job rides on the
 -- wake. Who is offered: a member that could claim it now (eligible, not
 -- frozen, silenced or the house, its own comms rules taking private
--- messages), never the job's poster, never the bot whose claim or release
+-- messages, with a live key), never the job's poster, never the bot whose claim or release
 -- just ended the last attempt, and never one that blocked the poster. In
 -- bot_id order, except that after a revision the bot whose work was sent
 -- back goes first: the revision already woke it, so it counts as offered at
@@ -24,6 +23,15 @@
 -- (job_offer_next), never stored. The insert's trigger takes the group's
 -- lock and checks the row is exactly the offer due now, so a run that read
 -- before a claim committed writes nothing.
+--
+-- A holder frozen or taken out before its lease ends frees the job for
+-- anyone to claim at once, but it's offered only once the lease ends: the
+-- holder may be unfrozen, and the clock already waits for the lease's end,
+-- so a freeze, which moves no due time, never leaves an offer waiting. An
+-- offer that waits for a member who wasn't there (one unfrozen, put in, or
+-- whose silence ended, with no job written since) can be up to the hour the
+-- clock keeps its soonest time late; the next job write in the group, or the
+-- hour turning over, sends it.
 --
 -- Lock order, as 054 has it: the site-wide wake cap's limit row, then
 -- lock_private_channel, then the wake counter.
@@ -74,15 +82,19 @@ BEGIN
   END IF;
   SELECT m.kind, m.created_at INTO lk, lat FROM job_moves m
   WHERE m.job_id = j AND m.seq = st.seq;
+  -- A claim frees its job for offers only when its lease ends.
+  IF lk = 'claim' AND st.lease_until > at THEN
+    RETURN;
+  END IF;
   -- When it turned ready: posted with nothing to wait for, or the newest
-  -- accept of a job it needs; a lapse at its lease's end, or now for a
-  -- holder frozen or taken out before then; else the move that freed it.
+  -- accept of a job it needs; a lapse at its lease's end; else the move
+  -- that freed it.
   began := CASE
     WHEN lk IS NULL THEN greatest(job.created_at, (
       SELECT max(m.created_at) FROM job_deps d
       JOIN job_moves m ON m.job_id = d.needs_job_id AND m.kind = 'accept'
       WHERE d.job_id = j))
-    WHEN lk = 'claim' THEN least(st.lease_until, at)
+    WHEN lk = 'claim' THEN st.lease_until
     ELSE lat
   END;
   RETURN QUERY
@@ -96,6 +108,7 @@ BEGIN
       AND (lk IS NULL OR lk NOT IN ('claim', 'release') OR r.bot_id IS DISTINCT FROM st.holder)
       AND NOT has_blocked(r.bot_id, job.bot_id)
       AND comms_takes_private(r.bot_id)
+      AND EXISTS (SELECT 1 FROM api_keys k WHERE k.bot_id = r.bot_id AND k.revoked_at IS NULL)
   ),
   offered AS (
     SELECT o.bot_id AS b, o.created_at AS t FROM job_offers o
@@ -114,8 +127,8 @@ BEGIN
 END;
 $$;
 
--- Jobs not yet done or canceled, by channel: the only ones that can make an
--- offer or lapse.
+-- Jobs not yet done or canceled, in groups open and not hidden, by channel:
+-- the only ones that can make an offer or lapse.
 CREATE FUNCTION jobs_open(only_channel bigint DEFAULT NULL)
 RETURNS TABLE (job_id bigint, channel_id bigint, last_kind text)
 LANGUAGE sql STABLE AS $$
@@ -124,6 +137,7 @@ LANGUAGE sql STABLE AS $$
   LEFT JOIN LATERAL (SELECT m.kind FROM job_moves m WHERE m.job_id = j.id
                      ORDER BY m.seq DESC LIMIT 1) l ON true
   WHERE (only_channel IS NULL OR j.channel_id = only_channel)
+    AND private_channel_is_open(j.channel_id) AND private_channel_is_visible(j.channel_id)
     AND l.kind IS DISTINCT FROM 'accept' AND l.kind IS DISTINCT FROM 'cancel'
 $$;
 
@@ -137,13 +151,15 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 -- The soonest a job's offer comes due, or a claim's lease ends (when its
--- job turns ready again): what the clock waits for.
+-- job turns ready again): what the clock waits for. While the site-wide
+-- wake cap holds offers back, the soonest stays in the past, so the clock
+-- tries each minute until the hour turns over and the cap lets them out.
 CREATE FUNCTION job_dispatch_soonest() RETURNS timestamptz LANGUAGE sql STABLE AS $$
   SELECT least(
     (SELECT min(d.due_at) FROM job_offers_due(now()) d),
     (SELECT min(s.lease_until) FROM jobs_open() o
      CROSS JOIN LATERAL job_state(o.job_id, now()) s
-     WHERE o.last_kind = 'claim' AND s.state = 'claimed'))
+     WHERE o.last_kind = 'claim' AND s.lease_until > now()))
 $$;
 
 -- An offer is the one due now, checked under the group's lock on its clock.

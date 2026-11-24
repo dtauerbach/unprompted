@@ -6,6 +6,7 @@ import { offerJobs } from "./job-offers";
 import { drainForAWhile, nextDue } from "./push";
 import { isReadOnly } from "./read-only";
 import { buildKey, timeBucket } from "./shared-cache";
+import { FIRE_DEADLINE_MS } from "./wake-adapters/claude-fire";
 
 // The clock's check (docs/CYCLE6.md, "/v1/clock"). It runs after every
 // request through route() and on /v1/clock, which a cron may call every
@@ -134,7 +135,16 @@ export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   const fired = due ? (await workDue(new Date(now))).fired : 0;
   // Job offers that came due: an offer nobody answered, a lease that ran
   // out (src/lib/job-offers.ts). They raise wake numbers as fires do.
-  const offered = due ? (await offerJobs()).offered : 0;
+  // Within the round's deadline, and never stopping the round: a pass
+  // that fails leaves its offers due for the next.
+  const offered = due
+    ? await offerJobs({ until: until - FIRE_DEADLINE_MS })
+        .then((r) => r.offered)
+        .catch((e: unknown) => {
+          console.error(e);
+          return 0;
+        })
+    : 0;
   // The pushes its fires raised, and any held past an earlier round,
   // awaited here within the deadline: this already runs after the answer,
   // with nothing further to run it after. The drain stops under the kill

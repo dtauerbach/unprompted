@@ -10,7 +10,7 @@ import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/
 import { GET as jobRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/route";
 import { POST as postRoute } from "@/app/v1/private-channels/[id]/jobs/route";
 import { POST as removeRoute } from "@/app/v1/private-channels/[id]/members/remove/route";
-import { setFrozen, setSilenced } from "@/lib/admin";
+import { setFrozen, setPrivateChannelHidden, setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { soonestDue } from "@/lib/due";
 import { JOB_OFFER_MINUTES, OFFER_RUN_MAX, offerJobs } from "@/lib/job-offers";
@@ -228,6 +228,46 @@ describe("job offers", () => {
     expect((await offerJobs()).offered).toBe(0);
   });
 
+  it("waits for the lease to end when a holder is frozen, so unfreezing it costs no episode", async () => {
+    const { l, m, n, g } = await group();
+    await post(l, g);
+    const c = await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await setFrozen(db(), "moe", true, "test");
+    // Free for anyone to claim, but nobody is woken for it yet.
+    expect(await you(n, g)).toBe("claimable");
+    expect((await offerJobs()).offered).toBe(0);
+    expect(await offers()).toHaveLength(1);
+    // The clock still waits for the lease's end.
+    expect((await soonestDue(db())).next?.toISOString()).toBe(
+      new Date(c.body.job.lease_until).toISOString(),
+    );
+    await setFrozen(db(), "moe", false, "test");
+    expect(await you(m, g)).toBe("holder");
+    // The lease runs out: the episode is fresh, and nia is offered.
+    await lapse();
+    expect((await offerJobs()).offered).toBe(1);
+    expect((await offers()).slice(1)).toEqual([
+      { number: 1, episode: 1, to: "nia" },
+    ]);
+  });
+
+  it("offers a job whose holder was taken out once its lease ends", async () => {
+    const { l, m, g } = await group();
+    await post(l, g);
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await call(removeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "moe" },
+    });
+    expect((await offerJobs()).offered).toBe(0);
+    await lapse();
+    expect((await offerJobs()).offered).toBe(1);
+    expect((await offers()).slice(1)).toEqual([
+      { number: 1, episode: 1, to: "nia" },
+    ]);
+  });
+
   it("offers a revised job to the bot whose work came back, then to the next", async () => {
     const { l, m, n, g } = await group();
     await post(l, g);
@@ -310,6 +350,52 @@ describe("job offers", () => {
     await setFrozen(db(), "moe", false, "test");
     expect((await offerJobs()).offered).toBe(1);
     expect((await offers()).map((x) => x.to)).toEqual(["ren", "moe"]);
+  });
+
+  it("makes no offer while its poster is frozen or its group hidden, and skips a bot with no live key", async () => {
+    const { l, g } = await group();
+    await db()`UPDATE api_keys SET revoked_at = now()
+               WHERE bot_id = (SELECT id FROM bots WHERE handle = 'moe')`;
+    // moe has no live key: nia is offered first.
+    expect((await post(l, g)).status).toBe(201);
+    expect((await offers()).map((x) => x.to)).toEqual(["nia"]);
+    // Its poster frozen, the job offers nothing more.
+    await setFrozen(db(), "lea", true, "test");
+    await nextWindow();
+    expect((await offerJobs()).offered).toBe(0);
+    await setFrozen(db(), "lea", false, "test");
+    await setPrivateChannelHidden(db(), Number(num(g)), true, "test");
+    expect((await offerJobs()).offered).toBe(0);
+    const [open] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM jobs_open()`;
+    expect(open?.n).toBe(0);
+    await setPrivateChannelHidden(db(), Number(num(g)), false, "test");
+    expect((await offerJobs()).offered).toBe(1);
+    expect((await offers()).map((x) => x.to)).toEqual(["nia", "oto"]);
+  });
+
+  it("tells no other member who was offered", async () => {
+    const { l, n, o, g } = await group();
+    await post(l, g);
+    for (const who of [n, o, l]) {
+      const r = await call(jobRoute, {
+        key: who.key,
+        params: { id: num(g), number: "1" },
+      });
+      expect(JSON.stringify(r.body)).not.toContain("moe");
+    }
+  });
+
+  it("stops at its deadline and leaves the rest due", async () => {
+    const { l, g } = await group();
+    await post(l, g);
+    await nextWindow();
+    expect(await offerJobs({ until: Date.now() - 1 })).toEqual({
+      offered: 0,
+      capped: false,
+      more: true,
+    });
+    expect((await offerJobs()).offered).toBe(1);
   });
 
   it("makes no offer in a closed group, or under the kill switch", async () => {
