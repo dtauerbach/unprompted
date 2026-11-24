@@ -11,6 +11,7 @@ import {
   POST as postRoute,
 } from "@/app/v1/private-channels/[id]/jobs/route";
 import { POST as leaderRoute } from "@/app/v1/private-channels/[id]/leader/route";
+import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { POST as removeRoute } from "@/app/v1/private-channels/[id]/members/remove/route";
 import {
   setFrozen,
@@ -232,12 +233,12 @@ describe("a job nobody takes", () => {
     expect((await read(l, g)).no_taker).toBe(true);
   });
 
-  it("wakes the leader once members are taken out, and a new leader reads the mark unwoken", async () => {
+  it("keeps its time when members are taken out, and a new leader reads the mark unwoken", async () => {
     const { l, members, g } = await group();
     const [m, n] = members as [Bot, Bot, Bot];
     await post(l, g);
     expect(await leaderWakes()).toEqual([]);
-    // Taking out nia and oto leaves moe, offered already and 16 minutes on.
+    // Taking out nia and oto leaves moe, offered already; they still count.
     await window();
     for (const who of [n.handle, "oto"])
       expect(
@@ -249,6 +250,12 @@ describe("a job nobody takes", () => {
           })
         ).status,
       ).toBe(200);
+    expect(await leaderWakes()).toEqual([]);
+    await window();
+    await offerJobs();
+    expect(await leaderWakes()).toEqual([]);
+    await window();
+    await offerJobs();
     expect(await leaderWakes()).toEqual([{ number: 1, episode: 0, to: "lea" }]);
     // moe leads now: it reads the mark, lea doesn't, and nobody is woken.
     const before = await wake(m);
@@ -265,6 +272,41 @@ describe("a job nobody takes", () => {
     expect((await read(l, g)).no_taker).toBeUndefined();
     expect(await leaderWakes()).toHaveLength(1);
     expect(await wake(m)).toBe(before);
+  });
+
+  it("wakes the leader when its only taker leaves after the post", async () => {
+    const { l, members, g } = await group(["moe"]);
+    const [m] = members as [Bot];
+    await post(l, g);
+    await age(5);
+    const before = await wake(l);
+    expect(
+      (await call(leaveRoute, { key: m.key, params: { id: num(g) } })).status,
+    ).toBe(200);
+    // moe counts still, since it was there when the job was posted.
+    expect(await leaderWakes()).toEqual([]);
+    await age(11);
+    await offerJobs();
+    expect(await leaderWakes()).toEqual([{ number: 1, episode: 0, to: "lea" }]);
+    expect(await wake(l)).toBe(before + 1);
+    const [r] = await db()<
+      { woken: boolean }[]
+    >`SELECT woken FROM job_no_takers`;
+    expect(r?.woken).toBe(true);
+  });
+
+  it("never brings the time forward for a member who leaves or is frozen after its offer", async () => {
+    const { l, members, g } = await group();
+    const [m, n] = members as [Bot, Bot, Bot];
+    await post(l, g);
+    await window();
+    await offerJobs();
+    await call(leaveRoute, { key: m.key, params: { id: num(g) } });
+    await setFrozen(db(), n.handle, true, "test");
+    await window();
+    await offerJobs();
+    expect(await leaderWakes()).toEqual([]);
+    expect(await leaderDueMinutes()).toBe(3 * JOB_OFFER_MINUTES);
   });
 
   it("keeps the same time whoever the offers passed over, so it tells no block or silence", async () => {

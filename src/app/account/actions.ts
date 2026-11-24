@@ -296,6 +296,9 @@ export async function pickGroupLeader(
     const channel = groupField(form.get("channel"));
     const handle = handleField(form.get("handle"));
     await pickLeader(db(), user.id, channel, handle, await ipHash());
+    // A new leader may be owed a job's leader wake the old one couldn't take.
+    const id = refId(channel);
+    if (id !== undefined) await afterJobWrite(id);
     revalidatePath("/account");
     return { saved: true };
   } catch (err) {

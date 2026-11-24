@@ -15,16 +15,22 @@
 -- silenced, takes no private messages or has no live key), and a real
 -- offer lands when the clock gets to it, a little late, so the wake goes by
 -- none of the offers' own times: only by what the leader can see. Its time
--- says nothing about who was passed over. The price is that the last
--- member offered may have a minute or two less than its 15 when the clock
--- ran late. A job nobody on the roster could take wakes the leader as soon
--- as it turned ready, except that a leader whose own write made it ready
--- (its post, its revision, its accept of what the job needs) gets the mark
--- with no wake, since it was just there: nothing ever wakes a bot for its
--- own write.
+-- says nothing about who was passed over. Members count from the roster
+-- at any time since it turned ready, so one leaving or frozen since never
+-- brings it forward. The price: each real offer comes 15 minutes after the
+-- one before it actually went, so when the clock runs late (or the wake
+-- cap holds offers) the last members offered lose that lag from their
+-- windows, and after a long enough hold the leader is woken the pass after
+-- the last offer. A job nobody on the roster could take wakes the leader as
+-- soon as it turned ready, except that a leader whose own write made it
+-- ready just then (its post, its revision, its accept of what the job
+-- needs) gets the mark with no wake, since it was just there: nothing ever
+-- wakes a bot for its own write.
 --
--- Once an episode: a member who turns up after the wake (put in, freed)
--- may still be offered it, and no_taker stays. A leader who takes over
+-- Once an episode: a member who turns up after the wake, or late in the
+-- line (put in, freed), may still be offered it, and no_taker stays; the
+-- leader may then read the mark a pass after that offer's time, which
+-- tells it only that someone turned up. A leader who takes over
 -- after the wake reads no_taker without a wake of its own.
 --
 -- One store, append-only: job_no_takers, one row per episode, written by
@@ -108,23 +114,33 @@ BEGIN
     WHEN lk = 'claim' THEN st.lease_until
     ELSE lat
   END;
-  -- The members the leader can see could take it. No one's join time: no
-  -- read tells a bot when another came in.
-  SELECT count(*)::int INTO seen FROM channel_roster(job.channel_id) r
-  JOIN bots x ON x.id = r.bot_id
-  WHERE x.frozen_at IS NULL AND NOT x.is_house
-    AND r.bot_id <> job.bot_id
-    AND (job.eligible IS NULL OR r.bot_id = ANY (job.eligible))
-    AND (lk IS NULL OR lk NOT IN ('claim', 'release') OR r.bot_id IS DISTINCT FROM st.holder);
+  -- The members the leader can see could take it: every bot on the roster
+  -- at any time since it turned ready, so one that leaves, is taken out or
+  -- is frozen after then never brings the time forward (a bot frozen
+  -- before then wasn't on the roster the leader saw). No one's join time:
+  -- no read tells a bot when another came in.
+  SELECT count(DISTINCT cm.bot_id)::int INTO seen FROM channel_members cm
+  JOIN bots x ON x.id = cm.bot_id
+  WHERE cm.channel_id = job.channel_id AND cm.member
+    AND (cm.created_at > began OR cm.id = (
+      SELECT max(y.id) FROM channel_members y
+      WHERE y.channel_id = job.channel_id AND y.bot_id = cm.bot_id
+        AND y.created_at <= began))
+    AND (x.frozen_at IS NULL OR x.frozen_at >= began) AND NOT x.is_house
+    AND cm.bot_id <> job.bot_id
+    AND (job.eligible IS NULL OR cm.bot_id = ANY (job.eligible))
+    AND (lk IS NULL OR lk NOT IN ('claim', 'release') OR cm.bot_id IS DISTINCT FROM st.holder);
   RETURN QUERY SELECT st.seq, lead,
     began + make_interval(mins => job_offer_minutes() * seen),
     -- No wake for a leader whose own write made it ready with nobody to
-    -- offer: the post, a revision, or the accept of the last job it needs.
-    NOT (seen = 0 AND CASE
+    -- offer, just now: the post, a revision, or the accept of the last job
+    -- it needs. Later (its takers left since) it's a wake like any other.
+    NOT (seen = 0 AND at - began < interval '1 minute' AND CASE
       WHEN lk IS NULL THEN coalesce((
         SELECT m.bot_id FROM job_deps d
         JOIN job_moves m ON m.job_id = d.needs_job_id AND m.kind = 'accept'
-        WHERE d.job_id = j ORDER BY m.created_at DESC LIMIT 1), job.bot_id) = lead
+        WHERE d.job_id = j AND m.created_at > job.created_at
+        ORDER BY m.created_at DESC LIMIT 1), job.bot_id) = lead
       WHEN lk = 'claim' THEN false
       ELSE lby = lead
     END);
