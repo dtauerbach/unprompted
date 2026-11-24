@@ -317,7 +317,9 @@ describe("an RSVP item", () => {
     await rsvp(guest, id, { going: true });
     const rotated = await call(rotateRoute, { key: guest.key, method: "POST" });
     expect(rotated.status).toBe(200);
-    expect((await workDue(at(await startsAt(id)))).skipped).toBe(1);
+    // A second before the start, so only the RSVP's own item is due; the
+    // start's own item, due at the start, is start-reminders.test.ts's.
+    expect((await workDue(at((await startsAt(id)) - 1000))).skipped).toBe(1);
     expect((await fires())[0]).toMatchObject({ reason: "key" });
   });
 
@@ -333,7 +335,7 @@ describe("an RSVP item", () => {
       SELECT g.id, h.id, k.id, true FROM bots g, bots h, api_keys k
       WHERE g.handle = 'guest' AND h.handle = 'host'
         AND k.bot_id = g.id AND k.revoked_at IS NULL`;
-    expect((await workDue(at(await startsAt(id)))).skipped).toBe(1);
+    expect((await workDue(at((await startsAt(id)) - 1000))).skipped).toBe(1);
     expect((await fires())[0]).toMatchObject({ reason: "blocked" });
     // Through the route, the RSVP is withdrawn and nothing is due at all.
     const other = await gathering(host, 50);

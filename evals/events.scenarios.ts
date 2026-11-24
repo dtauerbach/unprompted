@@ -57,6 +57,45 @@ export function eventScenarios(): void {
     });
   });
 
+  // P5 (R433, R436): a session's times or a notice out of bounds is refused
+  // with the bound in plain words, and no Retry-After, which is a quota's.
+  // A sign-up, so local only.
+  describe.runIf(LOCAL)("stated limits on times", () => {
+    it("names the bound a bot can choose within", async () => {
+      const ada = await register("ada-limits");
+      const cases: [object, string][] = [
+        [
+          { in_minutes: 30, every_minutes: 20_000 },
+          "every_minutes: Choose a whole number from 15 through 10,080 for minutes between meetings.",
+        ],
+        [
+          { in_minutes: 30, every_minutes: 60, times: 13 },
+          "times: Choose a whole number from 1 through 12 for times. A session ends after 12 times or 7 days, whichever comes first.",
+        ],
+      ];
+      for (const [extra, line] of cases) {
+        const res = await post(
+          "/v1/events",
+          { action: "session", channel: "private:999999", ...extra },
+          { key: ada.key, ip: ada.ip },
+        );
+        expect(res.status, line).toBe(400);
+        expect(res.json.error.message).toBe(line);
+        expect(res.headers.get("retry-after")).toBeNull();
+      }
+      const rsvp = await post(
+        "/v1/gatherings/999999/rsvp",
+        { going: true, notice_minutes: 7 },
+        { key: ada.key, ip: ada.ip },
+      );
+      expect(rsvp.status).toBe(400);
+      expect(rsvp.json.error.message).toBe(
+        "notice_minutes: Choose 0, 5, 10 or 15 minutes for the notice.",
+      );
+      expect(rsvp.headers.get("retry-after")).toBeNull();
+    });
+  });
+
   // Two sign-ups and a wait of a minute or two: local only.
   describe.runIf(LOCAL)("a bot's time comes", () => {
     it("fires once when its minute comes, read as its own due, and nothing of it reaches another bot", async () => {

@@ -92,14 +92,32 @@ type Msg = { channel?: string; to?: string; untrusted_body?: string };
 const msgs = (body: { messages?: { new?: Msg[] } }): Msg[] =>
   body.messages?.new ?? [];
 
+// The allowance's three countdowns, by path (src/lib/allowance.ts): a read
+// a second later says one second less until the hour or the day turns over.
+// Only these are dropped, so a new field that means something still counts.
+function withoutCountdowns(allowance: unknown): unknown {
+  if (allowance === null || typeof allowance !== "object") return allowance;
+  const a = structuredClone(allowance) as {
+    posts?: Record<string, unknown>;
+    votes?: Record<string, unknown>;
+  };
+  if (a.posts) {
+    delete a.posts.today_resets_in_seconds;
+    delete a.posts.next_in_seconds;
+  }
+  if (a.votes) delete a.votes.hour_resets_in_seconds;
+  return a;
+}
+
 // What a member's view of a channel and of catch_up should be, whatever
-// happens elsewhere: everything but the clock, countdowns included, since a
-// read a second later says one second less until the hour or day turns over.
+// happens elsewhere: everything but the clock and those countdowns.
 function stable(body: Record<string, unknown>): string {
   return JSON.stringify(body, (k, v) =>
-    k === "now" || k === "at" || k === "next_visit" || k.endsWith("_in_seconds")
+    k === "now" || k === "at" || k === "next_visit"
       ? undefined
-      : v,
+      : k === "allowance"
+        ? withoutCountdowns(v)
+        : v,
   );
 }
 

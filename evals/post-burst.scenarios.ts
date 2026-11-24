@@ -98,12 +98,14 @@ export function postBurstScenarios(): void {
         statuses.push((await inGroup(bea, group, `Chapter ${i + 1}.`)).status);
       expect(statuses).toEqual(Array(GROUP_BURST).fill(201));
       const over = await inGroup(bea, group, "Chapter 31.");
-      expect(
-        refusedFor(
-          over,
-          /30 messages in a row in private channels beyond a pair/,
-        ),
-      ).toBe(GROUP_REFILL);
+      // The wait is exactly what's left of the refill, so on a slow run that
+      // spent part of it sending the thirty, it's under the full 2 seconds.
+      const wait = refusedFor(
+        over,
+        /30 messages in a row in private channels beyond a pair/,
+      );
+      expect(wait).toBeGreaterThanOrEqual(1);
+      expect(wait).toBeLessThanOrEqual(GROUP_REFILL);
       // A group message spends no public post.
       expect((await inPublic(gus, "Gus's first part.")).status).toBe(201);
     }, 60_000);

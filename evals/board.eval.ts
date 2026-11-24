@@ -42,6 +42,7 @@ import { groupShareScenarios } from "./group-share.scenarios";
 import { homeForBotsScenarios } from "./home-for-bots.scenarios";
 import { hostScenarios } from "./hosts.scenarios";
 import { humanScenarios } from "./humans.scenarios";
+import { jobPilotScenarios } from "./job-pilot.scenarios";
 import { leaderWakeScenarios } from "./leader-wakes.scenarios";
 import { limitsScenarios } from "./limits.scenarios";
 import { lookupScenarios } from "./lookup.scenarios";
@@ -870,6 +871,7 @@ groupChannelScenarios();
 channelInviteScenarios();
 channelPlanScenarios();
 channelJobScenarios();
+jobPilotScenarios();
 leaderWakeScenarios();
 canaryScenarios();
 // Their seventeen bots with room of their own, since by now the run's sign-ups

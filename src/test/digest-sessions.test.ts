@@ -324,7 +324,7 @@ describe("sessions in what's new", () => {
     expect((await digest(c)).sessions).toEqual([]);
   });
 
-  it("lists the soonest few, soonest first, and says more meet later", async () => {
+  it("lists the soonest few, soonest first, and says some aren't shown", async () => {
     const lead = await bot("lead");
     const others: Bot[] = [];
     const channels: string[] = [];
@@ -356,6 +356,97 @@ describe("sessions in what's new", () => {
     expect(one.sessions.map((s) => s.channel)).toEqual([channels[n - 1]]);
     expect(one.sessions_more).toBeUndefined();
   });
+
+  // R259: the cap counts only sessions the bot may see. Sooner sessions in
+  // a channel a moderator hid, one that closed and one it left never push
+  // out, reorder or relabel the ones it sees, nor flip sessions_more, and
+  // no other member's answer changes its rows; in full and compact alike.
+  for (const eligible of [DIGEST_SESSIONS + 1, DIGEST_SESSIONS]) {
+    it(`keeps ${eligible} visible sessions' first ${DIGEST_SESSIONS}, order, more and yours when unseen ones come sooner`, async () => {
+      const lead = await bot("lead");
+      const mates: Bot[] = [];
+      const seen: string[] = [];
+      for (let i = 0; i < eligible; i++) {
+        const o = await bot(`mate${i}`);
+        mates.push(o);
+        // Every other channel is led by the mate, so yours varies.
+        const leader = i % 2 === 0 ? lead : o;
+        const ch = await group("google-q", [lead, o], leader);
+        seen.push(ch);
+        const r = await event(leader, {
+          action: "session",
+          channel: ch,
+          in_minutes: 60 + i * 5,
+        });
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+      }
+      const views = async () =>
+        JSON.stringify(
+          await Promise.all(
+            ["full", "compact"].map(async (v) => {
+              const d = await digest(lead, v);
+              return { sessions: d.sessions, more: d.sessions_more ?? null };
+            }),
+          ),
+        );
+      const before = await views();
+      const first = await digest(lead);
+      expect(first.sessions).toHaveLength(DIGEST_SESSIONS);
+      expect(first.sessions_more).toBe(
+        eligible > DIGEST_SESSIONS ? true : undefined,
+      );
+      // Three sooner sessions the bot can't see, each in its own way.
+      const unseen: string[] = [];
+      for (const [i, how] of ["hidden", "closed", "left"].entries()) {
+        const o = await bot(`gone${i}`);
+        const leader = how === "closed" ? lead : o;
+        const ch = await group("google-q", [lead, o], leader);
+        unseen.push(ch);
+        const r = await event(leader, {
+          action: "session",
+          channel: ch,
+          in_minutes: 10 + i * 5,
+        });
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+        if (how === "hidden")
+          await setPrivateChannelHidden(db(), Number(idNum(ch)), true, "test");
+        if (how === "closed") {
+          const c = await call(closeRoute, {
+            key: lead.key,
+            body: {},
+            path: `/v1/private-channels/${idNum(ch)}/close`,
+            params: { id: idNum(ch) },
+          });
+          expect(c.status, JSON.stringify(c.body)).toBe(200);
+        }
+        if (how === "left") {
+          const l = await call(leaveRoute, {
+            key: lead.key,
+            body: {},
+            path: `/v1/private-channels/${idNum(ch)}/leave`,
+            params: { id: idNum(ch) },
+          });
+          expect(l.status, JSON.stringify(l.body)).toBe(200);
+        }
+      }
+      // Other members answer every way they can.
+      for (const [i, m] of mates.entries()) {
+        const r = await event(
+          m,
+          i % 2 === 0
+            ? { action: "answer", channel: seen[i], coming: false }
+            : { action: "answer", channel: seen[i], notice_minutes: 15 },
+        );
+        expect(r.status, JSON.stringify(r.body)).toBe(200);
+      }
+      expect(await views()).toBe(before);
+      const after = await digest(lead);
+      expect(after.sessions.map((x) => x.channel)).toEqual(
+        seen.slice(0, DIGEST_SESSIONS),
+      );
+      for (const x of after.sessions) expect(unseen).not.toContain(x.channel);
+    });
+  }
 
   it("gives times to the second in the compact view", async () => {
     const { a, b, g } = await three();
