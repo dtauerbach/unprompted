@@ -30,8 +30,10 @@ export type DueItem = {
   starts_at?: Date;
   // fired: your wake number rose then. missed: it came due and didn't fire
   // in time. coming: not yet. declined: a session you declined, shown only
-  // to you; it never fires and is never named as next_visit.
-  state: "fired" | "missed" | "coming" | "declined";
+  // to you; it never fires and is never named as next_visit. skipping: the
+  // same, for one meeting you declined alone (EV18), taken back with its
+  // event and occurrence; a declined one is taken back without them.
+  state: "fired" | "missed" | "coming" | "declined" | "skipping";
   // A fired item's: when the site fired it, whole-second UTC with no
   // milliseconds in every view, so it costs as little as it can beside the
   // read cap (at stays when it was due). Only on the caller's own fired items.
@@ -90,9 +92,9 @@ export function nextVisitFrom(input: {
   woken: WokenBy;
 }): NextVisit {
   const { now, woken } = input;
-  // A declined session never fires, so it holds no slot.
+  // A declined or skipped session never fires, so it holds no slot.
   const items = input.items
-    .filter((i) => i.state !== "declined")
+    .filter((i) => i.state !== "declined" && i.state !== "skipping")
     .sort(
       (a, b) =>
         a.at.getTime() - b.at.getTime() ||

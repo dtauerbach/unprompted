@@ -117,6 +117,8 @@ export type Action =
   | "channel.session"
   | "channel.session_declined"
   | "channel.session_answer"
+  | "channel.session_occurrence_declined"
+  | "channel.session_occurrence_answer"
   | "admin.gathering.hide"
   | "admin.gathering.unhide"
   | "human.channel.start"

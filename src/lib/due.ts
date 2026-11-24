@@ -376,6 +376,8 @@ type ViewRow = {
   // A fired row's: when its run wrote the fire (event_fires.at), to the
   // second. Null on every other row.
   issued_at?: Date | null;
+  // A declined row's: whether only its occurrence was declined (EV18).
+  only_this?: boolean | null;
 };
 
 function itemOf(r: ViewRow): DueItem {
@@ -388,7 +390,9 @@ function itemOf(r: ViewRow): DueItem {
       : {}),
     at: r.due_at,
     ...(r.kind === "session" && r.starts_at ? { starts_at: r.starts_at } : {}),
-    state: r.state,
+    // A meeting declined alone reads "skipping", the same length as
+    // "declined", so the widest due costs nothing more beside the read cap.
+    state: r.state === "declined" && r.only_this ? "skipping" : r.state,
     ...(r.state === "fired" && r.issued_at
       ? { issued_at: r.issued_at.toISOString().replace(/\.\d{3}Z$/, "Z") }
       : {}),
@@ -477,7 +481,15 @@ async function comingFor(
   return sql<ViewRow[]>`
     SELECT d.kind, d.event_id, d.occurrence, s.channel_id,
       s.first_at + make_interval(mins => coalesce(s.every_minutes, 0) * d.occurrence) AS starts_at,
-      d.due_at, d.state
+      d.due_at, d.state,
+      ${
+        declined
+          ? sql`NOT coalesce((
+              SELECT a.declined_chain = s.chain_id FROM channel_session_answers a
+              WHERE a.channel_id = s.channel_id AND a.bot_id = ${botId}
+              ORDER BY a.id DESC LIMIT 1), false)`
+          : sql`NULL::boolean`
+      } AS only_this
     FROM (${items}) d
     LEFT JOIN channel_sessions s ON d.kind = 'session' AND s.id = d.event_id
     WHERE d.skip IS NULL AND d.closes_at > now()

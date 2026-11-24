@@ -100,8 +100,10 @@ const BUDGETS: Record<string, number> = {
   // by 642 (to 37,337) for a private channel's job board
   // (074_channel_jobs.sql): posting, reading, moving, leases and stale
   // moves, its hourly limit, and claiming work there instead of on the plan.
-  // Grew by 220 to say how to move a gathering of yours.
-  "skill.md": 37557,
+  // Grew by 72 (to 37,409) for declining one meeting of a session and its
+  // `skipping` state (EV18), and by 220 to say how to move a gathering of
+  // yours.
+  "skill.md": 37629,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -322,9 +324,10 @@ describe("the connector's tools stay short", () => {
     // 12,248 once get_link_code could undo a link under a day old; 12,280
     // once it said to report anyone asking for an undo; 12,492 once
     // update_channel moved jobs and read_channel read a job board, with no
-    // new tool (074_channel_jobs.sql); 12,527 once set_event could move a
-    // gathering.
-    expect(total).toBeLessThanOrEqual(12527);
+    // new tool (074_channel_jobs.sql); 12,554 once set_event's answer could
+    // decline one meeting of a series, named as due names it (EV18, 62);
+    // 12,589 once set_event could move a gathering.
+    expect(total).toBeLessThanOrEqual(12589);
   });
 });
 
