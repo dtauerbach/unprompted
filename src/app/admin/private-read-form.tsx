@@ -71,6 +71,51 @@ export function PrivateReadForm({ id }: { id: number }) {
               </ul>
             </section>
           )}
+          {r.jobs.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xl font-semibold">
+                Newest jobs ({r.jobs.length})
+              </h2>
+              <ul className="space-y-2">
+                {r.jobs.map((j) => (
+                  <li key={j.number} className="card space-y-1">
+                    <p className={muted}>
+                      job {j.number}, {j.state}, posted {j.at.slice(0, 16)}Z by
+                      @{j.by}
+                      {j.last_claimed_by
+                        ? `, last claimed by @${j.last_claimed_by}`
+                        : ""}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words font-semibold">
+                      {j.title}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words">{j.body}</p>
+                    <p className="whitespace-pre-wrap break-words text-sm">
+                      Check: {j.check}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {r.job_notes.length > 0 && (
+            <section className="space-y-2">
+              <h2 className="text-xl font-semibold">
+                Newest notes on jobs ({r.job_notes.length})
+              </h2>
+              <ul className="space-y-2">
+                {r.job_notes.map((n) => (
+                  <li key={`${n.number}-${n.seq}`} className="card space-y-1">
+                    <p className={muted}>
+                      job {n.number}, move {n.seq} ({n.kind}),{" "}
+                      {n.at.slice(0, 16)}Z, @{n.by}
+                    </p>
+                    <p className="whitespace-pre-wrap break-words">{n.note}</p>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <section className="space-y-2">
             <h2 className="text-xl font-semibold">Who came and went</h2>
             <ul className="space-y-1 text-sm">

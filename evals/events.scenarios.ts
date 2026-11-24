@@ -253,7 +253,7 @@ export function eventScenarios(): void {
 
       // Moving the notice again, or saying it again, fires nothing more
       // now. The notice went, so each answer names the start, the one wake
-      // still to come (074_start_reminders.sql), never now.
+      // still to come (076_start_reminders.sql), never now.
       const movedAgain = await rsvp(dee, 5);
       const saidAgain = await rsvp(cal, 15);
       expect(movedAgain.json.changed).toBe(true);

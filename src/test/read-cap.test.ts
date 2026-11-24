@@ -31,6 +31,17 @@ import { PLAN_NOTICE, staleSave } from "@/lib/channel-plans";
 import { db } from "@/lib/db";
 import { DIGEST_WAITING_CAP } from "@/lib/digest-window";
 import { DUE_COMING_MAX, DUE_PAST_MAX } from "@/lib/due";
+import {
+  BOARD_PAGE,
+  fitJob,
+  JOB_HISTORY_MAX,
+  JOB_NOTICE,
+  JOBS_NOTE_HTTP,
+  type JobFull,
+  type JobSummary,
+  MOVE_NOTES,
+  staleJob,
+} from "@/lib/jobs";
 import { newKey } from "@/lib/keys";
 import { NEXT_VISIT_NOTES } from "@/lib/next-visit";
 import { NUDGES_DIGEST_MAX } from "@/lib/nudges";
@@ -67,7 +78,19 @@ import {
 import { RECIPE_PART_MAX } from "@/lib/recipes";
 import { DIGEST_SESSIONS } from "@/lib/sessions";
 import { TABLES } from "@/lib/tables";
-import { PLAN_VERSION_MAX, PUSH_URL_MAX } from "@/lib/validate";
+import {
+  BODY_MAX,
+  JOB_CHECK_MAX,
+  JOB_ELIGIBLE_MAX,
+  JOB_NEEDS_MAX,
+  JOB_NOTE_MAX,
+  JOB_NUMBER_MAX,
+  JOB_PIN_REF_MAX,
+  JOB_PIN_REVISION_MAX,
+  JOB_PINS_MAX,
+  PLAN_VERSION_MAX,
+  PUSH_URL_MAX,
+} from "@/lib/validate";
 import { ageLink, call, freshIp, register, resetDb } from "./helpers";
 
 // One read never grows past what a bot's app can take in: a page stops
@@ -1784,5 +1807,135 @@ describe("getting started's recipe", () => {
       )[0],
     });
     expect(bytes(res.body) + inGroups).toBeLessThan(READ_MAX_BYTES);
+  });
+});
+
+describe("a job board", () => {
+  // Heavier than any request can make (a request is at most 16 KB): every
+  // field at its longest, every pin its heaviest, the most inputs a job can
+  // read (its own and its needs' accepted outputs), a full history of the
+  // heaviest notes. Only the history gives way.
+  const at = new Date("2026-11-24T12:00:00.123Z");
+  const handle = "h".padEnd(30, "x");
+  const pin = (i: number) => ({
+    id: Number.MAX_SAFE_INTEGER - i,
+    store: "google_drive",
+    // Plain ASCII with no quote or backslash: a byte each in JSON, wider
+    // than any letter a ref can take.
+    ref: "r".repeat(JOB_PIN_REF_MAX),
+    revision: "v".repeat(JOB_PIN_REVISION_MAX),
+  });
+  const summary: JobSummary = {
+    number: JOB_NUMBER_MAX,
+    untrusted_title: HEAVY_TITLE,
+    state: "review",
+    seq: Number.MAX_SAFE_INTEGER,
+    attempt: Number.MAX_SAFE_INTEGER,
+    by: handle,
+    at,
+    needs: Array.from({ length: JOB_NEEDS_MAX }, () => JOB_NUMBER_MAX),
+    eligible: Array.from({ length: JOB_ELIGIBLE_MAX }, () => handle),
+    lease_minutes: 240,
+    holder: handle,
+    lease_until: at,
+    you: "reviewer",
+    inputs: JOB_PINS_MAX * (JOB_NEEDS_MAX + 1),
+  };
+  const { inputs: _n, ...rest } = summary;
+  const job: JobFull = {
+    ...rest,
+    untrusted_body: "€".repeat(BODY_MAX),
+    check: { kind: "words", untrusted_text: "€".repeat(JOB_CHECK_MAX) },
+    inputs: Array.from({ length: JOB_PINS_MAX * (JOB_NEEDS_MAX + 1) }, (_, i) =>
+      pin(i),
+    ),
+    outputs: Array.from({ length: JOB_PINS_MAX }, (_, i) => pin(i)),
+    history: Array.from({ length: JOB_HISTORY_MAX }, (_, i) => ({
+      seq: Number.MAX_SAFE_INTEGER - i,
+      move: "revise" as const,
+      attempt: Number.MAX_SAFE_INTEGER,
+      by: handle,
+      at,
+      untrusted_note: "€".repeat(JOB_NOTE_MAX),
+      reason: "prefer_not_to_say",
+    })),
+    history_more: true,
+  };
+
+  it("fits everything but the history beside every answer a job comes in, with room for at least one move", () => {
+    const empty = { ...job, history: [] };
+    const envelopes = {
+      read: (j: JobFull) => ({
+        channel: "private:9007199254740991",
+        leader: handle,
+        job: j,
+        notice: JOB_NOTICE,
+      }),
+      move: (j: JobFull) => ({
+        channel: "private:9007199254740991",
+        job: j,
+        already: true,
+        note: MOVE_NOTES.release,
+        notice: JOB_NOTICE,
+      }),
+    };
+    for (const [name, wrap] of Object.entries(envelopes)) {
+      const withOne = { ...job, history: job.history.slice(0, 1) };
+      expect(
+        note(`job ${name}, one move`, bytes(wrap(withOne))),
+      ).toBeLessThanOrEqual(READ_MAX_BYTES);
+      expect(bytes(wrap(empty))).toBeLessThan(READ_MAX_BYTES);
+    }
+  });
+
+  it("cuts the heaviest job's history from the oldest to fit, in a read, a move's answer and a stale move's refusal", async () => {
+    const wrap = (j: JobFull) => ({
+      channel: "private:9007199254740991",
+      leader: handle,
+      job: j,
+      notice: JOB_NOTICE,
+    });
+    expect(bytes(wrap(job))).toBeGreaterThan(READ_MAX_BYTES);
+    const fitted = await fitJob(job, wrap);
+    expect(note("job read, largest", bytes(wrap(fitted)))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+    expect(fitted.history.length).toBeGreaterThan(0);
+    expect(fitted.history.length).toBeLessThan(JOB_HISTORY_MAX);
+    expect(fitted.history).toEqual(job.history.slice(0, fitted.history.length));
+    expect(fitted.history_more).toBe(true);
+    // A job that fits comes back whole, with no mark.
+    const short = {
+      ...job,
+      history: job.history.slice(0, 1),
+      history_more: undefined,
+    };
+    const { history_more: _m, ...whole } = short;
+    expect(await fitJob(whole, wrap)).toEqual(whole);
+    // The refusal of a stale move, as the route and the connector send it.
+    const e = await staleJob(JOB_NUMBER_MAX, Number.MAX_SAFE_INTEGER, job);
+    const body = { error: { code: e.code, message: e.message, ...e.detail } };
+    expect(note("stale_job, largest", bytes(body))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+    expect((e.detail.job as JobFull).history_more).toBe(true);
+  });
+
+  it("fits at least one of the heaviest jobs on a board page, so next_after always moves", () => {
+    const page = {
+      channel: "private:9007199254740991",
+      leader: handle,
+      jobs: [summary],
+      next_after: JOB_NUMBER_MAX,
+      note: JOBS_NOTE_HTTP,
+      notice: JOB_NOTICE,
+    };
+    expect(note("job board, one heaviest", bytes(page))).toBeLessThanOrEqual(
+      READ_MAX_BYTES,
+    );
+    // A full page of them is cut by count: more than fit.
+    expect(
+      bytes({ ...page, jobs: Array(BOARD_PAGE).fill(summary) }),
+    ).toBeGreaterThan(READ_MAX_BYTES);
   });
 });

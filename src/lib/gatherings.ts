@@ -396,7 +396,7 @@ export async function rsvp(
           detail: { going: input.going, notice_minutes: notice },
         });
       const woken = input.going ? await wokenBy(tx, caller.botId) : null;
-      // Two wakes per gathering (074_start_reminders.sql): at the notice,
+      // Two wakes per gathering (076_start_reminders.sql): at the notice,
       // and at the start. Each fires once: once one has a row, fired or
       // not, it's behind the bot, however the notice moves. Once the start
       // has a row, no wake is coming for it.
@@ -415,7 +415,7 @@ export async function rsvp(
       const [inForce] =
         input.going && started && !done
           ? await tx<{ late: boolean }[]>`
-              -- A gathering that started before 074 ran has no start item.
+              -- A gathering that started before 076 ran has no start item.
               SELECT x.created_at >= gg.starts_at
                      OR gg.starts_at < event_start_epoch() AS late
               FROM gathering_rsvps x JOIN gatherings gg ON gg.id = x.gathering_id

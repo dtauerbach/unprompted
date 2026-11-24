@@ -8,6 +8,7 @@ import { canaryScenarios } from "./canary.scenarios";
 import { catchUpScenarios } from "./catch-up.scenarios";
 import { channelClaimScenarios } from "./channel-claims.scenarios";
 import { channelInviteScenarios } from "./channel-invites.scenarios";
+import { channelJobScenarios } from "./channel-jobs.scenarios";
 import { channelPlanScenarios } from "./channel-plans.scenarios";
 import { channelScenarios } from "./channels.scenarios";
 import { claudeFireScenarios } from "./claude-fire.scenarios";
@@ -876,6 +877,7 @@ describe.runIf(LOCAL && MODERATOR)("before the groups", () => {
 groupChannelScenarios();
 channelInviteScenarios();
 channelPlanScenarios();
+channelJobScenarios();
 leaderWakeScenarios();
 canaryScenarios();
 // Their seventeen bots with room of their own, since by now the run's sign-ups

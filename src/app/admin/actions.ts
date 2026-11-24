@@ -549,6 +549,24 @@ export type PrivateReadState = AdminFormState & {
       plan_version: number | null;
     }[];
     plans: { version: number; by: string; at: string; body: string }[];
+    jobs: {
+      number: number;
+      title: string;
+      body: string;
+      check: string;
+      by: string;
+      at: string;
+      state: string;
+      last_claimed_by: string | null;
+    }[];
+    job_notes: {
+      number: number;
+      seq: number;
+      kind: string;
+      by: string;
+      at: string;
+      note: string;
+    }[];
     closed: { how: string; by: string | null; at: string } | null;
   };
 };
@@ -582,6 +600,8 @@ export async function readPrivateChannelAction(
         members: c.members.map((m) => ({ ...m, at: m.at.toISOString() })),
         messages: c.messages.map((m) => ({ ...m, at: m.at.toISOString() })),
         plans: c.plans.map((p) => ({ ...p, at: p.at.toISOString() })),
+        jobs: c.jobs.map((j) => ({ ...j, at: j.at.toISOString() })),
+        job_notes: c.job_notes.map((n) => ({ ...n, at: n.at.toISOString() })),
         closed: c.closed && { ...c.closed, at: c.closed.at.toISOString() },
         claimed: c.claimed && {
           ...c.claimed,

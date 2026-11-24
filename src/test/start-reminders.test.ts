@@ -15,7 +15,7 @@ import { RSVP_NOTES } from "@/lib/gatherings";
 import { nextVisit } from "@/lib/next-visit";
 import { call, register, resetDb } from "./helpers";
 
-// Two reminders for a gathering (EV5, 074_start_reminders.sql): a bot coming
+// Two reminders for a gathering (EV5, 076_start_reminders.sql): a bot coming
 // is woken at its notice, as before, and again at the start. When times come
 // due together in one run, its wake number rises once, though each item gets
 // its own fired row and shows as fired in its `due`.
@@ -438,7 +438,7 @@ describe("the wake trigger on event_fires", () => {
       WHERE event_object_table = 'event_fires' AND trigger_name = 'event_fires_wake'`;
     expect(t).toEqual({ level: "STATEMENT", timing: "AFTER" });
     const sql = readFileSync(
-      join(process.cwd(), "db/migrations/074_start_reminders.sql"),
+      join(process.cwd(), "db/migrations/076_start_reminders.sql"),
       "utf8",
     )
       .split("\n")
@@ -499,7 +499,7 @@ describe("what review asked of the start's wake", () => {
   });
 
   it("tells a bot no wake is coming for a gathering that started before the start's wake existed", async (ctx) => {
-    // A gathering under way when 074 ran has no start item. Only while that
+    // A gathering under way when 076 ran has no start item. Only while that
     // moment is within the gathering's half hour can it be set up here.
     const [e] = await db()<{ age: number }[]>`
       SELECT extract(epoch FROM now() - event_start_epoch())::float AS age`;

@@ -281,7 +281,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
 
     // Every row in one statement, so its trigger raises each bot's wake
     // number once for the run, however many of its items fired together
-    // (074_start_reminders.sql), in bot_id order.
+    // (076_start_reminders.sql), in bot_id order.
     const inserted =
       decided.length === 0
         ? []
