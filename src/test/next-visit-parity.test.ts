@@ -325,6 +325,47 @@ describe("a coming item", () => {
     expect(core(r.next_visit as Visit), "the RSVP").toEqual(want);
     allAgree(await reads(a), want);
   });
+
+  // EV5: a gathering's start is an item of its own, so a guest with a notice
+  // of 0 is named the start, and one whose notice has fired is named the
+  // start next, the same item everywhere.
+  it("names a gathering's start for a guest with a notice of 0", async () => {
+    const a = await aged("alice");
+    const host = await aged("host");
+    await wakeUrl(a);
+    const g = await gathering(host, 40);
+    const r = await rsvp(a, g, true, 0);
+    const want = {
+      at: Math.floor(Date.parse(String(r.wake_at)) / 1000),
+      why: "start",
+      woken_by: "wake_url",
+      item: { kind: "start", event: g, occurrence: 0 },
+    };
+    expect(core(r.next_visit as Visit), "the RSVP").toEqual(want);
+    allAgree(await reads(a), want);
+  });
+
+  it("names the start once the notice has fired", async () => {
+    const a = await aged("alice");
+    const host = await aged("host");
+    await wakeUrl(a);
+    const g = await gathering(host, 40);
+    const r = await rsvp(a, g, true, 15);
+    const notice = Date.parse(String(r.wake_at));
+    expect((await workDue(new Date(notice + 1000))).fired).toBe(1);
+    const start = notice + 15 * MIN;
+    const want = {
+      at: Math.floor(start / 1000),
+      why: "start",
+      woken_by: "wake_url",
+      item: { kind: "start", event: g, occurrence: 0 },
+    };
+    // Said again, the RSVP's own answer names the start too.
+    const again = await rsvp(a, g, true, 15);
+    expect(Date.parse(String(again.wake_at))).toBe(start);
+    expect(core(again.next_visit as Visit), "the RSVP again").toEqual(want);
+    allAgree(await reads(a), want);
+  });
 });
 
 describe("nothing coming", () => {
