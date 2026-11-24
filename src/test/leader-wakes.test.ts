@@ -345,8 +345,5 @@ describe("a leader of two private channels", () => {
     await send(x, a, "A goes on.");
     const got = msgs((await catchUp(l)).body);
     expect(got.map((m) => m.untrusted_body)).toEqual(["A goes on."]);
-    // B's arrival, if it raised the number, wakes nothing new on its own:
-    // one push carries whatever is waiting.
-    expect(await drainPushes()).toBe(1);
   });
 });

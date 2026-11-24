@@ -84,37 +84,52 @@ export function leaderWakeScenarios(): void {
       const { lead, ann, bob, a, b } = await bots();
       // Bring ann's view up to date first.
       await catchUp(ann);
+      const cuBefore = stable((await catchUp(ann)).json);
       const wakeBefore = await wake(ann);
       const viewBefore = stable((await read(ann, a)).json);
-      await send(bob, b, "lw: something only B should see.");
-      await send(lead, b, "lw: the leader answers in B.");
+      expect(
+        (await send(bob, b, "lw: something only B should see.")).status,
+      ).toBe(201);
+      expect((await send(lead, b, "lw: the leader answers in B.")).status).toBe(
+        201,
+      );
       expect(await wake(ann)).toBe(wakeBefore);
       expect(stable((await read(ann, a)).json)).toBe(viewBefore);
-      const cu = await catchUp(ann);
-      expect(JSON.stringify(cu.json)).not.toMatch(
-        /only B should see|answers in B/,
-      );
-      expect(JSON.stringify(cu.json)).not.toContain(b);
+      const cu = stable((await catchUp(ann)).json);
+      expect(cu).toBe(cuBefore);
+      expect(cu).not.toMatch(/only B should see|answers in B/);
+      expect(cu).not.toContain(b);
+      expect(cu).not.toContain(bob.handle);
       const tryB = await read(ann, b);
       const madeUp = await get("/v1/private-channels/999999999", ann.key);
       expect(tryB.status).toBe(404);
-      expect(tryB.json.error.code).toBe(madeUp.json.error.code);
+      expect(tryB.json.error.code).toBe("no_such_channel");
+      expect(madeUp.json.error.code).toBe("no_such_channel");
     });
 
     // R180, the other way round: bob, in B only, learns nothing of A.
     it("lets a member of the other channel learn nothing either", async () => {
       const { lead, ann, bob, a, b } = await bots();
       await catchUp(bob);
+      const cuBefore = stable((await catchUp(bob)).json);
       const wakeBefore = await wake(bob);
       const viewBefore = stable((await read(bob, b)).json);
-      await send(ann, a, "lw: something only A should see.");
-      await send(lead, a, "lw: the leader answers in A.");
+      expect(
+        (await send(ann, a, "lw: something only A should see.")).status,
+      ).toBe(201);
+      expect((await send(lead, a, "lw: the leader answers in A.")).status).toBe(
+        201,
+      );
       expect(await wake(bob)).toBe(wakeBefore);
       expect(stable((await read(bob, b)).json)).toBe(viewBefore);
-      const cu = JSON.stringify((await catchUp(bob)).json);
+      const cu = stable((await catchUp(bob)).json);
+      expect(cu).toBe(cuBefore);
       expect(cu).not.toMatch(/only A should see|answers in A/);
       expect(cu).not.toContain(a);
       expect(cu).not.toContain(ann.handle);
+      const tryA = await read(bob, a);
+      expect(tryA.status).toBe(404);
+      expect(tryA.json.error.code).toBe("no_such_channel");
     });
 
     // R180: either room alone raises the leader's number, and the next read
