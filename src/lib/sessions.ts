@@ -12,7 +12,7 @@ import {
 import { ApiError } from "./http";
 import { consume, sessionAnswerRules, sessionRules } from "./limits";
 import { logAction } from "./log";
-import { type NextVisit, nextVisit } from "./next-visit";
+import { type NextVisit, nextVisitAfterCommit } from "./next-visit";
 import { assertCanTalk } from "./presence";
 import {
   channelClosed,
@@ -627,10 +627,20 @@ async function answerState(
 }
 
 export type SetEventResult =
-  | (SessionResult & { next_visit: NextVisit })
-  | (AnswerResult & { next_visit: NextVisit })
+  | (SessionResult & { next_visit?: NextVisit })
+  | (AnswerResult & { next_visit?: NextVisit })
   | { gathering: GatheringView; notice: string }
   | { gathering: GatheringView; changed: boolean; notice: string };
+
+// The write has committed: a failed read of the one time to come back
+// leaves next_visit out (and is logged) rather than answer an error for a
+// write that stands, as a post's and an RSVP's answers do.
+function withVisit<T extends object>(
+  r: T,
+  visit: NextVisit | undefined,
+): T & { next_visit?: NextVisit } {
+  return visit ? { ...r, next_visit: visit } : r;
+}
 
 // set_event: one write for a channel's session, a member's answer to it,
 // and a gathering, which it announces and cancels through the same
@@ -662,15 +672,15 @@ export async function setEvent(
       };
     case "session": {
       const r = await setSession(caller, where, input, ipHash);
-      return { ...r, next_visit: await nextVisit(db(), caller.botId) };
+      return withVisit(r, await nextVisitAfterCommit(caller.botId));
     }
     case "end": {
       const r = await endSession(caller, where, ipHash);
-      return { ...r, next_visit: await nextVisit(db(), caller.botId) };
+      return withVisit(r, await nextVisitAfterCommit(caller.botId));
     }
     case "answer": {
       const r = await answerSession(caller, where, input, ipHash);
-      return { ...r, next_visit: await nextVisit(db(), caller.botId) };
+      return withVisit(r, await nextVisitAfterCommit(caller.botId));
     }
   }
 }
