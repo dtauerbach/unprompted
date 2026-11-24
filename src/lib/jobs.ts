@@ -259,7 +259,8 @@ async function jobRows(
          WHERE eb.frozen_at IS NULL AND channel_has(j.channel_id, eb.id)),
         '{}') END AS eligible,
       j.lease_minutes, pb.handle AS by, j.created_at AS at,
-      s.state, s.seq, s.attempt, s.holder, hb.handle AS holder_handle,
+      s.state, s.seq, s.attempt, s.holder,
+      CASE WHEN hb.frozen_at IS NULL THEN hb.handle END AS holder_handle,
       s.lease_until, s.held,
       (SELECT m.kind FROM job_moves m WHERE m.job_id = j.id AND m.seq = s.seq) AS last_kind,
       (SELECT coalesce(array_agg(n.number ORDER BY n.number), '{}') FROM job_deps d
@@ -381,10 +382,12 @@ async function jobFull(
       note: string | null;
       reason: string | null;
       before_me: boolean;
+      blocked: boolean;
     }[]
   >`
     SELECT m.seq, m.kind, m.attempt, m.bot_id, b.handle,
       b.frozen_at IS NOT NULL AS frozen, m.created_at AS at, m.note, m.reason,
+      has_blocked(${me}, m.bot_id) AS blocked,
       m.created_at < coalesce((SELECT cm.created_at FROM channel_members cm
         WHERE cm.id = (SELECT r.since_id FROM channel_roster(${id}) r WHERE r.bot_id = ${me})),
         '-infinity') AS before_me
@@ -396,9 +399,11 @@ async function jobFull(
     seq: m.seq,
     move: m.kind,
     attempt: m.attempt,
-    by: m.frozen ? null : m.handle,
+    // Who moved it before the reader came in is no more its business than
+    // the messages from then.
+    by: m.frozen || m.before_me ? null : m.handle,
     at: m.at,
-    ...(m.note !== null && !m.frozen && !m.before_me
+    ...(m.note !== null && !m.frozen && !m.before_me && !m.blocked
       ? { untrusted_note: m.note }
       : {}),
     ...(m.reason !== null && Number(m.bot_id) === me
@@ -708,12 +713,18 @@ export async function moveJob(
       return wrap(full && (await fitJob(full, wrap)));
     };
     if (input.if_seq !== r.seq) {
-      // The same move by the same bot right after the seq it read stood
-      // already: a retry, answered as done.
+      // The same move by the same bot right after the seq it read, and still
+      // the newest: a retry, answered as done. Anything since makes it stale.
       const [m] = await tx<{ kind: string; bot_id: string }[]>`
         SELECT kind, bot_id FROM job_moves
         WHERE job_id = ${jobId} AND seq = ${input.if_seq + 1}`;
-      if (m && m.kind === kind && Number(m.bot_id) === me) return answer(true);
+      if (
+        r.seq === input.if_seq + 1 &&
+        m &&
+        m.kind === kind &&
+        Number(m.bot_id) === me
+      )
+        return answer(true);
       throw await staleJob(number, r.seq, await jobFull(tx, id, me, number));
     }
     const holderId = r.holder === null ? null : Number(r.holder);
@@ -760,12 +771,7 @@ export async function moveJob(
       keyId: caller.keyId,
       subject: privateRef(id),
       ipHash,
-      detail: {
-        number,
-        move: kind,
-        seq,
-        ...(input.reason ? { reason: input.reason } : {}),
-      },
+      detail: { number, move: kind, seq },
     });
     return answer(false);
   });

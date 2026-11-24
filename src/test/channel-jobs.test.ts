@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as commsRoute } from "@/app/v1/me/comms/route";
@@ -662,6 +663,108 @@ describe("moving a job", () => {
     expect((await one(l, g, 1)).body.job.history[0].untrusted_note).toBe(
       "Early note.",
     );
+  });
+});
+
+describe("what a read leaves out", () => {
+  it("answers a retry as stale once anything has moved since, even its own claim", async () => {
+    const { l, m, g } = await group();
+    await post(l, g);
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await move(m, g, 1, { move: "release", if_seq: 1, reason: "cant_do" });
+    const late = await move(m, g, 1, { move: "claim", if_seq: 0 });
+    expect(late.status).toBe(409);
+    expect(late.body.error.code).toBe("stale_job");
+    expect(late.body.error.current_seq).toBe(2);
+  });
+
+  it("gives a waiting job only the outputs its needed jobs had accepted", async () => {
+    const { l, m, g } = await group();
+    await post(l, g);
+    await post(l, g, { ...job, title: "Next", needs: [1] });
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await move(m, g, 1, { move: "submit", if_seq: 1, outputs: [pin("v1")] });
+    expect((await one(l, g, 2)).body.job.inputs).toEqual([]);
+    expect((await board(l, g)).body.jobs[1].inputs).toBe(0);
+    await move(l, g, 1, { move: "revise", if_seq: 2 });
+    expect((await one(l, g, 2)).body.job.inputs).toEqual([]);
+    await move(m, g, 1, { move: "claim", if_seq: 3 });
+    await move(m, g, 1, { move: "submit", if_seq: 4, outputs: [pin("v2")] });
+    await move(l, g, 1, { move: "accept", if_seq: 5 });
+    const two = (await one(l, g, 2)).body.job;
+    expect(two.state).toBe("ready");
+    expect(two.inputs.map((p: { ref: string }) => p.ref)).toEqual(["v2"]);
+  });
+
+  it("hides a note from a member that blocked its writer, but not the move", async () => {
+    const { l, m, n, g } = await group();
+    await post(l, g);
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await move(m, g, 1, {
+      move: "submit",
+      if_seq: 1,
+      outputs: [pin("x")],
+      note: "Here it is.",
+    });
+    const b = await call(blockRoute, {
+      key: n.key,
+      params: { handle: "moe" },
+    });
+    expect(b.status).toBe(200);
+    const h = (await one(n, g, 1)).body.job.history[0];
+    expect(h).toMatchObject({ move: "submit", by: "moe" });
+    expect(h.untrusted_note).toBeUndefined();
+    expect((await one(l, g, 1)).body.job.history[0].untrusted_note).toBe(
+      "Here it is.",
+    );
+  });
+
+  it("names no frozen bot as holder or mover", async () => {
+    const { l, m, n, g } = await group();
+    await post(l, g);
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await setFrozen(db(), "moe", true, "test");
+    const seen = (await one(n, g, 1)).body.job;
+    expect(seen.holder ?? null).toBeNull();
+    expect(seen.history[0].by).toBeNull();
+    expect(JSON.stringify((await board(l, g)).body)).not.toContain("moe");
+  });
+
+  it("names no mover from before a member came in", async () => {
+    const { l, m, g } = await group();
+    await post(l, g);
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    const o = await bot("oli");
+    await join(o, l, g);
+    expect((await one(o, g, 1)).body.job.history[0].by).toBeNull();
+  });
+
+  it("keeps a release's reason out of the log", async () => {
+    const { l, m, g } = await group();
+    await post(l, g);
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await move(m, g, 1, {
+      move: "release",
+      if_seq: 1,
+      reason: "missing_input",
+    });
+    const rows = await db()<{ detail: unknown }[]>`
+      SELECT detail FROM action_log WHERE action = 'channel.job.move' ORDER BY id`;
+    expect(rows).toHaveLength(2);
+    expect(JSON.stringify(rows)).not.toContain("missing_input");
+  });
+
+  it("refuses a quote or a backslash in a pin, in the app and in the database", async () => {
+    const { l, g } = await group();
+    for (const p of [pin('a"b'), pin("a\\b"), { ...pin("a"), revision: 'v"1' }])
+      expect((await post(l, g, { ...job, inputs: [p] })).status).toBe(400);
+    expect((await post(l, g, job)).status).toBe(201);
+    await expect(
+      db()`
+        INSERT INTO job_pins (job_id, role, store, ref, bot_id)
+        SELECT j.id, 'input', 'github', 'a"b', j.bot_id
+        FROM channel_jobs j WHERE j.number = 1`,
+    ).rejects.toThrow();
   });
 });
 

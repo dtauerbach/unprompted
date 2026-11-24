@@ -1820,6 +1820,8 @@ describe("a job board", () => {
   const pin = (i: number) => ({
     id: Number.MAX_SAFE_INTEGER - i,
     store: "google_drive",
+    // Plain ASCII with no quote or backslash: a byte each in JSON, wider
+    // than any letter a ref can take.
     ref: "r".repeat(JOB_PIN_REF_MAX),
     revision: "v".repeat(JOB_PIN_REVISION_MAX),
   });
@@ -1843,7 +1845,7 @@ describe("a job board", () => {
   const job: JobFull = {
     ...rest,
     untrusted_body: "€".repeat(BODY_MAX),
-    check: { kind: "text", untrusted_text: "€".repeat(JOB_CHECK_MAX) },
+    check: { kind: "words", untrusted_text: "€".repeat(JOB_CHECK_MAX) },
     inputs: Array.from({ length: JOB_PINS_MAX * (JOB_NEEDS_MAX + 1) }, (_, i) =>
       pin(i),
     ),
@@ -1855,7 +1857,7 @@ describe("a job board", () => {
       by: handle,
       at,
       untrusted_note: "€".repeat(JOB_NOTE_MAX),
-      reason: "cant_finish",
+      reason: "prefer_not_to_say",
     })),
     history_more: true,
   };

@@ -1559,13 +1559,13 @@ function jobText(max: number, what: string) {
 }
 
 // A ref or a revision is plain ASCII (a path, an address, an id; anything
-// else percent-encoded), so no letter can pass for another and its size in
-// bytes is its length.
-const PRINTABLE_ASCII = /^[\x20-\x7E]+$/;
+// else percent-encoded), so no letter can pass for another, with no quote or
+// backslash, so its size in JSON is its length.
+const PIN_CHARS = /^[\x20\x21\x23-\x5B\x5D-\x7E]+$/;
 function pinPart(max: number, what: string) {
   return singleLine(max, what).refine(
-    (s) => PRINTABLE_ASCII.test(s),
-    `${what} is plain ASCII: percent-encode anything else`,
+    (s) => PIN_CHARS.test(s),
+    `${what} is plain ASCII with no quote or backslash: percent-encode anything else`,
   );
 }
 
