@@ -20,7 +20,7 @@ import { ageBot, MODERATOR } from "./moderator";
 // each is woken by what it has: an app's MCP event subscription, a Claude
 // routine its person saved, or only its own wake number (a wake URL). The
 // test fails if a guest that can be woken is woken more than a clock minute
-// after its time, or twice, or if a bot that isn't coming is woken, or if a
+// after its time, or twice, or if a bot that withdrew is woken, or if a
 // guest's reads show another guest's time.
 //
 // The event callback and the routine are fake receivers this run serves,
@@ -178,32 +178,49 @@ export function eventWakeScenarios(): void {
       });
       afterAll(async () => {
         // Leave nothing that could wake these bots later: the gathering, the
-        // routine and the subscription go before the receivers close.
-        if (gatheringId)
-          await post(`/v1/gatherings/${gatheringId}/cancel`, undefined, {
-            key: host.key,
-            ip: host.ip,
-          });
-        if (viaRoutine) removeRoutine(PERSON, viaRoutine.handle);
-        if (viaEvent)
-          await request("POST", "/mcp", {
-            key: viaEvent.key,
-            ip: viaEvent.ip,
-            headers: { accept: "application/json, text/event-stream" },
-            body: {
-              jsonrpc: "2.0",
-              id: 2,
-              method: "events/unsubscribe",
-              params: {
-                name: "wake",
-                arguments: {},
-                delivery: { mode: "webhook", url: callback },
-              },
-            },
-          });
-        for (const s of servers) {
-          s.closeAllConnections();
-          await new Promise<void>((r) => s.close(() => r()));
+        // routine and the subscription go before the receivers close. Each
+        // step stands alone, and the receivers close whatever fails, so a
+        // failed step can't hide the test's own failure.
+        const step = async (f: () => unknown) => {
+          try {
+            await f();
+          } catch (e) {
+            console.error("event wakes cleanup:", e);
+          }
+        };
+        try {
+          if (gatheringId)
+            await step(() =>
+              post(`/v1/gatherings/${gatheringId}/cancel`, undefined, {
+                key: host.key,
+                ip: host.ip,
+              }),
+            );
+          if (viaRoutine)
+            await step(() => removeRoutine(PERSON, viaRoutine.handle));
+          if (viaEvent)
+            await step(() =>
+              request("POST", "/mcp", {
+                key: viaEvent.key,
+                ip: viaEvent.ip,
+                headers: { accept: "application/json, text/event-stream" },
+                body: {
+                  jsonrpc: "2.0",
+                  id: 2,
+                  method: "events/unsubscribe",
+                  params: {
+                    name: "wake",
+                    arguments: {},
+                    delivery: { mode: "webhook", url: callback },
+                  },
+                },
+              }),
+            );
+        } finally {
+          for (const s of servers) {
+            s.closeAllConnections();
+            await new Promise<void>((r) => s.close(() => r()));
+          }
         }
       });
 
@@ -280,6 +297,16 @@ export function eventWakeScenarios(): void {
           expect(r.json.rsvp.woken_by, by).toBe(by);
           expect(Date.parse(r.json.rsvp.wake_at), by).toBe(wakeAt);
           before.set(g, await wakeOf(g));
+        }
+        // The control said it's coming, then withdrew before its time: its
+        // time leaves the due-list and nothing wakes it.
+        for (const going of [true, false]) {
+          const r = await post(
+            `/v1/gatherings/${id}/rsvp`,
+            going ? { going, notice_minutes: 15 } : { going },
+            { key: control.key, ip: control.ip },
+          );
+          expect(r.status, r.text).toBe(200);
         }
         const controlBefore = await wakeOf(control);
         const listed = await get("/v1/gatherings");
@@ -358,10 +385,15 @@ export function eventWakeScenarios(): void {
           await request("GET", "/v1/clock");
           await pause(POLL_MS);
         }
+        // A second fire would raise a number before the event's and the
+        // routine's gaps let it reach a receiver, so each number is checked
+        // as well as each receiver.
         expect(wakesTo(cbPath)).toHaveLength(1);
         expect(firesTo(routine)).toHaveLength(1);
+        expect(await wakeOf(viaEvent)).toBe(evWake);
+        expect(await wakeOf(viaRoutine)).toBe(rtWake);
         expect(await wakeOf(viaUrl)).toBe((before.get(viaUrl) ?? 0) + 1);
-        // And the bot that isn't coming was never woken.
+        // And the bot that withdrew was never woken.
         expect(await wakeOf(control)).toBe(controlBefore);
         expect(
           (await get("/v1/me/digest?since=0", control.key)).json.due,
