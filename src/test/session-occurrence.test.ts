@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { POST as eventsRoute } from "@/app/v1/events/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
+import { POST as createCodeRoute } from "@/app/v1/me/pairing-codes/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
+import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
@@ -312,6 +314,51 @@ describe("declining one meeting", () => {
     expect(r.body.error.code).toBe("channel_closed");
   });
 
+  it("is refused by the trigger for a meeting past the series' end, and in a closed channel", async () => {
+    const { a, b, g } = await three();
+    const s = await series(b, g);
+    const aid = await idOf(a);
+    const [k] = await db()<{ id: string }[]>`
+      SELECT id FROM api_keys WHERE bot_id = ${aid} ORDER BY id DESC LIMIT 1`;
+    const raw = (occ: number) =>
+      db()`INSERT INTO session_occurrence_answers (session_id, occurrence, bot_id, key_id, coming)
+           VALUES (${s.event}, ${occ}, ${aid}, ${k?.id ?? 0}, false)`;
+    // Three meetings: 0, 1 and 2. The fourth doesn't exist.
+    await expect(raw(3)).rejects.toMatchObject({ code: "UPR01" });
+    await expect(raw(-1)).rejects.toMatchObject({ code: "UPR01" });
+    await call(closeRoute, { key: b.key, params: { id: g.slice(8) } });
+    await expect(raw(1)).rejects.toMatchObject({ code: "UPR01" });
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM session_occurrence_answers`;
+    expect(n?.n).toBe(0);
+  });
+
+  it("works in a pair's channel as in a group's", async () => {
+    const a = await bot("pat-ev18");
+    const b = await bot("quinn-ev18");
+    const made = await call(createCodeRoute, { key: a.key, body: {} });
+    const red = await call(redeemRoute, {
+      key: b.key,
+      body: { code: made.body.code },
+    });
+    expect(red.status, JSON.stringify(red.body)).toBe(200);
+    const [ai, bi] = [await idOf(a), await idOf(b)];
+    const [c] = await db()<{ channel_id: string }[]>`
+      SELECT channel_id FROM direct_channels
+      WHERE (bot_low, bot_high) = (least(${ai}::bigint, ${bi}::bigint),
+                                   greatest(${ai}::bigint, ${bi}::bigint))`;
+    const ch = `private:${c?.channel_id}`;
+    const s = await series(a, ch);
+    const r = await one(b, ch, s.event, 1);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.note).toBe(OCCURRENCE_DECLINE_NOTE);
+    const second = await woken(s.first + 30 * MIN);
+    expect(second).toContain(ai * 100 + 1);
+    expect(second).not.toContain(bi * 100 + 1);
+    const later = await woken(s.first + 60 * MIN);
+    expect(later).toContain(bi * 100 + 2);
+  });
+
   it("taken back after its notice time, comes due at once", async () => {
     const { a, b, g } = await three();
     await event(a, { action: "answer", channel: g, notice_minutes: 15 });
@@ -406,6 +453,37 @@ describe("nobody else can tell", () => {
     const cleanReset = await reset();
     expect(declinedReset).toBe(cleanReset);
     expect(Number(latest?.id)).toBeGreaterThan(s.event);
+  });
+
+  it("after the clock runs over the meeting, the setter and the peer are woken and read alike, as if nobody declined", async () => {
+    const { a, b, c, g } = await three();
+    const s = await series(b, g);
+    await one(a, g, s.event, 1);
+    const [ai, bi, ci] = [await idOf(a), await idOf(b), await idOf(c)];
+    const wakeOf = async (id: number) => {
+      const [w] = await db()<{ n: string }[]>`
+        SELECT coalesce((SELECT count FROM wake_counters WHERE bot_id = ${id}), 0) AS n`;
+      return Number(w?.n);
+    };
+    await woken(s.first);
+    const before = [await wakeOf(ai), await wakeOf(bi), await wakeOf(ci)];
+    await woken(s.first + 30 * MIN);
+    const after = [await wakeOf(ai), await wakeOf(bi), await wakeOf(ci)];
+    // The setter and the peer each rose by one for the meeting; the bot
+    // that declined it didn't.
+    const rose = after.map((n, i) => n - (before[i] ?? 0));
+    expect(rose).toEqual([0, 1, 1]);
+    // Their due items for that meeting are the same, fired at the same
+    // instant, with nothing that says another member skipped it.
+    const itemOf = async (id: number) => {
+      const due = await dueFor(db(), id);
+      return due.find((d) => d.kind === "session" && d.occurrence === 1);
+    };
+    const [bItem, cItem] = [await itemOf(bi), await itemOf(ci)];
+    expect(bItem?.state).toBe("fired");
+    expect(bItem?.issued_at).toBeTruthy();
+    expect(cItem).toEqual(bItem);
+    expect((await itemOf(ai))?.state).toBe("skipping");
   });
 
   it("the record keeps it for the moderators, with no other bot named", async () => {
