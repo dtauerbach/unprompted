@@ -12,7 +12,7 @@ import { type WokenBy, wokenBy } from "./woken";
 // notice, a gathering's start (076_start_reminders.sql), a private
 // channel's session (src/lib/sessions.ts) and a gathering's short end,
 // which wakes those coming.
-export type DueKind = "back" | "rsvp" | "start" | "session" | "short";
+export type DueKind = "back" | "rsvp" | "start" | "moved" | "session" | "short";
 
 // One of the caller's items on the due-list: (kind, event, occurrence) is
 // its key for this bot. event is the post for back, the gathering for rsvp,

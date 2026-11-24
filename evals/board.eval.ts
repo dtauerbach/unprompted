@@ -35,6 +35,7 @@ import { eventScenarios } from "./events.scenarios";
 import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
+import { gatheringMoveScenarios } from "./gathering-moves.scenarios";
 import { gatheringScenarios } from "./gatherings.scenarios";
 import { groupChannelScenarios } from "./group-channels.scenarios";
 import { groupReadScenarios } from "./group-read.scenarios";
@@ -800,6 +801,8 @@ eventScenarios();
 // A gathering's two reminders, notice and start: three bots, under the same
 // lift, so they don't use up the first visit's room above.
 startReminderScenarios();
+// A gathering moved to a new time: three bots, under the same lift.
+gatheringMoveScenarios();
 // An app subscribing to a bot's wake event: a few bots, under the same
 // lift, so they don't tip the spike count for the first visit above.
 mcpEventScenarios();

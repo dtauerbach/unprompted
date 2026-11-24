@@ -1425,6 +1425,9 @@ function noticeMinutesSchema() {
   );
 }
 export const GATHERING_NEEDS_MAX = 100;
+// How many times a gathering may move (gathering_moves_max() in
+// 077_gathering_schedules.sql names the same number).
+export const GATHERING_MOVES_MAX = 3;
 
 export const gatheringSchema = z.strictObject({
   title: titleSchema,
@@ -1454,6 +1457,15 @@ export type RsvpInput = z.output<typeof rsvpSchema>;
 
 // Cancelling has no body, or an empty one.
 export const cancelGatheringSchema = z.strictObject({});
+
+// Moving one you announced: the new start, and, to move only the schedule
+// you read, its schedule_version (0 before any move).
+const scheduleVersionSchema = z.number().int().min(0).max(1000);
+export const moveGatheringSchema = z.strictObject({
+  starts_at: gatheringSchema.shape.starts_at,
+  if_schedule_version: scheduleVersionSchema.optional(),
+});
+export type MoveGatheringInput = z.output<typeof moveGatheringSchema>;
 
 export const rsvpToolSchema = rsvpFields
   .extend({ gathering: idSchema })
@@ -1698,13 +1710,16 @@ export const updateChannelToolSchema = z
 //   declines, true takes a decline back; notice_minutes how long before
 //   each occurrence you're woken;
 // - announce: a gathering (title, starts_at, needs);
-// - cancel: a gathering you announced (gathering).
+// - cancel: a gathering you announced (gathering);
+// - move: a gathering you announced, to a new start (gathering, starts_at,
+//   and if_schedule_version to move only the schedule you read).
 export const SET_EVENT_ACTIONS = [
   "session",
   "end",
   "answer",
   "announce",
   "cancel",
+  "move",
 ] as const;
 // A session's public bounds, here alone: src/lib/sessions.ts and
 // 055_channel_sessions.sql's session_min_ahead() and session_max_span()
@@ -1737,6 +1752,7 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
   answer: ["channel", "with", "coming", "notice_minutes"],
   announce: ["title", "starts_at", "needs"],
   cancel: ["gathering"],
+  move: ["gathering", "starts_at", "if_schedule_version"],
 };
 
 export const setEventSchema = z
@@ -1762,6 +1778,7 @@ export const setEventSchema = z
     starts_at: gatheringSchema.shape.starts_at.optional(),
     needs: gatheringSchema.shape.needs,
     gathering: idSchema.optional(),
+    if_schedule_version: scheduleVersionSchema.optional(),
   })
   .superRefine((e, ctx) => {
     const allowed = new Set(["action", ...FIELDS_FOR[e.action]]);
@@ -1817,7 +1834,16 @@ export const setEventSchema = z
           path: ["starts_at"],
         });
     }
-    if (e.action === "cancel" && e.gathering === undefined)
+    if (e.action === "move" && e.starts_at === undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "give the new starts_at",
+        path: ["starts_at"],
+      });
+    if (
+      (e.action === "cancel" || e.action === "move") &&
+      e.gathering === undefined
+    )
       ctx.addIssue({
         code: "custom",
         message: "give the gathering's id",

@@ -379,7 +379,7 @@ describe("a gathering's start", () => {
   });
 
   it("says in what bots read that a gathering wakes them at the start too", () => {
-    expect(DUE_NOTE).toMatch(/coming to \(notice, start\)/);
+    expect(DUE_NOTE).toMatch(/coming to \(notice, start/);
     const skill = readFileSync(join(process.cwd(), "content/skill.md"), "utf8");
     expect(skill).toMatch(/again at the start/);
   });

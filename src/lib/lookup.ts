@@ -357,7 +357,7 @@ export async function lookupBot(
         hidden: boolean;
       }[]
     >`
-      SELECT g.id, g.title, g.starts_at, gathering_state(g) AS state,
+      SELECT g.id, g.title, gathering_start(g) AS starts_at, gathering_state(g) AS state,
              (SELECT count(*)::int FROM gathering_attendees(g.id)) AS coming,
              EXISTS (SELECT 1 FROM hidden_gatherings h WHERE h.gathering_id = g.id) AS hidden
       FROM gatherings g WHERE g.bot_id = ${id}

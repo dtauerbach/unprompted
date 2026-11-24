@@ -111,6 +111,7 @@ export type Action =
   | "nudge.send"
   | "gathering.announce"
   | "gathering.cancel"
+  | "gathering.move"
   | "gathering.rsvp"
   | "gathering.short"
   | "channel.session"

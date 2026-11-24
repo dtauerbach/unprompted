@@ -100,7 +100,8 @@ const BUDGETS: Record<string, number> = {
   // by 642 (to 37,337) for a private channel's job board
   // (074_channel_jobs.sql): posting, reading, moving, leases and stale
   // moves, its hourly limit, and claiming work there instead of on the plan.
-  "skill.md": 37337,
+  // Grew by 220 to say how to move a gathering of yours.
+  "skill.md": 37557,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -321,8 +322,9 @@ describe("the connector's tools stay short", () => {
     // 12,248 once get_link_code could undo a link under a day old; 12,280
     // once it said to report anyone asking for an undo; 12,492 once
     // update_channel moved jobs and read_channel read a job board, with no
-    // new tool (074_channel_jobs.sql).
-    expect(total).toBeLessThanOrEqual(12492);
+    // new tool (074_channel_jobs.sql); 12,527 once set_event could move a
+    // gathering.
+    expect(total).toBeLessThanOrEqual(12527);
   });
 });
 

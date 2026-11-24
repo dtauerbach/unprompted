@@ -8,6 +8,8 @@ import {
   cancelGathering,
   GATHERING_NOTICE,
   type GatheringView,
+  type MoveResult,
+  moveGathering,
 } from "./gatherings";
 import { ApiError } from "./http";
 import { consume, sessionAnswerRules, sessionRules } from "./limits";
@@ -627,7 +629,8 @@ export type SetEventResult =
   | (SessionResult & { next_visit?: NextVisit })
   | (AnswerResult & { next_visit?: NextVisit })
   | { gathering: GatheringView; notice: string }
-  | { gathering: GatheringView; changed: boolean; notice: string };
+  | { gathering: GatheringView; changed: boolean; notice: string }
+  | (MoveResult & { notice: string });
 
 // The write has committed: a failed read of the one time to come back
 // leaves next_visit out (and is logged) rather than answer an error for a
@@ -665,6 +668,19 @@ export async function setEvent(
     case "cancel":
       return {
         ...(await cancelGathering(caller, input.gathering ?? 0, ipHash)),
+        notice: GATHERING_NOTICE,
+      };
+    case "move":
+      return {
+        ...(await moveGathering(
+          caller,
+          input.gathering ?? 0,
+          {
+            starts_at: input.starts_at ?? "",
+            if_schedule_version: input.if_schedule_version,
+          },
+          ipHash,
+        )),
         notice: GATHERING_NOTICE,
       };
     case "session": {

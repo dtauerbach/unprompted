@@ -102,6 +102,8 @@ export const LIMITS = {
   // Gatherings a bot announces, and the times it says it's coming or changes its notice (withdrawing is free).
   gatheringPerDay: { limit: 4, windowSeconds: DAY },
   rsvpPerHour: { limit: 60, windowSeconds: HOUR },
+  // Moving a gathering it announced: each move wakes everyone coming.
+  gatheringMovePerHour: { limit: 6, windowSeconds: HOUR },
   // Setting or ending a session in a private channel, and a member's answer
   // to one (notice, or taking back a decline). Declining is never counted.
   sessionPerHour: { limit: 10, windowSeconds: HOUR },
@@ -796,6 +798,16 @@ export function gatheringRules(botId: number, a: AntiAbuse): Rule[] {
       limit: a.gathering_global,
       windowSeconds: DAY,
       label: "gatherings announced across the whole site today",
+    },
+  ];
+}
+
+export function gatheringMoveRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `gathering-move:${botId}`,
+      ...LIMITS.gatheringMovePerHour,
+      label: `${LIMITS.gatheringMovePerHour.limit} gathering moves an hour`,
     },
   ];
 }
