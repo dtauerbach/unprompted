@@ -19,8 +19,9 @@ import { ageBot, MODERATOR } from "./moderator";
 // three guests say they're coming with a notice, and when the notice comes
 // each is woken by what it has: an app's MCP event subscription, a Claude
 // routine its person saved, or only its own wake number (a wake URL). The
-// test fails if a guest that can be woken is woken more than a minute after
-// its time, or twice, or if a guest's reads show another guest's time.
+// test fails if a guest that can be woken is woken more than a clock minute
+// after its time, or twice, or if a bot that isn't coming is woken, or if a
+// guest's reads show another guest's time.
 //
 // The event callback and the routine are fake receivers this run serves,
 // reached only when the site was started with UNPROMPTED_LOCAL_EVENT_RECEIVER
@@ -36,9 +37,15 @@ const configured =
   process.env.UNPROMPTED_LOCAL_FIRE_RECEIVER ===
     `http://127.0.0.1:${FIRE_PORT}`;
 
-// How late a wake may come after its time: the clock's cron runs each
-// minute, and this run calls the clock every few seconds as the cron would.
-const LATE_MS = 60_000;
+// How late a wake may come after its time. The clock works the due-list at
+// most once a minute (src/lib/due-check.ts), and a request in the minute that
+// holds the time, before it, uses that minute's check: the wake goes at the
+// next minute's first request. So up to a minute, plus this run's few
+// seconds between calls and the delivery itself.
+const LATE_MS = 75_000;
+// How long the run calls the clock for, past the time, before it gives up.
+const GIVE_UP_MS = 120_000;
+const POLL_MS = 3000;
 
 type Got = { at: number; path: string; body: string };
 const events: Got[] = [];
@@ -63,7 +70,12 @@ function serve(port: number, into: Got[], answer: (g: Got) => string) {
     });
   });
   servers.push(server);
-  return new Promise<void>((r) => server.listen(port, "127.0.0.1", r));
+  return new Promise<void>((resolve, reject) => {
+    server.once("error", (e) =>
+      reject(new Error(`can't serve the fake receiver on ${port}: ${e}`)),
+    );
+    server.listen(port, "127.0.0.1", resolve);
+  });
 }
 
 // The app's side: echo the challenge, take every event.
@@ -111,6 +123,21 @@ function saveRoutine(signInId: string, handle: string, routine: string) {
   expect(JSON.parse(run.stdout)).toEqual({ handle, routine });
 }
 
+function removeRoutine(signInId: string, handle: string) {
+  spawnSync(
+    "npx",
+    [
+      "tsx",
+      "--conditions=react-server",
+      "evals/claude-fire.ts",
+      signInId,
+      "remove",
+      handle,
+    ],
+    { encoding: "utf8", env: process.env },
+  );
+}
+
 type Due = { kind: string; event: number; state: string; at?: string };
 const dueOf = async (b: Bot, id: number) =>
   ((await get("/v1/me/digest?since=0", b.key)).json.due as Due[]).filter(
@@ -134,6 +161,9 @@ export function eventWakeScenarios(): void {
       let viaEvent: Bot;
       let viaRoutine: Bot;
       let viaUrl: Bot;
+      // Not coming: a wake URL and no RSVP, so nothing should wake it.
+      let control: Bot;
+      let gatheringId = 0;
 
       beforeAll(async () => {
         await serve(EVENT_PORT, events, eventAnswer);
@@ -144,8 +174,33 @@ export function eventWakeScenarios(): void {
         viaEvent = await register("ev12-app");
         viaRoutine = await register("ev12-routine");
         viaUrl = await register("ev12-url");
+        control = await register("ev12-control");
       });
       afterAll(async () => {
+        // Leave nothing that could wake these bots later: the gathering, the
+        // routine and the subscription go before the receivers close.
+        if (gatheringId)
+          await post(`/v1/gatherings/${gatheringId}/cancel`, undefined, {
+            key: host.key,
+            ip: host.ip,
+          });
+        if (viaRoutine) removeRoutine(PERSON, viaRoutine.handle);
+        if (viaEvent)
+          await request("POST", "/mcp", {
+            key: viaEvent.key,
+            ip: viaEvent.ip,
+            headers: { accept: "application/json, text/event-stream" },
+            body: {
+              jsonrpc: "2.0",
+              id: 2,
+              method: "events/unsubscribe",
+              params: {
+                name: "wake",
+                arguments: {},
+                delivery: { mode: "webhook", url: callback },
+              },
+            },
+          });
         for (const s of servers) {
           s.closeAllConnections();
           await new Promise<void>((r) => s.close(() => r()));
@@ -184,6 +239,12 @@ export function eventWakeScenarios(): void {
           { key: viaUrl.key, ip: viaUrl.ip },
         );
         expect(made.status, made.text).toBe(201);
+        const controlUrl = await post(
+          "/v1/me/wake/url",
+          {},
+          { key: control.key, ip: control.ip },
+        );
+        expect(controlUrl.status, controlUrl.text).toBe(201);
 
         // The host announces a gathering just over the 15 minutes ahead the
         // site asks for, so a 15-minute notice comes due a minute from now.
@@ -198,6 +259,7 @@ export function eventWakeScenarios(): void {
         );
         expect(announced.status, announced.text).toBe(201);
         const id = announced.json.gathering.id as number;
+        gatheringId = id;
         expect(announced.json.gathering.state).toBe("upcoming");
 
         // Three RSVPs, in good time, each told how and when it'll be woken.
@@ -219,6 +281,7 @@ export function eventWakeScenarios(): void {
           expect(Date.parse(r.json.rsvp.wake_at), by).toBe(wakeAt);
           before.set(g, await wakeOf(g));
         }
+        const controlBefore = await wakeOf(control);
         const listed = await get("/v1/gatherings");
         expect(
           listed.json.gatherings.find((x: { id: number }) => x.id === id),
@@ -229,25 +292,28 @@ export function eventWakeScenarios(): void {
         expect(firesTo(routine)).toHaveLength(0);
 
         // Call the clock as the cron would, until every guest's time shows
-        // fired, or a minute past its time.
-        const deadline = wakeAt + LATE_MS;
-        let states: string[] = [];
-        while (Date.now() < deadline) {
-          await request("GET", "/v1/clock");
-          states = [];
+        // fired and both receivers have it, or well past its time. The
+        // clock works in after(), so the states are read again after the
+        // loop rather than trusted from its last turn.
+        const statesNow = async () => {
+          const out: string[] = [];
           for (const [g] of guests)
-            states.push((await dueOf(g, id))[0]?.state ?? "gone");
+            out.push((await dueOf(g, id))[0]?.state ?? "gone");
+          return out;
+        };
+        while (Date.now() < wakeAt + GIVE_UP_MS) {
+          await request("GET", "/v1/clock");
+          await pause(POLL_MS);
           if (
-            states.every((s) => s === "fired") &&
+            (await statesNow()).every((s) => s === "fired") &&
             wakesTo(cbPath).length > 0 &&
             firesTo(routine).length > 0
           )
             break;
-          await pause(3000);
         }
-        expect(states).toEqual(["fired", "fired", "fired"]);
+        expect(await statesNow()).toEqual(["fired", "fired", "fired"]);
 
-        // Woken once each, by its own way, within a minute of its time.
+        // Woken once each, by its own way, within a clock minute of its time.
         const ev = wakesTo(cbPath);
         const fi = firesTo(routine);
         expect(ev).toHaveLength(1);
@@ -269,7 +335,8 @@ export function eventWakeScenarios(): void {
         );
         expect(await wakeOf(viaUrl)).toBe((before.get(viaUrl) ?? 0) + 1);
 
-        // The gathering is starting, and the guests find it in what's new.
+        // The gathering is starting, and the guests find it in what's new,
+        // as one they're coming to.
         const now = await get("/v1/gatherings");
         expect(
           now.json.gatherings.find((x: { id: number }) => x.id === id)?.state,
@@ -277,17 +344,28 @@ export function eventWakeScenarios(): void {
         for (const [g] of guests) {
           const caught = await get("/v1/me/catch-up", g.key);
           expect(caught.status, caught.text).toBe(200);
-          expect(caught.text).toContain(`"id":${id}`);
+          const mine = (
+            caught.json.gatherings as { id: number; going?: boolean }[]
+          ).filter((x) => x.id === id);
+          expect(mine).toHaveLength(1);
+          expect(mine[0]).toMatchObject({ state: "starting", going: true });
         }
 
-        // More of the clock wakes nobody again.
-        for (let i = 0; i < 4; i++) {
+        // The clock's next minute wakes nobody again: call it past the next
+        // minute boundary, so at least one more check works the due-list.
+        const nextMinute = Math.ceil((Date.now() + 1) / 60_000) * 60_000;
+        while (Date.now() < nextMinute + 3 * POLL_MS) {
           await request("GET", "/v1/clock");
-          await pause(2000);
+          await pause(POLL_MS);
         }
         expect(wakesTo(cbPath)).toHaveLength(1);
         expect(firesTo(routine)).toHaveLength(1);
         expect(await wakeOf(viaUrl)).toBe((before.get(viaUrl) ?? 0) + 1);
+        // And the bot that isn't coming was never woken.
+        expect(await wakeOf(control)).toBe(controlBefore);
+        expect(
+          (await get("/v1/me/digest?since=0", control.key)).json.due,
+        ).toEqual([]);
 
         // Each guest's reads show its own time, never another's, nor how
         // another would be woken.
@@ -304,7 +382,7 @@ export function eventWakeScenarios(): void {
         }
         const hosts = await get("/v1/me/digest?since=0", host.key);
         for (const [g] of guests) expect(hosts.text).not.toContain(g.handle);
-      }, 240_000);
+      }, 360_000);
     },
   );
 }
