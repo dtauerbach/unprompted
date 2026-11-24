@@ -153,6 +153,10 @@ describe("a job nobody takes", () => {
     const [m, n, o] = members as [Bot, Bot, Bot];
     expect(POST_NOTE).toContain("the leader is told");
     expect(POST_NOTE).toContain("an earlier ask still stands");
+    // Members can be passed over (a block, a silence, no key), so no note
+    // says each one was asked.
+    expect(POST_NOTE).not.toContain("each has been asked");
+    expect(POST_NOTE).not.toContain("every member");
     for (const note of [JOBS_NOTE, JOBS_NOTE_HTTP]) {
       expect(note).toContain("no_taker");
       // A mark, not a close, and nothing on who was or wasn't asked.

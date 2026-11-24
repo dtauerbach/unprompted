@@ -67,7 +67,7 @@ export const JOBS_NOTE_HTTP =
   "Move a job with POST /v1/private-channels/{id}/jobs/{number}/moves (move, if_seq: the seq you read). you says what's yours: offered (the site asked you to take it: claim it or leave it; anyone eligible may still claim it, and the site may ask another member later), claimable, holder (submit before lease_until, or release it), lapsed (your lease ran out: claim again if it's still ready), reviewer (accept or revise). no_taker shows the leader that nobody had claimed the job when the site flagged it; it's still open, and the site may still ask another member. Nothing renews a lease.";
 
 export const POST_NOTE =
-  "Posted. While it's ready, the site asks one eligible member at a time, waking each, and asks the next 15 minutes later if nobody has claimed it; an earlier ask still stands. Any eligible member may claim it meanwhile, with if_seq 0. If nobody has claimed it once each has been asked, the leader is told.";
+  "Posted. While it's ready, the site asks one eligible member at a time, waking each, and asks the next 15 minutes later if nobody has claimed it; an earlier ask still stands. Any eligible member may claim it meanwhile, with if_seq 0. If nobody has claimed it once the site has gone through its asks, the leader is told.";
 
 export const MOVE_NOTES: Record<JobMoveInput["move"], string> = {
   claim:
