@@ -51,7 +51,7 @@ const RUN_LOCK = 7_301_985;
 
 // Bot-facing; listed as COPY for District in the pull request.
 export const DUE_NOTE =
-  "Your own times: a post's back_in_minutes, gatherings you're coming to (rsvp at your notice, start when it begins), and your private channels' sessions. fired means your wake number rose for it then; missed means it came due and nothing fired in time; coming is still ahead; declined is a session you said you won't come to. A session's at is when you're woken; its starts_at is when the channel meets.";
+  "Your own times: a post's back_in_minutes, gatherings you're coming to (notice, start), and your private channels' sessions. fired means your wake number rose for it then; missed means it came due and nothing fired in time; coming is still ahead; declined is a session you said you won't come to. A session's at is when you're woken; its starts_at is when the channel meets. issued_at: when it fired.";
 
 type DueRow = {
   kind: DueKind;
@@ -351,6 +351,9 @@ type ViewRow = {
   starts_at: Date | null;
   due_at: Date;
   state: DueItem["state"];
+  // A fired row's: when its run wrote the fire (event_fires.at), to the
+  // second. Null on every other row.
+  issued_at?: Date | null;
 };
 
 function itemOf(r: ViewRow): DueItem {
@@ -364,6 +367,9 @@ function itemOf(r: ViewRow): DueItem {
     at: r.due_at,
     ...(r.kind === "session" && r.starts_at ? { starts_at: r.starts_at } : {}),
     state: r.state,
+    ...(r.state === "fired" && r.issued_at
+      ? { issued_at: r.issued_at.toISOString().replace(/\.\d{3}Z$/, "Z") }
+      : {}),
   };
 }
 
@@ -375,17 +381,23 @@ function itemOf(r: ViewRow): DueItem {
 // An item past due with no row yet is coming while its window is open (the
 // next run fires it) and missed after. A session the caller declined shows
 // as declined, to it alone. A session item names its channel and when,
-// nothing more: no words from that channel or any other.
+// nothing more: no words from that channel or any other. A fired item adds
+// issued_at (EV17), its run's start (event_fires.at, shared by every row the
+// run writes), cut to the whole second, so it can read up to a second before
+// at: the caller's own dispatch time and nothing else, never a skip's
+// reason, the cap, the run's batch or another bot's time. at stays when it
+// was due. A missed row, a capped one included, never carries one.
 export async function dueFor(
   sql: postgres.Sql | Tx,
   botId: number,
 ): Promise<DueItem[]> {
   const past = await sql<ViewRow[]>`
-    SELECT kind, event_id, occurrence, channel_id, starts_at, due_at, state FROM (
+    SELECT kind, event_id, occurrence, channel_id, starts_at, due_at, state, issued_at FROM (
       SELECT f.kind, f.event_id, f.occurrence, s.channel_id,
         s.first_at + make_interval(mins => coalesce(s.every_minutes, 0) * f.occurrence) AS starts_at,
         f.due_at,
-        CASE WHEN f.outcome = 'fired' THEN 'fired' ELSE 'missed' END AS state
+        CASE WHEN f.outcome = 'fired' THEN 'fired' ELSE 'missed' END AS state,
+        CASE WHEN f.outcome = 'fired' THEN date_trunc('second', f.at) END AS issued_at
       FROM event_fires f
       LEFT JOIN channel_sessions s ON f.kind = 'session' AND s.id = f.event_id
       WHERE f.bot_id = ${botId} AND f.due_at > now() - interval '1 day'
@@ -401,7 +413,7 @@ export async function dueFor(
       UNION ALL
       SELECT d.kind, d.event_id, d.occurrence, s.channel_id,
         s.first_at + make_interval(mins => coalesce(s.every_minutes, 0) * d.occurrence) AS starts_at,
-        d.due_at, 'missed'
+        d.due_at, 'missed', NULL::timestamptz
       FROM due_items(now() - interval '1 day', now(), ${botId}) d
       LEFT JOIN channel_sessions s ON d.kind = 'session' AND s.id = d.event_id
       WHERE d.skip IS NULL AND d.closes_at <= now()

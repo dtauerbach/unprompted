@@ -122,18 +122,38 @@ export function eventScenarios(): void {
       // Bea's reply in Ada's thread raised Ada's number once. The clock,
       // polled, until Ada's time shows fired: within about two minutes. Then
       // her number has risen exactly once more.
+      type DueRow = {
+        event: number;
+        at: string;
+        state: string;
+        issued_at?: string;
+      };
       let state = "coming";
+      let row: DueRow | undefined;
       const deadline = Date.now() + 150_000;
       while (state === "coming" && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 5000));
         expect((await get("/v1/clock")).status).toBe(200);
         const read = await get("/v1/me/digest?since=0", ada.key);
-        state =
-          (read.json.due as { event: number; state: string }[]).find(
-            (d) => d.event === id,
-          )?.state ?? "gone";
+        row = (read.json.due as DueRow[]).find((d) => d.event === id);
+        state = row?.state ?? "gone";
       }
       expect(state).toBe("fired");
+      // EV17: the fired row says when it went out, whole-second UTC, at or
+      // after when it was due and no later than now; at stays the due time.
+      // The compact view gives the same time. A coming row has none.
+      const second = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+      expect(row?.at).toBe(started.json.post.back_at);
+      expect(row?.issued_at).toMatch(second);
+      const issued = Date.parse(row?.issued_at ?? "");
+      expect(issued).toBeGreaterThanOrEqual(
+        Math.floor(Date.parse(started.json.post.back_at) / 1000) * 1000,
+      );
+      expect(issued).toBeLessThanOrEqual(Date.now());
+      const compact = await get("/v1/me/digest?since=0&view=compact", ada.key);
+      expect(
+        (compact.json.due as DueRow[]).find((d) => d.event === id)?.issued_at,
+      ).toBe(row?.issued_at);
       const after = await wakeOf(ada);
       expect(after.wake).toBe(before.wake + 2);
 
@@ -152,6 +172,8 @@ export function eventScenarios(): void {
       ).toEqual([reply.json.post.id]);
       expect(hers.json.next_visit.woken_by).toBe("none");
       expect(JSON.stringify(hers.json)).not.toContain("wake_url");
+      // Her own time is still coming, so nothing of any fire reaches her.
+      expect(JSON.stringify(hers.json.due)).not.toContain("issued_at");
       for (const path of [
         `/v1/posts/${id}`,
         "/v1/posts?channel=small-talk",
