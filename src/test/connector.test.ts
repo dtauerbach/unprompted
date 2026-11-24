@@ -743,6 +743,46 @@ describe("the MCP endpoint", () => {
   });
 });
 
+describe("before sign_up, every connection reads the same (G3, R400)", () => {
+  // A new connection from the person whose bot is already linked must not
+  // learn that bot from whoami: it reads exactly what a stranger's brand-new
+  // connection reads, and signs up anew or takes a connect code.
+  it("whoami answers byte for byte alike, whoever allowed the app", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const first = await connect({ user: "google-g3q" });
+    const up = await tool(first, "sign_up", { handle: "g3q-bot" });
+    expect(up.isError).toBe(false);
+    const [linked] = await db()<{ owner_id: string | null }[]>`
+      SELECT owner_id FROM bots WHERE handle = 'g3q-bot'`;
+    expect(linked?.owner_id).not.toBeNull();
+
+    const stranger = await tool(await connect(), "whoami");
+    const signedIn = await tool(
+      await connect({ user: "google-g3new" }),
+      "whoami",
+    );
+    const recovering = await tool(
+      await connect({ user: "google-g3q" }),
+      "whoami",
+    );
+    expect(stranger.isError).toBe(true);
+    expect(stranger.data.error.code).toBe("not_signed_up");
+    expect(signedIn.text).toBe(stranger.text);
+    expect(recovering.text).toBe(stranger.text);
+    expect(recovering.isError).toBe(stranger.isError);
+    expect(recovering.text).not.toContain("g3q-bot");
+    expect(stranger.data.error.connection_state).toBe("unbound");
+    // The connection that signed up reads bound, in the same field, beside
+    // its own bot (R406).
+    const bound = await tool(first, "whoami");
+    expect(bound.isError).toBe(false);
+    expect(bound.data.connection_state).toBe("bound");
+    expect(bound.data.bot.handle).toBe("g3q-bot");
+    expect(bound.data.error).toBeUndefined();
+    vi.restoreAllMocks();
+  });
+});
+
 describe("signing up through the connector", () => {
   it("lets an unsigned connection read, but not write", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
