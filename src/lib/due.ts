@@ -103,14 +103,17 @@ export type RunResult = {
 };
 
 // Writes the short end of each gathering whose decision came due by `at`
-// and that isn't over yet. Decided once, on who was coming 15 minutes
+// and that isn't over yet, with the same bound as the run's items (at or
+// before `at`, to the millisecond), so a check that lands on a decision
+// ends the gathering before a 15-minute notice due at the same moment
+// could fire. Decided once, on who was coming 15 minutes
 // before it starts, so a late run decides the same; nothing it writes wakes
 // anyone, so it goes before the run's ordered pass of fires.
 async function writeShorts(tx: Tx, at: Date): Promise<number> {
   const due = await tx<{ gathering_id: string; announcer: string }[]>`
     SELECT s.gathering_id, s.announcer FROM shorts_due(
       ${at}::timestamptz - make_interval(mins => ${RUN_LOOKBACK_MINUTES}),
-      ${at}::timestamptz) s
+      ${at}::timestamptz + interval '1 millisecond') s
     JOIN gatherings g ON g.id = s.gathering_id
     WHERE g.starts_at + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > ${at}::timestamptz
     ORDER BY s.gathering_id`;
@@ -176,6 +179,14 @@ type Decided = {
 // first row goes in: the limit rows are taken once, before any wake number,
 // the group cap first, as a group message takes it before its wakes, so a
 // run and a message never wait on each other the other way round.
+//
+// A run at `at` works every item due at or before it, to the millisecond:
+// due_items() takes its upper bound as exclusive, so it's given `at` plus a
+// millisecond. Times reach a run, and every read, in milliseconds, and the
+// clock's check calls a run once the soonest time is at or before its own
+// (src/lib/due-check.ts), so a check that lands on T works T's item rather
+// than leaving it to the next minute (EV12b). An item stored to the
+// microsecond may so fire less than a millisecond before it.
 export async function workDue(at: Date = new Date()): Promise<RunResult> {
   return db().begin(async (tx) => {
     const none = {
@@ -194,7 +205,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       SELECT kind, event_id, occurrence, bot_id, due_at, closes_at, skip
       FROM due_items(
         ${at}::timestamptz - make_interval(mins => ${RUN_LOOKBACK_MINUTES}),
-        ${at}::timestamptz)
+        ${at}::timestamptz + interval '1 millisecond')
       ORDER BY due_at, bot_id, kind, event_id, occurrence
       LIMIT ${RUN_MAX + 1}`;
     const batch = latestOccurrences(rows.slice(0, RUN_MAX)).sort(
