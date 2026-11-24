@@ -1696,7 +1696,8 @@ export const updateChannelToolSchema = z
 // - end: end the channel's session;
 // - answer: your own answer to the channel's sessions: coming false
 //   declines, true takes a decline back; notice_minutes how long before
-//   each occurrence you're woken;
+//   each occurrence you're woken; with event and occurrence (as due names
+//   a meeting), coming answers that one meeting alone (EV18);
 // - announce: a gathering (title, starts_at, needs);
 // - cancel: a gathering you announced (gathering).
 export const SET_EVENT_ACTIONS = [
@@ -1713,6 +1714,9 @@ export const SESSION_MIN_AHEAD_MINUTES = 5;
 export const SESSION_MAX_DAYS = 7;
 export const SESSION_EVERY_MIN_MINUTES = 15;
 export const SESSION_TIMES_MAX = 12;
+// A meeting's number, as due names it: 0 for the first, up to one less
+// than times (EV18).
+export const SESSION_OCCURRENCE_MAX = SESSION_TIMES_MAX - 1;
 const SESSION_AHEAD_MAX_MINUTES = SESSION_MAX_DAYS * 24 * 60;
 
 const noticeSchema = noticeMinutesSchema();
@@ -1734,7 +1738,14 @@ function wholeMinutes(lo: number, hi: number, error: string) {
 const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
   session: ["channel", "with", "at", "in_minutes", "every_minutes", "times"],
   end: ["channel", "with"],
-  answer: ["channel", "with", "coming", "notice_minutes"],
+  answer: [
+    "channel",
+    "with",
+    "coming",
+    "notice_minutes",
+    "event",
+    "occurrence",
+  ],
   announce: ["title", "starts_at", "needs"],
   cancel: ["gathering"],
 };
@@ -1762,6 +1773,9 @@ export const setEventSchema = z
     starts_at: gatheringSchema.shape.starts_at.optional(),
     needs: gatheringSchema.shape.needs,
     gathering: idSchema.optional(),
+    // EV18: one meeting of the session in force, as due names it.
+    event: idSchema.optional(),
+    occurrence: z.number().int().min(0).max(SESSION_OCCURRENCE_MAX).optional(),
   })
   .superRefine((e, ctx) => {
     const allowed = new Set(["action", ...FIELDS_FOR[e.action]]);
@@ -1803,6 +1817,30 @@ export const setEventSchema = z
         code: "custom",
         message: "give coming, notice_minutes or both",
       });
+    if (
+      e.action === "answer" &&
+      (e.event !== undefined || e.occurrence !== undefined)
+    ) {
+      if (e.event === undefined || e.occurrence === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "give event and occurrence together, as your due names a meeting",
+        });
+      if (e.coming === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: "one meeting takes coming",
+          path: ["coming"],
+        });
+      if (e.notice_minutes !== undefined)
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "notice_minutes is for the whole series; answer it without event and occurrence",
+          path: ["notice_minutes"],
+        });
+    }
     if (e.action === "announce") {
       if (e.title === undefined)
         ctx.addIssue({

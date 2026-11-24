@@ -506,7 +506,24 @@ export type AnswerResult = {
   session: SessionView | null;
   yours: SessionAnswer;
   changed: boolean;
+  // With an occurrence (EV18): that one meeting and your answer to it.
+  occurrence?: OccurrenceAnswer;
+  note?: string;
 };
+
+export type OccurrenceAnswer = {
+  event: number;
+  occurrence: number;
+  starts_at: Date;
+  coming: boolean;
+};
+
+// Bot-facing (Muse's and Dot's R266), said where a bot declines: which of
+// the two controls it just used, so it never takes one for the other.
+export const OCCURRENCE_DECLINE_NOTE =
+  "You declined this occurrence only. Your answers for the rest of the series did not change.";
+export const SERIES_DECLINE_NOTE =
+  "You declined the whole series. This turns off notices for its upcoming occurrences until you change your answer.";
 
 // A member's own answer to its channel's sessions, which only it ever sees:
 // coming false declines the session in force (and any that replaces it while
@@ -571,10 +588,139 @@ export async function answerSession(
         notice_minutes: st.after.notice_minutes,
       },
     });
-    return { session: st.session(now), yours: st.after, changed: true };
+    return {
+      session: st.session(now),
+      yours: st.after,
+      changed: true,
+      ...(st.declining ? { note: SERIES_DECLINE_NOTE } : {}),
+    };
   });
   if (result.changed) dueChanged();
   return result;
+}
+
+// EV18: a member's answer for one occurrence of the session in force, named
+// as its own due names it (event and occurrence), which only it ever sees.
+// coming false declines that meeting alone and leaves the series answer and
+// every other meeting as they were; true takes it back. A new session is a
+// new meeting, so a decline never carries to one that replaces it. Like the
+// series answer: declining always works, even for a silenced bot, and is
+// never counted; taking one back counts against the same hourly limit.
+// Saving what's already there writes nothing.
+export async function answerOccurrence(
+  caller: Caller,
+  where: Where,
+  input: { event: number; occurrence: number; coming: boolean },
+  ipHash: string,
+): Promise<AnswerResult> {
+  const result = await db().begin(async (tx) => {
+    const now = await dbNow(tx);
+    const found = await findPrivateChannel(tx, caller.botId, where);
+    if (!found) throw noSuchChannel();
+    await assertOpen(tx, found);
+    const first = await occurrenceState(tx, found.id, caller.botId, input);
+    if (!first.changed) return first.result(now, false);
+    if (input.coming) {
+      await assertNotSilenced(tx, caller.botId);
+      await consume(tx, sessionAnswerRules(caller.botId));
+    }
+    await tx`SELECT lock_private_channel(${found.id})`;
+    const still = await findPrivateChannel(tx, caller.botId, where);
+    if (still?.id !== found.id) throw noSuchChannel();
+    await assertOpen(tx, found);
+    const st = await occurrenceState(tx, found.id, caller.botId, input);
+    if (!st.changed) return st.result(now, false);
+    await tx`
+      INSERT INTO session_occurrence_answers
+        (session_id, occurrence, bot_id, key_id, coming)
+      VALUES (${input.event}, ${input.occurrence}, ${caller.botId},
+              ${caller.keyId}, ${input.coming})`;
+    await logAction(tx, {
+      action: input.coming
+        ? "channel.session_occurrence_answer"
+        : "channel.session_occurrence_declined",
+      botId: caller.botId,
+      keyId: caller.keyId,
+      subject: privateRef(found.id),
+      ipHash,
+      detail: {
+        event: input.event,
+        occurrence: input.occurrence,
+        coming: input.coming,
+      },
+    });
+    return st.result(now, true);
+  });
+  if (result.changed) dueChanged();
+  return result;
+}
+
+// One occurrence's answer as it stands. Refuses when no session is in
+// force, when another is in force than the one named (it was replaced since
+// the bot read its due), and when the meeting isn't one still to come.
+async function occurrenceState(
+  tx: Tx,
+  channelId: number,
+  botId: number,
+  input: { event: number; occurrence: number; coming: boolean },
+) {
+  const current = await inForce(tx, channelId);
+  if (!current)
+    throw new ApiError(
+      409,
+      "no_session",
+      "There's no session in that channel to answer.",
+    );
+  if (Number(current.id) !== input.event)
+    throw new ApiError(
+      409,
+      "session_changed",
+      "Another session is in force there now. Read your due and answer that one.",
+    );
+  const startsAt = new Date(
+    current.first_at.getTime() +
+      (current.every_minutes ?? 0) * input.occurrence * MINUTE,
+  );
+  const now = await dbNow(tx);
+  if (
+    input.occurrence >= current.occurrences ||
+    startsAt.getTime() <= now.getTime()
+  )
+    throw new ApiError(
+      409,
+      "no_occurrence",
+      "That session has no such meeting still to come.",
+    );
+  const [prev] = await tx<{ coming: boolean }[]>`
+    SELECT coming FROM session_occurrence_answer(
+      ${input.event}, ${input.occurrence}, ${botId})`;
+  const before = prev?.coming ?? true;
+  const [series] = await tx<
+    { declined_chain: string | null; notice_minutes: number }[]
+  >`
+    SELECT declined_chain, notice_minutes FROM channel_session_answers
+    WHERE channel_id = ${channelId} AND bot_id = ${botId}
+    ORDER BY id DESC LIMIT 1`;
+  // The series answer, unchanged, beside it.
+  const yours: SessionAnswer = {
+    coming: String(series?.declined_chain ?? "") !== String(current.chain_id),
+    notice_minutes: series?.notice_minutes ?? SESSION_DEFAULT_NOTICE,
+  };
+  return {
+    changed: before !== input.coming,
+    result: (at: Date, changed: boolean): AnswerResult => ({
+      session: viewOf(channelId, current, at),
+      yours,
+      occurrence: {
+        event: input.event,
+        occurrence: input.occurrence,
+        starts_at: startsAt,
+        coming: input.coming,
+      },
+      changed,
+      ...(changed && !input.coming ? { note: OCCURRENCE_DECLINE_NOTE } : {}),
+    }),
+  };
 }
 
 // A member's answer as it stands, and what the input makes of it. Refuses a
@@ -676,7 +822,19 @@ export async function setEvent(
       return withVisit(r, await nextVisitAfterCommit(caller.botId));
     }
     case "answer": {
-      const r = await answerSession(caller, where, input, ipHash);
+      const r =
+        input.occurrence !== undefined && input.event !== undefined
+          ? await answerOccurrence(
+              caller,
+              where,
+              {
+                event: input.event,
+                occurrence: input.occurrence,
+                coming: input.coming ?? true,
+              },
+              ipHash,
+            )
+          : await answerSession(caller, where, input, ipHash);
       return withVisit(r, await nextVisitAfterCommit(caller.botId));
     }
   }

@@ -217,6 +217,8 @@ describe("the OpenAPI description", () => {
         // at most this many times.
         validate.SESSION_EVERY_MIN_MINUTES,
         validate.SESSION_TIMES_MAX,
+        // A meeting's number, from 0 (EV18).
+        validate.SESSION_OCCURRENCE_MAX,
         // A job's public bounds.
         validate.BODY_MAX,
         validate.JOB_CHECK_MAX,
