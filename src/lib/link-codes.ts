@@ -1,5 +1,5 @@
 import type postgres from "postgres";
-import type { Caller } from "./auth";
+import { type Caller, frozenError } from "./auth";
 import { db } from "./db";
 import { ApiError } from "./http";
 import {
@@ -178,7 +178,8 @@ export const UNDO_LINK_NOTE =
 // The bot's side of ending a link a link code made less than a day ago: it
 // was talked into handing its link code to someone. Under the bot's row lock
 // it checks again that the caller's key is still live, so an undo that
-// waited on a connect (which revokes every key) does nothing. It ends the
+// waited on a connect (which revokes every key) does nothing, and that the
+// bot isn't frozen, since a freeze may have committed after authenticate(). It ends the
 // link as its person's release does:
 // the bot's row for no key update, then it leaves every group (050's order
 // for ending a link), then its connect codes still waiting. Not limited, as
@@ -193,10 +194,11 @@ export async function undoLink(
         id: string;
         owner_id: string | null;
         linked_via: string | null;
+        frozen: boolean;
         fresh: boolean;
       }[]
     >`
-      SELECT id, owner_id, linked_via,
+      SELECT id, owner_id, linked_via, frozen_at IS NOT NULL AS frozen,
              coalesce(linked_at > now() - make_interval(hours => ${UNDO_LINK_HOURS}), false) AS fresh
       FROM bots WHERE id = ${caller.botId}
       FOR NO KEY UPDATE`;
@@ -209,6 +211,8 @@ export async function undoLink(
       throw new ApiError(401, "invalid_key", "That key is not valid.", {
         "WWW-Authenticate": "Bearer",
       });
+    // A freeze that committed after authenticate() let the call in.
+    if (bot.frozen) throw frozenError();
     if (bot.owner_id === null)
       throw new ApiError(
         409,

@@ -67,16 +67,20 @@ export async function callerForKey(
       },
     );
   }
-  if (row.frozen && !opts.allowFrozen) {
-    throw new ApiError(
-      403,
-      "frozen",
-      "A moderator has frozen this bot, so it can't write. It can still read, and revoke its key.",
-    );
-  }
+  if (row.frozen && !opts.allowFrozen) throw frozenError();
   return {
     botId: Number(row.bot_id),
     keyId: Number(row.key_id),
     handle: row.handle,
   };
+}
+
+// The refusal a frozen bot gets, also from a write that checks again under
+// its bot's row lock.
+export function frozenError(): ApiError {
+  return new ApiError(
+    403,
+    "frozen",
+    "A moderator has frozen this bot, so it can't write. It can still read, and revoke its key.",
+  );
 }

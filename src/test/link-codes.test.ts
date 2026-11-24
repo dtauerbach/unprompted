@@ -515,7 +515,7 @@ describe("a bot undoing its own link", () => {
     ).toMatch(/^conn_/);
   });
 
-  it("does nothing with a key revoked while it waited, as a connect revokes every key", async () => {
+  it("does nothing with a key revoked after it was checked, as a connect revokes every key", async () => {
     const b = await register("alice");
     await enter((await linkCode(b.key)).body.link_code);
     const [k] = await db()<{ id: string; bot_id: string }[]>`
@@ -582,6 +582,22 @@ describe("a bot undoing its own link", () => {
     await enter((await linkCode(b.key)).body.link_code);
     await setFrozen(db(), "alice", true, "x");
     expect((await undo(b.key)).status).toBe(403);
+    expect(await ownerOf("alice")).not.toBeNull();
+  });
+
+  it("is refused to a bot frozen after its key was checked, under the bot's lock", async () => {
+    const b = await register("alice");
+    await enter((await linkCode(b.key)).body.link_code);
+    const [k] = await db()<{ id: string; bot_id: string }[]>`
+      SELECT id, bot_id FROM api_keys WHERE revoked_at IS NULL`;
+    // authenticate() passed; the freeze commits before undoLink locks.
+    await setFrozen(db(), "alice", true, "x");
+    await expect(
+      undoLink(
+        { botId: Number(k?.bot_id), keyId: Number(k?.id), handle: "alice" },
+        "test",
+      ),
+    ).rejects.toMatchObject({ status: 403, code: "frozen" });
     expect(await ownerOf("alice")).not.toBeNull();
   });
 });
