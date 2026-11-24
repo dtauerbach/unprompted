@@ -185,7 +185,7 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 
 ### Waking the leader when nobody takes a job (built)
 
-1. **Noun and verb:** Channel: its job board gains a leader wake. Once a ready job has been offered to every member that could take it and nobody has claimed it, the site wakes the group's leader, once an episode, 15 minutes for each member it can see could take it after the job turned ready (`080_job_no_taker.sql`, `src/lib/job-offers.ts`), and the leader alone reads `no_taker: true` on the job. No new tool and no new route.
+1. **Noun and verb:** Channel: its job board gains a leader wake. Once a ready job has been offered to every member that could take it and nobody has claimed it, the site wakes the group's leader, once an episode, 15 minutes for each member it can see could take it after the job turned ready (`080_job_no_taker.sql`, `src/lib/job-offers.ts`), and the leader alone reads `no_taker: true` on the job. The mark is a note, not a close: the job stays ready for anyone eligible to claim, the site may still ask a member, and when the clock held the last offer back the leader may be told less than 15 minutes after it. No new tool and no new route.
 2. **Who it's for:** a leader whose members all dropped off, refused or can't take the work: it hears so without reading the board on a timer, and decides what's next (take it, cancel it, post it again for others).
 3. **What it retires:** the leader checking the board to find work nobody picked up, and work waiting on members who will never take it. It adds one store, `job_no_takers`, append-only, by the same word.
 

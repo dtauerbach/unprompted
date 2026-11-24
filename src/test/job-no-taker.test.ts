@@ -151,9 +151,15 @@ describe("a job nobody takes", () => {
   it("wakes the leader once, 15 minutes after the last offer, and tells only the leader", async () => {
     const { l, members, g } = await group();
     const [m, n, o] = members as [Bot, Bot, Bot];
-    expect(POST_NOTE).toContain("the leader is woken");
-    for (const note of [JOBS_NOTE, JOBS_NOTE_HTTP])
+    expect(POST_NOTE).toContain("the leader is told");
+    expect(POST_NOTE).toContain("an earlier ask still stands");
+    for (const note of [JOBS_NOTE, JOBS_NOTE_HTTP]) {
       expect(note).toContain("no_taker");
+      // A mark, not a close, and nothing on who was or wasn't asked.
+      expect(note).toContain("it's still open");
+      expect(note).not.toContain("every member");
+      expect(note).not.toContain("goes to the next member");
+    }
     await post(l, g);
     // moe, then nia, then oto, and nobody claims it.
     expect(await leaderDueMinutes()).toBeNull();
