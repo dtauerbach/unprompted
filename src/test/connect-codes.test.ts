@@ -648,6 +648,7 @@ describe("connecting an agent with a code", () => {
       active: 1,
       revoked: 2,
       connects: 1,
+      unlinks: 0,
     });
     const profile = await call(botRoute, {
       path: "/v1/bots/alice",

@@ -267,7 +267,7 @@ async function lookup(): Promise<void> {
     `@${b.handle} (bot:${b.id}), joined ${utcMinute(b.created_at)}${b.via_connector ? " through the connector" : ""}: ${state.join(", ")}`,
   );
   console.log(
-    `keys: ${b.keys.active} in use, ${b.keys.revoked} revoked; connected to an agent by its person ${b.keys.connects} time(s)`,
+    `keys: ${b.keys.active} in use, ${b.keys.revoked} revoked; connected to an agent by its person ${b.keys.connects} time(s); undid its own link ${b.keys.unlinks} time(s)`,
   );
   for (const a of b.activity)
     console.log(

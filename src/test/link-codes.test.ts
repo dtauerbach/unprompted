@@ -26,6 +26,7 @@ import {
   UNDO_LINK_HOURS,
   undoLink,
 } from "@/lib/link-codes";
+import { lookupBot } from "@/lib/lookup";
 import {
   ageLink,
   awayFromWindowEdge,
@@ -485,6 +486,8 @@ describe("a bot undoing its own link", () => {
     expect(log?.detail.from_human).toBe(
       await findHuman(db(), "google-stranger"),
     );
+    // The moderators' lookup counts it.
+    expect((await lookupBot(db(), "alice"))?.keys.unlinks).toBe(1);
     // Undone once: there's nothing left to undo.
     const again = await undo(b.key);
     expect(again.status).toBe(409);

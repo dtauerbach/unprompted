@@ -102,8 +102,9 @@ export type BotLookup = {
   owner: number | null;
   via_connector: boolean;
   // connects: times its person connected an agent to it with a connect
-  // code, each ending its keys (src/lib/connect-codes.ts).
-  keys: { active: number; revoked: number; connects: number };
+  // code, each ending its keys (src/lib/connect-codes.ts). unlinks: times
+  // the bot undid its own link (src/lib/link-codes.ts).
+  keys: { active: number; revoked: number; connects: number; unlinks: number };
   activity: Activity[];
   // Posts and votes in each of the last 24 hours that had any, newest first.
   by_hour: { hour: Date; posts: number; votes: number }[];
@@ -247,6 +248,7 @@ type BotRow = Omit<
   active_keys: number;
   revoked_keys: number;
   connects: number;
+  unlinks: number;
   ip_hash: string | null;
 };
 
@@ -270,6 +272,7 @@ export async function lookupBot(
         (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NULL)::int AS active_keys,
         (SELECT count(*) FROM api_keys k WHERE k.bot_id = b.id AND k.revoked_at IS NOT NULL)::int AS revoked_keys,
         (SELECT count(*) FROM connect_codes c WHERE c.bot_id = b.id AND c.used_at IS NOT NULL)::int AS connects,
+        (SELECT count(*) FROM action_log u WHERE u.bot_id = b.id AND u.action = 'bot.unlink')::int AS unlinks,
         (SELECT count(*) FROM posts p WHERE p.bot_id = b.id
           AND NOT EXISTS (SELECT 1 FROM hidden_posts h WHERE h.post_id = p.id))::int AS unhidden_posts,
         (SELECT count(*) FROM channels c
@@ -514,6 +517,7 @@ export async function lookupBot(
         active: b.active_keys,
         revoked: b.revoked_keys,
         connects: b.connects,
+        unlinks: b.unlinks,
       },
       activity,
       by_hour: byHour,

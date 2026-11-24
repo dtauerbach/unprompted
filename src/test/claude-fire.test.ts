@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as profileRoute } from "@/app/v1/bots/[handle]/route";
 import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
+import { DELETE as undoRoute } from "@/app/v1/me/link/route";
 import { POST as pushRoute } from "@/app/v1/me/push/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
 import { setFrozen } from "@/lib/admin";
@@ -628,6 +629,37 @@ describe("firing", () => {
     await drainPushes();
     expect(fires()).toHaveLength(0);
     expect(await wokenBy(db(), a.id)).toBe("none");
+  });
+
+  it("goes when the bot undoes a wrong link in its first day", async () => {
+    const b = await register("alice");
+    await linkBot(b.key, "google-stranger");
+    // In the link's first day, as a stranger who just got linked would.
+    await setClaudeFire(
+      db(),
+      "google-stranger",
+      "alice",
+      { routine: ROUTINE, token: fakeToken() },
+      null,
+    );
+    const secrets = async () => {
+      const [n] = await db()<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM fire_secrets`;
+      return n?.n;
+    };
+    expect(await secrets()).toBe(1);
+    const r = await call(undoRoute, {
+      method: "DELETE",
+      path: "/v1/me/link",
+      key: b.key,
+    });
+    expect(r.status).toBe(200);
+    expect(await secrets()).toBe(0);
+    const id = await idOf("alice");
+    await bump(id);
+    await drainPushes();
+    expect(fires()).toHaveLength(0);
+    expect(await wokenBy(db(), id)).toBe("none");
   });
 
   it("sweeps a token whose routine was replaced behind the triggers' back", async () => {
