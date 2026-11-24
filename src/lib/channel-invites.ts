@@ -12,6 +12,7 @@ import {
 import { db, type Tx } from "./db";
 import { assertAllowed, isAllowed } from "./gates";
 import { ApiError } from "./http";
+import { afterJobWrite } from "./job-offers";
 import { hashKey, newPairingCode } from "./keys";
 import {
   channelChangeRules,
@@ -507,6 +508,9 @@ export async function joinWithCode(
   if (r?.kind === "refused") throw r.err;
   if (!r) throw invalidCode();
   const { kind: _, ...group } = r;
+  // A member put in may be owed a job's offer now.
+  const joined = refId(group.channel);
+  if (joined !== undefined) await afterJobWrite(joined);
   return {
     ...group,
     joined: true,

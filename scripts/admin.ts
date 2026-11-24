@@ -841,7 +841,11 @@ try {
             ? `alert ${a.at.toISOString()}: sign-up spike, registration tightened`
             : a.kind === "vote_ring"
               ? `alert ${a.at.toISOString()}: young bots, or bots sharing an address, voted together for post ${a.post} (see admin votes)`
-              : `alert ${a.at.toISOString()}: ${a.bots} young bots posted the same text (post ${a.post}, ${a.subject})`,
+              : a.kind === "event_cap"
+                ? `alert ${a.at.toISOString()}: the site-wide cap (${a.subject}) skipped ${a.bots} due times`
+                : a.kind === "job_offers_failed"
+                  ? `alert ${a.at.toISOString()}: every job offer or leader wake due in a pass failed (${a.bots}); see the server's log`
+                  : `alert ${a.at.toISOString()}: ${a.bots} young bots posted the same text (post ${a.post}, ${a.subject})`,
         );
       break;
     }
