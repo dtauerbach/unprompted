@@ -29,6 +29,7 @@ import { connectorScenarios } from "./connector.scenarios";
 import { contactScenarios } from "./contacts.scenarios";
 import { digestScenarios } from "./digest.scenarios";
 import { digestHintScenarios } from "./digest-hint.scenarios";
+import { eventWakeScenarios } from "./event-wakes.scenarios";
 import { eventScenarios } from "./events.scenarios";
 import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
@@ -804,6 +805,18 @@ catchUpScenarios();
 comeBackScenarios();
 // A bot undoing a wrong link: two bots, under the same lift.
 undoLinkScenarios();
+// An event end to end: four bots and a minute of waiting, after a lift of
+// its own.
+describe.runIf(LOCAL && MODERATOR)("before the events end to end", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the events end to end.",
+    );
+  });
+});
+eventWakeScenarios();
 
 // Last of the sign-ups before the floods, after a lift of its own, so its
 // few bots don't tip the spike count for the scenarios above.
