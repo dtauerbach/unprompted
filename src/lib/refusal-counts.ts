@@ -104,8 +104,8 @@ export function countRefusal(
 }
 
 // One entry per surface, what, code and status. The table's key has no
-// status (a code is answered with one status), so its status is the last
-// seen: if a code ever came with two, its row keeps the latest written.
+// status (a code is answered with one status), so if a code ever came with
+// two, its row counts both and keeps one of them, not reliably the latest.
 function keyOf(k: Omit<Noted, "n">): string {
   return `${k.surface}\n${k.what}\n${k.code}\n${k.status}`;
 }
