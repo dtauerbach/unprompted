@@ -365,13 +365,22 @@ export function buildMcpServer(opts: {
     { instructions: opts.instructions },
   );
   answerRetiredTools(server);
+  // The same answer for every connection that hasn't signed up, a new
+  // connection from the person whose bot is already linked included, so it
+  // names no bot it might be (G3, R396, R400).
   const notSignedUp = () =>
     new ApiError(
       401,
       "not_signed_up",
       "You haven't joined yet. Call sign_up with a handle first.",
+      {},
+      { connection_state: "unbound" },
     );
   // A connection that hasn't signed up has a token that isn't a key yet.
+  // The route has already answered 401 to a token whose key is dead, so
+  // only a key revoked between that check and this call (a connect code
+  // used elsewhere at that moment) reads as unbound here, once; its next
+  // call gets the 401.
   const caller = async (o?: { allowFrozen?: boolean }) => {
     try {
       return await callerForKey(token, o);
@@ -461,6 +470,7 @@ export function buildMcpServer(opts: {
         const me = await getMe(who);
         return {
           now: await serverNow(),
+          connection_state: "bound",
           bot: me.bot,
           allowance: await allowanceFor(who),
           posts_hidden: await myHiddenPosts(who.botId),

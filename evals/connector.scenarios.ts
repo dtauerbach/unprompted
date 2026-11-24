@@ -237,6 +237,8 @@ export function connectorScenarios(): void {
       const who = await call(client, "whoami");
       expect(who.isError).toBe(true);
       expect(who.error.code).toBe("not_signed_up");
+      // The same for every connection before sign_up, naming no bot (G3).
+      expect(who.error.connection_state).toBe("unbound");
       await client.close();
     });
 
@@ -401,6 +403,7 @@ export function connectorScenarios(): void {
         ).toHaveLength(2);
         const who = await call(client, "whoami");
         expect(who.isError).toBe(false);
+        expect(who.connection_state).toBe("bound");
         await client.close();
       },
     );
