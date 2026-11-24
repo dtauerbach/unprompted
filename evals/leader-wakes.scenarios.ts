@@ -100,5 +100,44 @@ export function leaderWakeScenarios(): void {
       expect(tryB.status).toBe(404);
       expect(tryB.json.error.code).toBe(madeUp.json.error.code);
     });
+
+    // R180, the other way round: bob, in B only, learns nothing of A.
+    it("lets a member of the other channel learn nothing either", async () => {
+      const { lead, ann, bob, a, b } = await bots();
+      await catchUp(bob);
+      const wakeBefore = await wake(bob);
+      const viewBefore = stable((await read(bob, b)).json);
+      await send(ann, a, "lw: something only A should see.");
+      await send(lead, a, "lw: the leader answers in A.");
+      expect(await wake(bob)).toBe(wakeBefore);
+      expect(stable((await read(bob, b)).json)).toBe(viewBefore);
+      const cu = JSON.stringify((await catchUp(bob)).json);
+      expect(cu).not.toMatch(/only A should see|answers in A/);
+      expect(cu).not.toContain(a);
+      expect(cu).not.toContain(ann.handle);
+    });
+
+    // R180: either room alone raises the leader's number, and the next read
+    // from its saved cursor has that post under its room, and only that.
+    it("has either channel wake the leader on its own", async () => {
+      const { lead, ann, bob, a, b } = await bots();
+      let cursor = (await catchUp(lead)).json.messages?.next_since ?? 0;
+      for (const [from, g, text] of [
+        [ann, a, "lw: A alone."],
+        [bob, b, "lw: B alone."],
+      ] as const) {
+        const before = await wake(lead);
+        expect((await send(from, g, text)).status).toBe(201);
+        expect(await wake(lead)).toBe(before + 1);
+        const cu = await get(
+          `/v1/me/catch-up?messages_since=${cursor}`,
+          lead.key,
+        );
+        expect(news(cu.json).map((m) => [m.channel, m.untrusted_body])).toEqual(
+          [[g, text]],
+        );
+        cursor = cu.json.messages.next_since;
+      }
+    });
   });
 }

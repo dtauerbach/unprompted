@@ -154,6 +154,101 @@ describe("a leader of two private channels", () => {
     );
   });
 
+  // R180 (Dot's acceptance, two rooms): either room alone wakes the leader,
+  // from a quiet state and with no visit due, and the first read after the
+  // wake has that post under its room. B's doesn't lean on A's.
+  it("is woken by either channel on its own, each from a quiet state", async () => {
+    const { l, x, y, a, b } = await twoRooms();
+    const quiet = await catchUp(l);
+    expect(msgs(quiet.body)).toEqual([]);
+    const cursor = quiet.body.messages?.next_since;
+
+    await send(x, a, "Only A this time.");
+    expect(await drainPushes()).toBe(1);
+    expect(sent.length).toBe(1);
+    const first = await catchUp(l, `?messages_since=${cursor ?? 0}`);
+    expect(msgs(first.body).map((m) => [m.channel, m.untrusted_body])).toEqual([
+      [a, "Only A this time."],
+    ]);
+    const next = first.body.messages?.next_since;
+    expect(next).toBeGreaterThan(cursor ?? 0);
+
+    // Quiet again: the push gap is over and nothing is waiting.
+    await db()`UPDATE push_state SET last_sent_at = last_sent_at - interval '1 minute'`;
+    sent = [];
+    expect(await drainPushes()).toBe(0);
+    await send(y, b, "Only B this time.");
+    expect(await drainPushes()).toBe(1);
+    expect(sent.length).toBe(1);
+    const second = await catchUp(l, `?messages_since=${next}`);
+    expect(msgs(second.body).map((m) => [m.channel, m.untrusted_body])).toEqual(
+      [[b, "Only B this time."]],
+    );
+  });
+
+  // R180: one wake may cover a burst, but nothing in it is lost. catch_up's
+  // first read has both; each channel's own cursor gives all its own unseen
+  // messages; a read after both cursors have moved brings none of them back.
+  it("loses nothing in a burst across both, by catch_up or each channel's own cursor", async () => {
+    const { l, x, y, a, b } = await twoRooms();
+    const fromA = await read(l, a);
+    const fromB = await read(l, b);
+    const afterA = fromA.body.next_after ?? 0;
+    const afterB = fromB.body.next_after ?? 0;
+    const start = (await catchUp(l)).body.messages?.next_since ?? 0;
+
+    await send(x, a, "A one.");
+    await send(y, b, "B one.");
+    await send(x, a, "A two.");
+    await send(y, b, "B two.");
+    expect(await drainPushes()).toBe(1);
+
+    const cu = await catchUp(l, `?messages_since=${start}`);
+    expect(msgs(cu.body).map((m) => [m.channel, m.untrusted_body])).toEqual([
+      [a, "A one."],
+      [b, "B one."],
+      [a, "A two."],
+      [b, "B two."],
+    ]);
+
+    const pageA = await call(readRoute, {
+      key: l.key,
+      path: `/v1/private-channels/${num(a)}?after=${afterA}`,
+      params: { id: num(a) },
+    });
+    expect(pageA.body.messages.map((m: Msg) => m.untrusted_body)).toEqual([
+      "A one.",
+      "A two.",
+    ]);
+    const pageB = await call(readRoute, {
+      key: l.key,
+      path: `/v1/private-channels/${num(b)}?after=${afterB}`,
+      params: { id: num(b) },
+    });
+    expect(pageB.body.messages.map((m: Msg) => m.untrusted_body)).toEqual([
+      "B one.",
+      "B two.",
+    ]);
+
+    // Both cursors moved: nothing comes back.
+    const again = await catchUp(
+      l,
+      `?messages_since=${cu.body.messages?.next_since}`,
+    );
+    expect(msgs(again.body)).toEqual([]);
+    for (const [g, page] of [
+      [a, pageA],
+      [b, pageB],
+    ] as const) {
+      const later = await call(readRoute, {
+        key: l.key,
+        path: `/v1/private-channels/${num(g)}?after=${page.body.next_after}`,
+        params: { id: num(g) },
+      });
+      expect(later.body.messages).toEqual([]);
+    }
+  });
+
   it("answers each channel in that channel only, whichever came first", async () => {
     const { l, x, y, a, b } = await twoRooms();
     // B's arrives first this time.
@@ -191,23 +286,35 @@ describe("a leader of two private channels", () => {
     ).not.toContain("A answer");
   });
 
-  it("lets a member of one channel learn nothing of work in the other", async () => {
+  // R180: in both directions, a member of one room learns nothing of the
+  // other: no entry, handle, message, id, count, page hint or rise in wake.
+  it("lets a member of one channel learn nothing of work in the other, either way", async () => {
     const { l, x, y, a, b } = await twoRooms();
     await send(l, a, "Kickoff for A.");
-    const wakeBefore = await wake(x);
-    const viewBefore = stable((await read(x, a)).body);
-    const cuBefore = stable((await catchUp(x)).body);
-    // Work lands in B only.
-    await send(y, b, "Something private to B.");
-    await send(l, b, "Leader's answer in B.");
-    expect(await wake(x)).toBe(wakeBefore);
-    expect(stable((await read(x, a)).body)).toBe(viewBefore);
-    expect(stable((await catchUp(x)).body)).toBe(cuBefore);
-    // x can't read B at all, and gets the answer a channel that doesn't
-    // exist gets.
-    const tryB = await read(x, b);
-    expect(tryB.status).toBe(404);
-    expect(tryB.body.error.code).toBe("no_such_channel");
+    await send(l, b, "Kickoff for B.");
+    for (const [member, mine, other, otherMember, label] of [
+      [x, a, b, y, "B"],
+      [y, b, a, x, "A"],
+    ] as const) {
+      const wakeBefore = await wake(member);
+      const viewBefore = stable((await read(member, mine)).body);
+      const cuBefore = stable((await catchUp(member)).body);
+      // Work lands in the other room only.
+      await send(otherMember, other, `Something private to ${label}.`);
+      await send(l, other, `Leader's answer in ${label}.`);
+      expect(await wake(member)).toBe(wakeBefore);
+      expect(stable((await read(member, mine)).body)).toBe(viewBefore);
+      const cuAfter = stable((await catchUp(member)).body);
+      expect(cuAfter).toBe(cuBefore);
+      expect(cuAfter).not.toContain(other);
+      expect(cuAfter).not.toContain(otherMember.handle);
+      expect(cuAfter).not.toContain(`private to ${label}`);
+      // It can't read the other room at all, and gets the answer a channel
+      // that doesn't exist gets.
+      const tryOther = await read(member, other);
+      expect(tryOther.status).toBe(404);
+      expect(tryOther.body.error.code).toBe("no_such_channel");
+    }
   });
 
   it("drops a channel it no longer leads or is in from what it reads, and isn't woken by it again", async () => {
