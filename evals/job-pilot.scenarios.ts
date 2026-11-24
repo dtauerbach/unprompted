@@ -15,8 +15,8 @@ import { MODERATOR } from "./moderator";
 // Cases 2, 4 and 5 wait on what isn't built yet, named in their todos: a
 // lease can't be run out on a running site's wall clock inside an eval (the
 // unit tests in src/test/channel-jobs.test.ts run it out), offers come with
-// B4b, an access check on a pin with B4c, and catch_up's owed rows for jobs
-// after EV0.
+// B4b, an access check on a pin with B4c, and catch_up's owed rows for jobs,
+// not built yet.
 
 type Group = { lea: Bot; ana: Bot; bo: Bot; cy: Bot; g: string };
 let made = 0;
@@ -98,6 +98,7 @@ export function jobPilotScenarios(): void {
         [D, "waiting", undefined],
       ]);
       expect(await actionable(s.ana, s.g)).toEqual([[J, "claimable"]]);
+      expect(await actionable(s.bo, s.g)).toEqual([[J, "claimable"]]);
       expect(await actionable(s.cy, s.g)).toEqual([]);
       // D can't be claimed while it waits; C can't claim J.
       const early = await job(s.ana, s.g, {
@@ -131,13 +132,17 @@ export function jobPilotScenarios(): void {
         you: "holder",
         seq: 1,
       });
-      expect(Date.parse(held?.lease_until ?? "")).toBeGreaterThan(Date.now());
+      // The 30-minute lease J was posted with, give or take the clocks.
+      const until = Date.parse(held?.lease_until ?? "");
+      expect(until).toBeGreaterThan(Date.now() + 25 * 60_000);
+      expect(until).toBeLessThan(Date.now() + 35 * 60_000);
       expect(await actionable(s.bo, s.g)).toEqual([]);
-      // Neither B nor C is told when A's lease ends.
-      for (const b of [s.bo, s.cy])
-        expect(
-          (await board(b, s.g)).find((j) => j.number === J)?.lease_until,
-        ).toBeUndefined();
+      // Neither B nor C is told when A's lease ends, though both see J held.
+      for (const b of [s.bo, s.cy]) {
+        const row = (await board(b, s.g)).find((j) => j.number === J);
+        expect(row).toMatchObject({ state: "claimed", holder: s.ana.handle });
+        expect(row?.lease_until).toBeUndefined();
+      }
 
       // A submits X: nothing left for A to do; the leader reviews.
       const before = await wake(s.lea);
@@ -151,13 +156,15 @@ export function jobPilotScenarios(): void {
       expect(await wake(s.lea)).toBe(before + 1);
       expect(await actionable(s.ana, s.g)).toEqual([]);
       expect(await actionable(s.lea, s.g)).toEqual([[J, "reviewer"]]);
+      expect(await actionable(s.bo, s.g)).toEqual([]);
+      expect(await actionable(s.cy, s.g)).toEqual([]);
       const twice = await job(s.ana, s.g, {
         number: J,
         move: "submit",
         if_seq: 2,
         outputs: [X],
       });
-      expect(twice.isError).toBe(true);
+      expect(twice.data.error.code).toBe("wrong_state");
       // D still waits, with no inputs, until the leader accepts.
       const waiting = (await board(s.lea, s.g)).find((j) => j.number === D);
       expect(waiting).toMatchObject({ state: "waiting", inputs: 0 });
@@ -187,6 +194,9 @@ export function jobPilotScenarios(): void {
       expect(JSON.stringify(chat.data.messages)).toContain(
         "could you take the outline",
       );
+      const bJ = (await board(s.bo, s.g)).find((j) => j.number === J);
+      expect(bJ).toMatchObject({ state: "done" });
+      expect(bJ?.holder).toBeUndefined();
       expect(await actionable(s.bo, s.g)).toEqual([[D, "claimable"]]);
       expect(await actionable(s.cy, s.g)).toEqual([]);
       const old = await job(s.bo, s.g, { number: J, move: "claim", if_seq: 3 });
@@ -197,7 +207,11 @@ export function jobPilotScenarios(): void {
         move: "claim",
         if_seq: 0,
       });
-      expect(bClaim.data.job).toMatchObject({ holder: s.bo.handle, seq: 1 });
+      expect(bClaim.data.job).toMatchObject({
+        holder: s.bo.handle,
+        seq: 1,
+        attempt: 1,
+      });
       expect(bClaim.data.job.inputs[0].ref).toBe(X.ref);
       expect(await actionable(s.ana, s.g)).toEqual([]);
     });
@@ -223,9 +237,9 @@ export function jobPilotScenarios(): void {
         [D, "waiting", undefined],
       ]);
       expect(await wake(s.lea)).toBe(before + 1);
-      expect(
-        (await board(s.ana, s.g)).find((j) => j.number === J)?.you,
-      ).not.toBe("holder");
+      expect((await board(s.ana, s.g)).find((j) => j.number === J)?.you).toBe(
+        "claimable",
+      );
       expect(await actionable(s.bo, s.g)).toEqual([[J, "claimable"]]);
 
       // The same release again: already, no second move or wake.
@@ -269,13 +283,13 @@ export function jobPilotScenarios(): void {
     });
 
     it.todo(
-      "case 2: a silent holder's lease runs out, one dispatch pass offers the job once (needs a controlled clock on a running site, and offers from B4b)",
+      "case 2: a silent holder's lease runs out, one dispatch pass offers the job once (needs a controlled clock on a running site, and offers and dispatch from B4b)",
     );
     it.todo(
       "case 4: a worker who can't read the exact pin gets its own blocker and another can claim (needs the access check from B4c)",
     );
     it.todo(
-      "case 5: a day-late cold read says nothing is owed only on a complete read (needs catch_up's job rows after EV0)",
+      "case 5: a day-late cold read says nothing is owed only on a complete read (needs catch_up's job rows, not built yet)",
     );
   });
 }
