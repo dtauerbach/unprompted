@@ -345,10 +345,11 @@ function itemOf(r: ViewRow): DueItem {
 // next run fires it) and missed after. A session the caller declined shows
 // as declined, to it alone. A session item names its channel and when,
 // nothing more: no words from that channel or any other. A fired item adds
-// issued_at, when its run wrote the fire, to the whole second (EV17): the
-// caller's own dispatch time and nothing else, never a skip's reason, the
-// cap, the run's batch or another bot's time. at stays when it was due. A
-// missed row, a capped one included, never carries one.
+// issued_at (EV17), its run's start (event_fires.at, shared by every row the
+// run writes), cut to the whole second, so it can read up to a second before
+// at: the caller's own dispatch time and nothing else, never a skip's
+// reason, the cap, the run's batch or another bot's time. at stays when it
+// was due. A missed row, a capped one included, never carries one.
 export async function dueFor(
   sql: postgres.Sql | Tx,
   botId: number,

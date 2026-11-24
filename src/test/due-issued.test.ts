@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { POST as eventsRoute } from "@/app/v1/events/route";
 import { POST as rsvpRoute } from "@/app/v1/gatherings/[id]/rsvp/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
@@ -7,6 +8,7 @@ import { setAntiAbuse, setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { DUE_NOTE, dueFor, workDue } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
+import { startChannel } from "@/lib/private-channels";
 import { call, freshIp, register, resetDb } from "./helpers";
 
 // EV17: a fired row on a bot's own due list says when the site fired it
@@ -215,6 +217,14 @@ describe("every other row", () => {
         else expect(d, JSON.stringify(d)).not.toHaveProperty("issued_at");
       }
     }
+    // Bob's was the one the cap stopped: one row, missed, with no time.
+    const bobs = (await digest(b)).body.due;
+    expect(bobs).toHaveLength(1);
+    expect(bobs[0]).toMatchObject({ event: pb.id, state: "missed" });
+    expect(bobs[0]).not.toHaveProperty("issued_at");
+    const [capped] = await db()<{ outcome: string; reason: string }[]>`
+      SELECT outcome, reason FROM event_fires WHERE event_id = ${pb.id}`;
+    expect(capped).toEqual({ outcome: "skipped", reason: "cap" });
     const states = [
       ...(await digest(a)).body.due,
       ...(await digest(b)).body.due,
@@ -248,6 +258,72 @@ describe("every other row", () => {
   });
 });
 
+// A private channel of three whose leader is bob, every bot past its
+// first days and linked to one person.
+async function group(): Promise<{ a: Bot; b: Bot; c: Bot; g: string }> {
+  const bots: Bot[] = [];
+  for (const h of ["alice", "bob", "cat"]) {
+    bots.push(await register(h));
+    await db()`UPDATE bots SET created_at = now() - interval '3 days' WHERE handle = ${h}`;
+  }
+  const [h] = await db()<{ id: string }[]>`
+    INSERT INTO humans (auth_user_id) VALUES ('google-ev17') RETURNING id`;
+  for (const x of bots)
+    await db()`UPDATE bots SET owner_id = ${h?.id ?? null} WHERE handle = ${x.handle}`;
+  const [a, b, c] = bots as [Bot, Bot, Bot];
+  const r = await startChannel(
+    db(),
+    "google-ev17",
+    bots.map((x) => x.handle),
+    b.handle,
+    null,
+  );
+  return { a, b, c, g: r.channel };
+}
+
+const event = (b: Bot, body: object) =>
+  call(eventsRoute, { key: b.key, body, path: "/v1/events" });
+
+describe("a session's rows", () => {
+  it("fired carries issued_at beside its channel and starts_at; declined carries none", async () => {
+    const { a, b, c, g } = await group();
+    const set = await event(b, {
+      action: "session",
+      channel: g,
+      in_minutes: 10,
+    });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    const no = await event(c, { action: "answer", channel: g, coming: false });
+    expect(no.status, JSON.stringify(no.body)).toBe(200);
+    const starts = Date.parse(set.body.session.at);
+    await workDue(at(starts));
+    for (const m of [a, b]) {
+      const due = (await digest(m)).body.due as Record<string, unknown>[];
+      expect(due, m.handle).toHaveLength(1);
+      expect(due[0]).toMatchObject({
+        kind: "session",
+        channel: g,
+        state: "fired",
+      });
+      expect(Date.parse(String(due[0]?.starts_at))).toBe(starts);
+      expect(String(due[0]?.issued_at)).toMatch(SECOND);
+      const [f] = await db()<{ at: Date }[]>`
+        SELECT f.at FROM event_fires f JOIN bots x ON x.id = f.bot_id
+        WHERE x.handle = ${m.handle} AND f.kind = 'session'`;
+      expect(due[0]?.issued_at).toBe(
+        second(new Date(Math.floor((f?.at.getTime() ?? 0) / 1000) * 1000)),
+      );
+    }
+    // Cat declined: its row reads declined, never fired, with no time.
+    const cats = (await digest(c)).body.due as Record<string, unknown>[];
+    expect(cats.length).toBeGreaterThan(0);
+    for (const d of cats) {
+      expect(d.state).toBe("declined");
+      expect(d).not.toHaveProperty("issued_at");
+    }
+  });
+});
+
 describe("what another bot reads", () => {
   it("is nothing of a fire that isn't its own", async () => {
     const a = await register("alice");
@@ -263,6 +339,48 @@ describe("what another bot reads", () => {
 });
 
 describe("issued_at_projection_ignores_hidden_dispatch_load", () => {
+  it("is the run's own time, the same whether the caller's item fired alone or among other bots' fires, skips and caps", async () => {
+    const a = await register("alice");
+    const others: Bot[] = [];
+    for (let i = 0; i < 5; i++) others.push(await register(`peer-${i}`));
+    const p = await back(a, 30);
+    for (const o of others) await back(o, 30);
+    await setFrozen(db(), others[0]?.handle ?? "", true, "Test.");
+    // Two fire: alice's, oldest, and one peer's; the rest are capped.
+    await setAntiAbuse(db(), { event_fire_global: 2 }, "Test cap.");
+    await workDue(at(p.at + 3 * MIN));
+    const rows = await db()<
+      { handle: string; outcome: string; reason: string | null; at: Date }[]
+    >`SELECT b.handle, f.outcome, f.reason, f.at FROM event_fires f
+      JOIN bots b ON b.id = f.bot_id ORDER BY f.id`;
+    expect(rows.map((r) => r.outcome).sort()).toEqual([
+      "fired",
+      "fired",
+      "skipped",
+      "skipped",
+      "skipped",
+      "skipped",
+    ]);
+    // One run, one time: every row it wrote shares it, so where the caller's
+    // item sat in it, and what else it did, can't move issued_at.
+    expect(new Set(rows.map((r) => r.at.getTime())).size).toBe(1);
+    const mine = rows.find((r) => r.handle === "alice");
+    expect(mine?.outcome).toBe("fired");
+    const [row] = (await digest(a)).body.due;
+    expect(Object.keys(row).sort()).toEqual([
+      "at",
+      "event",
+      "issued_at",
+      "kind",
+      "occurrence",
+      "state",
+    ]);
+    expect(row.issued_at).toBe(
+      second(new Date(Math.floor((mine?.at.getTime() ?? 0) / 1000) * 1000)),
+    );
+    expect(row.at).toBe(new Date(p.at).toISOString());
+  });
+
   it("gives the caller the same due list, byte for byte, however much else the site fired, skipped or capped", async () => {
     const a = await register("alice");
     const p = await back(a, 30);
