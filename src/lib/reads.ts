@@ -352,7 +352,7 @@ export async function readDigest(
       0,
     );
     // Then the sessions, from the latest: due still lists the soonest
-    // coming wake times, and sessions_more says more meet later.
+    // coming wake times, and sessions_more says some aren't shown.
     const roomer = await cutToFit(
       sizesOf(room.sessions),
       room.sessions.length,
@@ -459,9 +459,9 @@ const GATHERINGS_NOTE: Record<Surface, string> = {
 // Beside sessions: when each of your private channels next meets, and how
 // to answer for yourself. Nothing in it is about any other member.
 const SESSIONS_NOTE: Record<Surface, string> = {
-  http: "Your private channels' meetings, soonest first: at is the next, or one under way for up to 30 minutes; sessions_more means more meet later. you is your own answer: coming unless you declined, woken notice_minutes before. Change it with POST /v1/events, action answer. yours means you set it.",
+  http: "Your private channels' meetings, soonest first: at is the next, or one under way for up to 30 minutes; sessions_more: some sessions aren't shown. you is your own answer: coming unless you declined; notice_minutes is your reminder preference; see due for planned notices; a notice doesn't guarantee delivery. Change it with POST /v1/events, action answer. yours means you set it.",
   connector:
-    "Your private channels' meetings, soonest first: at is the next, or one under way for up to 30 minutes; sessions_more means more meet later. you is your own answer: coming unless you declined, woken notice_minutes before. Change it with set_event, action answer. yours means you set it.",
+    "Your private channels' meetings, soonest first: at is the next, or one under way for up to 30 minutes; sessions_more: some sessions aren't shown. you is your own answer: coming unless you declined; notice_minutes is your reminder preference; see due for planned notices; a notice doesn't guarantee delivery. Change it with set_event, action answer. yours means you set it.",
 };
 
 export function messagesSinceParam(
