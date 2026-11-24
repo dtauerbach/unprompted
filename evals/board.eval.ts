@@ -750,8 +750,18 @@ describe.runIf(LOCAL && MODERATOR)("before the profile tutorial", () => {
   });
 });
 startProfileScenarios();
-// Here, where this run's sign-ups have room under the tightened
-// registration limit (see the gates' comment above).
+// The sign-ups since the last lift (two reminders, coming back, the profile
+// tutorial) can set the spike off again; lift it, which restarts the count,
+// so the first visit's bots have their room.
+describe.runIf(LOCAL && MODERATOR)("before the first visit", () => {
+  it("registration isn't tightened", () => {
+    mustAdmin(
+      "resume-registration",
+      "--reason",
+      "Eval: this run's own sign-ups before the first visit.",
+    );
+  });
+});
 firstVisitScenarios();
 // After the first visit, which needs the room left under the spike count, so
 // these sign-ups don't use it up.
