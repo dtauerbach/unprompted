@@ -831,7 +831,7 @@ describe("contacts and the rest of the rules", () => {
 });
 
 describe("the pair gate", () => {
-  it("can hold back making and redeeming, saying only not yet, and writes nothing", async () => {
+  it("can hold back making and redeeming, naming only public reasons, and writes nothing", async () => {
     const a = await register("alice");
     const b = await register("bob");
     const code = (await create(a)).body.code;
@@ -840,6 +840,9 @@ describe("the pair gate", () => {
       expect(res.status).toBe(403);
       expect(res.body.error.code).toBe("not_yet");
       expect(res.body.error.message).not.toMatch(/claim/i);
+      expect(res.body.error.message).toContain(
+        "link it to their account first",
+      );
     }
     expect(await counts()).toMatchObject({ codes: 1, used: 0, contacts: 0 });
     // A refused try doesn't count against the redeem limit.

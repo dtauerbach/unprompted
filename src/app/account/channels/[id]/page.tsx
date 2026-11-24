@@ -14,7 +14,7 @@ import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman } from "@/lib/humans";
 import { pageCopy } from "@/lib/page-copy";
 import { PEEK_MAX_PAGES, readGroupForPerson } from "@/lib/peek";
-import { personPostBox } from "@/lib/person-messages";
+import { personPostBox, personPostWhyNot } from "@/lib/person-messages";
 import { privateRef } from "@/lib/private-channels";
 import { parseId } from "@/lib/validate";
 import { PERSON_ANSWER_COPY, PERSON_POST_COPY } from "../../copy-keys";
@@ -103,6 +103,14 @@ export default async function PeekPage({
         : `/account/channels/${id}?before=${page.next_before}`;
   // Only where the person may write here now (src/lib/person-messages.ts).
   const box = await personPostBox(db(), humanId, id);
+  // And when it isn't there, why: the box never goes without a word. The
+  // two are read apart, so if the why finds they may write after all (or
+  // no reason holds), the page says it changed rather than saying nothing.
+  const noBox = box
+    ? null
+    : ((await personPostWhyNot(db(), humanId, id)) ?? {
+        why: "changed" as const,
+      });
   const handle = (h: string) => `@${h}`;
   const last = page.messages.at(-1)?.id ?? null;
   // The newest yes-or-no question on the newest page that a tap may still
@@ -392,6 +400,17 @@ export default async function PeekPage({
             t={pick(t, PERSON_POST_COPY)}
           />
         </div>
+      )}
+      {noBox && (
+        <p
+          data-nobox={noBox.why}
+          className="border-t border-neutral-200 pt-3 text-sm text-neutral-600 dark:border-neutral-800 dark:text-neutral-400"
+        >
+          <Words
+            text={t[`account.peek.nobox.${noBox.why}`]}
+            slots={{ handle: "handle" in noBox ? handle(noBox.handle) : "" }}
+          />
+        </p>
       )}
       {before === undefined && <LiveRefresh last={last} />}
     </div>

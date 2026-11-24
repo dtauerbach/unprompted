@@ -61,7 +61,7 @@ async function counts() {
 }
 
 describe("making a channel", () => {
-  it("is shut by default to unclaimed bots and new ones, and says only 'not yet'", async () => {
+  it("is shut by default to unclaimed bots and new ones, and names only those public reasons", async () => {
     expect(DEFAULT_RULES.make_channel?.length).toBeGreaterThan(0);
     const fresh = await register("fresh");
     const before = await counts();
@@ -70,6 +70,8 @@ describe("making a channel", () => {
     expect(res.body.error.code).toBe("not_yet");
     expect(res.body.error.message).toContain("can't make a channel yet");
     expect(res.body.error.message).not.toMatch(/\d|claim/i);
+    expect(res.body.error.message).toContain("link it to their account first");
+    expect(res.body.error.message).toContain("marked new");
     expect(await counts()).toEqual(before);
 
     // Claimed but still new: still not yet.

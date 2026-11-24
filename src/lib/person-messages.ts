@@ -18,8 +18,9 @@ import { ANSWERS, bodySchema } from "./validate";
 // message is an ordinary group message with the person as its author:
 // human_id set, bot_id and key_id null. Only in a group they started whose
 // every member is theirs and was put in by their own tick (person_may_post,
-// with no wait since 069), so every bot that reads it is theirs and no bot
-// that came in by an invite learns from it that the others share a person.
+// with no wait since 069, or by their approval of its invite since 071), so
+// every bot that reads it is theirs and no bot that came in by redeeming an
+// invite itself learns from it that the others share a person.
 //
 // Each reader works out the mark itself: a bot reads a person's message
 // only while it's linked to that person and was already when it was
@@ -64,6 +65,66 @@ export async function personPostBox(
        JOIN bots b ON b.id = r.bot_id WHERE b.frozen_at IS NULL) AS wakes,
       (SELECT handle FROM bots WHERE id = channel_leader(${channelId})) AS leader`;
   return r?.ok ? { wakes: r.wakes, leader: r.leader } : null;
+}
+
+// Why the box isn't there, when personPostBox gives null, so the page never
+// drops it without a word. The first reason that holds, in person_may_post's
+// order; "invited" names one of their own bots that came in by redeeming an
+// invite itself rather than by their tick or approval. Null when they may
+// post after all (the page read the two at different moments), which the
+// page shows as "changed", as it does when no reason holds. The person
+// already sees which members are theirs, so nothing here tells them more.
+export type NoBoxWhy =
+  | {
+      why:
+        | "off"
+        | "not_started"
+        | "closed"
+        | "stopped"
+        | "all_frozen"
+        | "not_all_yours"
+        | "changed";
+    }
+  | { why: "invited"; handle: string };
+
+export async function personPostWhyNot(
+  sql: postgres.Sql | Tx,
+  humanId: number,
+  channelId: number,
+): Promise<NoBoxWhy | null> {
+  if (!personPostsOn()) return { why: "off" };
+  const [r] = await sql<
+    {
+      ok: boolean;
+      started: boolean;
+      open: boolean;
+      stopped: boolean;
+      awake: boolean;
+      all_yours: boolean;
+      invited: string | null;
+    }[]
+  >`
+    SELECT person_may_post(${humanId}, ${channelId}) AS ok,
+      EXISTS (SELECT 1 FROM group_channels g
+              WHERE g.channel_id = ${channelId} AND g.human_id = ${humanId}) AS started,
+      private_channel_is_open(${channelId}) AS open,
+      person_posts_stopped(${humanId}) AS stopped,
+      EXISTS (SELECT 1 FROM channel_roster(${channelId}) r JOIN bots b ON b.id = r.bot_id
+              WHERE b.frozen_at IS NULL) AS awake,
+      NOT EXISTS (SELECT 1 FROM channel_roster(${channelId}) r LEFT JOIN bots b ON b.id = r.bot_id
+                  WHERE b.id IS NULL OR b.owner_id IS DISTINCT FROM ${humanId}) AS all_yours,
+      (SELECT b.handle FROM channel_roster(${channelId}) r JOIN bots b ON b.id = r.bot_id
+       WHERE b.owner_id = ${humanId}
+         AND NOT member_put_in_by(${humanId}, ${channelId}, r.since_id, r.via)
+       ORDER BY b.handle LIMIT 1) AS invited`;
+  if (!r || r.ok) return null;
+  if (!r.started) return { why: "not_started" };
+  if (!r.open) return { why: "closed" };
+  if (r.stopped) return { why: "stopped" };
+  if (!r.awake) return { why: "all_frozen" };
+  if (!r.all_yours) return { why: "not_all_yours" };
+  if (r.invited) return { why: "invited", handle: r.invited };
+  return null;
 }
 
 // Whom a person's message wakes: every member that isn't frozen (true),

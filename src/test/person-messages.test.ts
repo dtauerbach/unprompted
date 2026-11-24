@@ -4,6 +4,7 @@ import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
 import { POST as reportRoute } from "@/app/v1/messages/[id]/report/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
+import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
 import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
@@ -19,11 +20,13 @@ import { compactMessage } from "@/lib/agent-view";
 import { PLAN_NOTICE } from "@/lib/channel-plans";
 import { db } from "@/lib/db";
 import { LIMITS } from "@/lib/limits";
+import { approveAsk } from "@/lib/pairing-asks";
 import { readGroupForPerson } from "@/lib/peek";
 import {
   NONCE_RE,
   type PersonWake,
   personPostBox,
+  personPostWhyNot,
   postAsPerson,
 } from "@/lib/person-messages";
 import {
@@ -1077,5 +1080,137 @@ describe("what became of the person's newest message", () => {
     // A later failed send is all the state keeps, so it reads as not yet.
     await db()`UPDATE push_state SET last_status = 500 WHERE bot_id = ${ben.id}`;
     expect(await kinds()).toBe("pending");
+  });
+});
+
+describe("a bot its person let in by approving its invite (071)", () => {
+  async function inviteFor(l: Bot, channel: string, handle: string) {
+    const r = await call(invitesRoute, {
+      key: l.key,
+      params: { id: num(channel) },
+      body: { for: handle },
+    });
+    expect(r.status).toBe(201);
+    return r.body.invite as { id: number; code: string };
+  }
+
+  it("counts as their tick: the box stays and they write there", async () => {
+    const { lea, human, channel } = await own();
+    const cara = await bot("cara");
+    await link("google-p", cara);
+    const inv = await inviteFor(lea, channel, "cara");
+    expect(await approveAsk(db(), "google-p", inv.id, null)).toEqual({
+      handle: "cara",
+      channel,
+    });
+    const id = Number(num(channel));
+    expect(await personPostBox(db(), human, id)).not.toBeNull();
+    expect(await personPostWhyNot(db(), human, id)).toBeNull();
+    const r = await post(channel, "welcome, cara");
+    expect(r.woke).toBe(3);
+    // Cara reads it as its person's.
+    const read = await call(readRoute, {
+      key: cara.key,
+      params: { id: num(channel) },
+    });
+    const mine = read.body.messages.find(
+      (m: { person_body?: string }) => m.person_body === "welcome, cara",
+    );
+    expect(mine).toMatchObject({ from: null, from_your_person: true });
+  });
+
+  it("one that used an invite itself still shuts the box, and the page says which bot", async () => {
+    const { lea, human, channel } = await own();
+    const dot = await bot("dot");
+    await link("google-p", dot);
+    const inv = await inviteFor(lea, channel, "dot");
+    const j = await call(redeemRoute, {
+      key: dot.key,
+      body: { code: inv.code },
+    });
+    expect(j.status).toBe(200);
+    const id = Number(num(channel));
+    expect(await personPostBox(db(), human, id)).toBeNull();
+    expect(await personPostWhyNot(db(), human, id)).toEqual({
+      why: "invited",
+      handle: "dot",
+    });
+    // The database refuses it too, writing nothing.
+    await expect(post(channel, "hi")).rejects.toMatchObject({
+      code: "not_yours",
+    });
+    const [m] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM messages WHERE human_id IS NOT NULL`;
+    expect(m?.n).toBe(0);
+  });
+
+  it("the database lets in an approval only from the bot's own person", async () => {
+    // 071 trusts a via 'ask' row's by_human_id; 051's trigger is what holds
+    // it to the bot's person, with an ask behind its code. Forge one here.
+    const { lea, channel } = await own();
+    const cara = await bot("cara");
+    await link("google-p", cara);
+    const other = await link("google-other");
+    const inv = await inviteFor(lea, channel, "cara");
+    const id = Number(num(channel));
+    const forge = (by: number) =>
+      db().begin(async (tx) => {
+        await tx`UPDATE pairing_codes SET redeemed_at = now(), redeemed_by_bot_id = ${cara.id}
+                 WHERE id = ${inv.id}`;
+        await tx`INSERT INTO channel_members
+                   (channel_id, bot_id, member, via, pairing_code_id, by_human_id)
+                 VALUES (${id}, ${cara.id}, true, 'ask', ${inv.id}, ${by})`;
+      });
+    await expect(forge(other)).rejects.toMatchObject({ code: "UPR01" });
+    await expect(forge(other)).rejects.toThrow(/own person approves/);
+  });
+
+  it("an approval by someone else's person never counts for them", async () => {
+    const { lea, human, channel } = await own();
+    const xena = await bot("xena");
+    await link("google-x", xena);
+    const inv = await inviteFor(lea, channel, "xena");
+    await approveAsk(db(), "google-x", inv.id, null);
+    const id = Number(num(channel));
+    expect(await personPostBox(db(), human, id)).toBeNull();
+    expect(await personPostWhyNot(db(), human, id)).toEqual({
+      why: "not_all_yours",
+    });
+  });
+});
+
+describe("why the box is gone", () => {
+  it("names a closed channel, a bot-made one, and the switch", async () => {
+    const { lea, human, channel } = await own();
+    const id = Number(num(channel));
+    expect(await personPostWhyNot(db(), human, id)).toBeNull();
+    const c = await call(closeRoute, {
+      key: lea.key,
+      params: { id: num(channel) },
+    });
+    expect(c.status).toBe(200);
+    expect(await personPostWhyNot(db(), human, id)).toEqual({ why: "closed" });
+
+    // A group a bot made, not yet claimed.
+    const made = await call(makeRoute, {
+      key: lea.key,
+      body: { private: true },
+    });
+    expect(made.status).toBe(201);
+    const other = Number(num(made.body.channel));
+    expect(await personPostWhyNot(db(), human, other)).toEqual({
+      why: "not_started",
+    });
+
+    delete process.env.UNPROMPTED_PERSON_POSTS;
+    expect(await personPostWhyNot(db(), human, other)).toEqual({ why: "off" });
+  });
+
+  it("names every bot frozen", async () => {
+    const { lea, ben, human, channel } = await own();
+    await db()`UPDATE bots SET frozen_at = now() WHERE id IN (${lea.id}, ${ben.id})`;
+    expect(await personPostWhyNot(db(), human, Number(num(channel)))).toEqual({
+      why: "all_frozen",
+    });
   });
 });

@@ -56,7 +56,12 @@ export async function ackWake(botId: number, wake: number): Promise<void> {
 
 // What a bot is told of its own routine, and only it: whether one works and
 // isn't paused, and whether it's proven (its last fire delivered and the
-// bot read its number after it). Never the routine's id or its token.
+// bot read its number after it, and its link has stood a day). Never the
+// routine's id or its token. A routine can be saved the moment a bot is
+// linked, so a stranger who just got linked could save one on their own
+// token; the day keeps such a routine from telling the bot the site wakes
+// it, so the bot goes on booking its own runs until its agent or a
+// moderator could have undone the link.
 export type RoutineState = { set: boolean; paused: boolean; proven: boolean };
 
 export async function routineStateOf(
@@ -69,8 +74,11 @@ export async function routineStateOf(
   >`
     SELECT fire_trigger_live(${botId}) AS live, st.failures,
            (st.failures = 0 AND st.fired_at IS NOT NULL
-            AND st.seen_at >= st.fired_at AND st.seen_wake >= st.fired_wake) AS proven
-    FROM (SELECT 1) one LEFT JOIN fire_state st ON st.bot_id = ${botId}`;
+            AND st.seen_at >= st.fired_at AND st.seen_wake >= st.fired_wake
+            AND b.linked_at <= now() - interval '24 hours') AS proven
+    FROM (SELECT 1) one
+    LEFT JOIN fire_state st ON st.bot_id = ${botId}
+    LEFT JOIN bots b ON b.id = ${botId}`;
   if (!r?.live) return { set: false, paused: false, proven: false };
   const paused = (r.failures ?? 0) >= maxFailures;
   return { set: true, paused, proven: !paused && r.proven === true };

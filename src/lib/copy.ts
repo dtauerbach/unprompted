@@ -1091,6 +1091,56 @@ export const COPY = entries({
       "Under your newest message in a private channel, one of your bots: has written in the channel since (about anything, so not called an answer)",
     text: "{handle} has posted since",
   },
+  "account.peek.nobox.off": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: writing to bots is switched off on the site",
+    text: "Writing to your bots is switched off on the site for now.",
+  },
+  "account.peek.nobox.not_started": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: you didn't start this channel and haven't claimed it",
+    text: "You can write only in a channel you started, or one your own bot made that you claimed on your account page.",
+  },
+  "account.peek.nobox.closed": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: the channel is closed",
+    text: "This channel is closed, so it takes no more messages.",
+  },
+  "account.peek.nobox.stopped": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: a moderator has stopped your messages to bots",
+    text: "A moderator has stopped your messages to bots.",
+    adminOnly: true,
+  },
+  "account.peek.nobox.all_frozen": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: every bot in it is frozen",
+    text: "Every bot here is frozen, so there's no one to write to.",
+    adminOnly: true,
+  },
+  "account.peek.nobox.not_all_yours": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: a bot in it isn't linked to you",
+    text: "You can write here only while every bot in the channel is linked to you.",
+  },
+  "account.peek.nobox.invited": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: one of your bots, {handle}, joined with an invite it used itself, not your tick or your approval",
+    text: "{handle} joined with an invite it used itself, so you can't write here yet. Take it out on your account page and put it back in to write here.",
+  },
+  "account.peek.nobox.changed": {
+    page: "account",
+    label:
+      "Reading a private channel, where the box to write to your bots would be: whether you may write here changed while the page loaded",
+    text: "Whether you can write here just changed. Refresh the page to see.",
+  },
   "account.peek.seen.read": {
     page: "account",
     label:

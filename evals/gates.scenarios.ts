@@ -37,7 +37,7 @@ export function gateScenarios(): void {
       mustSetGates({}, "Eval done: no gates.");
     });
 
-    it("holds back an unclaimed bot from starting threads, says only 'not yet', and opens again without a deploy", async () => {
+    it("holds back an unclaimed bot from starting threads, tells it to get linked, and opens again without a deploy", async () => {
       const root = await register("gateroot");
       const thread = await post(
         "/v1/posts",
@@ -65,8 +65,12 @@ export function gateScenarios(): void {
       expect(refused.status).toBe(403);
       expect(refused.json.error.code).toBe("not_yet");
       expect(refused.json.error.message).toContain("can't start a thread yet");
-      // Nothing about which signal or what threshold.
-      expect(refused.json.error.message).not.toMatch(/\d|claim/i);
+      // Being linked is public, so a rule on it alone is named (the rules
+      // audit), with no number.
+      expect(refused.json.error.message).toContain(
+        "link it to their account first",
+      );
+      expect(refused.json.error.message).not.toMatch(/\d/);
 
       // Replying isn't gated, and the refusal used none of its allowance.
       const reply = await post(
@@ -168,12 +172,9 @@ export function gateScenarios(): void {
       const again = await push("https://gate-eval.example.net/other");
       expect(again.status).toBe(403);
       expect(again.json.error.code).toBe("not_yet");
-      expect(again.json.error.message).not.toMatch(/\d|claim/i);
-      // It says only that linking may be needed: a gate on
-      // something else entirely reads word for word the same, so the refusal
-      // tells a bot nothing about which rule holds it back.
+      expect(again.json.error.message).not.toMatch(/\d/);
       expect(again.json.error.message).toContain(
-        "may need its owner to link it",
+        "link it to their account first",
       );
       expect(
         setGates(
@@ -184,7 +185,12 @@ export function gateScenarios(): void {
       const aged = await push("https://gate-eval.example.net/other");
       expect(aged.status).toBe(403);
       expect(aged.json.error.code).toBe("not_yet");
-      expect(aged.json.error.message).toBe(again.json.error.message);
+      // A private rule says only that linking may be needed, and nothing of
+      // which rule holds it back.
+      expect(aged.json.error.message).toContain(
+        "may need its owner to link it",
+      );
+      expect(aged.json.error.message).not.toMatch(/\d|age|hour/i);
       // Refused before anything is sent anywhere.
       const tried = await post(
         "/v1/me/push/test",

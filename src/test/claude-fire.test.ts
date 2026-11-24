@@ -102,7 +102,7 @@ async function idOf(handle: string): Promise<number> {
 async function routined(handle = "alice", person = `google-${handle}`) {
   const b = await register(handle);
   await linkBot(b.key, person);
-  // A routine is saved only once the link has stood a day.
+  // Aged a day: in a link's first day a routine never counts as proven.
   await ageLink(handle);
   const token = fakeToken();
   await setClaudeFire(db(), person, handle, { routine: ROUTINE, token }, null);
@@ -343,6 +343,47 @@ describe("firing", () => {
       SELECT pending_since FROM push_state WHERE bot_id = ${a.id}`;
     expect(p?.pending_since).toBeNull();
     expect((await attempts(a.id))[0]?.outcome).toBe("delivered");
+  });
+
+  it("isn't proven while its link is under a day old, so the bot keeps booking its own runs", async () => {
+    // A stranger who just got linked could save a routine on their own
+    // token; until the link has stood a day it can't tell the bot it's woken.
+    const b = await register("fresh");
+    await linkBot(b.key, "google-fresh");
+    const token = fakeToken();
+    await setClaudeFire(
+      db(),
+      "google-fresh",
+      "fresh",
+      { routine: ROUTINE, token },
+      null,
+    );
+    const id = await idOf("fresh");
+    await bump(id);
+    await drainPushes();
+    expect(fires()).toHaveLength(1);
+    expect((await call(wakeRoute, { key: b.key })).status).toBe(200);
+    expect(await routineStateOf(db(), id, PUSH_MAX_FAILURES)).toEqual({
+      set: true,
+      paused: false,
+      proven: false,
+    });
+    // What the bot itself reads: catch_up still hands it the recipe to book
+    // its own run, since nothing else is known to reach it (Dot's review).
+    const comeBack = async () => {
+      const r = await call(catchUpRoute, { key: b.key });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      return r.body.getting_started.steps.find(
+        (s: { step: string }) => s.step === "come_back",
+      );
+    };
+    expect((await comeBack()).recipe).toMatchObject({ holds: 1 });
+    await ageLink("fresh");
+    expect((await routineStateOf(db(), id, PUSH_MAX_FAILURES)).proven).toBe(
+      true,
+    );
+    // A day on, the same answered routine is trusted, so the recipe goes.
+    expect((await comeBack()).recipe).toBeUndefined();
   });
 
   it("is answered by catch_up too", async () => {
@@ -1140,31 +1181,27 @@ describe("only the production site fires", () => {
 });
 
 describe("a fresh link", () => {
-  it("can't save or test a routine until the link has stood a day", async () => {
+  it("saves and tests a routine at once: no wait after the link since the rules audit", async () => {
     const b = await register("alice");
     await linkBot(b.key, "google-alice");
-    const err = await setClaudeFire(
+    expect(
+      await setClaudeFire(
+        db(),
+        "google-alice",
+        "alice",
+        { routine: ROUTINE, token: fakeToken() },
+        null,
+      ),
+    ).toMatchObject({ handle: "alice", routine: ROUTINE });
+    const r = await testClaudeFire(
       db(),
       "google-alice",
       "alice",
-      { routine: ROUTINE, token: fakeToken() },
       null,
-    ).catch((e) => e);
-    expect(err).toMatchObject({ status: 403, code: "linked_recently" });
-    expect(String(err.message)).toMatch(/24 hours/);
-    await ageLink("alice");
-    await setClaudeFire(
-      db(),
-      "google-alice",
-      "alice",
-      { routine: ROUTINE, token: fakeToken() },
-      null,
+      deliver,
     );
-    await ageLink("alice", 2);
-    await expect(
-      testClaudeFire(db(), "google-alice", "alice", null, deliver),
-    ).rejects.toMatchObject({ code: "linked_recently" });
-    expect(sent).toHaveLength(0);
+    expect(r).toMatchObject({ ok: true });
+    expect(sent).toHaveLength(1);
     // Taking it off always works.
     expect(await removeClaudeFire(db(), "google-alice", "alice", null)).toEqual(
       { changed: true },

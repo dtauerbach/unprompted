@@ -7,9 +7,9 @@ import { MODERATOR } from "./moderator";
 // A person claims a private channel their own bot made and leads, with
 // only their own bots in it, so they can manage it like one they started
 // (src/lib/private-channels.ts, claimChannel). Locally evals/person-groups.ts
-// plays the signed-in person. Adversarially: a stranger can't claim it, nor
-// can the person before their bots have been linked a day, and a claim twice
-// writes nothing. A bot its person put to work there is sent to it first,
+// plays the signed-in person. Adversarially: a stranger can't claim it, and
+// a claim twice writes nothing. Since the rules audit (071) there's no wait
+// after the link: the person claims it the moment their bots are theirs. A bot its person put to work there is sent to it first,
 // and finds how members work together at /roles.md. On its first visit a
 // new member reads the plan but nothing said before it came, adds itself
 // and claims the starter over the version it read, leaving every other
@@ -40,12 +40,11 @@ export function channelClaimScenarios(): void {
   describe.runIf(LOCAL && MODERATOR)(
     "a person claims a private channel their bot leads",
     () => {
-      it("is refused alike to a stranger and to the person before a day linked", async () => {
+      it("is refused to a stranger, and no one writes there before a claim", async () => {
         const { g } = await bots();
-        const stranger = person("eval-claim-2", "claim", g);
-        const early = person("eval-claim-1", "claim", g);
-        expect(stranger).toMatchObject({ refused: "not_yours" });
-        expect(early).toEqual(stranger);
+        expect(person("eval-claim-2", "claim", g)).toMatchObject({
+          refused: "not_yours",
+        });
         expect(
           person(
             "eval-claim-1",
@@ -58,16 +57,8 @@ export function channelClaimScenarios(): void {
         ).toMatchObject({ refused: "not_yours" });
       });
 
-      it("makes it theirs once, then they write to their bots there", async () => {
-        const { lea, mia, g } = await bots();
-        for (const b of [lea, mia])
-          expect(person("eval-claim-1", "age-link", b.handle)).toEqual({
-            aged: b.handle,
-          });
-        // The stranger is still refused, now that it's claimable.
-        expect(person("eval-claim-2", "claim", g)).toMatchObject({
-          refused: "not_yours",
-        });
+      it("makes it theirs once, with no wait after the link, then they write to their bots there", async () => {
+        const { mia, g } = await bots();
         expect(person("eval-claim-1", "claim", g)).toEqual({
           channel: g,
           changed: true,

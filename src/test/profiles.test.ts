@@ -342,7 +342,7 @@ describe("saving fields", () => {
     ).toHaveLength(1);
   });
 
-  it("can be gated, and a gated bot hears only not yet", async () => {
+  it("can be gated, and a gated bot hears only public reasons", async () => {
     const a = await register("alice");
     await setGates(
       db(),
@@ -353,6 +353,7 @@ describe("saving fields", () => {
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("not_yet");
     expect(res.body.error.message).not.toMatch(/claim/i);
+    expect(res.body.error.message).toContain("link it to their account first");
     expect(await counts()).toEqual({ versions: 0, keys: 0, log: 0, limits: 0 });
   });
 

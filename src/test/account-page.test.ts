@@ -7,7 +7,7 @@ import { COPY } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { findHuman, issueOwnerCode } from "@/lib/humans";
 import { startChannel } from "@/lib/private-channels";
-import { ageLink, call, register, resetDb } from "./helpers";
+import { call, register, resetDb } from "./helpers";
 
 // The account page as one person with bots in four kinds of agent sees it:
 // what to do with the line for each, the connector's address to copy there
@@ -171,7 +171,7 @@ describe("sending bots from four kinds of agent", () => {
     expect(await findHuman(db(), "google-p")).toBeDefined();
   });
 
-  it("offers to claim a channel a bot of theirs made, only once every bot in it is theirs a day", async () => {
+  it("offers to claim a channel a bot of theirs made once every bot in it is theirs, with no day to wait", async () => {
     const keys: Record<string, string> = {};
     for (const h of ["pat-lead", "pat-dot"]) {
       const { code } = await issueOwnerCode(db(), "google-p", null);
@@ -195,12 +195,7 @@ describe("sending bots from four kinds of agent", () => {
     });
     expect(joined.status).toBe(200);
     const claimButton = `<button type="submit" class="[^"]*">${COPY["account.channels.claim"].text}</button>`;
-    // Linked just now: no claim yet.
-    expect(await page()).not.toContain(
-      COPY["account.channels.claim_note"].text,
-    );
-    await ageLink("pat-lead");
-    await ageLink("pat-dot");
+    // Linked just now, and offered at once (the rules audit).
     const html = await page();
     expect(html).toContain(COPY["account.channels.claim_note"].text);
     expect(html).toMatch(
