@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { db } from "./db";
 import { soonestDue, workDue } from "./due";
 import { clearDue, DUE_TAG, minuteStamp } from "./due-kick";
+import { offerJobs } from "./job-offers";
 import { drainForAWhile, nextDue } from "./push";
 import { isReadOnly } from "./read-only";
 import { buildKey, timeBucket } from "./shared-cache";
@@ -131,13 +132,17 @@ export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   const held = reached(soonest.push, now);
   if (!due && !held) return "not_due";
   const fired = due ? (await workDue(new Date(now))).fired : 0;
+  // Job offers that came due: an offer nobody answered, a lease that ran
+  // out (src/lib/job-offers.ts). They raise wake numbers as fires do.
+  const offered = due ? (await offerJobs()).offered : 0;
   // The pushes its fires raised, and any held past an earlier round,
   // awaited here within the deadline: this already runs after the answer,
   // with nothing further to run it after. The drain stops under the kill
   // switch too (src/lib/push.ts). A held push another round sent since the
   // cache read costs this one drain that finds nothing.
   const left = until - Date.now();
-  if ((fired > 0 || held) && left > 0) await drainForAWhile(undefined, left);
+  if ((fired > 0 || offered > 0 || held) && left > 0)
+    await drainForAWhile(undefined, left);
   // Then the next times, read while the database is awake.
   clearDue();
   await soonestCached(now);
