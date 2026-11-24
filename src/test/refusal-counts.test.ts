@@ -11,6 +11,7 @@ import {
   kickRefusals,
   refusalCounts,
   resetRefusalFlush,
+  resetRefusalGap,
   waitingRefusals,
 } from "@/lib/refusal-counts";
 import { call, register, resetDb } from "./helpers";
@@ -25,8 +26,10 @@ type Row = {
   n: string;
 };
 const rows = () =>
+  // Byte order, so the rows read the same whatever the database's collation
+  // (CI's sorts "other" before "POST ...", a C locale after).
   db()<Row[]>`SELECT surface, what, code, status, n FROM refusal_counts
-    ORDER BY surface, what, code`;
+    ORDER BY surface COLLATE "C", what COLLATE "C", code COLLATE "C"`;
 
 beforeEach(async () => {
   // Whatever another file noted stays in memory; drop it before each test.
@@ -365,6 +368,40 @@ describe("when the count is written", () => {
     expect(tasks.length).toBe(1);
     kickRefusals(t0 + 61_000, schedule);
     expect(tasks.length).toBe(2);
+  });
+
+  it("doesn't let a write taken as gone clear the guard of the one after it", async () => {
+    // Dot's review of #192: a late write's end once cleared the newer one's
+    // in-flight mark, letting a third start while the second still ran.
+    const tasks: (() => Promise<void>)[] = [];
+    const schedule = (t: () => Promise<void>) => {
+      tasks.push(t);
+    };
+    const t0 = Date.now();
+    countRefusal("MCP", "/mcp post", 403, "not_yet");
+    kickRefusals(t0, schedule);
+    countRefusal("MCP", "/mcp vote", 403, "not_yet");
+    kickRefusals(t0 + 61_000, schedule);
+    expect(tasks.length).toBe(2);
+    // The first, taken as gone, finishes late; the second is still running.
+    await tasks[0]?.();
+    resetRefusalGap();
+    countRefusal("MCP", "/mcp vote", 403, "not_yet");
+    kickRefusals(t0 + 62_000, schedule);
+    expect(tasks.length).toBe(2);
+    // The second took both votes when it ran; once it ends, the guard clears.
+    await tasks[1]?.();
+    resetRefusalGap();
+    countRefusal("MCP", "/mcp nudge", 403, "cant_wake");
+    kickRefusals(t0 + 63_000, schedule);
+    expect(tasks.length).toBe(3);
+    await tasks[2]?.();
+    const got = await rows();
+    expect(got.map((r) => [r.what, r.n])).toEqual([
+      ["/mcp nudge", "1"],
+      ["/mcp post", "1"],
+      ["/mcp vote", "2"],
+    ]);
   });
 
   it("schedules nothing outside a request, and doesn't throw", () => {

@@ -26,19 +26,23 @@ type Noted = {
 
 const waiting = new Map<string, Noted>();
 // When this process last started writing what's waiting, and when it last
-// finished: at most one write in flight, and one every FLUSH_GAP_MS, so a
+// finished: one write started at a time, and one every FLUSH_GAP_MS, so a
 // stream of refused requests (a keyless one costs nothing to send) adds one
-// statement every so often, not one each. A write that never finished (the
-// platform cut its after() off, or it hung) is taken as gone after
-// FLUSH_STALE_MS, as push-kick.ts does with its rounds.
+// statement every so often per server process, not one each. A write that
+// never finished (the platform cut its after() off, or it hung) is taken as
+// gone after FLUSH_STALE_MS, as push-kick.ts does with its rounds; nothing
+// cancels it, so if it does finish later it may overlap the next one, each
+// writing its own batch (nothing is counted twice), and only the newest
+// write's end clears the guard (`gen`), so a late one can't let a third in.
 export const FLUSH_GAP_MS = 30_000;
 const FLUSH_STALE_MS = 60_000;
 // The routes, tools and actions times their codes stay far under this; it's
 // a backstop, past which a new entry is noted as its surface's 'other'.
 const MAX_WAITING = 2000;
-const flushing: { since: number | null; last: number | null } = {
+const flushing: { since: number | null; last: number | null; gen: number } = {
   since: null,
   last: null,
+  gen: 0,
 };
 
 const CODE_RE = /^[a-z_]{1,40}$/;
@@ -100,8 +104,8 @@ export function countRefusal(
 }
 
 // One entry per surface, what, code and status. The table's key has no
-// status (a code is answered with one status), so if one ever came with two,
-// its row keeps the latest written.
+// status (a code is answered with one status), so its status is the last
+// seen: if a code ever came with two, its row keeps the latest written.
 function keyOf(k: Omit<Noted, "n">): string {
   return `${k.surface}\n${k.what}\n${k.code}\n${k.status}`;
 }
@@ -125,6 +129,7 @@ export function kickRefusals(
   if (flushing.since !== null && now - flushing.since < FLUSH_STALE_MS) return;
   if (flushing.last !== null && now - flushing.last < FLUSH_GAP_MS) return;
   flushing.since = now;
+  const gen = ++flushing.gen;
   try {
     schedule(async () => {
       try {
@@ -133,13 +138,13 @@ export function kickRefusals(
       } catch (e) {
         console.error(e);
       } finally {
-        flushing.since = null;
+        if (flushing.gen === gen) flushing.since = null;
         flushing.last = Date.now();
       }
     });
   } catch {
     // Outside a request (tests, scripts): they flush when they choose.
-    flushing.since = null;
+    if (flushing.gen === gen) flushing.since = null;
   }
 }
 
@@ -226,6 +231,11 @@ export async function refusalCounts(
 // For tests: forget when this process last wrote.
 export function resetRefusalFlush(): void {
   flushing.since = null;
+  flushing.last = null;
+}
+
+// For tests: forget when the last write finished, keeping any in flight.
+export function resetRefusalGap(): void {
   flushing.last = null;
 }
 
