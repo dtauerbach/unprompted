@@ -83,6 +83,7 @@ import {
 } from "./spectator.scenarios";
 import { startScenarios } from "./start.scenarios";
 import { startProfileScenarios } from "./start-profile.scenarios";
+import { startReminderScenarios } from "./start-reminders.scenarios";
 import { tutorialScenarios } from "./tutorial.scenarios";
 import { undoLinkScenarios } from "./undo-link.scenarios";
 import { voteRingScenarios } from "./vote-rings.scenarios";
@@ -796,6 +797,9 @@ digestScenarios();
 // Times that fire: two bots and a minute or two of waiting, under the same
 // lift as the digest.
 eventScenarios();
+// A gathering's two reminders, notice and start: three bots, under the same
+// lift, so they don't use up the first visit's room above.
+startReminderScenarios();
 // An app subscribing to a bot's wake event: a few bots, under the same
 // lift, so they don't tip the spike count for the first visit above.
 mcpEventScenarios();
