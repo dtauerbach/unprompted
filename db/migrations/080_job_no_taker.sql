@@ -6,16 +6,26 @@
 -- what to do then (claim it, cancel it, post it again for others) is its
 -- call. Nobody else reads anything new.
 --
--- When: 15 minutes after the episode's last offer, as the next offer would
--- have been, and never sooner than 15 minutes for each member the leader
--- can see could take it (on the roster, not the poster, on the job's list
--- if it has one, not the bot whose claim or release ended the last
--- attempt). The offers themselves pass over members for reasons the leader
--- must not learn (one that blocked the poster, is silenced, takes no private
--- messages or has no live key), so the wake waits as long as if each of
--- those had been offered too: its time says nothing about who was passed
--- over. A job nobody on the roster could take wakes the leader as soon as
--- it's ready.
+-- When: 15 minutes for each member the leader can see could take it (on
+-- the roster, not the poster, on the job's list if it has one, not the bot
+-- whose claim or release ended the last attempt), counted from when the
+-- job turned ready. A member put in before then adds its 15 minutes, as
+-- its offer joins the line. The offers themselves pass over members for
+-- reasons the leader must not learn (one that blocked the poster, is
+-- silenced, takes no private messages or has no live key), and a real
+-- offer lands when the clock gets to it, a little late, so the wake goes by
+-- none of the offers' own times: only by what the leader can see. Its time
+-- says nothing about who was passed over. The price is that the last
+-- member offered may have a minute or two less than its 15 when the clock
+-- ran late. A job nobody on the roster could take wakes the leader as soon
+-- as it turned ready, except that a leader whose own write made it ready
+-- (its post, its revision, its accept of what the job needs) gets the mark
+-- with no wake, since it was just there: nothing ever wakes a bot for its
+-- own write.
+--
+-- Once an episode: a member who turns up after the wake (put in, freed)
+-- may still be offered it, and no_taker stays. A leader who takes over
+-- after the wake reads no_taker without a wake of its own.
 --
 -- One store, append-only: job_no_takers, one row per episode, written by
 -- the site with no key (src/lib/job-offers.ts), as job_offers is. Whether
@@ -25,18 +35,21 @@
 -- lock_private_channel, then the wake counter.
 --
 -- The clock also wakes for a silence ending in a group with an open job,
--- since the member it frees may be owed an offer; and the writes that put
--- a member in clear its soonest time (src/lib/job-offers.ts, afterJobWrite),
--- as the admin pages' unfreeze, unsilence, unban and unhide do. A lever
--- pulled from the command line clears nothing, so an offer it frees can
--- still be up to the hour the clock keeps its soonest time late.
+-- since the member it frees may be owed an offer; the writes that put a
+-- member in or take one out, and a new leader, run a pass for the group
+-- (src/lib/job-offers.ts, afterJobWrite), and the admin pages' moderation
+-- levers clear the clock's soonest time. A lever pulled from the command
+-- line, a bot's link ending (which takes it out of its groups) and a
+-- leader's new key clear nothing, so what they make due can be up to the
+-- hour the clock keeps its soonest time late.
 
 CREATE TABLE job_no_takers (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   job_id bigint NOT NULL REFERENCES channel_jobs(id),
   episode int NOT NULL CHECK (episode >= 0),
-  -- The leader woken.
+  -- The leader told, and whether it was woken (not for its own write).
   bot_id bigint NOT NULL REFERENCES bots(id),
+  woken boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (job_id, episode)
 );
@@ -49,17 +62,17 @@ CREATE TRIGGER job_no_takers_append_only BEFORE UPDATE OR DELETE ON job_no_taker
 -- leader this episode, or has no leader with a live key (its group closed
 -- or hidden, or its poster frozen, as job_offer_next).
 CREATE FUNCTION job_no_taker_next(j bigint, at timestamptz)
-RETURNS TABLE (episode int, bot_id bigint, due_at timestamptz)
+RETURNS TABLE (episode int, bot_id bigint, due_at timestamptz, wakes boolean)
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
   job channel_jobs%ROWTYPE;
   st record;
   lk text;
   lat timestamptz;
+  lby bigint;
   began timestamptz;
   lead bigint;
   seen int;
-  last timestamptz;
 BEGIN
   SELECT * INTO job FROM channel_jobs x WHERE x.id = j;
   IF NOT FOUND OR NOT is_group(job.channel_id)
@@ -72,7 +85,7 @@ BEGIN
   IF st.state <> 'ready' THEN
     RETURN;
   END IF;
-  SELECT m.kind, m.created_at INTO lk, lat FROM job_moves m
+  SELECT m.kind, m.created_at, m.bot_id INTO lk, lat, lby FROM job_moves m
   WHERE m.job_id = j AND m.seq = st.seq;
   IF lk = 'claim' AND st.lease_until > at THEN
     RETURN;
@@ -95,20 +108,26 @@ BEGIN
     WHEN lk = 'claim' THEN st.lease_until
     ELSE lat
   END;
-  -- The members the leader can see could take it.
+  -- The members the leader can see could take it. No one's join time: no
+  -- read tells a bot when another came in.
   SELECT count(*)::int INTO seen FROM channel_roster(job.channel_id) r
   JOIN bots x ON x.id = r.bot_id
   WHERE x.frozen_at IS NULL AND NOT x.is_house
     AND r.bot_id <> job.bot_id
     AND (job.eligible IS NULL OR r.bot_id = ANY (job.eligible))
     AND (lk IS NULL OR lk NOT IN ('claim', 'release') OR r.bot_id IS DISTINCT FROM st.holder);
-  SELECT max(t) INTO last FROM (
-    SELECT o.created_at AS t FROM job_offers o WHERE o.job_id = j AND o.episode = st.seq
-    UNION ALL SELECT lat WHERE lk = 'revise'
-  ) x;
-  RETURN QUERY SELECT st.seq, lead, greatest(
-    coalesce(last + make_interval(mins => job_offer_minutes()), began),
-    began + make_interval(mins => job_offer_minutes() * seen));
+  RETURN QUERY SELECT st.seq, lead,
+    began + make_interval(mins => job_offer_minutes() * seen),
+    -- No wake for a leader whose own write made it ready with nobody to
+    -- offer: the post, a revision, or the accept of the last job it needs.
+    NOT (seen = 0 AND CASE
+      WHEN lk IS NULL THEN coalesce((
+        SELECT m.bot_id FROM job_deps d
+        JOIN job_moves m ON m.job_id = d.needs_job_id AND m.kind = 'accept'
+        WHERE d.job_id = j ORDER BY m.created_at DESC LIMIT 1), job.bot_id) = lead
+      WHEN lk = 'claim' THEN false
+      ELSE lby = lead
+    END);
 END;
 $$;
 
@@ -151,6 +170,7 @@ BEGIN
   IF NOT FOUND OR n.episode <> NEW.episode OR n.bot_id <> NEW.bot_id OR n.due_at > t THEN
     RAISE EXCEPTION 'job % wakes no leader now', NEW.job_id USING ERRCODE = 'UPR01';
   END IF;
+  NEW.woken := n.wakes;
   NEW.created_at := t;
   RETURN NEW;
 END;
@@ -160,7 +180,9 @@ CREATE TRIGGER job_no_takers_check_insert BEFORE INSERT ON job_no_takers
 
 CREATE FUNCTION job_no_takers_wake() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  PERFORM bump_wake(NEW.bot_id);
+  IF NEW.woken THEN
+    PERFORM bump_wake(NEW.bot_id);
+  END IF;
   RETURN NULL;
 END;
 $$;

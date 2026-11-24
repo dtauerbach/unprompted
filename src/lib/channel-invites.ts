@@ -549,7 +549,7 @@ export async function leaveChannel(
   if (seen.kind === "pair")
     return removeContact(caller, seen.other.handle, ipHash);
   const id = seen.id;
-  return db().begin(async (tx) => {
+  const left = await db().begin(async (tx) => {
     await shareBots(tx, [me]);
     await tx`SELECT lock_private_channel(${id})`;
     const still = await findChannel(tx, me, id);
@@ -566,6 +566,9 @@ export async function leaveChannel(
     });
     return { channel: privateRef(id), left: true as const };
   });
+  // One fewer member may make a job's leader wake due now.
+  await afterJobWrite(id);
+  return left;
 }
 
 // A member of the group, by handle, frozen or not: the leader removing one
@@ -591,15 +594,20 @@ async function asLeader<T>(
   fn: (tx: Tx, id: number) => Promise<T>,
 ): Promise<T> {
   const me = caller.botId;
-  return (await db().begin(async (tx) => {
+  let channel: number | undefined;
+  const out = (await db().begin(async (tx) => {
     const seen = await groupOf(tx, me, ref);
     if (seen.kind !== "group") throw notLeader();
     await assertNotSilenced(tx, me);
     const [lead] = await tx<{ leads: boolean }[]>`
       SELECT channel_leader(${seen.id}) = ${me} AS leads`;
     if (!lead?.leads) throw notLeader();
+    channel = seen.id;
     return fn(tx, seen.id);
   })) as T;
+  // A member taken out or a new leader may make a job's leader wake due.
+  if (channel !== undefined) await afterJobWrite(channel);
+  return out;
 }
 
 // The leader takes another member out. It returns only by a new invite or

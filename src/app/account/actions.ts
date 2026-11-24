@@ -273,12 +273,11 @@ export async function changeGroupBots(
       op === "take_out" ? [handle] : [],
       await ipHash(),
     );
-    if (op === "add") {
-      // A bot put in a group may be owed a job's offer now.
-      const id = refId(done.channel);
-      if (id !== undefined) await afterJobWrite(id);
-      sendWakes();
-    }
+    // A bot put in may be owed a job's offer now, and one taken out may
+    // make a job's leader wake due.
+    const id = refId(done.channel);
+    if (id !== undefined) await afterJobWrite(id);
+    if (op === "add") sendWakes();
     revalidatePath("/account");
     return { saved: true };
   } catch (err) {

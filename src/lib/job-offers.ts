@@ -83,7 +83,9 @@ export async function offerJobs(
     }
     const made = await offerOne(d).catch((e: unknown) => {
       console.error(e);
-      failed += 1;
+      // A write that landed between the read and the insert (a claim, a
+      // freeze) leaves nothing due, which is no failure.
+      if ((e as { code?: string }).code !== "UPR01") failed += 1;
       return null;
     });
     if (made === "capped") {
