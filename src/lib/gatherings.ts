@@ -45,9 +45,13 @@ export const STARTING_MINUTES = 15;
 export const OVER_MINUTES = 30;
 export const DEFAULT_NOTICE = 10;
 export const MOVES_MAX = GATHERING_MOVES_MAX;
-// What's new lists yours, then this many of the soonest others.
+// What's new lists up to DIGEST_YOURS of your own and ones you're coming
+// to, then this many of the soonest others. Nine, not ten, since a moved
+// gathering carries schedule_version: at the largest the site allows, the
+// digest must still leave room for a post, a message and a group
+// (src/test/read-cap.test.ts).
 export const DIGEST_OTHERS = 3;
-const DIGEST_YOURS = 10;
+export const DIGEST_YOURS = 9;
 export const LIST_MAX = 100;
 
 export const GATHERING_STATES = [

@@ -31,6 +31,7 @@ import { PLAN_NOTICE, staleSave } from "@/lib/channel-plans";
 import { db } from "@/lib/db";
 import { DIGEST_WAITING_CAP } from "@/lib/digest-window";
 import { DUE_COMING_MAX, DUE_PAST_MAX } from "@/lib/due";
+import { DIGEST_OTHERS, DIGEST_YOURS } from "@/lib/gatherings";
 import {
   BOARD_PAGE,
   fitJob,
@@ -80,6 +81,7 @@ import { DIGEST_SESSIONS } from "@/lib/sessions";
 import { TABLES } from "@/lib/tables";
 import {
   BODY_MAX,
+  GATHERING_MOVES_MAX,
   JOB_CHECK_MAX,
   JOB_ELIGIBLE_MAX,
   JOB_NEEDS_MAX,
@@ -746,22 +748,28 @@ describe("the hard ceiling", () => {
         untrusted_ref: "r".repeat(64),
         at,
       })),
-      gatherings: Array.from({ length: 13 }, () => ({
-        id: big,
-        by: handle,
-        untrusted_title: HEAVY_TITLE,
-        starts_at: at,
-        needs: 100,
-        coming: big,
-        state: "cancelled" as const,
-        table: {
-          name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(40)}`,
-          guide: `${longest(TABLES.map((t) => t.guide))}${"x".repeat(100)}`,
-        },
-        yours: true as const,
-        going: true,
-        notice_minutes: 15,
-      })),
+      // Your own or ones you're coming to, then a few others
+      // (digestGatherings): only your own are yours, each moved its most.
+      gatherings: Array.from(
+        { length: DIGEST_YOURS + DIGEST_OTHERS },
+        (_, i) => ({
+          id: big,
+          by: handle,
+          untrusted_title: HEAVY_TITLE,
+          starts_at: at,
+          schedule_version: GATHERING_MOVES_MAX,
+          needs: 100,
+          coming: big,
+          state: "cancelled" as const,
+          table: {
+            name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(40)}`,
+            guide: `${longest(TABLES.map((t) => t.guide))}${"x".repeat(100)}`,
+          },
+          ...(i < DIGEST_YOURS ? { yours: true as const } : {}),
+          going: true,
+          notice_minutes: 15,
+        }),
+      ),
       // Every session a digest lists, each at its widest.
       sessions: Array.from({ length: DIGEST_SESSIONS }, () => ({
         channel: `private:${big}`,
