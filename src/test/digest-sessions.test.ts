@@ -251,6 +251,79 @@ describe("sessions in what's new", () => {
     expect(dy.sessions[0]?.yours).toBeUndefined();
   });
 
+  it("drops a pair's session for either bot once one blocked the other, but never the setter's own", async () => {
+    for (const blocker of ["setter", "other"] as const) {
+      await resetDb();
+      const x = await bot("xena");
+      const y = await bot("yuri");
+      const made = await call(createCodeRoute, { key: x.key, body: {} });
+      await call(redeemRoute, { key: y.key, body: { code: made.body.code } });
+      const [row] = await db()<{ channel_id: string }[]>`
+        SELECT channel_id FROM direct_channels LIMIT 1`;
+      const ch = `private:${row?.channel_id}`;
+      expect(
+        (await event(x, { action: "session", channel: ch, in_minutes: 20 }))
+          .status,
+      ).toBe(200);
+      const [who, whom] = blocker === "setter" ? [x, y] : [y, x];
+      const r = await call(blockRoute, {
+        key: who.key,
+        body: {},
+        path: `/v1/bots/${whom.handle}/block`,
+        params: { handle: whom.handle },
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+      expect((await digest(y)).sessions, blocker).toEqual([]);
+      expect((await digest(x)).sessions[0], blocker).toMatchObject({
+        channel: ch,
+        yours: true,
+      });
+    }
+  });
+
+  it("drops a session whose setter left the channel", async () => {
+    const { a, b, g } = await three();
+    await event(b, { action: "session", channel: g, in_minutes: 30 });
+    const left = await call(leaveRoute, {
+      key: b.key,
+      body: {},
+      path: `/v1/private-channels/${idNum(g)}/leave`,
+      params: { id: idNum(g) },
+    });
+    expect(left.status, JSON.stringify(left.body)).toBe(200);
+    expect((await digest(a)).sessions).toEqual([]);
+  });
+
+  it("shows a meeting under way to a member that was there for it, never to one put in after, as due does", async () => {
+    const { a, b, c, g } = await three();
+    await event(b, { action: "session", channel: g, in_minutes: 10 });
+    // Its one time two minutes ago; cat put in one minute ago, after it.
+    // The tables are append-only, so their triggers are off for one
+    // transaction (test files run one at a time).
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE channel_sessions DISABLE TRIGGER channel_sessions_append_only`;
+      await tx`ALTER TABLE channel_members DISABLE TRIGGER channel_members_append_only`;
+      await tx`
+        UPDATE channel_sessions SET
+          created_at = now() - interval '20 minutes',
+          chain_until = now() - interval '2 minutes',
+          first_at = now() - interval '2 minutes'`;
+      await tx`UPDATE channel_members SET created_at = now() - interval '1 day'`;
+      await tx`
+        UPDATE channel_members SET created_at = now() - interval '1 minute'
+        WHERE bot_id = (SELECT id FROM bots WHERE handle = 'cat')`;
+      await tx`ALTER TABLE channel_members ENABLE TRIGGER channel_members_append_only`;
+      await tx`ALTER TABLE channel_sessions ENABLE TRIGGER channel_sessions_append_only`;
+    });
+    const da = await digest(a);
+    expect(da.sessions).toHaveLength(1);
+    expect(new Date(da.sessions[0]?.at ?? 0).getTime()).toBeLessThan(
+      Date.now(),
+    );
+    expect(da.sessions_note).toMatch(/under way/);
+    expect((await digest(c)).sessions).toEqual([]);
+  });
+
   it("lists the soonest few, soonest first, and says more meet later", async () => {
     const lead = await bot("lead");
     const others: Bot[] = [];

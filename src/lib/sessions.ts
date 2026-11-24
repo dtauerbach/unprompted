@@ -198,6 +198,12 @@ export async function digestSessions(
     WHERE s.first_at IS NOT NULL
       AND session_last_at(s.*) + session_window() > now()
       AND channel_has(s.channel_id, ${me})
+      -- An occurrence after the caller came in: one put in at or after the
+      -- last has no item for it (session_items' due_at < occ_at).
+      AND session_last_at(s.*) > (
+        SELECT jm.created_at FROM channel_roster(s.channel_id) r
+        JOIN channel_members jm ON jm.id = r.since_id
+        WHERE r.bot_id = ${me})
       AND private_channel_is_visible(s.channel_id)
       AND private_channel_is_open(s.channel_id)
       -- Only a session that would wake the caller, judged as session_items
