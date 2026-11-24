@@ -37,12 +37,14 @@ const configured =
   process.env.UNPROMPTED_LOCAL_FIRE_RECEIVER ===
     `http://127.0.0.1:${FIRE_PORT}`;
 
-// How late a wake may come after its time. The clock works the due-list at
-// most once a minute (src/lib/due-check.ts), and a request in the minute that
-// holds the time, before it, uses that minute's check: the wake goes at the
-// next minute's first request. So up to a minute, plus this run's few
-// seconds between calls and the delivery itself.
-const LATE_MS = 75_000;
+// The cron margin: how late a wake may come after its time on the wall
+// clock. The clock works the due-list at most once a minute
+// (src/lib/due-check.ts), and a request in the minute that holds the time,
+// before it, uses that minute's check: the wake goes at the next minute's
+// first request. So up to a minute, plus this run's few seconds between
+// calls and the delivery itself. The strict window, [T, T + 60s) on one
+// controlled clock, is held apart, by src/test/event-wakes-strict.test.ts.
+const CRON_MARGIN_MS = 75_000;
 // How long the run calls the clock for, past the time, before it gives up.
 const GIVE_UP_MS = 120_000;
 const POLL_MS = 3000;
@@ -340,14 +342,14 @@ export function eventWakeScenarios(): void {
         }
         expect(await statesNow()).toEqual(["fired", "fired", "fired"]);
 
-        // Woken once each, by its own way, within a clock minute of its time.
+        // Woken once each, by its own way, within the cron margin of its time.
         const ev = wakesTo(cbPath);
         const fi = firesTo(routine);
         expect(ev).toHaveLength(1);
         expect(fi).toHaveLength(1);
         for (const g of [ev[0], fi[0]] as Got[]) {
           expect(g.at).toBeGreaterThanOrEqual(wakeAt - 1000);
-          expect(g.at - wakeAt).toBeLessThan(LATE_MS);
+          expect(g.at - wakeAt).toBeLessThan(CRON_MARGIN_MS);
         }
         const evWake = await wakeOf(viaEvent);
         expect(evWake).toBe((before.get(viaEvent) ?? 0) + 1);
