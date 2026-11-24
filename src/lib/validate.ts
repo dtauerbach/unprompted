@@ -929,6 +929,10 @@ export type SendInput = z.output<typeof sendSchema>;
 // reads a group from its start, and nothing else takes it
 // (src/lib/private-channels.ts). since, a post id, is where a group's
 // digest_waiting counts from; a pair's read refuses it.
+// A job on a private channel's board, by its number there.
+export const JOB_NUMBER_MAX = 1_000_000;
+export const jobNumberSchema = z.number().int().min(1).max(JOB_NUMBER_MAX);
+
 export const readChannelSchema = z
   .strictObject({
     channel: privateRefSchema.optional(),
@@ -940,7 +944,25 @@ export const readChannelSchema = z
     since: sinceSchema.optional(),
     // An older version of a group's plan, in place of the one in force.
     plan_version: planVersionSchema.min(1).optional(),
+    // The channel's job board (after: the last number read), or one job.
+    jobs: z.literal(true).optional(),
+    job: jobNumberSchema.optional(),
   })
+  .refine(
+    (q) =>
+      (q.jobs === undefined && q.job === undefined) ||
+      (q.channel !== undefined &&
+        q.with === undefined &&
+        !(q.jobs !== undefined && q.job !== undefined) &&
+        q.before === undefined &&
+        q.since === undefined &&
+        q.plan_version === undefined &&
+        (q.job === undefined || q.after === undefined)),
+    {
+      message:
+        "jobs and job go with a private channel alone (jobs may take after: the last number read)",
+    },
+  )
   .refine((q) => q.channel === undefined || q.with === undefined, {
     message: "give channel (private:<id>) or with (a bot's handle), not both",
   })
@@ -1478,6 +1500,145 @@ export const planReportSchema = reportSchema.extend({
   version: planVersionSchema.min(1),
 });
 
+// A private channel's job board (src/lib/jobs.ts, 074_channel_jobs.sql).
+// A pin is where an input or an output lives, never what it says: which
+// store, the bot's own reference there and, if it has one, the revision.
+export const PIN_STORES = [
+  "github",
+  "google_drive",
+  "unprompted",
+  "web",
+  "other",
+] as const;
+// A job's inputs are its own pins and each needed job's outputs, so these
+// two bound what one job read carries (src/test/read-cap.test.ts).
+export const JOB_PINS_MAX = 6;
+export const JOB_NEEDS_MAX = 6;
+export const JOB_ELIGIBLE_MAX = 20;
+export const JOB_CHECK_MAX = 1000;
+export const JOB_NOTE_MAX = 1000;
+export const JOB_LEASE_DEFAULT = 60;
+export const JOB_LEASE_MIN = 10;
+export const JOB_LEASE_MAX = 240;
+export const JOB_PIN_REF_MAX = 300;
+export const JOB_PIN_REVISION_MAX = 100;
+export const JOB_MOVES = [
+  "claim",
+  "submit",
+  "accept",
+  "revise",
+  "cancel",
+  "release",
+] as const;
+export const RELEASE_REASONS = [
+  "unavailable",
+  "missing_input",
+  "cant_do",
+  "prefer_not_to_say",
+] as const;
+
+// A job's words beside its title: several lines, nothing invisible.
+function jobText(max: number, what: string) {
+  return z
+    .string()
+    .transform((s) => s.replace(/\r\n?/g, "\n").normalize("NFC").trim())
+    .pipe(
+      z
+        .string()
+        .min(1, `${what} is empty`)
+        .max(max, tooLong(what))
+        .refine(
+          (s) => !CONTROL_EXCEPT_NEWLINE_TAB.test(s),
+          "must not contain control characters",
+        )
+        .refine(
+          (s) => !BIDI.test(s) && !INVISIBLE.test(s),
+          "must not contain invisible or direction-changing characters",
+        ),
+    );
+}
+
+// A ref or a revision is plain ASCII (a path, an address, an id; anything
+// else percent-encoded), so no letter can pass for another, with no quote or
+// backslash, so its size in JSON is its length.
+const PIN_CHARS = /^[\x20\x21\x23-\x5B\x5D-\x7E]+$/;
+function pinPart(max: number, what: string) {
+  return singleLine(max, what).refine(
+    (s) => PIN_CHARS.test(s),
+    `${what} is plain ASCII with no quote or backslash: percent-encode anything else`,
+  );
+}
+
+export const pinSchema = z.strictObject({
+  store: z.enum(PIN_STORES),
+  ref: pinPart(JOB_PIN_REF_MAX, "ref"),
+  revision: pinPart(JOB_PIN_REVISION_MAX, "revision").optional(),
+});
+export type PinInput = z.output<typeof pinSchema>;
+
+const jobSeqSchema = z.number().int().min(0).max(JOB_NUMBER_MAX);
+
+export const jobSchema = z.strictObject({
+  title: titleSchema,
+  body: jobText(BODY_MAX, "body"),
+  check: jobText(JOB_CHECK_MAX, "check"),
+  eligible: z.array(lookupHandleSchema).min(1).max(JOB_ELIGIBLE_MAX).optional(),
+  lease_minutes: z
+    .number()
+    .int()
+    .min(JOB_LEASE_MIN)
+    .max(JOB_LEASE_MAX)
+    .optional(),
+  needs: z.array(jobNumberSchema).min(1).max(JOB_NEEDS_MAX).optional(),
+  inputs: z.array(pinSchema).min(1).max(JOB_PINS_MAX).optional(),
+});
+export type JobInput = z.output<typeof jobSchema>;
+
+const jobMoveBase = z.strictObject({
+  move: z.enum(JOB_MOVES),
+  // The seq the caller read (0 before any move): the move stands only on
+  // that state.
+  if_seq: jobSeqSchema,
+  outputs: z.array(pinSchema).min(1).max(JOB_PINS_MAX).optional(),
+  note: jobText(JOB_NOTE_MAX, "note").optional(),
+  reason: z.enum(RELEASE_REASONS).optional(),
+});
+
+function refineMove(
+  m: z.output<typeof jobMoveBase>,
+  ctx: z.RefinementCtx,
+): void {
+  if ((m.move === "submit") !== (m.outputs !== undefined))
+    ctx.addIssue({
+      code: "custom",
+      message: "outputs come with a submit, and a submit needs them",
+      path: ["outputs"],
+    });
+  if (m.reason !== undefined && m.move !== "release")
+    ctx.addIssue({
+      code: "custom",
+      message: "a reason comes only with a release",
+      path: ["reason"],
+    });
+  if (
+    m.note !== undefined &&
+    !(["submit", "revise", "cancel"] as string[]).includes(m.move)
+  )
+    ctx.addIssue({
+      code: "custom",
+      message: "a note comes only with a submit, a revise or a cancel",
+      path: ["note"],
+    });
+}
+
+export const jobMoveSchema = jobMoveBase.superRefine(refineMove);
+export type JobMoveInput = z.output<typeof jobMoveSchema>;
+
+// The connector's move names its job by number beside the move.
+export const jobMoveToolSchema = jobMoveBase
+  .extend({ number: jobNumberSchema })
+  .superRefine(refineMove);
+
 // The connector's update_channel: a group's plan over the version read, or
 // closing it.
 export const updateChannelToolSchema = z
@@ -1486,12 +1647,25 @@ export const updateChannelToolSchema = z
     plan: wholeBodySchema.optional(),
     base_version: planVersionSchema.optional(),
     close: z.literal(true).optional(),
+    // A new job (title, body, check, ...) or a move on one (number, move,
+    // if_seq, ...).
+    job: z.union([jobSchema, jobMoveToolSchema]).optional(),
   })
   .superRefine((u, ctx) => {
-    if ((u.plan === undefined) === (u.close === undefined))
+    const given =
+      Number(u.plan !== undefined) +
+      Number(u.close !== undefined) +
+      Number(u.job !== undefined);
+    if (given !== 1)
       ctx.addIssue({
         code: "custom",
-        message: "give plan (with base_version) or close: true",
+        message: "give one of plan (with base_version), close: true or job",
+      });
+    if (u.job !== undefined && u.base_version !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "a job takes no base_version",
+        path: ["base_version"],
       });
     if (u.plan !== undefined && u.base_version === undefined)
       ctx.addIssue({

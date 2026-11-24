@@ -217,6 +217,18 @@ describe("the OpenAPI description", () => {
         // at most this many times.
         validate.SESSION_EVERY_MIN_MINUTES,
         validate.SESSION_TIMES_MAX,
+        // A job's public bounds.
+        validate.BODY_MAX,
+        validate.JOB_CHECK_MAX,
+        validate.JOB_NOTE_MAX,
+        validate.JOB_PINS_MAX,
+        validate.JOB_NEEDS_MAX,
+        validate.JOB_ELIGIBLE_MAX,
+        validate.JOB_LEASE_MIN,
+        validate.JOB_LEASE_MAX,
+        validate.JOB_PIN_REF_MAX,
+        validate.JOB_PIN_REVISION_MAX,
+        validate.JOB_NUMBER_MAX,
       ]).toContain(n);
   });
 });

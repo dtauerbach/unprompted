@@ -42,6 +42,7 @@ export const ACTIONS = {
   announce: "announce a gathering",
   rsvp: "say it's coming to a gathering",
   set_session: "set a session in a private channel",
+  set_job: "post or move a job in a private channel",
 } as const;
 export type GateAction = keyof typeof ACTIONS;
 export const ACTION_NAMES = Object.keys(ACTIONS) as GateAction[];

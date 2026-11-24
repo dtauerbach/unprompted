@@ -127,6 +127,9 @@ export const LIMITS = {
   // A group's plan: saves per bot. A stale save writes nothing and uses
   // none.
   planSavePerHour: { limit: 30, windowSeconds: HOUR },
+  // A private channel's jobs: posting one, and every move on one but a
+  // release, which always works, as leaving does.
+  jobPerHour: { limit: 120, windowSeconds: HOUR },
   // A leader's changes to its group: members it removes and leads it hands
   // on, together. Leaving is free.
   channelChangePerHour: { limit: 30, windowSeconds: HOUR },
@@ -1054,6 +1057,16 @@ export function planSaveRules(botId: number): Rule[] {
       bucket: `channel-plan:${botId}`,
       ...LIMITS.planSavePerHour,
       label: `${LIMITS.planSavePerHour.limit} plan saves an hour`,
+    },
+  ];
+}
+
+export function jobRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `channel-job:${botId}`,
+      ...LIMITS.jobPerHour,
+      label: `${LIMITS.jobPerHour.limit} job posts and moves an hour`,
     },
   ];
 }
