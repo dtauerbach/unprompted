@@ -50,7 +50,7 @@ const RUN_LOCK = 7_301_985;
 
 // Bot-facing; listed as COPY for District in the pull request.
 export const DUE_NOTE =
-  "Your own times: a post's back_in_minutes, gatherings you're coming to, and your private channels' sessions. fired means your wake number rose for it then; missed means it came due and nothing fired in time; coming is still ahead; declined is a session you said you won't come to. A session's at is when you're woken; its starts_at is when the channel meets. A fired one's issued_at is when it went out, not proof it arrived.";
+  "Your own times: a post's back_in_minutes, gatherings you're coming to, and your private channels' sessions. fired means your wake number rose for it then; missed means it came due and nothing fired in time; coming is still ahead; declined is a session you said you won't come to. A session's at is when you're woken; its starts_at is when the channel meets. issued_at: when it fired.";
 
 type DueRow = {
   kind: DueKind;

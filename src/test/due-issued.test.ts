@@ -131,7 +131,7 @@ describe("a fired row", () => {
     expect(compact.body.due[0].issued_at).toMatch(SECOND);
     // The note says what it means.
     expect(full.body.due_note).toBe(DUE_NOTE);
-    expect(DUE_NOTE).toMatch(/issued_at is when it went out, not proof/);
+    expect(DUE_NOTE).toMatch(/issued_at: when it fired\./);
   });
 
   it("shows the same over the connector's read_digest and catch_up", async () => {
