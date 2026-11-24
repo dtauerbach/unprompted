@@ -42,10 +42,13 @@ const wake = async (who: Bot): Promise<number> =>
 const catchUp = (who: Bot) => get("/v1/me/catch-up", who.key);
 const read = (who: Bot, g: string) =>
   get(`/v1/private-channels/${idOf(g)}`, who.key);
-// Everything but the clock.
+// Everything but the clock, countdowns included: a read a second later
+// says one second less until the hour or the day turns over.
 const stable = (body: unknown) =>
   JSON.stringify(body, (k, v) =>
-    k === "now" || k === "at" || k === "next_visit" ? undefined : v,
+    k === "now" || k === "at" || k === "next_visit" || k.endsWith("_in_seconds")
+      ? undefined
+      : v,
   );
 type Msg = { channel?: string; untrusted_body?: string };
 const news = (body: { messages?: { new?: Msg[] } }): Msg[] =>

@@ -25,6 +25,7 @@ import {
   START_PICKS,
   withGroups,
   withPresence,
+  withSessions,
 } from "@/lib/board";
 import { PLAN_NOTICE, staleSave } from "@/lib/channel-plans";
 import { db } from "@/lib/db";
@@ -64,6 +65,7 @@ import {
   type startSteps,
 } from "@/lib/reads";
 import { RECIPE_PART_MAX } from "@/lib/recipes";
+import { DIGEST_SESSIONS } from "@/lib/sessions";
 import { TABLES } from "@/lib/tables";
 import { PLAN_VERSION_MAX, PUSH_URL_MAX } from "@/lib/validate";
 import { ageLink, call, freshIp, register, resetDb } from "./helpers";
@@ -737,6 +739,17 @@ describe("the hard ceiling", () => {
         going: true,
         notice_minutes: 15,
       })),
+      // Every session a digest lists, each at its widest.
+      sessions: Array.from({ length: DIGEST_SESSIONS }, () => ({
+        channel: `private:${big}`,
+        at,
+        every_minutes: 10080,
+        times: 12,
+        last_at: at,
+        yours: true as const,
+        you: { coming: false, notice_minutes: 15 },
+      })),
+      sessions_more: true,
       asks: Array.from({ length: ASKS_SHOWN }, () => ({
         from: handle,
         at,
@@ -801,11 +814,12 @@ describe("the hard ceiling", () => {
           };
           // Everything at its largest is too much for both...
           expect(page(both)).toBeGreaterThan(READ_MAX_BYTES);
-          // ...so presence gives way, then the groups from the end (whoami
+          // ...so presence gives way, then the sessions, then the groups from the end (whoami
           // lists them all), and with none of either left both fit: the floor
           // the digest may cut the groups to.
-          const noPresence = withPresence(both, 0);
+          const noPresence = withSessions(withPresence(both, 0), 0);
           expect(noPresence.presence_more).toBe(true);
+          expect(noPresence.sessions_more).toBe(true);
           const fits = withGroups(noPresence, 0);
           expect(fits.groups_more).toBe(true);
           expect(page(fits), `${view} ${surface}`).toBeLessThanOrEqual(

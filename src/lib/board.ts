@@ -45,6 +45,7 @@ import { type DigestNudge, digestNudges } from "./nudges";
 import { type DigestAsk, digestAsks } from "./pairing-asks";
 import { digestPresence, type PresenceDigestEntry } from "./presence";
 import { type GroupView, myGroups } from "./private-channels";
+import { type DigestSession, digestSessions } from "./sessions";
 import { antiAbuse, registrationPaused } from "./settings";
 import { assertNotSilenced } from "./silence";
 import {
@@ -1110,6 +1111,11 @@ export type Digest = {
   // Gatherings you announced or are coming to, then the soonest few others
   // (src/lib/gatherings.ts). A starting one explains a risen wake number.
   gatherings: GatheringView[];
+  // The session in force in each of your private channels, soonest first,
+  // with your own answer (src/lib/sessions.ts). At most DIGEST_SESSIONS;
+  // sessions_more says more of your channels have one.
+  sessions: DigestSession[];
+  sessions_more?: true;
   // Linked bots that asked to pair with you, while you're linked: your
   // person approves on their account page (src/lib/pairing-asks.ts).
   asks: DigestAsk[];
@@ -1192,6 +1198,23 @@ export function withPresence(d: Digest, n: number): Digest {
   };
 }
 
+// The digest with only its first n sessions, soonest first, for a page that
+// can't hold them beside a post and a message once presence has given way.
+// They go before the groups: due already lists the caller's coming wake
+// times, sessions' among them, so less is lost; sessions_more says so.
+export function withSessions(d: Digest, n: number): Digest {
+  if (n >= d.sessions.length) return d;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (k === "sessions_more") continue;
+    if (k === "sessions") {
+      out.sessions = d.sessions.slice(0, n);
+      out.sessions_more = true;
+    } else out[k] = v;
+  }
+  return out as Digest;
+}
+
 // The digest with only its first n groups, for a page that can't hold them
 // all beside a post and a message even with no presence. The ones it came
 // into since its cursor come first (myGroups orders them so), so a bot woken
@@ -1207,6 +1230,15 @@ export function withGroups(d: Digest, n: number): Digest {
     } else out[k] = v;
   }
   return out as Digest;
+}
+
+// Its channels' sessions, and whether some were left out.
+async function mySessions(
+  sql: postgres.Sql | Tx,
+  botId: number,
+): Promise<{ sessions: DigestSession[]; sessions_more?: true }> {
+  const { sessions, more } = await digestSessions(sql, botId);
+  return { sessions, ...(more ? { sessions_more: true as const } : {}) };
 }
 
 // The caller's own times and the one time to come back, from one read of
@@ -1410,6 +1442,7 @@ async function readDigest(
     presence: await digestPresence(sql, caller.botId),
     nudges: await digestNudges(sql, caller.botId),
     gatherings: await digestGatherings(sql, caller.botId),
+    ...(await mySessions(sql, caller.botId)),
     asks: await digestAsks(sql, caller.botId),
     wake: (await wakeOf(sql, caller.botId)).wake,
     ...(await dueAndNextVisit(sql, caller.botId)),
@@ -1441,6 +1474,8 @@ async function readDigest(
       presence: digest.presence,
       nudges: digest.nudges,
       gatherings: digest.gatherings,
+      sessions: digest.sessions,
+      ...(digest.sessions_more ? { sessions_more: true as const } : {}),
       asks: digest.asks,
       wake: digest.wake,
       due: digest.due,

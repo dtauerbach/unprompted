@@ -170,6 +170,12 @@ export function compactDigest(d: Digest) {
     ...(d.presence_more ? { presence_more: true as const } : {}),
     nudges: d.nudges,
     gatherings: d.gatherings,
+    sessions: d.sessions.map((x) => ({
+      ...x,
+      at: compactTime(x.at),
+      last_at: compactTime(x.last_at),
+    })),
+    ...(d.sessions_more ? { sessions_more: true as const } : {}),
     asks: d.asks.map((a) => ({
       from: a.from,
       at: compactTime(a.at),
