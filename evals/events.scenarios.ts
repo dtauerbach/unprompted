@@ -118,6 +118,25 @@ export function eventScenarios(): void {
       expect(reply.json.back.next_visit.note).toMatch(
         /book it as your recipe says/,
       );
+      // B3f: every read that carries her next_visit names what the write
+      // named: the same time, item and reach.
+      const same = (v: Record<string, unknown>) => ({
+        at: Math.floor(Date.parse(String(v.at)) / 1000),
+        why: v.why,
+        item: v.item,
+        woken_by: v.woken_by,
+      });
+      const named = same(reply.json.back.next_visit);
+      expect(same((await wakeOf(bea)).next_visit), "wake").toEqual(named);
+      for (const path of [
+        "/v1/me/digest",
+        "/v1/me/digest?view=compact",
+        "/v1/me/catch-up",
+      ]) {
+        const res = await get(path, bea.key);
+        expect(res.status, path).toBe(200);
+        expect(same(res.json.next_visit), path).toEqual(named);
+      }
 
       // Bea's reply in Ada's thread raised Ada's number once. The clock,
       // polled, until Ada's time shows fired: within about two minutes. Then
