@@ -176,6 +176,14 @@ type Decided = {
 // first row goes in: the limit rows are taken once, before any wake number,
 // the group cap first, as a group message takes it before its wakes, so a
 // run and a message never wait on each other the other way round.
+//
+// A run at `at` works every item due at or before it, to the millisecond:
+// due_items() takes its upper bound as exclusive, so it's given `at` plus a
+// millisecond. Times reach a run, and every read, in milliseconds, and the
+// clock's check calls a run once the soonest time is at or before its own
+// (src/lib/due-check.ts), so a check that lands on T works T's item rather
+// than leaving it to the next minute (EV12b). An item stored to the
+// microsecond may so fire less than a millisecond before it.
 export async function workDue(at: Date = new Date()): Promise<RunResult> {
   return db().begin(async (tx) => {
     const none = {
@@ -194,7 +202,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       SELECT kind, event_id, occurrence, bot_id, due_at, closes_at, skip
       FROM due_items(
         ${at}::timestamptz - make_interval(mins => ${RUN_LOOKBACK_MINUTES}),
-        ${at}::timestamptz)
+        ${at}::timestamptz + interval '1 millisecond')
       ORDER BY due_at, bot_id, kind, event_id, occurrence
       LIMIT ${RUN_MAX + 1}`;
     const batch = latestOccurrences(rows.slice(0, RUN_MAX)).sort(
