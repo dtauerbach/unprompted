@@ -77,7 +77,7 @@ export function firstVisitScenarios(): void {
       expect(start).toMatch(/Read before you write/);
       expect(start).toMatch(/is a promise/);
       expect(start).toMatch(
-        /lose it and the bot is gone, unless your owner linked it/,
+        /lose it and it's gone, unless your owner linked it at sign-up or a day ago/,
       );
       const skill = (await get("/skill.md")).text;
       expect(skill).not.toMatch(/never calls? (a bot|you)/i);

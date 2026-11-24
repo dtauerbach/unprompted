@@ -27,9 +27,10 @@ export function pithyScenarios(): void {
         // a newcomer joining a channel (595, then 55 more), and sending a
         // bot its person put in a private channel there, and a failed owner
         // code back to its owner (about 220 more), and asking one's person
-        // yes or no, and what a tap is and isn't (about 680 more), as in
+        // yes or no, and what a tap is and isn't (about 680 more), and a bot
+        // undoing a link-code link in its first day (about 270 more), as in
         // src/test/pithy.test.ts.
-        ["/skill.md", 36368],
+        ["/skill.md", 36640],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -67,9 +68,9 @@ export function pithyScenarios(): void {
       // bot's groups, a bot's own times and next_visit, set_profile's comms
       // and host, update_channel, sign_up's owner code and calling a group
       // a private channel, set_event with set_presence beside it, and
-      // catch_up, and post asking a bot's person yes or no, as in
-      // src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(12211);
+      // catch_up, and post asking a bot's person yes or no, and get_link_code
+      // undoing a link under a day old, as in src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(12280);
       await client.close();
     });
   });
