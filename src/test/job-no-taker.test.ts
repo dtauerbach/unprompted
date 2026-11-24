@@ -113,6 +113,7 @@ async function age(minutes: number) {
     ["job_moves", "job_moves_append_only"],
     ["job_offers", "job_offers_append_only"],
     ["job_no_takers", "job_no_takers_append_only"],
+    ["channel_members", "channel_members_append_only"],
   ] as const;
   await db().begin(async (tx) => {
     for (const [t, trigger] of tables) {
@@ -121,6 +122,8 @@ async function age(minutes: number) {
     }
     await tx`UPDATE job_moves SET lease_until = lease_until - make_interval(mins => ${minutes})
              WHERE lease_until IS NOT NULL`;
+    await tx`UPDATE bots SET frozen_at = frozen_at - make_interval(mins => ${minutes})
+             WHERE frozen_at IS NOT NULL`;
     for (const [t, trigger] of tables)
       await tx`ALTER TABLE ${tx(t)} ENABLE TRIGGER ${tx(trigger)}`;
   });
@@ -307,6 +310,98 @@ describe("a job nobody takes", () => {
     await offerJobs();
     expect(await leaderWakes()).toEqual([]);
     expect(await leaderDueMinutes()).toBe(3 * JOB_OFFER_MINUTES);
+  });
+
+  it("counts no member who left, or was frozen, before the job was posted", async () => {
+    const { l, members, g } = await group();
+    const [, n] = members as [Bot, Bot, Bot];
+    await call(leaveRoute, { key: n.key, params: { id: num(g) } });
+    await setFrozen(db(), "oto", true, "test");
+    await age(1);
+    await post(l, g);
+    // moe alone: 15 minutes.
+    await window();
+    expect((await offerJobs()).leaders).toBe(1);
+  });
+
+  it("counts a member frozen before the post once it's unfrozen", async () => {
+    const { l, g } = await group();
+    await setFrozen(db(), "oto", true, "test");
+    await age(1);
+    await post(l, g);
+    await setFrozen(db(), "oto", false, "test");
+    await window();
+    await offerJobs();
+    await window();
+    await offerJobs();
+    expect(await leaderWakes()).toEqual([]);
+    expect(await leaderDueMinutes()).toBe(3 * JOB_OFFER_MINUTES);
+  });
+
+  it("wakes a leader whose own post was marked later, as the pass after it was held", async () => {
+    const { l, g } = await group([]);
+    await post(l, g);
+    // As if the pass after the post never ran.
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE job_no_takers DISABLE TRIGGER job_no_takers_append_only`;
+      await tx`DELETE FROM job_no_takers`;
+      await tx`ALTER TABLE job_no_takers ENABLE TRIGGER job_no_takers_append_only`;
+    });
+    await age(2);
+    const before = await wake(l);
+    expect((await offerJobs()).leaders).toBe(1);
+    expect(await wake(l)).toBe(before + 1);
+  });
+
+  it("wakes the leader after all once a member turns up after its unwoken mark and doesn't take the job", async () => {
+    const { l, g } = await group(["moe"]);
+    await setFrozen(db(), "moe", true, "test");
+    await age(1);
+    const before = await wake(l);
+    await post(l, g);
+    expect(await leaderWakes()).toHaveLength(1);
+    expect(await wake(l)).toBe(before);
+    await setFrozen(db(), "moe", false, "test");
+    expect((await offerJobs()).offered).toBe(1);
+    expect((await offerJobs()).leaders).toBe(0);
+    await window();
+    expect((await offerJobs()).leaders).toBe(1);
+    expect(await wake(l)).toBe(before + 1);
+    const rows = await db()<{ woken: boolean }[]>`
+      SELECT woken FROM job_no_takers ORDER BY id`;
+    expect(rows).toEqual([{ woken: false }, { woken: true }]);
+    // And no more that episode.
+    await window();
+    expect((await offerJobs()).leaders).toBe(0);
+  });
+
+  it("takes a job posted after its need was accepted as its poster's own write", async () => {
+    const { l, members, g } = await group(["moe"]);
+    const [m] = members as [Bot];
+    await post(l, g, { ...job, eligible: [m.handle] });
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await move(m, g, 1, {
+      move: "submit",
+      if_seq: 1,
+      outputs: [{ store: "github", ref: "a.md", revision: "r1" }],
+    });
+    expect((await move(l, g, 1, { move: "accept", if_seq: 2 })).status).toBe(
+      200,
+    );
+    // moe leads now and posts a job only it was listed for.
+    await call(leaderRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: m.handle },
+    });
+    const before = await wake(m);
+    const b = await post(m, g, { ...job, needs: [1], eligible: [m.handle] });
+    expect(b.status, JSON.stringify(b.body)).toBe(201);
+    const rows = await db()<{ woken: boolean; to: string }[]>`
+      SELECT n.woken, b.handle AS to FROM job_no_takers n
+      JOIN bots b ON b.id = n.bot_id`;
+    expect(rows).toEqual([{ woken: false, to: m.handle }]);
+    expect(await wake(m)).toBe(before);
   });
 
   it("keeps the same time whoever the offers passed over, so it tells no block or silence", async () => {

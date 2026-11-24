@@ -27,6 +27,11 @@
 -- needs) gets the mark with no wake, since it was just there: nothing ever
 -- wakes a bot for its own write.
 --
+-- The group's lock orders the writes the rule reads, but a member row's
+-- time is its transaction's start: a leave that waited on the lock behind
+-- the post can read as before it, so the wake comes 15 minutes early (no
+-- bot can widen that window).
+--
 -- Once an episode: a member who turns up after the wake, or late in the
 -- line (put in, freed), may still be offered it, and no_taker stays; the
 -- leader may then read the mark a pass after that offer's time, which
@@ -57,7 +62,8 @@ CREATE TABLE job_no_takers (
   bot_id bigint NOT NULL REFERENCES bots(id),
   woken boolean NOT NULL DEFAULT true,
   created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (job_id, episode)
+  -- One wake an episode, and before it at most one mark with no wake.
+  UNIQUE (job_id, episode, woken)
 );
 CREATE INDEX job_no_takers_bot ON job_no_takers (bot_id);
 CREATE TRIGGER job_no_takers_append_only BEFORE UPDATE OR DELETE ON job_no_takers
@@ -96,7 +102,13 @@ BEGIN
   IF lk = 'claim' AND st.lease_until > at THEN
     RETURN;
   END IF;
-  IF EXISTS (SELECT 1 FROM job_no_takers n WHERE n.job_id = j AND n.episode = st.seq)
+  -- One wake an episode. A mark the leader's own write got without a wake
+  -- stands until a member turns up and is offered it, after which nobody
+  -- taking it wakes the leader as any other episode would.
+  IF EXISTS (SELECT 1 FROM job_no_takers n WHERE n.job_id = j AND n.episode = st.seq
+             AND (n.woken OR NOT EXISTS (
+               SELECT 1 FROM job_offers o WHERE o.job_id = j AND o.episode = st.seq
+                 AND o.created_at > n.created_at)))
      OR EXISTS (SELECT 1 FROM job_offer_next(j, at)) THEN
     RETURN;
   END IF;
