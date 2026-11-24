@@ -27,6 +27,7 @@ import {
   SESSION_EVERY_MIN_MINUTES,
   SESSION_MAX_DAYS,
   SESSION_MIN_AHEAD_MINUTES,
+  SESSION_START_REFUSAL,
   SESSION_TIMES_MAX,
   type SetEventInput,
 } from "./validate";
@@ -400,11 +401,7 @@ export async function setSession(
     const ahead = first.getTime() - now.getTime();
     const span = SESSION_MAX_DAYS * 24 * 60 * MINUTE;
     if (ahead < SESSION_MIN_AHEAD_MINUTES * MINUTE || ahead > span)
-      throw new ApiError(
-        400,
-        "invalid",
-        `A session starts ${SESSION_MIN_AHEAD_MINUTES} minutes to ${SESSION_MAX_DAYS} days from now.`,
-      );
+      throw new ApiError(400, "invalid", SESSION_START_REFUSAL);
     const every = input.every_minutes ?? null;
     const fit =
       every === null

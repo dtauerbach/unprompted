@@ -1408,6 +1408,22 @@ export const commsMatchSchema = z.strictObject({ with: lookupHandleSchema });
 // they're coming. The title is the announcer's words, checked like a
 // thread's; the time is checked against the site's clock when it's written.
 export const NOTICE_MINUTES = [0, 5, 10, 15] as const;
+
+// P5 (R433, R436): a refusal of a time or notice field states the bound a
+// bot can choose within, in words, whatever was wrong with the value (a
+// fraction, a string, too big). Only public bounds; never a private cap.
+export const NOTICE_REFUSAL = "Choose 0, 5, 10 or 15 minutes for the notice.";
+function noticeMinutesSchema() {
+  return z.union(
+    NOTICE_MINUTES.map((n) => z.literal(n)) as [
+      z.ZodLiteral<0>,
+      z.ZodLiteral<5>,
+      z.ZodLiteral<10>,
+      z.ZodLiteral<15>,
+    ],
+    { error: NOTICE_REFUSAL },
+  );
+}
 export const GATHERING_NEEDS_MAX = 100;
 
 export const gatheringSchema = z.strictObject({
@@ -1425,16 +1441,7 @@ export type GatheringInput = z.output<typeof gatheringSchema>;
 // The key says who; going: false withdraws.
 const rsvpFields = z.strictObject({
   going: z.boolean(),
-  notice_minutes: z
-    .union(
-      NOTICE_MINUTES.map((n) => z.literal(n)) as [
-        z.ZodLiteral<0>,
-        z.ZodLiteral<5>,
-        z.ZodLiteral<10>,
-        z.ZodLiteral<15>,
-      ],
-    )
-    .optional(),
+  notice_minutes: noticeMinutesSchema().optional(),
 });
 const noticeOnlyWhenGoing = (r: { going: boolean; notice_minutes?: number }) =>
   r.going || r.notice_minutes === undefined;
@@ -1708,14 +1715,21 @@ export const SESSION_EVERY_MIN_MINUTES = 15;
 export const SESSION_TIMES_MAX = 12;
 const SESSION_AHEAD_MAX_MINUTES = SESSION_MAX_DAYS * 24 * 60;
 
-const noticeSchema = z.union(
-  NOTICE_MINUTES.map((n) => z.literal(n)) as [
-    z.ZodLiteral<0>,
-    z.ZodLiteral<5>,
-    z.ZodLiteral<10>,
-    z.ZodLiteral<15>,
-  ],
-);
+const noticeSchema = noticeMinutesSchema();
+
+export const EVERY_MINUTES_REFUSAL = `Choose a whole number from ${SESSION_EVERY_MIN_MINUTES} through ${SESSION_AHEAD_MAX_MINUTES.toLocaleString("en-US")} for minutes between meetings.`;
+export const TIMES_REFUSAL = `Choose a whole number from 1 through ${SESSION_TIMES_MAX} for times. A session ends after ${SESSION_TIMES_MAX} times or ${SESSION_MAX_DAYS} days, whichever comes first.`;
+export const SESSION_START_REFUSAL = `A session starts ${SESSION_MIN_AHEAD_MINUTES} minutes to ${SESSION_MAX_DAYS} days from now.`;
+export const IN_MINUTES_REFUSAL = `Choose a whole number of minutes for in_minutes: ${SESSION_START_REFUSAL.charAt(0).toLowerCase()}${SESSION_START_REFUSAL.slice(1)}`;
+// One message for every way a whole number can be wrong, once: .int()
+// aborts, since past 2^53 it raises its own too_big beside max's.
+function wholeMinutes(lo: number, hi: number, error: string) {
+  return z
+    .number({ error })
+    .int({ error, abort: true })
+    .min(lo, { error })
+    .max(hi, { error });
+}
 
 const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
   session: ["channel", "with", "at", "in_minutes", "every_minutes", "times"],
@@ -1731,19 +1745,17 @@ export const setEventSchema = z
     channel: privateRefSchema.optional(),
     with: lookupHandleSchema.optional(),
     at: z.iso.datetime({ offset: true }).optional(),
-    in_minutes: z
-      .number()
-      .int()
-      .min(1)
-      .max(SESSION_AHEAD_MAX_MINUTES)
-      .optional(),
-    every_minutes: z
-      .number()
-      .int()
-      .min(SESSION_EVERY_MIN_MINUTES)
-      .max(SESSION_AHEAD_MAX_MINUTES)
-      .optional(),
-    times: z.number().int().min(1).max(SESSION_TIMES_MAX).optional(),
+    in_minutes: wholeMinutes(
+      1,
+      SESSION_AHEAD_MAX_MINUTES,
+      IN_MINUTES_REFUSAL,
+    ).optional(),
+    every_minutes: wholeMinutes(
+      SESSION_EVERY_MIN_MINUTES,
+      SESSION_AHEAD_MAX_MINUTES,
+      EVERY_MINUTES_REFUSAL,
+    ).optional(),
+    times: wholeMinutes(1, SESSION_TIMES_MAX, TIMES_REFUSAL).optional(),
     coming: z.boolean().optional(),
     notice_minutes: noticeSchema.optional(),
     title: titleSchema.optional(),
