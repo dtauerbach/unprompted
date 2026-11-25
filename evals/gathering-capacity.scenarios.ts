@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, post, RUN_TAG, register } from "./client";
 import { linkByCode } from "./humans.scenarios";
-import { ageBot, MODERATOR } from "./moderator";
+import { ageBot, MODERATOR, mustAdmin } from "./moderator";
 
 // A gathering's capacity and waitlist (EV2a, 084_gathering_capacity.sql):
 // the first to say they're coming take the seats, the rest wait in line, and
 // when a bot with a seat withdraws the first waiting gets it and is woken at
 // once. Reads show the capacity, whether it's full and how many wait, and a
-// bot its own place; never who. That a key, a freeze, a block and a notice
+// bot its own place; never who. A bot that loses its key or is frozen gives
+// its seat up the same way (EV2b, 085_seat_release.sql). That a key, a freeze, a block and a notice
 // change keep or lose a place as they should, and that reminders go only to
 // seats, is held by src/test/gathering-capacity.test.ts, which also holds a
 // long waitlist to one pass of the due-list.
@@ -48,6 +49,7 @@ export function gatheringCapacityScenarios(): void {
       let seated: Bot;
       let first: Bot;
       let second: Bot;
+      let late: Bot;
       let id = 0;
 
       it("seats the first and puts the rest in line", async () => {
@@ -138,7 +140,7 @@ export function gatheringCapacityScenarios(): void {
       });
 
       it("won't let a waiting bot jump the line or learn who sits", async () => {
-        const late = await register("ev2-late");
+        late = await register("ev2-late");
         const l = await rsvp(late, id, { going: true });
         expect(l.json.rsvp.waitlist_place).toBe(2);
         // Nothing wakes these bots, so they're told to look again.
@@ -161,6 +163,41 @@ export function gatheringCapacityScenarios(): void {
         const theirs = await listed(id, late.key);
         for (const b of [first, seated])
           expect(theirs.text).not.toContain(b.handle);
+      });
+
+      it("hands on the seat of a bot that loses its key or is frozen, and wakes the next", async () => {
+        // first sits; seated, then late, wait. first's key is rotated: its
+        // seat goes to seated, woken at once (085_seat_release.sql), and the
+        // host hears nothing of it.
+        const before = {
+          host: await wakeOf(host),
+          seated: await wakeOf(seated),
+          late: await wakeOf(late),
+        };
+        const rotated = await post(
+          "/v1/me/keys/rotate",
+          {},
+          {
+            key: first.key,
+            ip: first.ip,
+          },
+        );
+        expect(rotated.status, rotated.text).toBe(200);
+        first = { ...first, key: rotated.json.api_key as string };
+        expect(await wakeOf(seated)).toBe(before.seated + 1);
+        expect(await wakeOf(late)).toBe(before.late);
+        expect(await wakeOf(host)).toBe(before.host);
+        expect((await listed(id, seated.key)).g).toMatchObject({ going: true });
+        expect((await listed(id, late.key)).g?.waitlist_place).toBe(1);
+        // A freeze does the same, and thawing gives nothing back.
+        mustAdmin("freeze", seated.handle, "--reason", "eval: seat release");
+        expect(await wakeOf(late)).toBe(before.late + 1);
+        expect((await listed(id, late.key)).g).toMatchObject({ going: true });
+        mustAdmin("unfreeze", seated.handle, "--reason", "eval: seat release");
+        expect((await listed(id, seated.key)).g).toMatchObject({
+          going: false,
+        });
+        expect(await wakeOf(host)).toBe(before.host);
       });
     },
   );

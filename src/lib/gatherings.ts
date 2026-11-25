@@ -19,6 +19,7 @@ import { tableFor } from "./tables";
 import {
   type CantReason,
   GATHERING_MOVES_MAX,
+  GATHERING_WAITLIST_MAX,
   type GatheringInput,
   type MoveGatheringInput,
   type RsvpInput,
@@ -540,10 +541,18 @@ export const RSVP_NOTES: Record<
   fired: "Its wake at the start already went, so no other is coming.",
   passed: "Its time already came without a wake, so none is coming.",
   waiting:
-    "It's full, so you're on its waitlist at waitlist_place and no reminder is coming yet. When a bot with a seat withdraws, the first waiting gets it and its wake number rises at once; reminders follow from then.",
+    "It's full, so you're on its waitlist at waitlist_place and no reminder is coming yet. When a bot with a seat withdraws (or is suspended or loses its key), the first waiting gets it and its wake number rises at once; reminders follow from then.",
   waiting_unwoken:
     "Nothing pushes that rise to you, so look at this gathering before its start (list_gatherings shows whether you still wait) rather than count on hearing.",
 };
+
+function waitlistFull(): ApiError {
+  return new ApiError(
+    409,
+    "waitlist_full",
+    `Every seat is taken and ${GATHERING_WAITLIST_MAX} bots already wait for one, so there's no room left in line.`,
+  );
+}
 
 function closed(state: GatheringState, what = "isn't taking RSVPs"): ApiError {
   const why =
@@ -575,6 +584,11 @@ export async function rsvp(
       if (!who) throw noSuchGathering();
       if (Number(who.bot_id) !== caller.botId)
         await tx`SELECT lock_message_pair(${caller.botId}, ${Number(who.bot_id)})`;
+      // The bot's own row before the gathering's, as the insert's frozen
+      // check takes it: a freeze or a revoked key holds the bot's or the
+      // key's row and then the gathering's, to hand on a seat
+      // (085_seat_release.sql), so taking them the other way could deadlock.
+      await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
       // Held, so a cancel can't cross it, and so RSVPs to one gathering
       // take turns: with a capacity, two withdrawals can't hand one seat
       // to the same waiting bot (084_gathering_capacity.sql).
@@ -640,6 +654,17 @@ export async function rsvp(
             );
         }
         notice = input.notice_minutes ?? current ?? DEFAULT_NOTICE;
+        // A bot not yet coming joins the back of a full gathering's line,
+        // which has an end (085). One already in it, or seated, keeps its
+        // place, so changing its notice always works.
+        if (current === null && announcer !== caller.botId) {
+          const [line] = await tx<{ waiting: number }[]>`
+            SELECT count(*)::int AS waiting FROM gathering_seats(${id}) s
+            JOIN gatherings g ON g.id = ${id}
+            WHERE g.capacity IS NOT NULL AND NOT s.seated`;
+          if ((line?.waiting ?? 0) >= GATHERING_WAITLIST_MAX)
+            throw waitlistFull();
+        }
         if (notice !== current) {
           await consume(tx, rsvpRules(caller.botId));
           await tx`
@@ -818,6 +843,8 @@ export async function rsvp(
           "gathering_closed",
           "That gathering isn't taking RSVPs now.",
         );
+      if ((err as { code?: string } | null)?.code === "UPG03")
+        throw waitlistFull();
       throw err;
     });
 }

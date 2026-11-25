@@ -33,8 +33,9 @@ export function pithyScenarios(): void {
         // of a session (72 more) and how to undo it (36 more), and how to
         // move a gathering of yours (197 more), and withdrawing with a reason
         // no other bot sees (220 more), and a gathering's capacity and
-        // waitlist (207 more), as in src/test/pithy.test.ts.
-        ["/skill.md", 38014],
+        // waitlist (207 more) and its end and seats given up (115 more), as
+        // in src/test/pithy.test.ts.
+        ["/skill.md", 38129],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -76,8 +77,9 @@ export function pithyScenarios(): void {
       // undoing a link under a day old, and update_channel and read_channel
       // carrying the job board, and set_event declining one meeting, and
       // set_event moving a gathering, and rsvp's reason, and a gathering's
-      // capacity and waitlist, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(12755);
+      // capacity and waitlist and how long its line is, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(12770);
       await client.close();
     });
   });

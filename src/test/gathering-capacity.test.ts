@@ -8,12 +8,12 @@ import {
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
-import { setFrozen } from "@/lib/admin";
+import { banBot, setFrozen, unbanBot } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { workDue } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
 import { RSVP_NOTES } from "@/lib/gatherings";
-import { GATHERING_CAPACITY_MAX } from "@/lib/validate";
+import { GATHERING_CAPACITY_MAX, GATHERING_WAITLIST_MAX } from "@/lib/validate";
 import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 // A gathering's capacity and waitlist (EV2a, 084_gathering_capacity.sql).
@@ -222,32 +222,149 @@ describe("seats and the waitlist", () => {
     expect((await viewOf(d, id)).waitlist_place).toBe(1);
   });
 
-  it("gives up a seat with its key, and starts over at the end with a new one", async () => {
-    const { a, c, id } = await fullHouse();
+  it("gives up a seat with its key, wakes the first waiting, and starts over at the end with a new one", async () => {
+    const { host, a, c, id } = await fullHouse();
     const cBefore = await wakeCount(c);
+    const hostBefore = await wakeCount(host);
     const rotated = await call(rotateRoute, { key: a.key });
     expect(rotated.status).toBe(200);
     const a2 = { handle: a.handle, key: rotated.body.api_key as string };
-    // The seat goes quiet with the key: c holds it now, woken by nothing.
+    // The seat goes with the key (085_seat_release.sql): c holds it now,
+    // woken at once; the announcer hears nothing of a lost key.
     expect((await viewOf(c, id)).going).toBe(true);
-    expect(await wakeCount(c)).toBe(cBefore);
+    expect(await wakeCount(c)).toBe(cBefore + 1);
+    expect(await wakeCount(host)).toBe(hostBefore);
+    expect((await viewOf(host, id)).seat_opened_at).toBeUndefined();
     const back = await rsvp(a2, id, { going: true });
     expect(back.body.rsvp.waitlist_place).toBe(2);
+    // The moderators' record names why and who got it.
+    const [log] = await db()<{ detail: Record<string, unknown> }[]>`
+      SELECT detail FROM action_log WHERE action = 'gathering.seat_release'`;
+    expect(log?.detail).toEqual({ why: "key", promoted: await botId(c) });
   });
 
-  it("lets a frozen bot keep its seat, uncounted, and moves nobody when it thaws", async () => {
-    const { host, a, c, id } = await fullHouse();
+  it("hands a frozen bot's seat on, wakes the first waiting, and gives nothing back when it thaws", async () => {
+    const { host, a, c, d, id } = await fullHouse();
+    const cBefore = await wakeCount(c);
+    const hostBefore = await wakeCount(host);
     await setFrozen(db(), a.handle, true, "Testing.");
     expect(await viewOf(host, id)).toMatchObject({
-      coming: 1,
+      coming: 2,
       full: true,
-      waiting: 2,
+      waiting: 1,
     });
-    expect((await viewOf(c, id)).waitlist_place).toBe(1);
+    expect((await viewOf(c, id)).going).toBe(true);
+    expect((await viewOf(d, id)).waitlist_place).toBe(1);
+    expect(await wakeCount(c)).toBe(cBefore + 1);
+    expect(await wakeCount(host)).toBe(hostBefore);
     await setFrozen(db(), a.handle, false, "Testing.");
-    expect(await viewOf(host, id)).toMatchObject({ coming: 2, full: true });
-    expect((await viewOf(a, id)).going).toBe(true);
-    expect((await viewOf(c, id)).waitlist_place).toBe(1);
+    expect(await viewOf(host, id)).toMatchObject({ coming: 2, waiting: 1 });
+    expect((await viewOf(a, id)).going).toBe(false);
+    // Saying it's coming again puts it at the back.
+    expect((await rsvp(a, id, { going: true })).body.rsvp.waitlist_place).toBe(
+      2,
+    );
+  });
+
+  it("lets a frozen bot's place in line go, so a seat never goes to it", async () => {
+    const { a, c, d, id } = await fullHouse();
+    await setFrozen(db(), c.handle, true, "Testing.");
+    expect((await viewOf(d, id)).waitlist_place).toBe(1);
+    const dBefore = await wakeCount(d);
+    await rsvp(a, id, { going: false });
+    expect((await viewOf(d, id)).going).toBe(true);
+    expect(await wakeCount(d)).toBe(dBefore + 1);
+    const [log] = await db()<{ detail: Record<string, unknown> }[]>`
+      SELECT detail FROM action_log WHERE action = 'gathering.seat_release'`;
+    expect(log?.detail).toEqual({ why: "frozen" });
+  });
+
+  it("releases a banned bot's seats, and leaves a gathering without a capacity as it was", async () => {
+    const host = await register("host");
+    const a = await register("guest-a");
+    const c = await register("guest-c");
+    const open = await gathering(host, null);
+    const capped = await gathering(host, 1);
+    await rsvp(a, open, { going: true });
+    await rsvp(a, capped, { going: true });
+    await rsvp(c, capped, { going: true });
+    const cBefore = await wakeCount(c);
+    await banBot(db(), a.handle, "Testing.");
+    expect((await viewOf(c, capped)).going).toBe(true);
+    expect(await wakeCount(c)).toBe(cBefore + 1);
+    // Without a capacity a frozen bot's RSVP stands, uncounted, as before.
+    const [r] = await db()<{ key_id: string | null }[]>`
+      SELECT key_id FROM gathering_rsvps
+      WHERE gathering_id = ${open} AND bot_id = ${await botId(a)}
+      ORDER BY id DESC LIMIT 1`;
+    expect(r?.key_id).not.toBeNull();
+    await unbanBot(db(), a.handle, "Testing.");
+    expect((await viewOf(a, open)).going).toBe(true);
+    expect((await viewOf(a, capped)).going).toBe(false);
+  });
+
+  it("hands on every seat a connect code's new key ends", async () => {
+    const { a, c, id } = await fullHouse();
+    const cBefore = await wakeCount(c);
+    // A connect revokes every live key of the bot in one statement.
+    await db()`UPDATE api_keys SET revoked_at = now()
+               WHERE bot_id = ${await botId(a)} AND revoked_at IS NULL`;
+    expect((await viewOf(c, id)).going).toBe(true);
+    expect(await wakeCount(c)).toBe(cBefore + 1);
+  });
+
+  it("ends the line at its cap, but keeps a waiting bot's place when its notice changes", async () => {
+    const host = await register("host");
+    const a = await register("guest-a");
+    const late = await register("guest-late");
+    const id = await gathering(host, 1);
+    await rsvp(a, id, { going: true });
+    // The waitlist, full, written straight to the table.
+    await db()`
+      WITH bs AS (
+        INSERT INTO bots (handle, display_name)
+        SELECT 'filler-' || n, 'Filler ' || n
+        FROM generate_series(1, ${GATHERING_WAITLIST_MAX}) n
+        RETURNING id, handle),
+      ks AS (
+        INSERT INTO api_keys (bot_id, key_hash, prefix)
+        SELECT id, encode(sha256(convert_to('filler-key-' || handle, 'UTF8')), 'hex'), 'fill'
+        FROM bs RETURNING id, bot_id)
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
+      SELECT ${id}, bot_id, id, 10 FROM ks ORDER BY bot_id`;
+    expect(await viewOf(host, id)).toMatchObject({
+      waiting: GATHERING_WAITLIST_MAX,
+    });
+    const refused = await rsvp(late, id, { going: true });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe("waitlist_full");
+    expect(refused.body.error.message).not.toMatch(/filler/);
+    // A bot seated changes its notice whatever the line.
+    expect((await rsvp(a, id, { going: true, notice_minutes: 5 })).status).toBe(
+      200,
+    );
+    // The database holds to it too.
+    await expect(
+      db()`
+        INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
+        SELECT ${id}, b.id, k.id, 10 FROM bots b
+        JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+        WHERE b.handle = ${late.handle}`,
+    ).rejects.toMatchObject({ code: "UPG03" });
+    // A waiting bot's change of notice keeps its place.
+    const [w] = await db()<{ bot_id: string; key_id: string }[]>`
+      SELECT s.bot_id, s.key_id FROM gathering_seats(${id}) s
+      WHERE NOT s.seated ORDER BY s.place LIMIT 1`;
+    if (!w) throw new Error("nobody waits");
+    await db()`
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
+      VALUES (${id}, ${w.bot_id}, ${w.key_id}, 5)`;
+    // Once one leaves the line, the next may join it.
+    await db()`INSERT INTO gathering_rsvps (gathering_id, bot_id)
+               VALUES (${id}, ${w.bot_id})`;
+    expect(
+      (await rsvp(late, id, { going: true })).body.rsvp.waitlist_place,
+    ).toBe(GATHERING_WAITLIST_MAX);
   });
 
   it("hands a seat on when a guest blocks the announcer", async () => {
@@ -402,10 +519,10 @@ describe("reminders go to seats", () => {
     expect(await viewOf(d, id)).toMatchObject({ going: true, waiting: 0 });
   });
 
-  it("decides a short end on who had a seat", async () => {
-    // Two seats, needs two: a and b seated, w waiting. b is frozen (it keeps
-    // its seat, uncounted), so only one is coming and the gathering ends
-    // short; the waiting bot doesn't make up the number.
+  it("decides a short end on who had a seat, a frozen bot's handed on", async () => {
+    // Two seats, needs two: a and b seated, w waiting. b is frozen, so its
+    // seat goes to w (085), and the gathering doesn't end short. Then w
+    // withdraws with nobody behind it, and it does: only a had a seat.
     const host = await register("host");
     const a = await register("guest-a");
     const b = await register("guest-b");
@@ -421,12 +538,11 @@ describe("reminders go to seats", () => {
     await rsvp(a, id, { going: true });
     await rsvp(b, id, { going: true });
     await rsvp(w, id, { going: true });
+    await setFrozen(db(), b.handle, true, "Testing.");
     const [n] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM gathering_coming_as_of(${id}, now())`;
     expect(n?.n).toBe(2);
-    await setFrozen(db(), b.handle, true, "Testing.");
-    // The clock ends it short 15 minutes before its start, and wakes only
-    // the bot that had a seat, never the one waiting.
+    await rsvp(w, id, { going: false });
     await workDue(new Date(Date.now() + 46 * 60_000));
     const [end] = await db()<{ kind: string }[]>`
       SELECT kind FROM gathering_ends WHERE gathering_id = ${id}`;
@@ -436,12 +552,12 @@ describe("reminders go to seats", () => {
       WHERE kind = 'short' AND event_id = ${id} ORDER BY bot_id`;
     expect(rows.map((r) => [Number(r.bot), r.outcome])).toEqual([
       [await botId(a), "fired"],
-      [await botId(b), "skipped"],
     ]);
   });
 
   it("works out a long waitlist's reminders in one pass, not one per RSVP", async () => {
-    // 1,000 RSVPs for 600 seats, written straight to the tables. Worked
+    // 700 RSVPs for 600 seats (the line holds 100), written straight to
+    // the tables. Worked
     // out once per RSVP, the seats made this take seconds; once per
     // gathering, a few hundred milliseconds at most.
     const host = await register("host");
@@ -449,7 +565,7 @@ describe("reminders go to seats", () => {
     await db()`
       WITH nb AS (
         INSERT INTO bots (handle, display_name)
-        SELECT 'load-' || n, 'Load ' || n FROM generate_series(1, 1000) n
+        SELECT 'load-' || n, 'Load ' || n FROM generate_series(1, 700) n
         RETURNING id, handle)
       INSERT INTO api_keys (bot_id, key_hash, prefix)
       SELECT id, encode(sha256(convert_to('load-key-' || handle, 'UTF8')), 'hex'), 'load'
