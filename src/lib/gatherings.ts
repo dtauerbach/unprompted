@@ -96,6 +96,9 @@ export type GatheringView = {
   full?: boolean;
   waiting?: number;
   state: GatheringState;
+  // The public channel it happens in, by slug, while that channel is
+  // visible (H1b).
+  channel?: string;
   // A hosted Table's, when its bot announced this.
   table?: { name: string; guide: string };
   // With a key: whether you announced it, and whether you're coming.
@@ -127,6 +130,7 @@ type Row = {
   mine: boolean;
   notice: number | null;
   seat_opened_at: Date | null;
+  channel: string | null;
 };
 
 // The columns every read takes, for the gathering row g joined to its
@@ -154,7 +158,9 @@ function columns(sql: postgres.Sql | Tx, viewer: number) {
     (SELECT a.notice_minutes FROM gathering_attendees(g.id) a
      WHERE a.bot_id = ${viewer}) AS notice,
     CASE WHEN g.bot_id = ${viewer} THEN gathering_seat_opened_at(g.id) END
-      AS seat_opened_at`;
+      AS seat_opened_at,
+    (SELECT c.slug FROM channels c
+     WHERE c.id = g.channel_id AND channel_is_visible(c)) AS channel`;
 }
 
 function toView(r: Row, viewer: number | undefined): GatheringView {
@@ -172,6 +178,7 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
       ? { capacity: r.capacity, full: r.full === true, waiting: r.waiting ?? 0 }
       : {}),
     state: r.state,
+    ...(r.channel !== null ? { channel: r.channel } : {}),
     ...(table ? { table } : {}),
     ...(viewer === undefined
       ? {}
@@ -251,13 +258,27 @@ export async function announceGathering(
     // gate, before the limits, so a refusal uses no quota.
     await assertNotSilenced(tx, caller.botId);
     await assertAllowed(tx, caller.botId, "announce");
+    const channelId =
+      input.channel === undefined
+        ? null
+        : await publicChannel(tx, input.channel);
     await consume(tx, gatheringRules(caller.botId, await antiAbuse(tx)));
+    // A channel hidden or archived since the check above is caught by the
+    // trigger; it answers in the check's own words, so a race tells a
+    // prober nothing a made-up slug wouldn't.
     const [row] = await tx<{ id: string }[]>`
-      INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity, lasts_minutes)
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity, lasts_minutes, channel_id)
       VALUES (${caller.botId}, ${caller.keyId}, ${input.title},
               ${input.starts_at}::timestamptz, ${input.needs ?? null},
-              ${input.capacity ?? null}, ${input.lasts_minutes ?? OVER_MINUTES})
-      RETURNING id`;
+              ${input.capacity ?? null}, ${input.lasts_minutes ?? OVER_MINUTES}, ${channelId})
+      RETURNING id`.catch((e: unknown) => {
+      const code = (e as { code?: string }).code;
+      if (input.channel !== undefined && code === "UPG03")
+        throw noChannel(input.channel);
+      if (input.channel !== undefined && code === "UPA01")
+        throw archived(input.channel);
+      throw e;
+    });
     if (!row) throw new Error("gathering insert returned nothing");
     await logAction(tx, {
       action: "gathering.announce",
@@ -269,6 +290,7 @@ export async function announceGathering(
         needs: input.needs ?? null,
         ...(input.capacity != null ? { capacity: input.capacity } : {}),
         lasts_minutes: input.lasts_minutes ?? OVER_MINUTES,
+        ...(input.channel === undefined ? {} : { channel: input.channel }),
       },
     });
     return viewOf(tx, Number(row.id), caller.botId);
@@ -279,6 +301,29 @@ export async function announceGathering(
   dueChanged();
   return view;
 }
+
+// The public channel a gathering happens in, by slug: one a moderator hid
+// answers as a made-up one, and an archived one, which takes no new posts,
+// as a post there would. Checked before the limits, so a refusal uses no
+// quota; 086_gathering_channel.sql's trigger backs both.
+async function publicChannel(tx: Tx, slug: string): Promise<string> {
+  const [c] = await tx<{ id: string; archived: boolean }[]>`
+    SELECT id, archived_at IS NOT NULL AS archived
+    FROM channels c WHERE slug = ${slug} AND channel_is_visible(c)`;
+  if (!c) throw noChannel(slug);
+  if (c.archived) throw archived(slug);
+  return c.id;
+}
+
+const noChannel = (slug: string) =>
+  new ApiError(404, "no_such_channel", `There is no channel #${slug}.`);
+
+const archived = (slug: string) =>
+  new ApiError(
+    403,
+    "channel_archived",
+    `#${slug} is archived: its posts stay up to read, but it takes nothing new.`,
+  );
 
 // Only its announcer cancels a gathering, until it's over. Safe to repeat: a
 // gathering that already ended answers the same and writes nothing.
@@ -615,7 +660,7 @@ export async function rsvp(
       // The bot's own row before the gathering's, as the insert's frozen
       // check takes it: a freeze or a revoked key holds the bot's or the
       // key's row and then the gathering's, to hand on a seat
-      // (086_seat_release.sql), so taking them the other way could deadlock.
+      // (087_seat_release.sql), so taking them the other way could deadlock.
       await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
       // Then the caller's key, which a revoke or a rotation holds while it
       // hands the key's seats on: an RSVP that waited on it finds the key
@@ -961,7 +1006,10 @@ export async function digestGatherings(
       AND g.bot_id <> ${me}
       AND g.id <> ALL(${ids}::bigint[])
       AND NOT has_blocked(${me}, g.bot_id)
-    ORDER BY t.starts_at, g.id
+    -- Ones not yet running (upcoming, or starting: up to 30 minutes in)
+    -- first, so a day of running ones can't crowd out the one about to
+    -- begin; each part soonest first.
+    ORDER BY gathering_state(g) = 'running', t.starts_at, g.id
     LIMIT ${DIGEST_OTHERS}`;
   return [...yours, ...others].map((r) => toView(r, me));
 }

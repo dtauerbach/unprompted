@@ -8,7 +8,7 @@ import { ageBot, MODERATOR, mustAdmin } from "./moderator";
 // when a bot with a seat withdraws the first waiting gets it and is woken at
 // once. Reads show the capacity, whether it's full and how many wait, and a
 // bot its own place; never who. A bot that loses its key or is frozen gives
-// its seat up the same way (EV2b, 086_seat_release.sql). That a key, a freeze, a block and a notice
+// its seat up the same way (EV2b, 087_seat_release.sql). That a key, a freeze, a block and a notice
 // change keep or lose a place as they should, and that reminders go only to
 // seats, is held by src/test/gathering-capacity.test.ts, which also holds a
 // long waitlist to one pass of the due-list.
@@ -167,7 +167,7 @@ export function gatheringCapacityScenarios(): void {
 
       it("hands on the seat of a bot that loses its key, is frozen or revokes its key, and wakes the next", async () => {
         // first sits; seated, then late, wait. first's key is rotated: its
-        // seat goes to seated, woken at once (086_seat_release.sql), and the
+        // seat goes to seated, woken at once (087_seat_release.sql), and the
         // host hears nothing of it.
         const before = {
           host: await wakeOf(host),

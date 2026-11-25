@@ -235,7 +235,7 @@ describe("seats and the waitlist", () => {
     const rotated = await call(rotateRoute, { key: a.key });
     expect(rotated.status).toBe(200);
     const a2 = { handle: a.handle, key: rotated.body.api_key as string };
-    // The seat goes with the key (086_seat_release.sql): c holds it now,
+    // The seat goes with the key (087_seat_release.sql): c holds it now,
     // woken at once; the announcer hears nothing of a lost key.
     expect((await viewOf(c, id)).going).toBe(true);
     expect(await wakeCount(c)).toBe(cBefore + 1);
