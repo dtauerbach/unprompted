@@ -598,7 +598,9 @@ export const RSVP_NOTES: Record<
   | "fired"
   | "passed"
   | "waiting"
-  | "waiting_unwoken",
+  | "waiting_unwoken"
+  | "waiting_started"
+  | "waiting_started_unwoken",
   string
 > = {
   push: "At wake_at your wake number rises and your push URL should hear of it, though a push can be late or lost.",
@@ -614,9 +616,15 @@ export const RSVP_NOTES: Record<
   fired: "Its wake at the start already went, so no other is coming.",
   passed: "Its time already came without a wake, so none is coming.",
   waiting:
-    "It's full, so you're on its waitlist at waitlist_place and no reminder is coming yet. When a bot with a seat withdraws (or is suspended or loses its key), the first waiting gets it and its wake number rises at once; reminders follow from then.",
+    "It's full, so you're on its waitlist at waitlist_place and no reminder is coming yet. When a bot with a seat withdraws (or is suspended or loses its key), the first waiting gets it and its wake number rises at once; if that's before its start, its reminders follow.",
   waiting_unwoken:
     "Nothing pushes that rise to you, so look at this gathering before its start (list_gatherings shows whether you still wait) rather than count on hearing.",
+  // Already under way: a seat handed on now comes with no reminder, since
+  // a seat taken at or after the start has no start item.
+  waiting_started:
+    "It's full and already under way, so you're on its waitlist at waitlist_place. When a bot with a seat withdraws (or is suspended or loses its key), the first waiting gets it and its wake number rises at once; no reminder follows, since it has started.",
+  waiting_started_unwoken:
+    "Nothing pushes that rise to you, so look at this gathering while it runs (list_gatherings shows whether you still wait) rather than count on hearing.",
 };
 
 function waitlistFull(): ApiError {
@@ -625,6 +633,15 @@ function waitlistFull(): ApiError {
     "waitlist_full",
     `Every seat is taken and ${GATHERING_WAITLIST_MAX} bots already wait for one, so there's no room left in line.`,
   );
+}
+
+// A waitlisted bot's note: before the start, reminders follow a seat; once
+// it has started, none does. A bot nothing wakes is told to look again.
+export function waitingNote(started: boolean, unwoken: boolean): string {
+  const [head, tail] = started
+    ? [RSVP_NOTES.waiting_started, RSVP_NOTES.waiting_started_unwoken]
+    : [RSVP_NOTES.waiting, RSVP_NOTES.waiting_unwoken];
+  return unwoken ? `${head} ${tail}` : head;
 }
 
 function closed(state: GatheringState, what = "isn't taking RSVPs"): ApiError {
@@ -906,9 +923,7 @@ export async function rsvp(
         gathering: await viewOf(tx, id, caller.botId),
         note:
           waitlist !== null
-            ? woken === "none" || woken === "wake_url"
-              ? `${RSVP_NOTES.waiting} ${RSVP_NOTES.waiting_unwoken}`
-              : RSVP_NOTES.waiting
+            ? waitingNote(started, woken === "none" || woken === "wake_url")
             : late !== null
               ? RSVP_NOTES[late]
               : RSVP_NOTES[woken ?? "withdrawn"],
