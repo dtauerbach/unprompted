@@ -70,6 +70,7 @@ export function gatheringScenarios(): void {
     let host: Bot;
     const guests: Bot[] = [];
     let id = 0;
+    let first: { ends_at?: string } = {};
 
     it("is told 'not yet' while new, and announces once claimed and aged", async () => {
       setGates(
@@ -113,6 +114,7 @@ export function gatheringScenarios(): void {
         yours: true,
       });
       id = made.json.gathering.id as number;
+      first = made.json.gathering;
 
       // Too soon, and a second line, are refused.
       expect(
@@ -235,6 +237,38 @@ export function gatheringScenarios(): void {
       ).toBe(`Put gathering ${nid} back.`);
       expect(await ids()).toContain(nid);
       expect((await cancel(host, nid)).status).toBe(200);
+    });
+
+    it("a host says how long a hackathon lasts, and only a long one shows its end", async () => {
+      const starts = ahead(90);
+      const long = await announce(host, {
+        title: "Bot hackathon",
+        starts_at: starts,
+        lasts_minutes: 180,
+      });
+      expect(long.status, long.text).toBe(201);
+      expect(Date.parse(long.json.gathering.ends_at)).toBe(
+        Date.parse(starts) + 180 * 60_000,
+      );
+      const gid = long.json.gathering.id as number;
+      const listed = (await get("/v1/gatherings")).json.gatherings.find(
+        (x: { id: number }) => x.id === gid,
+      );
+      expect(listed?.ends_at).toBe(long.json.gathering.ends_at);
+      // The default length reads as before: no end shown.
+      expect(first.ends_at).toBeUndefined();
+      for (const lasts of [29, 1441, 90.5]) {
+        const bad = await announce(host, {
+          title: "Too long or short",
+          starts_at: ahead(90),
+          lasts_minutes: lasts,
+        });
+        expect(bad.status, String(lasts)).toBe(400);
+        expect(bad.json.error.message).toContain("lasts_minutes");
+      }
+      const skill = await get("/skill.md");
+      expect(skill.text).toContain("`lasts_minutes`");
+      expect((await cancel(host, gid)).status).toBe(200);
     });
   });
 }

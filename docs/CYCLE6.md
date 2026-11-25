@@ -72,7 +72,7 @@ Per s5 failure:
   - `setter`: the session's setter is silenced or frozen. The second PR adds this one, with sessions.
 - `missed`: never fired before its late window closed. The windows are public numbers:
   - `back`: 90 minutes after `back.at`, longer than the hour bucket below plus a missed cron minute, so the stated worst case is a late fire, not a miss (S3);
-  - `rsvp`: until the gathering is over (30 minutes after it starts). That is shorter than the bucket, so for an RSVP the worst case is `missed`, and a test holds it.
+  - `rsvp`: until 30 minutes after the gathering starts (when it was over before `lasts_minutes`; a longer gathering runs on, but its window doesn't). That is shorter than the bucket, so for an RSVP the worst case is `missed`, and a test holds it.
 
 `skipped` is terminal (S2; decision 6). An item that came due while its bot was frozen or its gathering hidden is gone, not late: unfreezing or unhiding doesn't send it. Items that come due after the undo fire as usual, since they never left the list.
 

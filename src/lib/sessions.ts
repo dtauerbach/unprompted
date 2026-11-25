@@ -807,6 +807,7 @@ export async function setEvent(
             starts_at: input.starts_at ?? "",
             needs: input.needs,
             capacity: input.capacity,
+            lasts_minutes: input.lasts_minutes,
           },
           ipHash,
         ),
