@@ -42,6 +42,8 @@ import {
   type JobFull,
   type JobSummary,
   MOVE_NOTES,
+  OWED_JOBS_MAX,
+  OWED_NOTE,
   staleJob,
 } from "@/lib/jobs";
 import { newKey } from "@/lib/keys";
@@ -902,6 +904,14 @@ describe("the hard ceiling", () => {
             `catch_up ${view} ${surface}`,
           ).toBeLessThanOrEqual(READ_MAX_BYTES);
           expect(answer(fits).getting_started).toMatchObject({ more: true });
+          // my_jobs gave way too, but only its titles: every row stays.
+          const jobsPart = answer(fits).my_jobs;
+          expect(jobsPart.complete && jobsPart.jobs).toHaveLength(
+            OWED_JOBS_MAX,
+          );
+          expect(
+            jobsPart.complete && jobsPart.jobs[0]?.untrusted_title,
+          ).toBeUndefined();
           const cutUp = await cutToFit(
             sizesOf(noPresence.groups),
             noPresence.groups.length,
@@ -1033,6 +1043,24 @@ async function largestCatchUpParts(
         paused: true,
       },
       allowance: up.body.allowance,
+      // Every row of a full jobs part at its heaviest, with its note at
+      // the longer surface's and its notice.
+      my_jobs: {
+        complete: true,
+        jobs: Array.from({ length: OWED_JOBS_MAX }, () => ({
+          channel: `private:${big}`,
+          number: JOB_NUMBER_MAX,
+          untrusted_title: HEAVY_TITLE,
+          state: "claimed" as const,
+          seq: JOB_NUMBER_MAX,
+          attempt: JOB_NUMBER_MAX,
+          you: "reviewer" as const,
+          lease_until: at,
+        })),
+        more: true,
+        note: OWED_NOTE.http,
+        notice: JOB_NOTICE,
+      },
       getting_started: catchUpStart(
         {
           steps: marked,

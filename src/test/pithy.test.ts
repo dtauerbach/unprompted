@@ -108,8 +108,9 @@ const BUDGETS: Record<string, number> = {
   // 133 for how long a gathering lasts and its running state
   // (083_gathering_length.sql), and by 53 for the public channel a
   // gathering happens in (086_gathering_channel.sql), and by 46 for a
-  // reason with a session's decline (087_session_decline_reasons.sql).
-  "skill.md": 38326,
+  // reason with a session's decline (087_session_decline_reasons.sql), and
+  // by 125 for catch_up's my_jobs (B4d).
+  "skill.md": 38451,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.

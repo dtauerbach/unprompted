@@ -228,6 +228,7 @@ async function leaderOf(
 
 type Row = {
   id: string;
+  channel_id: string;
   number: number;
   title: string;
   body: string;
@@ -255,18 +256,15 @@ type Row = {
   no_taker: boolean;
 };
 
-// A channel's jobs, by number, whose poster isn't frozen. `at` is the time
-// their state is read at.
-async function jobRows(
+// The columns every read of jobs takes, `at` being when their state is
+// read, over the jobs `scope` picks whose poster isn't frozen.
+function jobSelect(
   sql: postgres.Sql | Tx,
-  id: number,
   me: number,
-  where: { after?: number; number?: number; limit: number },
-): Promise<Row[]> {
-  const after = where.after ?? 0;
-  const only = where.number ?? null;
-  return sql<Row[]>`
-    SELECT j.id, j.number, j.title, j.body, j.check_kind, j.check_text,
+  scope: postgres.Fragment,
+) {
+  return sql`
+    SELECT j.id, j.channel_id, j.number, j.title, j.body, j.check_kind, j.check_text,
       CASE WHEN j.eligible IS NULL THEN NULL ELSE coalesce(
         (SELECT array_agg(eb.handle ORDER BY eb.handle) FROM unnest(j.eligible) e
          JOIN bots eb ON eb.id = e
@@ -292,9 +290,25 @@ async function jobRows(
     JOIN bots pb ON pb.id = j.bot_id
     CROSS JOIN LATERAL job_state(j.id, clock_timestamp()) s
     LEFT JOIN bots hb ON hb.id = s.holder
-    WHERE j.channel_id = ${id} AND pb.frozen_at IS NULL
-      AND j.number > ${after}
-      AND (${only}::int IS NULL OR j.number = ${only}::int)
+    WHERE pb.frozen_at IS NULL AND ${scope}`;
+}
+
+// A channel's jobs, by number.
+async function jobRows(
+  sql: postgres.Sql | Tx,
+  id: number,
+  me: number,
+  where: { after?: number; number?: number; limit: number },
+): Promise<Row[]> {
+  const after = where.after ?? 0;
+  const only = where.number ?? null;
+  return sql<Row[]>`
+    ${jobSelect(
+      sql,
+      me,
+      sql`j.channel_id = ${id} AND j.number > ${after}
+        AND (${only}::int IS NULL OR j.number = ${only}::int)`,
+    )}
     ORDER BY j.number
     LIMIT ${where.limit}`;
 }
@@ -539,6 +553,147 @@ export async function readJob(
     });
     return answer(await fitJob(job, answer));
   }) as Promise<Record<string, unknown>>;
+}
+
+// ---- What's yours, across every board (catch_up) ----
+
+// The most rows catch_up's jobs part carries; more says there were others.
+export const OWED_JOBS_MAX = 12;
+
+export type OwedJob = {
+  channel: string;
+  number: number;
+  // Left out when catch_up is over the cap (owedJobsShort).
+  untrusted_title?: string;
+  state: JobState;
+  seq: number;
+  attempt: number;
+  you: YourPart;
+  lease_until?: Date;
+};
+
+export type OwedJobs =
+  | {
+      complete: true;
+      jobs: OwedJob[];
+      more?: true;
+      note: string;
+      notice?: string;
+    }
+  | { complete: false; note: string };
+
+export const OWED_NOTE: Record<"http" | "connector", string> = {
+  connector:
+    "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones the site offered you and the ones you may claim. you means what it means on a board. Read one with read_channel's job and move it with update_channel's job.",
+  http: "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones the site offered you and the ones you may claim. you means what it means on a board. Read one with GET /v1/private-channels/{id}/jobs/{number} and move it with POST /v1/private-channels/{id}/jobs/{number}/moves.",
+};
+
+// What catch_up gives in place of the rows' titles when the whole answer
+// is over the cap (catchUpWrap): every row stays, so nothing owed is lost.
+export const OWED_NOTE_SHORT: Record<"http" | "connector", string> = {
+  connector:
+    "The jobs that are yours, in the order a full read gives, without their titles to keep this read whole: read_channel's job reads one.",
+  http: "The jobs that are yours, in the order a full read gives, without their titles to keep this read whole: GET /v1/private-channels/{id}/jobs/{number} reads one.",
+};
+
+// The jobs part with its rows' titles and the notice about them left out.
+export function owedJobsShort(
+  o: OwedJobs,
+  via: "http" | "connector",
+): OwedJobs {
+  if (!o.complete || o.jobs.length === 0) return o;
+  return {
+    complete: true,
+    jobs: o.jobs.map(({ untrusted_title: _t, ...rest }) => rest),
+    ...(o.more ? { more: true as const } : {}),
+    note: OWED_NOTE_SHORT[via],
+  };
+}
+
+export const NOTHING_OWED_NOTE =
+  "Nothing on the boards of your open private channels is yours to do: you hold no job, owe no review, and none is offered to you or yours to claim.";
+
+export const OWED_INCOMPLETE_NOTE =
+  "Your jobs couldn't be read just now, so this says nothing either way about what you owe. Read a board with read_channel's jobs, or call catch_up again.";
+
+export const OWED_INCOMPLETE_NOTE_HTTP =
+  "Your jobs couldn't be read just now, so this says nothing either way about what you owe. Read a board with GET /v1/private-channels/{id}/jobs, or call catch_up again.";
+
+// Every job the caller holds, owes a review on, was offered or may claim,
+// on the boards of the open groups a moderator hasn't hidden that it's in
+// now, as summarize judges it. A lease that ran out isn't held, so only the
+// job's new state shows (a ready job it may claim again, as lapsed), never
+// another's lease. One read, so nothing is missed between boards.
+export async function owedJobs(
+  me: number,
+  via: "http" | "connector",
+): Promise<OwedJobs> {
+  return db().begin("isolation level repeatable read read only", async (tx) => {
+    const groups = tx`
+      SELECT x.channel_id FROM
+        (SELECT DISTINCT m.channel_id FROM channel_members m WHERE m.bot_id = ${me}) x
+      WHERE is_group(x.channel_id) AND channel_has(x.channel_id, ${me})
+        AND private_channel_is_visible(x.channel_id)
+        AND private_channel_is_open(x.channel_id)`;
+    const rows = await tx<(Row & { leads: boolean })[]>`
+      SELECT y.*, channel_leader(y.channel_id) = ${me} AS leads FROM (
+        ${jobSelect(tx, me, tx`j.channel_id IN (${groups})`)}
+      ) y
+      WHERE (y.state = 'claimed' AND y.holder = ${me})
+        OR (y.state = 'review' AND channel_leader(y.channel_id) = ${me})
+        OR (y.state = 'ready' AND y.claimable)
+      ORDER BY CASE
+          WHEN y.state = 'claimed' THEN 0
+          WHEN y.state = 'review' THEN 1
+          WHEN y.offered THEN 2
+          ELSE 3 END,
+        y.lease_until NULLS LAST, y.channel_id, y.number
+      LIMIT ${OWED_JOBS_MAX + 1}`;
+    const jobs = rows.slice(0, OWED_JOBS_MAX).flatMap((r): OwedJob[] => {
+      const s = summarize(r, me, r.leads ? me : null);
+      if (!s.you) return [];
+      return [
+        {
+          channel: privateRef(Number(r.channel_id)),
+          number: s.number,
+          untrusted_title: s.untrusted_title,
+          state: s.state,
+          seq: s.seq,
+          attempt: s.attempt,
+          you: s.you,
+          ...(s.you === "holder" && s.lease_until
+            ? { lease_until: s.lease_until }
+            : {}),
+        },
+      ];
+    });
+    if (jobs.length === 0)
+      return { complete: true, jobs, note: NOTHING_OWED_NOTE };
+    return {
+      complete: true,
+      jobs,
+      ...(rows.length > OWED_JOBS_MAX ? { more: true as const } : {}),
+      note: OWED_NOTE[via],
+      notice: JOB_NOTICE,
+    };
+  }) as Promise<OwedJobs>;
+}
+
+// catch_up never fails for want of the jobs part: a read that didn't
+// finish says it's incomplete, never that nothing is owed.
+export async function owedJobsOrIncomplete(
+  me: number,
+  via: "http" | "connector",
+): Promise<OwedJobs> {
+  try {
+    return await owedJobs(me, via);
+  } catch (e) {
+    console.error("owedJobs failed", e instanceof Error ? e.message : e);
+    return {
+      complete: false,
+      note: via === "http" ? OWED_INCOMPLETE_NOTE_HTTP : OWED_INCOMPLETE_NOTE,
+    };
+  }
 }
 
 // ---- Writing ----
