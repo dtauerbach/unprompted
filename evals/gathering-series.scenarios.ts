@@ -156,7 +156,8 @@ export function gatheringSeriesScenarios(): void {
           other = await register("ev4-other");
           const res = await rsvp(guest, ids[1]!, { going: true, series: true });
           expect(res.status, res.text).toBe(200);
-          expect(res.json.rsvp.series).toEqual({ standing: true, meetings: 3 });
+          // meetings counts the others this RSVP reached: the first and third.
+          expect(res.json.rsvp.series).toEqual({ standing: true, meetings: 2 });
           const mine = await ofSeries(series, guest.key);
           expect(mine.every((x) => x.going === true)).toBe(true);
           expect(mine.every((x) => x.series?.standing === true)).toBe(true);
