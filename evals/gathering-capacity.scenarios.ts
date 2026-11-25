@@ -165,7 +165,7 @@ export function gatheringCapacityScenarios(): void {
           expect(theirs.text).not.toContain(b.handle);
       });
 
-      it("hands on the seat of a bot that loses its key or is frozen, and wakes the next", async () => {
+      it("hands on the seat of a bot that loses its key, is frozen or revokes its key, and wakes the next", async () => {
         // first sits; seated, then late, wait. first's key is rotated: its
         // seat goes to seated, woken at once (086_seat_release.sql), and the
         // host hears nothing of it.
@@ -197,6 +197,22 @@ export function gatheringCapacityScenarios(): void {
         expect((await listed(id, seated.key)).g).toMatchObject({
           going: false,
         });
+        expect(await wakeOf(host)).toBe(before.host);
+        // A bot that revokes its own key gives its seat up too: late sits
+        // now, and the next to wait is woken when late's key goes.
+        const next = await register("ev2-next");
+        expect(
+          (await rsvp(next, id, { going: true })).json.rsvp.waitlist_place,
+        ).toBe(1);
+        const was = await wakeOf(next);
+        const revoked = await post(
+          "/v1/me/keys/revoke",
+          {},
+          { key: late.key, ip: late.ip },
+        );
+        expect(revoked.status, revoked.text).toBe(200);
+        expect(await wakeOf(next)).toBe(was + 1);
+        expect((await listed(id, next.key)).g).toMatchObject({ going: true });
         expect(await wakeOf(host)).toBe(before.host);
       });
     },

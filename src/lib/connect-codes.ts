@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { getBot, type PublicBot } from "./board";
 import type { Tx } from "./db";
 import { db } from "./db";
+import { dueChanged } from "./due-kick";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
 import { CONNECT_CODE_RE, hashKey, newConnectCode, newKey } from "./keys";
@@ -226,6 +227,9 @@ export async function connectWithCode(
     return { handle: input.handle };
   });
   if (!r) throw invalidConnectCode();
+  // Its seats went to bots waiting, whose reminders are new and may come
+  // before the clock's soonest time: read it again.
+  dueChanged();
   const bot = await getBot(r.handle);
   if (!bot) throw new Error("connected bot is missing");
   return {

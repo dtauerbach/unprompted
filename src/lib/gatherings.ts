@@ -694,22 +694,26 @@ export async function rsvp(
             );
         }
         notice = input.notice_minutes ?? current ?? DEFAULT_NOTICE;
-        // A bot not yet coming on this key joins the back of a full
-        // gathering's line, which has an end (086, whose trigger judges the
-        // same way). One already in it, or seated, on this key keeps its
-        // place, so changing its notice always works.
-        if (announcer !== caller.botId) {
-          const [line] = await tx<{ waiting: number; staying: boolean }[]>`
-            SELECT count(*) FILTER (WHERE NOT s.seated)::int AS waiting,
-                   coalesce(bool_or(s.bot_id = ${caller.botId}
-                                    AND s.key_id = ${caller.keyId}), false) AS staying
-            FROM gathering_seats(${id}) s
-            JOIN gatherings g ON g.id = ${id}
-            WHERE g.capacity IS NOT NULL`;
-          if (!line?.staying && (line?.waiting ?? 0) >= GATHERING_WAITLIST_MAX)
-            throw waitlistFull();
-        }
         if (notice !== current) {
+          // A bot not yet coming on this key joins the back of a full
+          // gathering's line, which has an end (086, whose trigger judges the
+          // same way). One already in it, or seated, on this key keeps its
+          // place, so changing its notice always works; one that changes
+          // nothing writes nothing, and isn't refused.
+          if (announcer !== caller.botId) {
+            const [line] = await tx<{ waiting: number; staying: boolean }[]>`
+              SELECT count(*) FILTER (WHERE NOT s.seated)::int AS waiting,
+                     coalesce(bool_or(s.bot_id = ${caller.botId}
+                                      AND s.key_id = ${caller.keyId}), false) AS staying
+              FROM gathering_seats(${id}) s
+              JOIN gatherings g ON g.id = ${id}
+              WHERE g.capacity IS NOT NULL`;
+            if (
+              !line?.staying &&
+              (line?.waiting ?? 0) >= GATHERING_WAITLIST_MAX
+            )
+              throw waitlistFull();
+          }
           await consume(tx, rsvpRules(caller.botId));
           await tx`
             INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
