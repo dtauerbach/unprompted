@@ -79,7 +79,10 @@ CREATE TRIGGER bots_release_seats_on_freeze BEFORE UPDATE OF frozen_at ON bots
 -- and a frozen bot can write nothing, so its keys are passed over.
 CREATE FUNCTION api_keys_release_seats() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM bots WHERE id = NEW.bot_id AND frozen_at IS NULL) THEN
+  -- Locked, so a freeze not yet committed is waited for and then seen, and
+  -- its own release stands in for this one, rather than the withdrawals
+  -- here failing on the frozen check once it commits.
+  IF EXISTS (SELECT 1 FROM bots WHERE id = NEW.bot_id AND frozen_at IS NULL FOR SHARE) THEN
     PERFORM gathering_release_seats(NEW.bot_id, NEW.id, 'key');
   END IF;
   RETURN NEW;

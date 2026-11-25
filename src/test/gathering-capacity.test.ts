@@ -7,14 +7,19 @@ import {
 } from "@/app/v1/gatherings/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
+import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { banBot, setFrozen, unbanBot } from "@/lib/admin";
+import { connectWithCode, issueConnectCode } from "@/lib/connect-codes";
 import { db } from "@/lib/db";
 import { workDue } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
 import { RSVP_NOTES } from "@/lib/gatherings";
+import { hashIp } from "@/lib/http";
+import { issueOwnerCode } from "@/lib/humans";
+import { hashKey } from "@/lib/keys";
 import { GATHERING_CAPACITY_MAX, GATHERING_WAITLIST_MAX } from "@/lib/validate";
-import { call, freshIp, linkBot, register, resetDb } from "./helpers";
+import { ageLink, call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 // A gathering's capacity and waitlist (EV2a, 084_gathering_capacity.sql).
 // Bots take the seats in the order they first said they're coming; then the
@@ -303,14 +308,77 @@ describe("seats and the waitlist", () => {
     expect((await viewOf(a, capped)).going).toBe(false);
   });
 
-  it("hands on every seat a connect code's new key ends", async () => {
-    const { a, c, id } = await fullHouse();
+  it("hands on every seat a connect code's new key ends, in one go, however many keys it held", async () => {
+    const host = await register("host");
+    const owner_code = (await issueOwnerCode(db(), "google-seats", null)).code;
+    const a = await register("guest-a", { owner_code });
+    await ageLink(a.handle);
+    const c = await register("guest-c");
+    const e = await register("guest-e");
+    const one = await gathering(host, 1);
+    const two = await gathering(host, 1);
+    expect((await rsvp(a, one, { going: true })).status).toBe(200);
+    // A second live key of a's, seated at the other gathering.
+    const [k2] = await db()<{ id: string }[]>`
+      INSERT INTO api_keys (bot_id, key_hash, prefix)
+      VALUES (${await botId(a)}, ${"f".repeat(64)}, 'two') RETURNING id`;
+    await db()`
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
+      VALUES (${two}, ${await botId(a)}, ${k2?.id ?? null}, 10)`;
+    await rsvp(e, one, { going: true });
+    await rsvp(c, two, { going: true });
     const cBefore = await wakeCount(c);
-    // A connect revokes every live key of the bot in one statement.
-    await db()`UPDATE api_keys SET revoked_at = now()
-               WHERE bot_id = ${await botId(a)} AND revoked_at IS NULL`;
+    const eBefore = await wakeCount(e);
+    const code = (await issueConnectCode(db(), "google-seats", a.handle, null))
+      .code;
+    await connectWithCode({ handle: a.handle, code }, hashIp(freshIp()));
+    expect((await viewOf(c, two)).going).toBe(true);
+    expect((await viewOf(e, one)).going).toBe(true);
+    expect(await wakeCount(c)).toBe(cBefore + 1);
+    expect(await wakeCount(e)).toBe(eBefore + 1);
+    // One statement: both released before any key's own trigger, logged
+    // without a key, and no second release.
+    const logs = await db()<
+      { key_id: string | null; detail: { why: string } }[]
+    >`
+      SELECT key_id, detail FROM action_log
+      WHERE action = 'gathering.seat_release' AND bot_id = ${await botId(a)}`;
+    expect(logs).toHaveLength(2);
+    for (const l of logs) {
+      expect(l.key_id).toBeNull();
+      expect(l.detail.why).toBe("key");
+    }
+  });
+
+  it("hands on a seat when a bot revokes its own key", async () => {
+    const { a, c, host, id } = await fullHouse();
+    const cBefore = await wakeCount(c);
+    const hostBefore = await wakeCount(host);
+    expect((await call(revokeRoute, { key: a.key })).status).toBe(200);
     expect((await viewOf(c, id)).going).toBe(true);
     expect(await wakeCount(c)).toBe(cBefore + 1);
+    expect(await wakeCount(host)).toBe(hostBefore);
+  });
+
+  it("refuses an RSVP that waited on its key while a revoke handed its seats on", async () => {
+    const host = await register("host");
+    const a = await register("guest-a");
+    const id = await gathering(host, 1);
+    const aId = await botId(a);
+    let late: Promise<Awaited<ReturnType<typeof rsvp>>> | undefined;
+    await db().begin(async (tx) => {
+      await tx`SELECT 1 FROM bots WHERE id = ${aId} FOR SHARE`;
+      await tx`UPDATE api_keys SET revoked_at = now()
+               WHERE bot_id = ${aId} AND revoked_at IS NULL`;
+      late = rsvp(a, id, { going: true });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+    const res = await late;
+    expect(res?.status).toBe(401);
+    expect(res?.body.error.code).toBe("invalid_key");
+    const rows = await db()`
+      SELECT 1 FROM gathering_rsvps WHERE gathering_id = ${id} AND bot_id = ${aId}`;
+    expect(rows).toHaveLength(0);
   });
 
   it("ends the line at its cap, but keeps a waiting bot's place when its notice changes", async () => {
@@ -365,6 +433,43 @@ describe("seats and the waitlist", () => {
     expect(
       (await rsvp(late, id, { going: true })).body.rsvp.waitlist_place,
     ).toBe(GATHERING_WAITLIST_MAX);
+  });
+
+  it("sends a bot in line that comes on another key to the end of a full line, refused as the database would", async () => {
+    const host = await register("host");
+    const a = await register("guest-a");
+    const w = await register("guest-w");
+    const id = await gathering(host, 1);
+    await rsvp(a, id, { going: true });
+    await rsvp(w, id, { going: true });
+    await db()`
+      WITH bs AS (
+        INSERT INTO bots (handle, display_name)
+        SELECT 'filler-' || n, 'Filler ' || n
+        FROM generate_series(2, ${GATHERING_WAITLIST_MAX}) n
+        RETURNING id, handle),
+      ks AS (
+        INSERT INTO api_keys (bot_id, key_hash, prefix)
+        SELECT id, encode(sha256(convert_to('filler-key-' || handle, 'UTF8')), 'hex'), 'fill'
+        FROM bs RETURNING id, bot_id)
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
+      SELECT ${id}, bot_id, id, 10 FROM ks ORDER BY bot_id`;
+    // w waits on its first key; a second key of its own would start a new
+    // run at the back, so at the cap it's refused, plainly, not as an error.
+    const second = "unp_" + "q".repeat(40);
+    await db()`
+      INSERT INTO api_keys (bot_id, key_hash, prefix)
+      VALUES (${await botId(w)}, ${hashKey(second)}, 'q2')`;
+    const res = await rsvp({ handle: w.handle, key: second }, id, {
+      going: true,
+      notice_minutes: 5,
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe("waitlist_full");
+    // On its own key it keeps its place.
+    expect((await rsvp(w, id, { going: true, notice_minutes: 5 })).status).toBe(
+      200,
+    );
   });
 
   it("hands a seat on when a guest blocks the announcer", async () => {

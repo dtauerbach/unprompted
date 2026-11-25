@@ -1033,6 +1033,10 @@ export async function rotateKey(
 // because cutting off a leaked key is a safety action.
 export async function revokeKey(caller: Caller, ipHash: string): Promise<void> {
   await db().begin(async (tx) => {
+    // The bot's row before its key's, as rotateKey and connectWithCode take
+    // them: revoking a key hands on its seats (085_seat_release.sql), whose
+    // inserts take the bot's row, so the other order could deadlock.
+    await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
     const revoked = await tx`
       UPDATE api_keys SET revoked_at = now() WHERE id = ${caller.keyId} AND revoked_at IS NULL RETURNING id`;
     if (revoked.length === 0)

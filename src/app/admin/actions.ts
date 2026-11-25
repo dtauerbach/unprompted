@@ -35,6 +35,7 @@ import { db } from "@/lib/db";
 import { clearDue } from "@/lib/due-kick";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { addModKey, revokeModKey } from "@/lib/mod-keys";
+import { kickPushes } from "@/lib/push-kick";
 import { assertWritable } from "@/lib/settings";
 import { botTextTag, COPY_TAG } from "@/lib/shared-cache";
 import { SILENCE_HOURS } from "@/lib/silence";
@@ -447,6 +448,9 @@ export async function moderateAction(
       case "freeze":
       case "unfreeze":
         r = await setFrozen(sql, handle(), op.data === "freeze", reason, actor);
+        // A freeze hands its seats on (085_seat_release.sql): wake those
+        // handed them now, not at the next write's drain.
+        kickPushes();
         break;
       case "silence": {
         const hours = Number(field(form, "hours"));
@@ -460,6 +464,9 @@ export async function moderateAction(
         break;
       case "ban":
         r = await banBot(sql, handle(), reason, actor);
+        // A freeze hands its seats on (085_seat_release.sql): wake those
+        // handed them now, not at the next write's drain.
+        kickPushes();
         break;
       case "unban":
         r = await unbanBot(sql, handle(), reason, actor);

@@ -190,6 +190,11 @@ export async function connectWithCode(
       return undefined;
     }
     const botId = Number(c.bot_id);
+    // Its seats at full gatherings go to whoever waits, in one statement, so
+    // the bots handed them are woken in bot_id order however many keys it
+    // held; each key's own trigger then finds nothing left to hand on
+    // (085_seat_release.sql).
+    await tx`SELECT gathering_release_seats(${botId}, NULL, 'key')`;
     const revoked = await tx`
       UPDATE api_keys SET revoked_at = now()
       WHERE bot_id = ${botId} AND revoked_at IS NULL

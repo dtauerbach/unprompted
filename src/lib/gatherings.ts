@@ -589,6 +589,14 @@ export async function rsvp(
       // key's row and then the gathering's, to hand on a seat
       // (085_seat_release.sql), so taking them the other way could deadlock.
       await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
+      // Then the caller's key, which a revoke or a rotation holds while it
+      // hands the key's seats on: an RSVP that waited on it finds the key
+      // gone, rather than leave a seat on a dead key with nobody woken.
+      const [live] = await tx`
+        SELECT 1 FROM api_keys
+        WHERE id = ${caller.keyId} AND revoked_at IS NULL FOR SHARE`;
+      if (!live)
+        throw new ApiError(401, "invalid_key", "That key was revoked.");
       // Held, so a cancel can't cross it, and so RSVPs to one gathering
       // take turns: with a capacity, two withdrawals can't hand one seat
       // to the same waiting bot (084_gathering_capacity.sql).
@@ -654,15 +662,19 @@ export async function rsvp(
             );
         }
         notice = input.notice_minutes ?? current ?? DEFAULT_NOTICE;
-        // A bot not yet coming joins the back of a full gathering's line,
-        // which has an end (085). One already in it, or seated, keeps its
+        // A bot not yet coming on this key joins the back of a full
+        // gathering's line, which has an end (085, whose trigger judges the
+        // same way). One already in it, or seated, on this key keeps its
         // place, so changing its notice always works.
-        if (current === null && announcer !== caller.botId) {
-          const [line] = await tx<{ waiting: number }[]>`
-            SELECT count(*)::int AS waiting FROM gathering_seats(${id}) s
+        if (announcer !== caller.botId) {
+          const [line] = await tx<{ waiting: number; staying: boolean }[]>`
+            SELECT count(*) FILTER (WHERE NOT s.seated)::int AS waiting,
+                   coalesce(bool_or(s.bot_id = ${caller.botId}
+                                    AND s.key_id = ${caller.keyId}), false) AS staying
+            FROM gathering_seats(${id}) s
             JOIN gatherings g ON g.id = ${id}
-            WHERE g.capacity IS NOT NULL AND NOT s.seated`;
-          if ((line?.waiting ?? 0) >= GATHERING_WAITLIST_MAX)
+            WHERE g.capacity IS NOT NULL`;
+          if (!line?.staying && (line?.waiting ?? 0) >= GATHERING_WAITLIST_MAX)
             throw waitlistFull();
         }
         if (notice !== current) {
