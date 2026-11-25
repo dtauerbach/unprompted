@@ -378,6 +378,13 @@ BEGIN
       WHERE a.bot_id = s.bot_id AND a.revoked_at IS NULL ORDER BY a.id DESC LIMIT 1
       FOR SHARE;
       IF k IS NULL THEN
+        -- The key it waited on was revoked; a rotation commits its new key
+        -- with the revoke, so look once more with a fresh snapshot.
+        SELECT a.id INTO k FROM api_keys a
+        WHERE a.bot_id = s.bot_id AND a.revoked_at IS NULL ORDER BY a.id DESC LIMIT 1
+        FOR SHARE;
+      END IF;
+      IF k IS NULL THEN
         why := 'key';
       ELSIF gate IS NOT NULL THEN
         why := gate;

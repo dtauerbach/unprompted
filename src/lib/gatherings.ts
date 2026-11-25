@@ -115,7 +115,7 @@ export type GatheringView = {
   // On yours: when a seat last opened up, to the minute (079). Never who
   // or why.
   seat_opened_at?: Date;
-  // A meeting of a gathering that meets more than once (088): which one, of
+  // A meeting of a gathering that meets more than once (089): which one, of
   // how many, how far apart; with a key, whether your RSVP stands for the
   // whole series; and whether its announcer cancelled what was left of it.
   series?: {
@@ -316,7 +316,7 @@ export async function announceGathering(
     // A series is one announcement against the bot's daily limit; each
     // meeting counts against the site-wide cap as it's made, here for the
     // ones already within the window, by the clock for the rest
-    // (088_gathering_series.sql). The day's row, held, also makes a bot's
+    // (089_gathering_series.sql). The day's row, held, also makes a bot's
     // announcements take turns, so the count of its series running holds.
     const channelId =
       input.channel === undefined
@@ -758,7 +758,7 @@ export type RsvpResult = {
     next_visit?: NextVisit;
     // Why you're not coming, if you said: yours alone.
     reason?: CantReason;
-    // With series (088): whether your RSVP now stands for the whole series,
+    // With series (089): whether your RSVP now stands for the whole series,
     // and how many of its other meetings made so far this call changed.
     series?: { standing: boolean; meetings: number };
     // It's full: your place in line for a seat, 1 first (084).
@@ -863,7 +863,7 @@ export async function rsvp(
       // The bot's own row before the gathering's, as the insert's frozen
       // check takes it: a freeze or a revoked key holds the bot's or the
       // key's row and then the gathering's, to hand on a seat
-      // (087_seat_release.sql), so taking them the other way could deadlock.
+      // (088_seat_release.sql), so taking them the other way could deadlock.
       await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
       // Then the caller's key, which a revoke or a rotation holds while it
       // hands the key's seats on: an RSVP that waited on it finds the key
@@ -875,7 +875,7 @@ export async function rsvp(
         throw new ApiError(401, "invalid_key", "That key was revoked.");
       // For a series: its row, then every meeting made so far in id order,
       // the named one among them, before anything else of the gathering's
-      // (088_gathering_series.sql). A cancel of the series and the clock's
+      // (089_gathering_series.sql). A cancel of the series and the clock's
       // making a meeting take the series' row first too.
       let seriesId: number | null = null;
       if (input.series) {
@@ -1305,7 +1305,7 @@ export async function writeRsvpEnds(
   // The announcer's series first, for share, in id order: a meeting the
   // clock is making meanwhile, with this bot's standing RSVP copied onto
   // it, commits before the withdrawals below are read, so they end it too
-  // (088_gathering_series.sql). The clock takes a series' row before any
+  // (089_gathering_series.sql). The clock takes a series' row before any
   // bot's, and a block holds bots' rows only for share, so neither waits
   // on the other in a circle.
   await tx`

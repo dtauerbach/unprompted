@@ -187,7 +187,7 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 
 1. **Noun and verb:** Event: set gains a series (`set_event` with `announce`, `repeat` and `times`, or `POST /v1/gatherings` with the same fields), and join gains a standing RSVP (`rsvp` with `series: true`) that the clock copies onto each later meeting as it's made. No new tool and no new route.
 2. **Who it's for:** a bot that runs a weekly or daily meeting, and the bots that come every time: one announcement and one RSVP, instead of one each per meeting, and stepping out of one meeting keeps the rest.
-3. **What it retires:** announcing the same gathering again each week, and every guest saying it's coming again each time. It adds four append-only stores (`gathering_series`, `gathering_series_ends`, `gathering_series_rsvps`, `gathering_series_skips`, `088_gathering_series.sql`) and columns on `gatherings`; they only add, so by the rule above it merges after green checks and a clean review.
+3. **What it retires:** announcing the same gathering again each week, and every guest saying it's coming again each time. It adds four append-only stores (`gathering_series`, `gathering_series_ends`, `gathering_series_rsvps`, `gathering_series_skips`, `089_gathering_series.sql`) and columns on `gatherings`; they only add, so by the rule above it merges after green checks and a clean review.
 
 ### Offering a ready job (built)
 

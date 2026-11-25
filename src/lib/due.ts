@@ -100,7 +100,7 @@ export async function soonestDue(
          WHERE gathering_start(g) + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > now()),
          -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
          job_dispatch_soonest(),
-         -- A series' next meeting to make (088_gathering_series.sql).
+         -- A series' next meeting to make (089_gathering_series.sql).
          (SELECT min(try_at) FROM gathering_series_pending())
       ) AS next,
       (SELECT min(t.starts_at) FROM gathering_times(
@@ -118,7 +118,7 @@ export type RunResult = {
   capped: number;
   // Gatherings this run ended short.
   shorts: number;
-  // Meetings of a series this run made (088).
+  // Meetings of a series this run made (089).
   made: number;
   // More were due than one run works: the next run takes them.
   more: boolean;
@@ -132,7 +132,7 @@ export type RunResult = {
 // back stays on the list and is tried again by every run until its last
 // try about an hour before it starts writes the skip, once; `try_at` only
 // keeps a quiet site from waking the database before the next hour for one
-// held back (088_gathering_series.sql); the database judges a freeze, a
+// held back (089_gathering_series.sql); the database judges a freeze, a
 // silence, a hide and a key first. Each announcer's own row first, in bot
 // id order, then the site-wide one, the order an announcement takes them in, so a
 // run and an announcement by one of its bots can't deadlock.

@@ -19,7 +19,7 @@ import { forgetDueMinute } from "@/lib/due-check";
 import { RSVP_NOTES } from "@/lib/gatherings";
 import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
-// A gathering that meets more than once (EV4, 088_gathering_series.sql).
+// A gathering that meets more than once (EV4, 089_gathering_series.sql).
 // The announcer says how far apart (daily or weekly) and how many times;
 // each meeting is a gathering of its own, made once it's within the
 // announcement window, at the announcement or by the clock. One RSVP with
@@ -1295,6 +1295,9 @@ describe("a series in a public channel", () => {
     await expect(channelSeries(host, writing)).rejects.toMatchObject({
       code: "UPG03",
     });
+    await expect(channelSeries(host, 999_999)).rejects.toMatchObject({
+      code: "UPG03",
+    });
     await db()`UPDATE channels SET archived_at = now() WHERE slug = 'small-talk'`;
     await expect(
       channelSeries(host, await slugId("small-talk")),
@@ -1370,6 +1373,40 @@ describe("a series in a public channel", () => {
     expect(r?.n).toBe(0);
     expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "key" }]);
     expect((await meetings(sid)).size).toBe(0);
+  });
+
+  it("makes a meeting with the new key when the announcer's key is rotated while the clock is making it", async () => {
+    const host = await trusted("host");
+    const sid = await channelSeries(host, await slugId("research"));
+    // A rotation as one transaction: the old key revoked, a new one in.
+    const rotate = held(async (tx) => {
+      const [k] = await tx<{ id: string; bot_id: string }[]>`
+        UPDATE api_keys k SET revoked_at = now() FROM bots b
+        WHERE b.id = k.bot_id AND b.handle = ${host.handle}
+          AND k.revoked_at IS NULL
+        RETURNING k.id, k.bot_id`;
+      await tx`
+        INSERT INTO api_keys (bot_id, key_hash, prefix)
+        VALUES (${k?.bot_id ?? null},
+                encode(sha256(gen_random_uuid()::text::bytea), 'hex'), 'rotated')`;
+    });
+    await rotate.started;
+    const make = db()<
+      { n: number }[]
+    >`SELECT gathering_series_make(${sid}) AS n`.execute();
+    const waited = await someoneWaits();
+    rotate.release();
+    await rotate.done;
+    expect(waited).toBe(true);
+    const [r] = await make;
+    expect(r?.n).toBe(6);
+    expect(await skipsOf(sid)).toEqual([]);
+    const keys = await db()<{ key_id: string }[]>`
+      SELECT DISTINCT g.key_id FROM gatherings g WHERE g.series_id = ${sid}`;
+    const [live] = await db()<{ id: string }[]>`
+      SELECT k.id FROM api_keys k JOIN bots b ON b.id = k.bot_id
+      WHERE b.handle = ${host.handle} AND k.revoked_at IS NULL`;
+    expect(keys.map((x) => x.key_id)).toEqual([live?.id]);
   });
 
   it("announces a series in a channel through set_event", async () => {
