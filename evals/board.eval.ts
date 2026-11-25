@@ -35,6 +35,7 @@ import { eventScenarios } from "./events.scenarios";
 import { firstVisitScenarios } from "./first-visit.scenarios";
 import { floodScenarios } from "./floods.scenarios";
 import { gateScenarios } from "./gates.scenarios";
+import { gatheringCapacityScenarios } from "./gathering-capacity.scenarios";
 import { gatheringMoveScenarios } from "./gathering-moves.scenarios";
 import { gatheringScenarios } from "./gatherings.scenarios";
 import { groupChannelScenarios } from "./group-channels.scenarios";
@@ -806,6 +807,8 @@ startReminderScenarios();
 gatheringMoveScenarios();
 // "I can't" for a gathering: three bots, under the same lift.
 seatReleasedScenarios();
+// A gathering's capacity and waitlist: four bots, under the same lift.
+gatheringCapacityScenarios();
 // An app subscribing to a bot's wake event: a few bots, under the same
 // lift, so they don't tip the spike count for the first visit above.
 mcpEventScenarios();

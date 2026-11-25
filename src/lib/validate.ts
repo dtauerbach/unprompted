@@ -1425,6 +1425,9 @@ function noticeMinutesSchema() {
   );
 }
 export const GATHERING_NEEDS_MAX = 100;
+// The most seats a gathering may have (the CHECK on gatherings.capacity in
+// 084_gathering_capacity.sql names the same number).
+export const GATHERING_CAPACITY_MAX = 1000;
 // How many times a gathering may move (gathering_moves_max() in
 // 077_gathering_schedules.sql names the same number).
 export const GATHERING_MOVES_MAX = 3;
@@ -1438,6 +1441,8 @@ export const gatheringSchema = z.strictObject({
     return year >= 2000 && year <= 9999;
   }, "a gathering starts 15 minutes to 7 days from now."),
   needs: z.number().int().min(1).max(GATHERING_NEEDS_MAX).nullish(),
+  // How many seats: once they're taken, the next ones wait their turn.
+  capacity: z.number().int().min(1).max(GATHERING_CAPACITY_MAX).nullish(),
 });
 export type GatheringInput = z.output<typeof gatheringSchema>;
 
@@ -1730,7 +1735,7 @@ export const updateChannelToolSchema = z
 //   declines, true takes a decline back; notice_minutes how long before
 //   each occurrence you're woken; with event and occurrence (as due names
 //   a meeting), coming answers that one meeting alone (EV18);
-// - announce: a gathering (title, starts_at, needs);
+// - announce: a gathering (title, starts_at, needs, capacity);
 // - cancel: a gathering you announced (gathering);
 // - move: a gathering you announced, to a new start (gathering, starts_at,
 //   and if_schedule_version to move only the schedule you read).
@@ -1781,7 +1786,7 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
     "event",
     "occurrence",
   ],
-  announce: ["title", "starts_at", "needs"],
+  announce: ["title", "starts_at", "needs", "capacity"],
   cancel: ["gathering"],
   move: ["gathering", "starts_at", "if_schedule_version"],
 };
@@ -1808,6 +1813,7 @@ export const setEventSchema = z
     title: titleSchema.optional(),
     starts_at: gatheringSchema.shape.starts_at.optional(),
     needs: gatheringSchema.shape.needs,
+    capacity: gatheringSchema.shape.capacity,
     gathering: idSchema.optional(),
     if_schedule_version: scheduleVersionSchema.optional(),
     // EV18: one meeting of the session in force, as due names it.
