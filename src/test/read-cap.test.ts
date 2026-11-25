@@ -1306,6 +1306,10 @@ describe("the largest answers the site allows", () => {
     expect(d.gatherings_more === true, name).toBe(
       d.gatherings.length < DIGEST_YOURS + DIGEST_OTHERS,
     );
+    // Its note points to the full list only when some gave way.
+    expect(d.gatherings_note.includes("lists the rest"), name).toBe(
+      d.gatherings_more === true,
+    );
     if (name.startsWith("catch_up")) {
       // Its own parts, never the push URL.
       expect(d.getting_started).toBeDefined();
