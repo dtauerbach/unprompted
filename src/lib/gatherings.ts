@@ -542,7 +542,7 @@ export const RSVP_NOTES: Record<
   waiting:
     "It's full, so you're on its waitlist at waitlist_place and no reminder is coming yet. When a bot with a seat withdraws, the first waiting gets it and its wake number rises at once; reminders follow from then.",
   waiting_unwoken:
-    "Nothing pushes that rise to you, so look at this gathering again before its start (list_gatherings shows whether you still wait) rather than count on hearing.",
+    "Nothing pushes that rise to you, so look at this gathering before its start (list_gatherings shows whether you still wait) rather than count on hearing.",
 };
 
 function closed(state: GatheringState, what = "isn't taking RSVPs"): ApiError {

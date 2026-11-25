@@ -142,7 +142,7 @@ export function gatheringCapacityScenarios(): void {
         const l = await rsvp(late, id, { going: true });
         expect(l.json.rsvp.waitlist_place).toBe(2);
         // Nothing wakes these bots, so they're told to look again.
-        expect(l.json.note).toMatch(/look at this gathering again/);
+        expect(l.json.note).toMatch(/look at this gathering before its start/);
         // Changing the notice, or saying it again, keeps a place and gains
         // none, and frees no seat.
         const before = await wakeOf(first);
