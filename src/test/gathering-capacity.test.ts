@@ -691,7 +691,10 @@ describe("reminders go to seats", () => {
     const took = Date.now() - t0;
     expect(n).toEqual({ rsvp: 600, start: 600 });
     expect(took).toBeLessThan(2500);
-  });
+    // Writing the 700 RSVPs goes through the line's check row by row (085),
+    // which reads the line each time, so the setup alone can pass 20 seconds
+    // on a busy runner. Only the read above is timed.
+  }, 90_000);
 });
 
 describe("announcing a capacity", () => {
