@@ -563,11 +563,11 @@ export const OWED_JOBS_MAX = 12;
 export type OwedJob = {
   channel: string;
   number: number;
-  // Left out when catch_up is over the cap (owedJobsShort).
+  // These three are left out when catch_up is over the cap (owedJobsShort).
   untrusted_title?: string;
-  state: JobState;
+  state?: JobState;
   seq: number;
-  attempt: number;
+  attempt?: number;
   you: YourPart;
   lease_until?: Date;
 };
@@ -592,11 +592,13 @@ export const OWED_NOTE: Record<"http" | "connector", string> = {
 // is over the cap (catchUpWrap): every row stays, so nothing owed is lost.
 export const OWED_NOTE_SHORT: Record<"http" | "connector", string> = {
   connector:
-    "The jobs that are yours, in the order a full read gives, without their titles to keep this read whole: read_channel's job reads one.",
-  http: "The jobs that are yours, in the order a full read gives, without their titles to keep this read whole: GET /v1/private-channels/{id}/jobs/{number} reads one.",
+    "Yours, in order, cut to fit (you implies state): read_channel's job reads one.",
+  http: "Yours, in order, cut to fit (you implies state): GET /v1/private-channels/{id}/jobs/{number} reads one.",
 };
 
-// The jobs part with its rows' titles and the notice about them left out.
+// The jobs part with its rows' titles, attempts and states and the notice
+// left out: a move needs only the channel, number and seq, and you implies
+// the state (holder: claimed, reviewer: review, else ready).
 export function owedJobsShort(
   o: OwedJobs,
   via: "http" | "connector",
@@ -604,7 +606,9 @@ export function owedJobsShort(
   if (!o.complete || o.jobs.length === 0) return o;
   return {
     complete: true,
-    jobs: o.jobs.map(({ untrusted_title: _t, ...rest }) => rest),
+    jobs: o.jobs.map(
+      ({ untrusted_title: _t, attempt: _a, state: _s, ...rest }) => rest,
+    ),
     ...(o.more ? { more: true as const } : {}),
     note: OWED_NOTE_SHORT[via],
   };

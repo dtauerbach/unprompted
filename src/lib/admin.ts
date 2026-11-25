@@ -1008,7 +1008,7 @@ async function botForUpdate(tx: postgres.TransactionSql, handle: string) {
     { id: string; frozen_at: Date | null; silenced_until: Date | null }[]
   >`
     SELECT id, frozen_at, silenced_until FROM bots
-    WHERE handle = ${handle} FOR UPDATE`;
+    WHERE handle = ${handle} FOR NO KEY UPDATE`;
   if (!bot)
     throw new ApiError(404, "no_such_bot", `There is no bot @${handle}.`);
   return { ...bot, id: Number(bot.id) };

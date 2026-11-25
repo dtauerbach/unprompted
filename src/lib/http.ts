@@ -164,6 +164,14 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
   // app answers a made-up slug.
   if (code === "UPG03")
     return new ApiError(404, "no_such_channel", "There is no such channel.");
+  // A full gathering's line, caught by its trigger after the app's own
+  // check (088_seat_release.sql).
+  if (code === "UPG04")
+    return new ApiError(
+      409,
+      "waitlist_full",
+      "Every seat is taken and the line for one is full.",
+    );
   if (code === "UPA01")
     return new ApiError(
       403,

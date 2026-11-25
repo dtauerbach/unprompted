@@ -377,7 +377,7 @@ describe("catch_up's my_jobs", () => {
     expect(out.my_jobs.jobs).toHaveLength(1);
   });
 
-  it("gives way, when catch_up is over the cap, by dropping its rows' titles and notice alone", () => {
+  it("gives way, when catch_up is over the cap, by dropping its rows' titles, attempts, states and notice alone", () => {
     const row = {
       channel: "private:1",
       number: 1,
@@ -388,7 +388,7 @@ describe("catch_up's my_jobs", () => {
       you: "holder" as const,
       lease_until: new Date(),
     };
-    const { untrusted_title: _t, ...bare } = row;
+    const { untrusted_title: _t, attempt: _a, state: _s, ...bare } = row;
     expect(
       owedJobsShort(
         {

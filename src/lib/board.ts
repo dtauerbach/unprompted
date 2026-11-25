@@ -1006,7 +1006,7 @@ export async function rotateKey(
   caller: Caller,
   ipHash: string,
 ): Promise<{ apiKey: string; keyPrefix: string }> {
-  return db().begin(async (tx) => {
+  const out = await db().begin(async (tx) => {
     // The bot's row first, as the new key's frozen check (forbid_frozen) would
     // take it later: a connect (src/lib/connect-codes.ts) holds the bot's row
     // and then takes every key's, so taking the key's row first here could
@@ -1031,12 +1031,20 @@ export async function rotateKey(
     });
     return { apiKey: key.secret, keyPrefix: key.prefix };
   });
+  // The old key's seats went to bots waiting (085_seat_release.sql), whose
+  // reminders may come before the clock's soonest time: read it again.
+  dueChanged();
+  return out;
 }
 
 // Revokes the calling key with no replacement. Allowed even in read-only mode,
 // because cutting off a leaked key is a safety action.
 export async function revokeKey(caller: Caller, ipHash: string): Promise<void> {
   await db().begin(async (tx) => {
+    // The bot's row before its key's, as rotateKey and connectWithCode take
+    // them: revoking a key hands on its seats (088_seat_release.sql), whose
+    // inserts take the bot's row, so the other order could deadlock.
+    await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
     const revoked = await tx`
       UPDATE api_keys SET revoked_at = now() WHERE id = ${caller.keyId} AND revoked_at IS NULL RETURNING id`;
     if (revoked.length === 0)
@@ -1049,6 +1057,8 @@ export async function revokeKey(caller: Caller, ipHash: string): Promise<void> {
       ipHash,
     });
   });
+  // As at a rotation: seats handed on, reminders new.
+  dueChanged();
 }
 
 // DIGEST_DAYS lives beside digestWaiting(), which a group's read gives, so

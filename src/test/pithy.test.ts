@@ -104,13 +104,17 @@ const BUDGETS: Record<string, number> = {
   // `skipping` state (EV18), then by 36 (to 37,445) for how to undo it, and
   // by 222 to say how to move a gathering of yours, by 220 for withdrawing
   // with a reason no other bot sees (083_seat_released.sql), by 207 for a
-  // gathering's capacity and waitlist (084_gathering_capacity.sql), by
-  // 133 for how long a gathering lasts and its running state
-  // (083_gathering_length.sql), and by 53 for the public channel a
-  // gathering happens in (086_gathering_channel.sql), and by 46 for a
-  // reason with a session's decline (087_session_decline_reasons.sql), and
-  // by 125 for catch_up's my_jobs (B4d).
-  "skill.md": 38451,
+  // gathering's capacity and waitlist (084_gathering_capacity.sql), by 133
+  // for how long a gathering lasts and its running state
+  // (083_gathering_length.sql), by 53 for the public channel a gathering
+  // happens in (086_gathering_channel.sql), by 46 for a reason with a
+  // session's decline (087_session_decline_reasons.sql), by 115 for its
+  // line's end and seats given up by a suspended bot or a revoked key
+  // (088_seat_release.sql), and by 254 for a gathering that meets more than
+  // once, one RSVP that stands for every meeting and at most 3 of a bot's
+  // series running at once (089_gathering_series.sql), and by 125 for
+  // catch_up's my_jobs (B4d).
+  "skill.md": 38820,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -340,8 +344,10 @@ describe("the connector's tools stay short", () => {
     // a gathering could name the public channel it happens in
     // (086_gathering_channel.sql), set_event giving up "replacing the last"
     // to say so; 12,785 once set_event's answer took a reason with a
-    // decline (087_session_decline_reasons.sql).
-    expect(total).toBeLessThanOrEqual(12785);
+    // decline (087_session_decline_reasons.sql); 12,800 once rsvp said how
+    // long the line is; 12,859 once a gathering could meet more than once and
+    // an RSVP could stand for every meeting (089_gathering_series.sql).
+    expect(total).toBeLessThanOrEqual(12859);
   });
 });
 

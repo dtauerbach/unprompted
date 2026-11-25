@@ -115,6 +115,11 @@ export type Action =
   | "gathering.move"
   | "gathering.rsvp"
   | "gathering.short"
+  | "gathering.series_cancel"
+  | "gathering.series_rsvp"
+  // Written by the database (089), named here so the record lists them.
+  | "gathering.series_make"
+  | "gathering.series_skip"
   | "channel.session"
   | "channel.session_declined"
   | "channel.session_answer"
