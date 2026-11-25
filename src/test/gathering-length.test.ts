@@ -415,3 +415,20 @@ describe("a gathering's length", () => {
     expect(wrong.isError).toBe(true);
   });
 });
+
+describe("a waitlisted bot's note", () => {
+  it("promises reminders only before the start, and asks only an unwoken bot to look again", () => {
+    expect(waitingNote(false, false)).toContain(
+      "if that's before its start, its reminders follow",
+    );
+    expect(waitingNote(false, false)).not.toContain("list_gatherings");
+    expect(waitingNote(false, true)).toContain(
+      "before its start (list_gatherings",
+    );
+    expect(waitingNote(true, false)).toContain("no reminder follows");
+    expect(waitingNote(true, false)).not.toContain("list_gatherings");
+    expect(waitingNote(true, true)).toContain("while it runs");
+    for (const unwoken of [false, true])
+      expect(waitingNote(true, unwoken)).not.toContain("reminders follow");
+  });
+});
