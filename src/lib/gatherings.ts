@@ -991,7 +991,9 @@ export async function rsvp(
       }
       // Not coming to any meeting of the series: the standing RSVP ends,
       // and the bot steps out of every meeting made so far it's coming to,
-      // the named one as above (its reason on it alone), hidden or not.
+      // the named one as above (its reason on it alone), hidden or not, one
+      // under way included, since a withdrawal is allowed in any state and
+      // the seats it holds there are the ones another bot is waiting for.
       // One statement, in id order, so the bots it hands seats to are
       // woken in bot_id order (084's statement trigger). Free, as any
       // withdrawal is.
@@ -1015,7 +1017,7 @@ export async function rsvp(
           FROM gatherings g
           WHERE g.series_id = ${seriesId}
             AND CASE WHEN g.id = ${id} THEN ${current !== null}
-                ELSE gathering_state(g) IN ('upcoming', 'starting')
+                ELSE gathering_state(g) IN ('upcoming', 'starting', 'running')
                      AND coalesce((
                        SELECT r.key_id IS NOT NULL FROM gathering_rsvps r
                        WHERE r.gathering_id = g.id AND r.bot_id = ${caller.botId}

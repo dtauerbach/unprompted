@@ -596,6 +596,21 @@ function held(work: (tx: Tx) => Promise<unknown>) {
   return { started, release, done };
 }
 
+// Whether n sessions are waiting on the transaction held open.
+async function waiters(n: number): Promise<boolean> {
+  for (let i = 0; i < 100; i++) {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_stat_activity w
+      WHERE w.wait_event_type = 'Lock' AND w.datname = current_database()
+        AND EXISTS (SELECT 1 FROM pg_stat_activity h
+                    WHERE h.pid = ANY (pg_blocking_pids(w.pid))
+                      AND h.state = 'idle in transaction')`;
+    if ((r?.n ?? 0) >= n) return true;
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  return false;
+}
+
 // Whether a session is waiting on a lock right now.
 async function someoneWaits(): Promise<boolean> {
   for (let i = 0; i < 100; i++) {
@@ -732,6 +747,34 @@ describe("what can cross the clock making a meeting", () => {
     await freeze.done;
     expect((await run).made).toBe(0);
     expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "frozen" }]);
+  });
+
+  it("an announcement by the series' own bot crosses a run without deadlocking", async () => {
+    const host = await trusted("host");
+    const sid = await oldSeries(host);
+    // The row both paths take: the announcer's own day of meetings. Held
+    // open, so the two line up in the order that used to deadlock, the
+    // announcement first.
+    await useMeetings(host, 0);
+    const bucket = `gathering-meeting:day:${await botId(host)}`;
+    const hold = held(
+      (tx) => tx`UPDATE rate_limits SET count = count WHERE bucket = ${bucket}`,
+    );
+    await hold.started;
+    const said = announce(host, { title: "One off", starts_at: ahead(60) });
+    expect(await someoneWaits()).toBe(true);
+    // The run queues behind it for the same row, which it takes before the
+    // site-wide cap, as the announcement does. Taken the other way round,
+    // whichever got the site-wide row first would wait on the other for
+    // this one and Postgres would kill one of them.
+    const run = workDue();
+    expect(await waiters(2)).toBe(true);
+    hold.release();
+    await hold.done;
+    const res = await said;
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((await run).made).toBe(6);
+    expect(await skipsOf(sid)).toEqual([]);
   });
 });
 
@@ -952,40 +995,72 @@ describe("a standing RSVP's details", () => {
     expect(logs.length).toBe(1);
   });
 
-  it("writes a standing RSVP into a meeting under way, not only the ones to come", async () => {
-    const host = await trusted("host");
-    const guest = await register("guest");
-    // A daily series of two whose first meeting started an hour ago and
-    // lasts three, so it's running and still takes RSVPs.
+  // A daily series of two whose first meeting started an hour ago and lasts
+  // three, so that one is running and still takes RSVPs, and the second is
+  // a day off. Written straight to the tables, each meeting from the
+  // series' own row so its time is the series' time for it to the
+  // millisecond.
+  async function runningSeries(host: Bot, capacity: number | null = null) {
     const [s] = await db()<{ id: string }[]>`
       INSERT INTO gathering_series
-        (bot_id, key_id, title, starts_at, repeat, times, lasts_minutes, created_at)
+        (bot_id, key_id, title, starts_at, repeat, times, lasts_minutes,
+         capacity, created_at)
       SELECT b.id, k.id, 'Long jam', now() - interval '60 minutes', 'daily', 2,
-             180, now() - interval '1 day'
+             180, ${capacity}, now() - interval '1 day'
       FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
       WHERE b.handle = ${host.handle}
       RETURNING id`;
     const sid = Number(s?.id);
-    // From the series' own row, so each meeting is at the series' time for
-    // it to the millisecond.
     await db()`
       INSERT INTO gatherings (bot_id, key_id, title, starts_at, lasts_minutes,
-                              series_id, occurrence, created_at)
+                              capacity, series_id, occurrence, created_at)
       SELECT x.bot_id, k.id, x.title,
              gathering_series_start(x.starts_at, x.repeat, n), x.lasts_minutes,
-             x.id, n, now() - interval '1 day'
+             x.capacity, x.id, n, now() - interval '1 day'
       FROM gathering_series x
       JOIN api_keys k ON k.bot_id = x.bot_id AND k.revoked_at IS NULL
       CROSS JOIN generate_series(1, 2) AS n
       WHERE x.id = ${sid}`;
     const made = await meetings(sid);
-    const running = made.get(1) as number;
-    const next = made.get(2) as number;
+    return { sid, running: made.get(1) as number, next: made.get(2) as number };
+  }
+
+  it("writes a standing RSVP into a meeting under way, not only the ones to come", async () => {
+    const host = await trusted("host");
+    const guest = await register("guest");
+    const { running, next } = await runningSeries(host);
     const res = await rsvp(guest, next, { going: true, series: true });
     expect(res.status).toBe(200);
     expect(res.body.rsvp.series).toMatchObject({ standing: true });
     expect(await coming(guest, running)).toBe(true);
     expect(await coming(guest, next)).toBe(true);
+  });
+
+  it("steps out of a meeting under way too, handing its seat to the bot waiting", async () => {
+    const host = await trusted("host");
+    const a = await register("alpha");
+    const b = await register("bravo");
+    const { running, next } = await runningSeries(host, 1);
+    await rsvp(a, next, { going: true, series: true });
+    await rsvp(b, next, { going: true, series: true });
+    // One seat each meeting: alpha has it, bravo is waiting.
+    expect(await coming(a, running)).toBe(true);
+    expect(await coming(b, running)).toBe(true);
+    const before = await wakeOf(b);
+    const out = await rsvp(a, next, { going: false, series: true });
+    expect(out.status).toBe(200);
+    expect(out.body.rsvp.series).toMatchObject({ standing: false });
+    expect(out.body.note).toContain(RSVP_NOTES.series_withdrawn);
+    // Not coming to either, the one under way included, and its seat went
+    // to the bot waiting there, which is woken for it.
+    expect(await coming(a, running)).toBe(false);
+    expect(await coming(a, next)).toBe(false);
+    for (const id of [running, next]) {
+      const seats = await db()<{ bot_id: string; seated: boolean }[]>`
+        SELECT bot_id, seated FROM gathering_seats(${id})`;
+      expect(seats).toEqual([{ bot_id: String(await botId(b)), seated: true }]);
+    }
+    expect((await wakeOf(b)) - before).toBe(2);
   });
 
   it("keeps the series' notice over the one a meeting had alone", async () => {
@@ -1010,7 +1085,10 @@ describe("a standing RSVP's details", () => {
     const before = await wakeOf(b);
     const out = await rsvp(a, g.id, { going: false, series: true });
     expect(out.status).toBe(200);
-    expect(out.body.seat_opened ?? false).toBe(false);
+    // The seat went to the bot waiting, so the announcer is told of none.
+    const opened = await db()<{ n: string }[]>`
+      SELECT count(*) AS n FROM gathering_rsvps WHERE seat_opened`;
+    expect(opened[0]?.n).toBe("0");
     const m = await meetings(g.series.id);
     for (const id of m.values()) {
       const seats = await db()<{ bot_id: string; seated: boolean }[]>`

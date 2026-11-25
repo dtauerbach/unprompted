@@ -129,11 +129,20 @@ export type RunResult = {
 // series a run, oldest first. What an announcement answers to, each is
 // held to again: the announcer's gate, judged now, its own daily meetings
 // and the site-wide cap on gatherings, one use per meeting. A meeting held
-// back stays on the list and is tried again an hour later, until its last
-// try about an hour before it starts writes the skip, once
-// (087_gathering_series.sql); the database judges a freeze, a silence, a
-// hide and a key first. The caps' rows after the series' row, as an
-// announcement takes them after its own (new) series is made.
+// back stays on the list and is tried again by every run until its last
+// try about an hour before it starts writes the skip, once; `try_at` only
+// keeps a quiet site from waking the database before the next hour for one
+// held back (087_gathering_series.sql); the database judges a freeze, a
+// silence, a hide and a key first. Each announcer's own row first, in bot
+// id order,
+// then the site-wide one, the order an announcement takes them in, so a
+// run and an announcement by one of its bots can't deadlock.
+function ownRule(botId: number) {
+  const [own] = gatheringMeetingRules(botId);
+  if (!own) throw new Error("no daily cap on a bot's meetings");
+  return own;
+}
+
 async function makeMeetings(tx: Tx): Promise<number> {
   const due = await tx<{ series_id: string; bot_id: string }[]>`
     SELECT DISTINCT x.series_id, s.bot_id
@@ -142,20 +151,30 @@ async function makeMeetings(tx: Tx): Promise<number> {
     WHERE x.make_at <= now()
     ORDER BY x.series_id LIMIT ${RUN_MAX}`;
   if (due.length === 0) return 0;
+  const work: { series: string; bot: number; gate: string | null }[] = [];
+  const mine = new Map<number, number>();
+  for (const d of [...due].sort(
+    (a, b) => Number(a.bot_id) - Number(b.bot_id),
+  )) {
+    const bot = Number(d.bot_id);
+    if (!mine.has(bot)) mine.set(bot, await usesLeft(tx, ownRule(bot)));
+    work.push({
+      series: d.series_id,
+      bot,
+      gate: (await isAllowed(tx, bot, "announce")) ? null : "gate",
+    });
+  }
   const [cap] = gatheringGlobalRules(await antiAbuse(tx));
   if (!cap) throw new Error("no site-wide cap on gatherings");
   let left = await usesLeft(tx, cap);
   let made = 0;
-  for (const d of due) {
-    const botId = Number(d.bot_id);
-    const gate = (await isAllowed(tx, botId, "announce")) ? null : "gate";
-    const [own] = gatheringMeetingRules(botId);
-    if (!own) throw new Error("no daily cap on a bot's meetings");
-    const allow = Math.min(left, await usesLeft(tx, own));
+  for (const w of work) {
+    const allow = Math.min(left, mine.get(w.bot) ?? 0);
     const [m] = await tx<{ n: number }[]>`
-      SELECT gathering_series_make(${d.series_id}, ${allow}, ${gate}) AS n`;
+      SELECT gathering_series_make(${w.series}, ${allow}, ${w.gate}) AS n`;
     const n = m?.n ?? 0;
-    if (n > 0) await addUses(tx, own, n);
+    if (n > 0) await addUses(tx, ownRule(w.bot), n);
+    mine.set(w.bot, (mine.get(w.bot) ?? 0) - n);
     left -= n;
     made += n;
   }

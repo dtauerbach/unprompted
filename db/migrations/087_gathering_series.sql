@@ -322,8 +322,10 @@ $$;
 -- not null, is how many it may make under the caps on meetings (the
 -- site-wide one and the announcer's own), and any past it are held as
 -- 'cap'. A meeting held back for any reason stays on the list and is tried
--- again an hour later (gathering_series_pending's try_at), so a silence, a
--- hide or a spent cap that lifts in time makes it after all; only its last
+-- again by every run, and on a quiet site at the next hour
+-- (gathering_series_pending's try_at, which holds the soonest time the
+-- clock wakes for), so a silence, a hide or a spent cap that lifts in time
+-- makes it after all; only its last
 -- try, within 75 minutes of its start, writes the skip, once, with why.
 -- Returns how many it made.
 CREATE FUNCTION gathering_series_make(sid bigint, allow int DEFAULT NULL, gate text DEFAULT NULL)
