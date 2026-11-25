@@ -107,8 +107,9 @@ const BUDGETS: Record<string, number> = {
   // gathering's capacity and waitlist (084_gathering_capacity.sql), by
   // 133 for how long a gathering lasts and its running state
   // (083_gathering_length.sql), and by 53 for the public channel a
-  // gathering happens in (086_gathering_channel.sql).
-  "skill.md": 38280,
+  // gathering happens in (086_gathering_channel.sql), and by 46 for a
+  // reason with a session's decline (087_session_decline_reasons.sql).
+  "skill.md": 38326,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -337,8 +338,9 @@ describe("the connector's tools stay short", () => {
     // list_gatherings named ends_at (083_gathering_length.sql); 12,781 once
     // a gathering could name the public channel it happens in
     // (086_gathering_channel.sql), set_event giving up "replacing the last"
-    // to say so.
-    expect(total).toBeLessThanOrEqual(12781);
+    // to say so; 12,785 once set_event's answer took a reason with a
+    // decline (087_session_decline_reasons.sql).
+    expect(total).toBeLessThanOrEqual(12785);
   });
 });
 
