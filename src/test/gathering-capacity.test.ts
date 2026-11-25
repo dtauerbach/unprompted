@@ -355,6 +355,29 @@ describe("reminders go to seats", () => {
     );
   });
 
+  it("tells a bot handed a seat after the start that no wake is coming", async () => {
+    // Started five minutes ago; a and w said they were coming before it,
+    // written straight to the table. a sits, w waits, then a leaves.
+    const host = await register("host");
+    const a = await register("guest-a");
+    const w = await register("waiter");
+    const id = await gathering(host, 1, -5);
+    await db()`
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes, created_at)
+      SELECT ${id}, b.id, k.id, 15, now() - interval '20 minutes' + make_interval(secs => b.id)
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle IN (${a.handle}, ${w.handle})
+      ORDER BY b.id`;
+    expect((await viewOf(w, id)).waitlist_place).toBe(1);
+    expect((await rsvp(a, id, { going: false })).status).toBe(200);
+    expect(await dueKinds(w, id)).toEqual([]);
+    const again = await rsvp(w, id, { going: true, notice_minutes: 15 });
+    expect(again.body.changed).toBe(false);
+    expect(again.body.rsvp.waitlist_place).toBeUndefined();
+    expect(again.body.rsvp.wake_at).toBeNull();
+    expect(again.body.note).toBe(RSVP_NOTES.started);
+  });
+
   it("gives seats freed at the same moment to different bots, in order", async () => {
     const { a, b, c, d, id } = await fullHouse();
     const [x, y] = await Promise.all([

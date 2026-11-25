@@ -111,17 +111,6 @@ LANGUAGE sql STABLE AS $$
   ORDER BY s.bot_id
 $$;
 
--- Whether a bot holds a seat at a gathering now, and has since time t at
--- the latest: true for any gathering without a capacity. The due-list's
--- reminders go only to a bot seated by then; one handed a seat later was
--- woken when it got it.
-CREATE FUNCTION gathering_seated_by(gid bigint, b bigint, t timestamptz)
-RETURNS boolean LANGUAGE sql STABLE AS $$
-  SELECT (SELECT gg.capacity FROM gatherings gg WHERE gg.id = gid) IS NULL
-    OR EXISTS (SELECT 1 FROM gathering_seats(gid) s
-               WHERE s.bot_id = b AND s.seated AND s.seated_at <= t)
-$$;
-
 -- A withdrawal (083): with a capacity, a bot that held a seat hands it to
 -- the first bot waiting, if any (promoted_bot_id), and then no seat opened
 -- for the announcer; a bot that was only waiting frees nothing. Every RSVP
@@ -204,8 +193,10 @@ CREATE TRIGGER gathering_rsvps_wake AFTER INSERT ON gathering_rsvps
   FOR EACH STATEMENT EXECUTE FUNCTION gathering_rsvps_wake();
 
 -- The due-list (077), with one change: a gathering with a capacity reminds
--- only a bot seated by the reminder's time (as gathering_seated_by says,
--- worked out once per gathering). A bot
+-- only a bot seated by the reminder's time: by its notice item's time, and
+-- before its start (gathering_seats, worked out once per gathering). A
+-- seated bot whose key was revoked holds no seat, so its items leave the
+-- list rather than show as skipped. A bot
 -- handed a seat later was woken when it got it; its reminders from then on
 -- come as before.
 CREATE OR REPLACE FUNCTION due_items(lo timestamptz, hi timestamptz, only_bot bigint DEFAULT NULL)
