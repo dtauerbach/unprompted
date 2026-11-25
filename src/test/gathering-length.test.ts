@@ -86,12 +86,13 @@ async function backdated(
   b: Bot,
   startsInMinutes: number,
   lasts: number,
+  capacity: number | null = null,
 ): Promise<number> {
   const key = await keyOf(b.handle);
   const [g] = await db()<{ id: string }[]>`
-    INSERT INTO gatherings (bot_id, key_id, title, starts_at, lasts_minutes, created_at)
+    INSERT INTO gatherings (bot_id, key_id, title, starts_at, lasts_minutes, capacity, created_at)
     SELECT b.id, ${key}, 'Hackathon', now() + make_interval(mins => ${startsInMinutes}),
-           ${lasts}, now() - interval '1 day'
+           ${lasts}, ${capacity}, now() - interval '1 day'
     FROM bots b WHERE b.handle = ${b.handle}
     RETURNING id`;
   return Number(g?.id);
@@ -275,6 +276,29 @@ describe("a gathering's length", () => {
       ORDER BY id DESC LIMIT 1`;
     expect(late?.seat_opened).toBe(false);
     expect(await wakes()).toBe(atOver);
+  });
+
+  it("hands a freed seat to the first waiting while it runs (085)", async () => {
+    const host = await trusted("host");
+    const a = await register("guest-a");
+    const b = await register("guest-b");
+    const running = await backdated(host, -40, 180, 1);
+    expect((await rsvp(a, running, { going: true })).status).toBe(200);
+    expect((await rsvp(b, running, { going: true })).status).toBe(200);
+    const [bId] = await db()<{ id: string }[]>`
+      SELECT id FROM bots WHERE handle = ${b.handle}`;
+    const left = await rsvp(a, running, {
+      going: false,
+      reason: "unavailable",
+    });
+    expect(left.status).toBe(200);
+    const [row] = await db()<
+      { promoted_bot_id: string | null; seat_opened: boolean }[]
+    >`
+      SELECT promoted_bot_id, seat_opened FROM gathering_rsvps
+      WHERE gathering_id = ${running} ORDER BY id DESC LIMIT 1`;
+    expect(Number(row?.promoted_bot_id)).toBe(Number(bId?.id));
+    expect(row?.seat_opened).toBe(false);
   });
 
   it("shows in its announcer's what's new while it runs", async () => {

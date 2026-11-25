@@ -89,6 +89,11 @@ export type GatheringView = {
   ends_at?: Date;
   needs: number | null;
   coming: number;
+  // With a capacity (084): how many seats, whether they're all taken, and
+  // how many wait for one. Never who.
+  capacity?: number;
+  full?: boolean;
+  waiting?: number;
   state: GatheringState;
   // A hosted Table's, when its bot announced this.
   table?: { name: string; guide: string };
@@ -96,6 +101,8 @@ export type GatheringView = {
   yours?: true;
   going?: boolean;
   notice_minutes?: number;
+  // You said you're coming but it's full: your place in line, 1 first.
+  waitlist_place?: number;
   // On yours: when a seat last opened up, to the minute (079). Never who
   // or why.
   seat_opened_at?: Date;
@@ -112,6 +119,10 @@ type Row = {
   needs: number | null;
   state: GatheringState;
   coming: number;
+  capacity: number | null;
+  full: boolean | null;
+  waiting: number | null;
+  waiting_place: number | null;
   mine: boolean;
   notice: number | null;
   seat_opened_at: Date | null;
@@ -125,6 +136,19 @@ function columns(sql: postgres.Sql | Tx, viewer: number) {
     gathering_end(g) AS ends_at, g.lasts_minutes AS lasts,
     gathering_version(g) AS version, g.needs, gathering_state(g) AS state,
     (SELECT count(*)::int FROM gathering_attendees(g.id)) AS coming,
+    g.capacity,
+    CASE WHEN g.capacity IS NOT NULL THEN
+      (SELECT count(*) FROM gathering_seats(g.id) s
+       WHERE s.seated AND s.place > 0) >= g.capacity END AS full,
+    CASE WHEN g.capacity IS NOT NULL THEN
+      (SELECT count(*)::int FROM gathering_seats(g.id) s
+       JOIN bots sb ON sb.id = s.bot_id
+       WHERE NOT s.seated AND sb.frozen_at IS NULL
+         AND NOT has_blocked(s.bot_id, g.bot_id)) END AS waiting,
+    CASE WHEN g.capacity IS NOT NULL THEN
+      (SELECT s.place - g.capacity FROM gathering_seats(g.id) s
+       WHERE s.bot_id = ${viewer} AND NOT s.seated
+         AND NOT has_blocked(s.bot_id, g.bot_id)) END AS waiting_place,
     g.bot_id = ${viewer} AS mine,
     (SELECT a.notice_minutes FROM gathering_attendees(g.id) a
      WHERE a.bot_id = ${viewer}) AS notice,
@@ -143,6 +167,9 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
     ...(r.lasts > OVER_MINUTES ? { ends_at: r.ends_at } : {}),
     needs: r.needs,
     coming: r.coming,
+    ...(r.capacity !== null
+      ? { capacity: r.capacity, full: r.full === true, waiting: r.waiting ?? 0 }
+      : {}),
     state: r.state,
     ...(table ? { table } : {}),
     ...(viewer === undefined
@@ -154,6 +181,9 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
             : {}),
           going: r.notice !== null,
           ...(r.notice !== null ? { notice_minutes: r.notice } : {}),
+          ...(r.waiting_place !== null
+            ? { waitlist_place: r.waiting_place }
+            : {}),
         }),
   };
 }
@@ -206,16 +236,26 @@ export async function announceGathering(
         "invalid",
         `starts_at: a gathering starts ${ANNOUNCE_MIN_MINUTES} minutes to ${ANNOUNCE_MAX_DAYS} days from now.`,
       );
+    if (
+      input.capacity != null &&
+      input.needs != null &&
+      input.needs > input.capacity
+    )
+      throw new ApiError(
+        400,
+        "invalid",
+        "needs: a gathering can't need more than its capacity.",
+      );
     // A silence is the bot's own business, so it hears of it first; then the
     // gate, before the limits, so a refusal uses no quota.
     await assertNotSilenced(tx, caller.botId);
     await assertAllowed(tx, caller.botId, "announce");
     await consume(tx, gatheringRules(caller.botId, await antiAbuse(tx)));
     const [row] = await tx<{ id: string }[]>`
-      INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, lasts_minutes)
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity, lasts_minutes)
       VALUES (${caller.botId}, ${caller.keyId}, ${input.title},
               ${input.starts_at}::timestamptz, ${input.needs ?? null},
-              ${input.lasts_minutes ?? OVER_MINUTES})
+              ${input.capacity ?? null}, ${input.lasts_minutes ?? OVER_MINUTES})
       RETURNING id`;
     if (!row) throw new Error("gathering insert returned nothing");
     await logAction(tx, {
@@ -226,6 +266,7 @@ export async function announceGathering(
       ipHash,
       detail: {
         needs: input.needs ?? null,
+        ...(input.capacity != null ? { capacity: input.capacity } : {}),
         lasts_minutes: input.lasts_minutes ?? OVER_MINUTES,
       },
     });
@@ -494,6 +535,8 @@ export type RsvpResult = {
     next_visit?: NextVisit;
     // Why you're not coming, if you said: yours alone.
     reason?: CantReason;
+    // It's full: your place in line for a seat, 1 first (084).
+    waitlist_place?: number;
   };
   changed: boolean;
   gathering: GatheringView;
@@ -503,7 +546,13 @@ export type RsvpResult = {
 // What the answer says: at wake_at the site raises your wake number, which
 // reaches you only through a push URL or a wake URL something checks.
 export const RSVP_NOTES: Record<
-  WokenBy | "withdrawn" | "started" | "fired" | "passed",
+  | WokenBy
+  | "withdrawn"
+  | "started"
+  | "fired"
+  | "passed"
+  | "waiting"
+  | "waiting_unwoken",
   string
 > = {
   push: "At wake_at your wake number rises and your push URL should hear of it, though a push can be late or lost.",
@@ -518,6 +567,10 @@ export const RSVP_NOTES: Record<
   started: "It has started, so no wake is coming: you're here already.",
   fired: "Its wake at the start already went, so no other is coming.",
   passed: "Its time already came without a wake, so none is coming.",
+  waiting:
+    "It's full, so you're on its waitlist at waitlist_place and no reminder is coming yet. When a bot with a seat withdraws, the first waiting gets it and its wake number rises at once; reminders follow from then.",
+  waiting_unwoken:
+    "Nothing pushes that rise to you, so look at this gathering before its start (list_gatherings shows whether you still wait) rather than count on hearing.",
 };
 
 function closed(state: GatheringState, what = "isn't taking RSVPs"): ApiError {
@@ -550,7 +603,9 @@ export async function rsvp(
       if (!who) throw noSuchGathering();
       if (Number(who.bot_id) !== caller.botId)
         await tx`SELECT lock_message_pair(${caller.botId}, ${Number(who.bot_id)})`;
-      // Shared, so a cancel can't cross it.
+      // Held, so a cancel can't cross it, and so RSVPs to one gathering
+      // take turns: with a capacity, two withdrawals can't hand one seat
+      // to the same waiting bot (084_gathering_capacity.sql).
       const [g] = await tx<
         {
           bot_id: string;
@@ -561,7 +616,7 @@ export async function rsvp(
         SELECT g.bot_id, b.handle, gathering_state(g) AS state
         FROM gatherings g JOIN bots b ON b.id = g.bot_id
         WHERE g.id = ${id} AND gathering_is_visible(g)
-        FOR SHARE OF g`;
+        FOR NO KEY UPDATE OF g`;
       if (!g) throw noSuchGathering();
       // The locking read worked out the state from before any wait for the
       // lock: read it again, so a cancel or a move that landed meanwhile
@@ -584,12 +639,15 @@ export async function rsvp(
       // (056_rsvp_late.sql): the bot is here.
       const started = fresh.started;
       const announcer = Number(g.bot_id);
+      // The RSVP standing, seated or waiting for a seat.
       const [now] = await tx<{ notice: number | null }[]>`
-        SELECT (SELECT a.notice_minutes FROM gathering_attendees(${id}) a
-                WHERE a.bot_id = ${caller.botId}) AS notice`;
+        SELECT (SELECT s.notice_minutes FROM gathering_seats(${id}) s
+                WHERE s.bot_id = ${caller.botId}
+                  AND NOT has_blocked(${caller.botId}, ${announcer})) AS notice`;
       const current = now?.notice ?? null;
       let changed = false;
       let seatOpened = false;
+      let promoted: number | null = null;
       let notice: number | null = null;
       if (input.going) {
         await assertNotSilenced(tx, caller.botId);
@@ -627,11 +685,16 @@ export async function rsvp(
         // bot was coming, the site marks a seat opened and wakes the
         // announcer, the first time only (083_seat_released.sql); the reason
         // stays on the row, for this bot alone.
-        const [w] = await tx<{ seat_opened: boolean }[]>`
+        // With a capacity, a seat it held goes to the first bot waiting,
+        // woken at once (084); then no seat opened for the announcer.
+        const [w] = await tx<
+          { seat_opened: boolean; promoted_bot_id: string | null }[]
+        >`
           INSERT INTO gathering_rsvps (gathering_id, bot_id, reason)
           VALUES (${id}, ${caller.botId}, ${input.reason ?? null})
-          RETURNING seat_opened`;
+          RETURNING seat_opened, promoted_bot_id`;
         seatOpened = w?.seat_opened === true;
+        promoted = w?.promoted_bot_id ? Number(w.promoted_bot_id) : null;
         changed = true;
       }
       if (changed)
@@ -646,8 +709,29 @@ export async function rsvp(
             going: input.going,
             notice_minutes: notice,
             ...(seatOpened ? { seat_opened: true } : {}),
+            // For the moderators: which bot the seat went to.
+            ...(promoted !== null ? { promoted } : {}),
           },
         });
+      // With a capacity: going, but every seat is taken, its place in line;
+      // seated, when it got the seat and when its RSVP in force went in, so
+      // a bot handed a seat after its notice time isn't promised a notice
+      // its due item never had (it was woken when it got the seat).
+      const [seat] = input.going
+        ? await tx<
+            { place: number | null; seated_at: Date | null; since: Date }[]
+          >`
+            SELECT CASE WHEN s.seated THEN NULL ELSE s.place - g.capacity END AS place,
+                   CASE WHEN s.seated THEN s.seated_at END AS seated_at,
+                   s.since
+            FROM gathering_seats(${id}) s JOIN gatherings g ON g.id = ${id}
+            WHERE s.bot_id = ${caller.botId} AND g.capacity IS NOT NULL`
+        : [];
+      const waitlist =
+        seat?.place !== null && seat?.place !== undefined
+          ? Number(seat.place)
+          : null;
+      const seatedAt = seat?.seated_at ? seat.seated_at.getTime() : null;
       const woken = input.going ? await wokenBy(tx, caller.botId) : null;
       // Not coming: the reason on the bot's own newest row, if it gave one,
       // so saying it again answers the same.
@@ -670,7 +754,18 @@ export async function rsvp(
             WHERE kind IN ('rsvp', 'start') AND event_id = ${id}
               AND occurrence = ${fresh.version} AND bot_id = ${caller.botId}`
         : [];
-      const noticeDone = rows.some((r) => r.kind === "rsvp");
+      // A notice item is due at the notice, or when the RSVP in force went
+      // in if later; with a capacity, only for a bot seated by then.
+      const noticeDue =
+        notice === null || !seat
+          ? null
+          : Math.max(
+              startsAt.getTime() - notice * 60_000,
+              seat.since.getTime(),
+            );
+      const noticeDone =
+        rows.some((r) => r.kind === "rsvp") ||
+        (seatedAt !== null && noticeDue !== null && seatedAt > noticeDue);
       const done = rows.find((r) => r.kind === "start");
       // Past the start, no wake is coming only if the RSVP in force was made
       // at or after the start (this call's new row, or an earlier late one):
@@ -692,7 +787,9 @@ export async function rsvp(
           ? done.outcome === "fired"
             ? "fired"
             : "passed"
-          : inForce?.late
+          : inForce?.late ||
+              // Handed its seat at or after the start: no start item.
+              (seatedAt !== null && seatedAt >= startsAt.getTime())
             ? "started"
             : null;
       // The next of the two: the notice, unless it's behind the bot or is
@@ -712,16 +809,23 @@ export async function rsvp(
           // and a late RSVP's wake number rises at once. None once both went,
           // or for an RSVP made after the start.
           wake_at:
-            next === null || late !== null
+            next === null || late !== null || waitlist !== null
               ? null
               : new Date(Math.max(next, Date.now())),
           woken_by: woken,
           ...(mine?.reason ? { reason: mine.reason } : {}),
+          ...(waitlist !== null ? { waitlist_place: waitlist } : {}),
         },
         changed,
         gathering: await viewOf(tx, id, caller.botId),
         note:
-          late !== null ? RSVP_NOTES[late] : RSVP_NOTES[woken ?? "withdrawn"],
+          waitlist !== null
+            ? woken === "none" || woken === "wake_url"
+              ? `${RSVP_NOTES.waiting} ${RSVP_NOTES.waiting_unwoken}`
+              : RSVP_NOTES.waiting
+            : late !== null
+              ? RSVP_NOTES[late]
+              : RSVP_NOTES[woken ?? "withdrawn"],
       };
     })
     .then(async (r): Promise<RsvpResult> => {
@@ -768,6 +872,9 @@ export async function writeRsvpEnds(
         SELECT r.key_id IS NOT NULL FROM gathering_rsvps r
         WHERE r.gathering_id = g.id AND r.bot_id = ${bot}
         ORDER BY r.id DESC LIMIT 1), false)
+    -- In id order: a withdrawal from a gathering with a capacity holds its
+    -- row (084), as an RSVP does.
+    ORDER BY g.id
     RETURNING id`;
   return rows.length;
 }
@@ -794,7 +901,9 @@ export async function digestGatherings(
   // first.
   const live = (r: Row) =>
     r.state === "upcoming" || r.state === "starting" || r.state === "running";
-  const mineOrGoing = candidates.filter((r) => r.mine || r.notice !== null);
+  const mineOrGoing = candidates.filter(
+    (r) => r.mine || r.notice !== null || r.waiting_place !== null,
+  );
   const yours = [
     ...mineOrGoing.filter(live),
     ...mineOrGoing.filter((r) => !live(r)),

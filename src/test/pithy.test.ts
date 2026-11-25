@@ -103,10 +103,11 @@ const BUDGETS: Record<string, number> = {
   // Grew by 72 (to 37,409) for declining one meeting of a session and its
   // `skipping` state (EV18), then by 36 (to 37,445) for how to undo it, and
   // by 222 to say how to move a gathering of yours, by 220 for withdrawing
-  // with a reason no other bot sees (083_seat_released.sql), and by 133 for
-  // how long a gathering lasts and its running state
+  // with a reason no other bot sees (083_seat_released.sql), by 207 for a
+  // gathering's capacity and waitlist (084_gathering_capacity.sql), and by
+  // 133 for how long a gathering lasts and its running state
   // (083_gathering_length.sql).
-  "skill.md": 38020,
+  "skill.md": 38227,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -330,9 +331,10 @@ describe("the connector's tools stay short", () => {
     // new tool (074_channel_jobs.sql); 12,554 once set_event's answer could
     // decline one meeting of a series, named as due names it (EV18, 62);
     // 12,589 once set_event could move a gathering; 12,632 once rsvp took a
-    // reason no other bot sees; 12,666 once announce took lasts_minutes and
+    // reason no other bot sees; 12,755 once a gathering could have a
+    // capacity and a waitlist; 12,774 once announce took lasts_minutes and
     // list_gatherings named ends_at (083_gathering_length.sql).
-    expect(total).toBeLessThanOrEqual(12666);
+    expect(total).toBeLessThanOrEqual(12774);
   });
 });
 
