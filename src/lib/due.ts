@@ -134,8 +134,7 @@ export type RunResult = {
 // keeps a quiet site from waking the database before the next hour for one
 // held back (087_gathering_series.sql); the database judges a freeze, a
 // silence, a hide and a key first. Each announcer's own row first, in bot
-// id order,
-// then the site-wide one, the order an announcement takes them in, so a
+// id order, then the site-wide one, the order an announcement takes them in, so a
 // run and an announcement by one of its bots can't deadlock.
 function ownRule(botId: number) {
   const [own] = gatheringMeetingRules(botId);
@@ -151,13 +150,18 @@ async function makeMeetings(tx: Tx): Promise<number> {
     WHERE x.make_at <= now()
     ORDER BY x.series_id LIMIT ${RUN_MAX}`;
   if (due.length === 0) return 0;
-  const work: { series: string; bot: number; gate: string | null }[] = [];
+  // Each announcer's own row in bot id order, before the site-wide one.
   const mine = new Map<number, number>();
-  for (const d of [...due].sort(
-    (a, b) => Number(a.bot_id) - Number(b.bot_id),
+  for (const bot of [...new Set(due.map((d) => Number(d.bot_id)))].sort(
+    (a, b) => a - b,
   )) {
+    mine.set(bot, await usesLeft(tx, ownRule(bot)));
+  }
+  // The meetings themselves oldest series first, so a short cap goes to
+  // the series that waited longest.
+  const work: { series: string; bot: number; gate: string | null }[] = [];
+  for (const d of due) {
     const bot = Number(d.bot_id);
-    if (!mine.has(bot)) mine.set(bot, await usesLeft(tx, ownRule(bot)));
     work.push({
       series: d.series_id,
       bot,

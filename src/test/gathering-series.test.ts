@@ -596,21 +596,6 @@ function held(work: (tx: Tx) => Promise<unknown>) {
   return { started, release, done };
 }
 
-// Whether n sessions are waiting on the transaction held open.
-async function waiters(n: number): Promise<boolean> {
-  for (let i = 0; i < 100; i++) {
-    const [r] = await db()<{ n: number }[]>`
-      SELECT count(*)::int AS n FROM pg_stat_activity w
-      WHERE w.wait_event_type = 'Lock' AND w.datname = current_database()
-        AND EXISTS (SELECT 1 FROM pg_stat_activity h
-                    WHERE h.pid = ANY (pg_blocking_pids(w.pid))
-                      AND h.state = 'idle in transaction')`;
-    if ((r?.n ?? 0) >= n) return true;
-    await new Promise((res) => setTimeout(res, 20));
-  }
-  return false;
-}
-
 // Whether a session is waiting on a lock right now.
 async function someoneWaits(): Promise<boolean> {
   for (let i = 0; i < 100; i++) {
@@ -752,29 +737,46 @@ describe("what can cross the clock making a meeting", () => {
   it("an announcement by the series' own bot crosses a run without deadlocking", async () => {
     const host = await trusted("host");
     const sid = await oldSeries(host);
-    // The row both paths take: the announcer's own day of meetings. Held
-    // open, so the two line up in the order that used to deadlock, the
-    // announcement first.
     await useMeetings(host, 0);
     const bucket = `gathering-meeting:day:${await botId(host)}`;
-    const hold = held(
-      (tx) => tx`UPDATE rate_limits SET count = count WHERE bucket = ${bucket}`,
-    );
-    await hold.started;
-    const said = announce(host, { title: "One off", starts_at: ahead(60) });
-    expect(await someoneWaits()).toBe(true);
-    // The run queues behind it for the same row, which it takes before the
-    // site-wide cap, as the announcement does. Taken the other way round,
-    // whichever got the site-wide row first would wait on the other for
-    // this one and Postgres would kill one of them.
+    // A transaction plays the announcement, taking the rows it takes in
+    // the order it takes them: its own day of meetings, then the site-wide
+    // cap. Between the two, the run starts and waits for the first. Had
+    // the run taken the site-wide row before the announcer's own, the
+    // second step would wait on the run, which waits on it: the deadlock.
+    let go!: () => void;
+    const gate = new Promise<void>((r) => {
+      go = r;
+    });
+    let ready!: () => void;
+    const started = new Promise<void>((r) => {
+      ready = r;
+    });
+    const plays = db().begin(async (tx) => {
+      await tx`UPDATE rate_limits SET count = count WHERE bucket = ${bucket}`;
+      ready();
+      await gate;
+      await tx`SET LOCAL lock_timeout = '3s'`;
+      await tx`
+        INSERT INTO rate_limits (bucket, window_start, count)
+        VALUES ('gathering:all',
+                to_timestamp(floor(extract(epoch FROM now()) / 86400) * 86400), 0)
+        ON CONFLICT (bucket, window_start) DO UPDATE SET count = rate_limits.count`;
+    });
+    await started;
     const run = workDue();
-    expect(await waiters(2)).toBe(true);
-    hold.release();
-    await hold.done;
-    const res = await said;
-    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(await someoneWaits()).toBe(true);
+    go();
+    // Not held up behind the run: it never touched the site-wide row.
+    await expect(plays).resolves.toBeUndefined();
     expect((await run).made).toBe(6);
     expect(await skipsOf(sid)).toEqual([]);
+    // And a real announcement by the same bot still goes through.
+    const res = await announce(host, {
+      title: "One off",
+      starts_at: ahead(60),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
   });
 });
 
@@ -853,6 +855,22 @@ describe("what holds a meeting back", () => {
     expect((await workDue()).made).toBe(4);
     expect([...(await meetings(sid)).keys()]).toEqual([7, 8, 9, 10, 11]);
     expect(await skipsOf(sid)).toEqual([]);
+  });
+
+  it("gives a short site-wide cap to the oldest series, whatever its bot's id", async () => {
+    await db()`
+      INSERT INTO settings (key, value)
+      VALUES ('anti_abuse_limits', ${JSON.stringify({ gathering_global: 3 })}::text::jsonb)`;
+    const low = await trusted("low");
+    const high = await trusted("high");
+    expect(await botId(low)).toBeLessThan(await botId(high));
+    // The higher id's series is the older one: it goes first.
+    const first = await oldSeries(high);
+    const second = await oldSeries(low);
+    expect(first).toBeLessThan(second);
+    expect((await workDue()).made).toBe(3);
+    expect((await meetings(first)).size).toBe(3);
+    expect((await meetings(second)).size).toBe(0);
   });
 
   it("counts each meeting against its bot's own day, so cancelling and announcing again runs out", async () => {
