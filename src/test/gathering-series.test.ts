@@ -1274,6 +1274,132 @@ describe("a series in a public channel", () => {
     expect((await workDue()).made).toBe(5);
     expect([...(await meetings(sid)).keys()]).toEqual([8, 9, 10, 11, 12]);
   });
+
+  // A series written straight to the table in a channel, as oldSeries does.
+  async function channelSeries(host: Bot, channel: number) {
+    const [s] = await db()<{ id: string }[]>`
+      INSERT INTO gathering_series
+        (bot_id, key_id, title, starts_at, repeat, times, channel_id, created_at)
+      SELECT b.id, k.id, 'Standup', now() - interval '6 days' + interval '1 hour',
+             'daily', 12, ${channel}, now() - interval '6 days'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    return Number(s?.id);
+  }
+
+  it("refuses a series written straight to the table in a hidden, made-up or archived channel", async () => {
+    const host = await trusted("host");
+    const writing = await slugId("writing");
+    await db()`INSERT INTO hidden_channels (channel_id) VALUES (${writing})`;
+    await expect(channelSeries(host, writing)).rejects.toMatchObject({
+      code: "UPG03",
+    });
+    await db()`UPDATE channels SET archived_at = now() WHERE slug = 'small-talk'`;
+    await expect(
+      channelSeries(host, await slugId("small-talk")),
+    ).rejects.toMatchObject({ code: "UPA01" });
+    expect((await db()`SELECT 1 FROM gathering_series`).length).toBe(0);
+  });
+
+  it("refuses a meeting whose channel isn't its series'", async () => {
+    const host = await trusted("host");
+    const sid = await channelSeries(host, await slugId("research"));
+    const other = await slugId("writing");
+    const write = (channel: number | null) => db()`
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, lasts_minutes,
+                              channel_id, series_id, occurrence)
+      SELECT s.bot_id, s.key_id, s.title,
+             gathering_series_start(s.starts_at, s.repeat, 7),
+             s.lasts_minutes, ${channel}, s.id, 7
+      FROM gathering_series s WHERE s.id = ${sid}`;
+    await expect(write(other)).rejects.toThrow(/isn't a meeting of series/);
+    await expect(write(null)).rejects.toThrow(/isn't a meeting of series/);
+    expect((await meetings(sid)).size).toBe(0);
+  });
+
+  it("holds a meeting whose channel is hidden while the clock is making it, without failing the run", async () => {
+    const host = await trusted("host");
+    const research = await slugId("research");
+    const sid = await channelSeries(host, research);
+    // Hold the announcer's key, so the make passes the channel check and
+    // then waits for the key.
+    const key = held(
+      (tx) => tx`
+        SELECT 1 FROM api_keys k JOIN bots b ON b.id = k.bot_id
+        WHERE b.handle = ${host.handle} AND k.revoked_at IS NULL
+        FOR NO KEY UPDATE OF k`,
+    );
+    await key.started;
+    const make = db()<
+      { n: number }[]
+    >`SELECT gathering_series_make(${sid}) AS n`.execute();
+    // Checked after the release, so a make that doesn't wait can't
+    // leave the lock held for the tests after this one.
+    const waited = await someoneWaits();
+    await db()`INSERT INTO hidden_channels (channel_id) VALUES (${research})`;
+    key.release();
+    await key.done;
+    expect(waited).toBe(true);
+    const [r] = await make;
+    expect(r?.n).toBe(0);
+    expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "channel" }]);
+    expect((await meetings(sid)).size).toBe(0);
+  });
+
+  it("holds a meeting whose announcer's key is revoked while the clock is making it", async () => {
+    const host = await trusted("host");
+    const sid = await channelSeries(host, await slugId("research"));
+    const revoke = held(
+      (tx) => tx`
+        UPDATE api_keys k SET revoked_at = now() FROM bots b
+        WHERE b.id = k.bot_id AND b.handle = ${host.handle}
+          AND k.revoked_at IS NULL`,
+    );
+    await revoke.started;
+    const make = db()<
+      { n: number }[]
+    >`SELECT gathering_series_make(${sid}) AS n`.execute();
+    // Checked after the release, so a make that doesn't wait can't
+    // leave the lock held for the tests after this one.
+    const waited = await someoneWaits();
+    revoke.release();
+    await revoke.done;
+    expect(waited).toBe(true);
+    const [r] = await make;
+    expect(r?.n).toBe(0);
+    expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "key" }]);
+    expect((await meetings(sid)).size).toBe(0);
+  });
+
+  it("announces a series in a channel through set_event", async () => {
+    const host = await trusted("host");
+    const made = await tool(host.key, "set_event", {
+      action: "announce",
+      title: "Jam",
+      starts_at: ahead(60),
+      repeat: "weekly",
+      times: 2,
+      channel: "research",
+    });
+    expect(made.isError, JSON.stringify(made.data)).toBe(false);
+    expect(made.data.gathering.channel).toBe("research");
+    expect(made.data.gathering.series).toMatchObject({
+      meeting: 1,
+      of: 2,
+      repeat: "weekly",
+    });
+    const hid = await tool(host.key, "set_event", {
+      action: "announce",
+      title: "Jam",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 2,
+      channel: "no-such-place",
+    });
+    expect(hid.isError).toBe(true);
+    expect(hid.data.error.code).toBe("no_such_channel");
+  });
 });
 
 describe("on the connector", () => {

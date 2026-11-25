@@ -21,9 +21,11 @@
 --
 -- A meeting that can't be made when its hour comes (the announcer frozen,
 -- silenced, with no live key or held back by its gate, a moderator hid a
--- meeting of the series, or the site-wide cap on gatherings is reached) is
--- skipped, once, with a row saying why, so it leaves the clock's list;
--- later meetings are judged when their own hour comes. Each meeting made
+-- meeting of the series, its channel was hidden or archived, or a cap on
+-- gatherings is reached) is held and tried again each hour; only its last
+-- try, about an hour before it starts, skips it, once, with a row saying
+-- why, so it leaves the clock's list. Later meetings are judged when their
+-- own hour comes. Each meeting made
 -- counts against the site-wide cap on gatherings, as an announcement does.
 --
 -- Hiding any meeting hides the whole series (gathering_is_visible below),
@@ -98,8 +100,8 @@ ALTER TABLE gatherings
 CREATE UNIQUE INDEX gatherings_series_occurrence ON gatherings (series_id, occurrence)
   WHERE series_id IS NOT NULL;
 
--- A meeting is its series' own: same announcer, title, needs, capacity and
--- length, at the series' time for it. So whoever writes one, the clock included,
+-- A meeting is its series' own: same announcer, title, needs, capacity,
+-- length and channel, at the series' time for it. So whoever writes one, the clock included,
 -- writes only what the series said.
 CREATE FUNCTION gatherings_series_check() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -111,6 +113,7 @@ BEGIN
      OR NEW.needs IS DISTINCT FROM s.needs
      OR NEW.capacity IS DISTINCT FROM s.capacity
      OR NEW.lasts_minutes <> s.lasts_minutes
+     OR NEW.channel_id IS DISTINCT FROM s.channel_id
      OR NEW.starts_at <> gathering_series_start(s.starts_at, s.repeat, NEW.occurrence)
      OR EXISTS (SELECT 1 FROM gathering_series_ends e WHERE e.series_id = s.id) THEN
     RAISE EXCEPTION 'that isn''t a meeting of series %', NEW.series_id;
@@ -369,8 +372,11 @@ BEGIN
       -- insert would be refused, and made if it's unhidden in time.
       why := 'channel';
     ELSE
+      -- For share, so a revoke that commits meanwhile is seen (no key, held)
+      -- or waits for this to commit, and the meeting's own key check passes.
       SELECT a.id INTO k FROM api_keys a
-      WHERE a.bot_id = s.bot_id AND a.revoked_at IS NULL ORDER BY a.id DESC LIMIT 1;
+      WHERE a.bot_id = s.bot_id AND a.revoked_at IS NULL ORDER BY a.id DESC LIMIT 1
+      FOR SHARE;
       IF k IS NULL THEN
         why := 'key';
       ELSIF gate IS NOT NULL THEN
@@ -378,6 +384,19 @@ BEGIN
       ELSIF allow IS NOT NULL AND made >= allow THEN
         why := 'cap';
       END IF;
+    END IF;
+    IF why IS NULL THEN
+      BEGIN
+        INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity,
+                                lasts_minutes, channel_id, series_id, occurrence)
+        VALUES (s.bot_id, k, s.title, p.starts_at, s.needs, s.capacity,
+                s.lasts_minutes, s.channel_id, sid, p.occurrence)
+        RETURNING id INTO gid;
+      EXCEPTION WHEN SQLSTATE 'UPG03' OR SQLSTATE 'UPA01' THEN
+        -- Its channel hidden or archived after the check above: held the
+        -- same way, never an error that stops the clock's run.
+        why := 'channel';
+      END;
     END IF;
     IF why IS NOT NULL THEN
       CONTINUE WHEN p.starts_at > now() + interval '75 minutes';
@@ -388,11 +407,6 @@ BEGIN
               jsonb_build_object('occurrence', p.occurrence, 'why', why));
       CONTINUE;
     END IF;
-    INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity,
-                            lasts_minutes, channel_id, series_id, occurrence)
-    VALUES (s.bot_id, k, s.title, p.starts_at, s.needs, s.capacity,
-            s.lasts_minutes, s.channel_id, sid, p.occurrence)
-    RETURNING id INTO gid;
     INSERT INTO action_log (action, bot_id, key_id, subject, detail)
     VALUES ('gathering.series_make', s.bot_id, k, 'gathering:' || gid,
             jsonb_build_object('series', sid, 'occurrence', p.occurrence));
