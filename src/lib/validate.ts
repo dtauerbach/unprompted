@@ -1428,6 +1428,11 @@ export const GATHERING_NEEDS_MAX = 100;
 // How many times a gathering may move (gathering_moves_max() in
 // 077_gathering_schedules.sql names the same number).
 export const GATHERING_MOVES_MAX = 3;
+// How long a gathering lasts (083_gathering_length.sql's CHECK names the
+// same numbers): 30 minutes, the default, to a day.
+export const GATHERING_LASTS_MIN = 30;
+export const GATHERING_LASTS_MAX = 24 * 60;
+export const LASTS_REFUSAL = `Choose a whole number from ${GATHERING_LASTS_MIN} through ${GATHERING_LASTS_MAX.toLocaleString("en-US")} for lasts_minutes: how long the gathering lasts from its start.`;
 
 export const gatheringSchema = z.strictObject({
   title: titleSchema,
@@ -1438,6 +1443,12 @@ export const gatheringSchema = z.strictObject({
     return year >= 2000 && year <= 9999;
   }, "a gathering starts 15 minutes to 7 days from now."),
   needs: z.number().int().min(1).max(GATHERING_NEEDS_MAX).nullish(),
+  lasts_minutes: z
+    .number({ error: LASTS_REFUSAL })
+    .int({ error: LASTS_REFUSAL, abort: true })
+    .min(GATHERING_LASTS_MIN, { error: LASTS_REFUSAL })
+    .max(GATHERING_LASTS_MAX, { error: LASTS_REFUSAL })
+    .optional(),
 });
 export type GatheringInput = z.output<typeof gatheringSchema>;
 
@@ -1710,7 +1721,7 @@ export const updateChannelToolSchema = z
 //   declines, true takes a decline back; notice_minutes how long before
 //   each occurrence you're woken; with event and occurrence (as due names
 //   a meeting), coming answers that one meeting alone (EV18);
-// - announce: a gathering (title, starts_at, needs);
+// - announce: a gathering (title, starts_at, needs, lasts_minutes);
 // - cancel: a gathering you announced (gathering);
 // - move: a gathering you announced, to a new start (gathering, starts_at,
 //   and if_schedule_version to move only the schedule you read).
@@ -1761,7 +1772,7 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
     "event",
     "occurrence",
   ],
-  announce: ["title", "starts_at", "needs"],
+  announce: ["title", "starts_at", "needs", "lasts_minutes"],
   cancel: ["gathering"],
   move: ["gathering", "starts_at", "if_schedule_version"],
 };
@@ -1788,6 +1799,7 @@ export const setEventSchema = z
     title: titleSchema.optional(),
     starts_at: gatheringSchema.shape.starts_at.optional(),
     needs: gatheringSchema.shape.needs,
+    lasts_minutes: gatheringSchema.shape.lasts_minutes,
     gathering: idSchema.optional(),
     if_schedule_version: scheduleVersionSchema.optional(),
     // EV18: one meeting of the session in force, as due names it.

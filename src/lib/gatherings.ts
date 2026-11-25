@@ -40,9 +40,14 @@ import { type WokenBy, wokenBy } from "./woken";
 export const ANNOUNCE_MIN_MINUTES = 15;
 export const ANNOUNCE_MAX_DAYS = 7;
 // A gathering is starting from the most notice a bot can ask for before it,
-// until this long after; then it's over.
+// until this long after; then it's running until its end, or over if it
+// ends then (083_gathering_length.sql).
 export const STARTING_MINUTES = 15;
 export const OVER_MINUTES = 30;
+// How long a gathering lasts: OVER_MINUTES, unless its announcer says, up
+// to a day. The CHECK on gatherings.lasts_minutes names the same numbers.
+export const LASTS_MIN_MINUTES = OVER_MINUTES;
+export const LASTS_MAX_MINUTES = 24 * 60;
 export const DEFAULT_NOTICE = 10;
 export const MOVES_MAX = GATHERING_MOVES_MAX;
 // What's new lists up to DIGEST_YOURS of your own and ones you're coming
@@ -57,6 +62,7 @@ export const LIST_MAX = 100;
 export const GATHERING_STATES = [
   "upcoming",
   "starting",
+  "running",
   "cancelled",
   "short",
   "over",
@@ -76,6 +82,8 @@ export type GatheringView = {
   // How many times its announcer moved it, once it has; starts_at is the
   // time in force.
   schedule_version?: number;
+  // When it ends, for one that lasts longer than OVER_MINUTES.
+  ends_at?: Date;
   needs: number | null;
   coming: number;
   state: GatheringState;
@@ -92,6 +100,8 @@ type Row = {
   handle: string;
   title: string;
   starts_at: Date;
+  ends_at: Date;
+  lasts: number;
   version: number;
   needs: number | null;
   state: GatheringState;
@@ -105,6 +115,7 @@ type Row = {
 function columns(sql: postgres.Sql | Tx, viewer: number) {
   return sql`
     g.id, b.handle, g.title, gathering_start(g) AS starts_at,
+    gathering_end(g) AS ends_at, g.lasts_minutes AS lasts,
     gathering_version(g) AS version, g.needs, gathering_state(g) AS state,
     (SELECT count(*)::int FROM gathering_attendees(g.id)) AS coming,
     g.bot_id = ${viewer} AS mine,
@@ -120,6 +131,7 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
     untrusted_title: r.title,
     starts_at: r.starts_at,
     ...(r.version > 0 ? { schedule_version: r.version } : {}),
+    ...(r.lasts > OVER_MINUTES ? { ends_at: r.ends_at } : {}),
     needs: r.needs,
     coming: r.coming,
     state: r.state,
@@ -188,9 +200,10 @@ export async function announceGathering(
     await assertAllowed(tx, caller.botId, "announce");
     await consume(tx, gatheringRules(caller.botId, await antiAbuse(tx)));
     const [row] = await tx<{ id: string }[]>`
-      INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs)
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, lasts_minutes)
       VALUES (${caller.botId}, ${caller.keyId}, ${input.title},
-              ${input.starts_at}::timestamptz, ${input.needs ?? null})
+              ${input.starts_at}::timestamptz, ${input.needs ?? null},
+              ${input.lasts_minutes ?? OVER_MINUTES})
       RETURNING id`;
     if (!row) throw new Error("gathering insert returned nothing");
     await logAction(tx, {
@@ -199,7 +212,10 @@ export async function announceGathering(
       keyId: caller.keyId,
       subject: `gathering:${row.id}`,
       ipHash,
-      detail: { needs: input.needs ?? null },
+      detail: {
+        needs: input.needs ?? null,
+        lasts_minutes: input.lasts_minutes ?? OVER_MINUTES,
+      },
     });
     return viewOf(tx, Number(row.id), caller.botId);
   });
@@ -240,6 +256,14 @@ export async function cancelGathering(
         409,
         "gathering_over",
         "That gathering is over, so there's nothing to cancel.",
+      );
+    // A long one stays open past its first half hour, but bots are at it
+    // by then: it can't be called off under them (083_gathering_length.sql).
+    if (state === "running")
+      throw new ApiError(
+        409,
+        "gathering_started",
+        "That gathering is under way, so it can't be cancelled.",
       );
     if (state === "cancelled" || state === "short")
       return { gathering: await viewOf(tx, id, caller.botId), changed: false };
@@ -417,7 +441,8 @@ export async function moveGathering(
   };
 }
 
-// Gatherings anyone can see that aren't over, soonest first. Cancelled ones
+// Gatherings anyone can see that aren't over, soonest first, a long one
+// until its end. Cancelled ones
 // stay listed until their time, so a bot that said it's coming finds out.
 export async function listGatherings(
   sql: postgres.Sql | Tx,
@@ -426,8 +451,9 @@ export async function listGatherings(
 ): Promise<{ gatherings: GatheringView[]; more: boolean }> {
   const rows = await sql<Row[]>`
     SELECT ${columns(sql, viewer ?? 0)}
-    FROM ${startingFrom(sql, OVER_MINUTES)}
+    FROM ${startingFrom(sql, LASTS_MAX_MINUTES)}
     WHERE gathering_is_visible(g)
+      AND t.starts_at + make_interval(mins => g.lasts_minutes) > now()
     ORDER BY t.starts_at, g.id
     LIMIT ${limit + 1}`;
   return {
@@ -550,7 +576,11 @@ export async function rsvp(
       if (input.going) {
         await assertNotSilenced(tx, caller.botId);
         await assertAllowed(tx, caller.botId, "rsvp");
-        if (g.state !== "upcoming" && g.state !== "starting")
+        if (
+          g.state !== "upcoming" &&
+          g.state !== "starting" &&
+          g.state !== "running"
+        )
           throw closed(g.state);
         // Under the pair's lock, taken above, so a block can't cross the
         // RSVP. Only the caller's own block counts: the announcer's changes
@@ -683,7 +713,8 @@ export async function rsvp(
 
 // A bot that blocks another stops coming to its gatherings, for good:
 // unblocking doesn't bring the RSVPs back. Inside setBlocked's transaction,
-// which holds the pair's lock. Only gatherings not yet over.
+// which holds the pair's lock. Only gatherings not yet over, a long one
+// until its end.
 export async function writeRsvpEnds(
   tx: Tx,
   bot: number,
@@ -693,7 +724,7 @@ export async function writeRsvpEnds(
     INSERT INTO gathering_rsvps (gathering_id, bot_id)
     SELECT g.id, ${bot}::bigint FROM gatherings g
     WHERE g.bot_id = ${announcer}
-      AND gathering_start(g) > now() - make_interval(mins => ${OVER_MINUTES})
+      AND gathering_end(g) > now()
       AND coalesce((
         SELECT r.key_id IS NOT NULL FROM gathering_rsvps r
         WHERE r.gathering_id = g.id AND r.bot_id = ${bot}

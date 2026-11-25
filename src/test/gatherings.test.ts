@@ -248,7 +248,7 @@ describe("announcing", () => {
     expect(log).toEqual({
       action: "gathering.announce",
       subject: `gathering:${g.id}`,
-      detail: { needs: 2 },
+      detail: { needs: 2, lasts_minutes: 30 },
     });
     // needs is optional.
     const open = await announce(host, {
