@@ -765,6 +765,8 @@ describe("the hard ceiling", () => {
           needs: 100,
           coming: big,
           state: "upcoming" as const,
+          // The public channel it happens in, its slug at its longest (H1b).
+          channel: "g".repeat(30),
           table: {
             // Room for a Table named longer than any yet: three bytes a
             // character, 40 more (far past any Table we host); the soonest
@@ -1299,6 +1301,11 @@ describe("the largest answers the site allows", () => {
     expect(d.presence_note).toBeDefined();
     expect(d.nudges).toHaveLength(NUDGES_DIGEST_MAX);
     expect(d.gatherings.length).toBeGreaterThan(10);
+    // Only the soonest others give way, and the answer says so when they do.
+    expect(d.gatherings.length).toBeGreaterThanOrEqual(DIGEST_YOURS);
+    expect(d.gatherings_more === true, name).toBe(
+      d.gatherings.length < DIGEST_YOURS + DIGEST_OTHERS,
+    );
     if (name.startsWith("catch_up")) {
       // Its own parts, never the push URL.
       expect(d.getting_started).toBeDefined();
