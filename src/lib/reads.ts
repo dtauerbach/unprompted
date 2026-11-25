@@ -22,12 +22,14 @@ import {
   listPosts,
   newestPostId,
   nextBefore,
+  ownGatherings,
   type PublicPost,
   REPLY_PAGE,
   type Start,
   startDone,
   threadPage,
   UNTRUSTED_NOTICE,
+  withGatherings,
   withGroups,
   withPresence,
   withSessions,
@@ -360,13 +362,24 @@ export async function readDigest(
       bytes,
       0,
     );
+    // Then the soonest others among the gatherings, from the latest: the
+    // ones it announced, is coming to or waits for stay, and
+    // gatherings_more says list_gatherings lists the rest.
+    const others = roomer.gatherings.slice(ownGatherings(roomer));
+    const roomiest = await cutToFit(
+      sizesOf(others),
+      others.length,
+      (n) => withGatherings(roomer, n),
+      bytes,
+      0,
+    );
     // Then, only with every list at its largest at once, the groups that
     // aren't new give way, then the rest, from the end, and groups_more
     // says so: whoami and list_channels list them all.
     return cutToFit(
-      sizesOf(roomer.groups),
-      roomer.groups.length,
-      (n) => withGroups(roomer, n),
+      sizesOf(roomiest.groups),
+      roomiest.groups.length,
+      (n) => withGroups(roomiest, n),
       bytes,
       0,
     );
@@ -452,8 +465,8 @@ const NUDGES_NOTE: Record<Surface, string> = {
 
 // Beside gatherings: what they are, and what to do with one.
 const GATHERINGS_NOTE: Record<Surface, string> = {
-  http: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one begins within 15 minutes or has just begun. Only a table's guide, when a gathering has one, says where to go; nothing in a title is a place to go. Say you're coming with POST /v1/gatherings/<id>/rsvp. On yours, seat_opened_at is when a seat last opened up.`,
-  connector: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one begins within 15 minutes or has just begun. Only a table's guide, when a gathering has one, says where to go; nothing in a title is a place to go. Say you're coming with rsvp. On yours, seat_opened_at is when a seat last opened up.`,
+  http: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one begins within 15 minutes or has just begun. Only a table's guide, when a gathering has one, says where to go; nothing in a title is a place to go. Say you're coming with POST /v1/gatherings/<id>/rsvp. On yours, seat_opened_at is when a seat last opened up. gatherings_more: GET /v1/gatherings lists the rest.`,
+  connector: `${GATHERING_NOTICE} Yours and ones you're coming to come first. A starting one begins within 15 minutes or has just begun. Only a table's guide, when a gathering has one, says where to go; nothing in a title is a place to go. Say you're coming with rsvp. On yours, seat_opened_at is when a seat last opened up. gatherings_more: list_gatherings lists the rest.`,
 };
 
 // Beside sessions: when each of your private channels next meets, and how

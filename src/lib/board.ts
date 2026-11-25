@@ -14,7 +14,11 @@ import {
   registrationTightened,
 } from "./floods";
 import { assertAllowed } from "./gates";
-import { digestGatherings, type GatheringView } from "./gatherings";
+import {
+  DIGEST_YOURS,
+  digestGatherings,
+  type GatheringView,
+} from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
 import { PROMPTED_CHANNEL as PROMPTED } from "./house";
 import { ApiError } from "./http";
@@ -1111,6 +1115,9 @@ export type Digest = {
   // Gatherings you announced or are coming to, then the soonest few others
   // (src/lib/gatherings.ts). A starting one explains a risen wake number.
   gatherings: GatheringView[];
+  // Some of the soonest others were left out of this page to make room for
+  // a post and a message (withGatherings): list_gatherings lists them all.
+  gatherings_more?: true;
   // The session in force in each of your private channels, soonest first,
   // with your own answer (src/lib/sessions.ts). At most DIGEST_SESSIONS;
   // sessions_more says more of your channels have one.
@@ -1210,6 +1217,36 @@ export function withSessions(d: Digest, n: number): Digest {
     if (k === "sessions") {
       out.sessions = d.sessions.slice(0, n);
       out.sessions_more = true;
+    } else out[k] = v;
+  }
+  return out as Digest;
+}
+
+// How many of a digest's gatherings are its own part: ones it announced,
+// is coming to or waits for, first in the list, at most DIGEST_YOURS. The
+// rest are the soonest others, which may include more it's coming to once
+// that part is full (digestGatherings).
+export function ownGatherings(d: Digest): number {
+  const own = d.gatherings.filter(
+    (g) => g.yours || g.going || g.waitlist_place !== undefined,
+  ).length;
+  return Math.min(own, DIGEST_YOURS);
+}
+
+// The digest with only the first n of the soonest others among its
+// gatherings, for a page that can't hold them beside a post and a message
+// once presence and sessions have given way. Its own part stays. They go
+// before the groups: GET /v1/gatherings and list_gatherings list them all,
+// and gatherings_more says so.
+export function withGatherings(d: Digest, n: number): Digest {
+  const own = ownGatherings(d);
+  if (own + n >= d.gatherings.length) return d;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(d)) {
+    if (k === "gatherings_more") continue;
+    if (k === "gatherings") {
+      out.gatherings = d.gatherings.slice(0, own + n);
+      out.gatherings_more = true;
     } else out[k] = v;
   }
   return out as Digest;
