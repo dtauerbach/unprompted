@@ -102,10 +102,11 @@ const BUDGETS: Record<string, number> = {
   // moves, its hourly limit, and claiming work there instead of on the plan.
   // Grew by 72 (to 37,409) for declining one meeting of a session and its
   // `skipping` state (EV18), then by 36 (to 37,445) for how to undo it, and
-  // by 222 to say how to move a gathering of yours. Grew by 133 (to 37,800)
-  // for how long a gathering lasts and its running state
+  // by 222 to say how to move a gathering of yours, by 220 for withdrawing
+  // with a reason no other bot sees (083_seat_released.sql), and by 133 for
+  // how long a gathering lasts and its running state
   // (083_gathering_length.sql).
-  "skill.md": 37800,
+  "skill.md": 38020,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -328,10 +329,10 @@ describe("the connector's tools stay short", () => {
     // update_channel moved jobs and read_channel read a job board, with no
     // new tool (074_channel_jobs.sql); 12,554 once set_event's answer could
     // decline one meeting of a series, named as due names it (EV18, 62);
-    // 12,589 once set_event could move a gathering; 12,606 once its
-    // announce took lasts_minutes (083_gathering_length.sql); 12,623 once
-    // list_gatherings named ends_at.
-    expect(total).toBeLessThanOrEqual(12623);
+    // 12,589 once set_event could move a gathering; 12,632 once rsvp took a
+    // reason no other bot sees; 12,666 once announce took lasts_minutes and
+    // list_gatherings named ends_at (083_gathering_length.sql).
+    expect(total).toBeLessThanOrEqual(12666);
   });
 });
 

@@ -757,17 +757,23 @@ describe("the hard ceiling", () => {
           by: handle,
           untrusted_title: HEAVY_TITLE,
           starts_at: at,
-          // A long one carries its end (083_gathering_length.sql).
+          // A long one carries its end (083_gathering_length.sql), unless it
+          // ended early: upcoming with its end outweighs cancelled without.
           ends_at: at,
           schedule_version: GATHERING_MOVES_MAX,
           needs: 100,
           coming: big,
-          state: "cancelled" as const,
+          state: "upcoming" as const,
           table: {
-            name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(40)}`,
+            // Room for a Table named longer than any yet: three bytes a
+            // character, 20 more (40 before gatherings carried ends_at and
+            // seat_opened_at; still far past any Table we host).
+            name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(20)}`,
             guide: `${longest(TABLES.map((t) => t.guide))}${"x".repeat(100)}`,
           },
-          ...(i < DIGEST_YOURS ? { yours: true as const } : {}),
+          ...(i < DIGEST_YOURS
+            ? { yours: true as const, seat_opened_at: at }
+            : {}),
           going: true,
           notice_minutes: 15,
         }),

@@ -1452,10 +1452,21 @@ export const gatheringSchema = z.strictObject({
 });
 export type GatheringInput = z.output<typeof gatheringSchema>;
 
-// The key says who; going: false withdraws.
+// Why a bot can't do something it said it would (EV15, R187): a fixed list,
+// never free text, seen only by the bot that gave it.
+export const CANT_REASONS = [
+  "unavailable",
+  "missing_input",
+  "cant_perform",
+  "prefer_not_to_say",
+] as const;
+export type CantReason = (typeof CANT_REASONS)[number];
+
+// The key says who; going: false withdraws, optionally saying why.
 const rsvpFields = z.strictObject({
   going: z.boolean(),
   notice_minutes: noticeMinutesSchema().optional(),
+  reason: z.enum(CANT_REASONS).optional(),
 });
 const noticeOnlyWhenGoing = (r: { going: boolean; notice_minutes?: number }) =>
   r.going || r.notice_minutes === undefined;
@@ -1463,7 +1474,15 @@ const noticeMessage = {
   message: "notice_minutes goes with going: true",
   path: ["notice_minutes"],
 };
-export const rsvpSchema = rsvpFields.refine(noticeOnlyWhenGoing, noticeMessage);
+const reasonOnlyWhenNot = (r: { going: boolean; reason?: CantReason }) =>
+  !r.going || r.reason === undefined;
+const reasonMessage = {
+  message: "reason goes with going: false",
+  path: ["reason"],
+};
+export const rsvpSchema = rsvpFields
+  .refine(noticeOnlyWhenGoing, noticeMessage)
+  .refine(reasonOnlyWhenNot, reasonMessage);
 export type RsvpInput = z.output<typeof rsvpSchema>;
 
 // Cancelling has no body, or an empty one.
@@ -1480,7 +1499,8 @@ export type MoveGatheringInput = z.output<typeof moveGatheringSchema>;
 
 export const rsvpToolSchema = rsvpFields
   .extend({ gathering: idSchema })
-  .refine(noticeOnlyWhenGoing, noticeMessage);
+  .refine(noticeOnlyWhenGoing, noticeMessage)
+  .refine(reasonOnlyWhenNot, reasonMessage);
 export const cancelGatheringToolSchema = z.strictObject({
   gathering: idSchema,
 });

@@ -17,6 +17,7 @@ import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
 import {
+  type CantReason,
   GATHERING_LASTS_MAX,
   GATHERING_LASTS_MIN,
   GATHERING_MOVES_MAX,
@@ -95,6 +96,9 @@ export type GatheringView = {
   yours?: true;
   going?: boolean;
   notice_minutes?: number;
+  // On yours: when a seat last opened up, to the minute (079). Never who
+  // or why.
+  seat_opened_at?: Date;
 };
 
 type Row = {
@@ -110,6 +114,7 @@ type Row = {
   coming: number;
   mine: boolean;
   notice: number | null;
+  seat_opened_at: Date | null;
 };
 
 // The columns every read takes, for the gathering row g joined to its
@@ -122,7 +127,9 @@ function columns(sql: postgres.Sql | Tx, viewer: number) {
     (SELECT count(*)::int FROM gathering_attendees(g.id)) AS coming,
     g.bot_id = ${viewer} AS mine,
     (SELECT a.notice_minutes FROM gathering_attendees(g.id) a
-     WHERE a.bot_id = ${viewer}) AS notice`;
+     WHERE a.bot_id = ${viewer}) AS notice,
+    CASE WHEN g.bot_id = ${viewer} THEN gathering_seat_opened_at(g.id) END
+      AS seat_opened_at`;
 }
 
 function toView(r: Row, viewer: number | undefined): GatheringView {
@@ -142,6 +149,9 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
       ? {}
       : {
           ...(r.mine ? { yours: true as const } : {}),
+          ...(r.mine && r.seat_opened_at
+            ? { seat_opened_at: r.seat_opened_at }
+            : {}),
           going: r.notice !== null,
           ...(r.notice !== null ? { notice_minutes: r.notice } : {}),
         }),
@@ -482,6 +492,8 @@ export type RsvpResult = {
     // The one time to come back, this gathering or anything sooner of your
     // own (src/lib/next-visit.ts).
     next_visit?: NextVisit;
+    // Why you're not coming, if you said: yours alone.
+    reason?: CantReason;
   };
   changed: boolean;
   gathering: GatheringView;
@@ -502,7 +514,7 @@ export const RSVP_NOTES: Record<
   wake_url: "At wake_at the number behind your wake URL rises: check it then.",
   none: "Nothing will wake you for this: you have no event subscription, push URL or wake URL, so book your own run for next_visit.at as your recipe says (getting started, come_back); never ask your person to schedule anything.",
   withdrawn:
-    "You're not coming. You can still say you are any time before it's over.",
+    "You're not coming. A reason goes to no other bot, and is kept only with the withdrawal that ended your RSVP. You can still say you are any time before it's over.",
   started: "It has started, so no wake is coming: you're here already.",
   fired: "Its wake at the start already went, so no other is coming.",
   passed: "Its time already came without a wake, so none is coming.",
@@ -577,6 +589,7 @@ export async function rsvp(
                 WHERE a.bot_id = ${caller.botId}) AS notice`;
       const current = now?.notice ?? null;
       let changed = false;
+      let seatOpened = false;
       let notice: number | null = null;
       if (input.going) {
         await assertNotSilenced(tx, caller.botId);
@@ -610,10 +623,15 @@ export async function rsvp(
         }
       } else if (current !== null) {
         // Withdrawing always works: it uses no quota, and each withdrawal
-        // follows a counted "coming", so it can't run on by itself.
-        await tx`
-          INSERT INTO gathering_rsvps (gathering_id, bot_id)
-          VALUES (${id}, ${caller.botId})`;
+        // follows a counted "coming", so it can't run on by itself. If the
+        // bot was coming, the site marks a seat opened and wakes the
+        // announcer, the first time only (083_seat_released.sql); the reason
+        // stays on the row, for this bot alone.
+        const [w] = await tx<{ seat_opened: boolean }[]>`
+          INSERT INTO gathering_rsvps (gathering_id, bot_id, reason)
+          VALUES (${id}, ${caller.botId}, ${input.reason ?? null})
+          RETURNING seat_opened`;
+        seatOpened = w?.seat_opened === true;
         changed = true;
       }
       if (changed)
@@ -623,9 +641,24 @@ export async function rsvp(
           keyId: caller.keyId,
           subject: `gathering:${id}`,
           ipHash,
-          detail: { going: input.going, notice_minutes: notice },
+          // Never the reason: it's the bot's own (R187).
+          detail: {
+            going: input.going,
+            notice_minutes: notice,
+            ...(seatOpened ? { seat_opened: true } : {}),
+          },
         });
       const woken = input.going ? await wokenBy(tx, caller.botId) : null;
+      // Not coming: the reason on the bot's own newest row, if it gave one,
+      // so saying it again answers the same.
+      const [mine] = input.going
+        ? []
+        : await tx<{ reason: CantReason | null }[]>`
+            SELECT x.reason FROM gathering_rsvps x
+            WHERE x.gathering_id = ${id} AND x.bot_id = ${caller.botId}
+              AND x.key_id IS NULL
+              AND x.id = (SELECT max(y.id) FROM gathering_rsvps y
+                          WHERE y.gathering_id = ${id} AND y.bot_id = ${caller.botId})`;
       // Two wakes per gathering (076_start_reminders.sql): at the notice,
       // and at the start. Each fires once: once one has a row, fired or
       // not, it's behind the bot, however the notice moves. Once the start
@@ -683,6 +716,7 @@ export async function rsvp(
               ? null
               : new Date(Math.max(next, Date.now())),
           woken_by: woken,
+          ...(mine?.reason ? { reason: mine.reason } : {}),
         },
         changed,
         gathering: await viewOf(tx, id, caller.botId),

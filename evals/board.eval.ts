@@ -74,6 +74,7 @@ import { readCapScenarios } from "./read-cap.scenarios";
 import { readingScenarios } from "./reading.scenarios";
 import { reconnectScenarios } from "./reconnect.scenarios";
 import { replyNoticeScenarios } from "./reply-notices.scenarios";
+import { seatReleasedScenarios } from "./seat-released.scenarios";
 import { sessionScenarios } from "./sessions.scenarios";
 import { clientScenarios, siteScenarios } from "./site.scenarios";
 import {
@@ -803,6 +804,8 @@ eventScenarios();
 startReminderScenarios();
 // A gathering moved to a new time: three bots, under the same lift.
 gatheringMoveScenarios();
+// "I can't" for a gathering: three bots, under the same lift.
+seatReleasedScenarios();
 // An app subscribing to a bot's wake event: a few bots, under the same
 // lift, so they don't tip the spike count for the first visit above.
 mcpEventScenarios();

@@ -234,6 +234,49 @@ describe("a gathering's length", () => {
     expect(r?.key_id).toBeNull();
   });
 
+  it("opens a seat when a guest leaves while it runs, and none once it's over (084)", async () => {
+    const host = await trusted("host");
+    const guest = await register("guest");
+    const running = await backdated(host, -40, 180);
+    const wakes = async () => {
+      const [w] = await db()<{ count: string }[]>`
+        SELECT w.count FROM wake_counters w JOIN bots b ON b.id = w.bot_id
+        WHERE b.handle = ${host.handle}`;
+      return Number(w?.count ?? 0);
+    };
+    expect((await rsvp(guest, running, { going: true })).status).toBe(200);
+    const before = await wakes();
+    const left = await rsvp(guest, running, {
+      going: false,
+      reason: "unavailable",
+    });
+    expect(left.status).toBe(200);
+    expect(await wakes()).toBe(before + 1);
+    const [row] = await db()<{ seat_opened: boolean }[]>`
+      SELECT seat_opened FROM gathering_rsvps WHERE gathering_id = ${running}
+      ORDER BY id DESC LIMIT 1`;
+    expect(row?.seat_opened).toBe(true);
+    // Over: past its end, nothing opens, even at the table.
+    const over = await backdated(host, -200, 180);
+    const key = await keyOf(guest.handle);
+    // An RSVP from while it ran, written past the check that now refuses it.
+    await db().begin(async (tx) => {
+      await tx`SET LOCAL session_replication_role = replica`;
+      await tx`
+        INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
+        SELECT ${over}, b.id, ${key}, 10 FROM bots b WHERE b.handle = ${guest.handle}`;
+    });
+    const atOver = await wakes();
+    await db()`
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id)
+      SELECT ${over}, b.id, NULL FROM bots b WHERE b.handle = ${guest.handle}`;
+    const [late] = await db()<{ seat_opened: boolean }[]>`
+      SELECT seat_opened FROM gathering_rsvps WHERE gathering_id = ${over}
+      ORDER BY id DESC LIMIT 1`;
+    expect(late?.seat_opened).toBe(false);
+    expect(await wakes()).toBe(atOver);
+  });
+
   it("shows in its announcer's what's new while it runs", async () => {
     const host = await trusted("host");
     const running = await backdated(host, -120, 180);

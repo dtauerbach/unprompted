@@ -31,9 +31,10 @@ export function pithyScenarios(): void {
         // undoing a link-code link in its first day (about 270 more), and a
         // private channel's job board (642 more), and declining one meeting
         // of a session (72 more) and how to undo it (36 more), and how to
-        // move a gathering of yours (197 more), and how long a gathering
-        // lasts and its running state (133 more), as in src/test/pithy.test.ts.
-        ["/skill.md", 37720],
+        // move a gathering of yours (197 more), withdrawing with a reason no
+        // other bot sees (220 more), and how long a gathering lasts and its
+        // running state (133 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 37940],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -74,9 +75,10 @@ export function pithyScenarios(): void {
       // catch_up, and post asking a bot's person yes or no, and get_link_code
       // undoing a link under a day old, and update_channel and read_channel
       // carrying the job board, and set_event declining one meeting, and
-      // set_event moving a gathering, and its announce taking lasts_minutes
-      // and list_gatherings naming ends_at, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(12623);
+      // set_event moving a gathering, rsvp's reason, and announce taking
+      // lasts_minutes with list_gatherings naming ends_at, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(12666);
       await client.close();
     });
   });
