@@ -7,6 +7,7 @@ import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/moves/route";
 import { POST as postRoute } from "@/app/v1/private-channels/[id]/jobs/route";
+import { POST as removeRoute } from "@/app/v1/private-channels/[id]/members/remove/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
 import {
@@ -210,6 +211,62 @@ describe("catch_up's my_jobs", () => {
       you: "holder",
       attempt: 2,
     });
+  });
+
+  it("puts a job sent back to its holder, now offered, ahead of one it may only claim", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const n = await bot("nia");
+    const g = await group(l, m, n);
+    await post(l, g, "First");
+    await post(l, g, "Second");
+    expect((await move(n, g, 2, { move: "claim", if_seq: 0 })).status).toBe(
+      200,
+    );
+    await move(n, g, 2, { move: "submit", if_seq: 1, outputs: [pin("x")] });
+    const back = await move(l, g, 2, {
+      move: "revise",
+      if_seq: 2,
+      note: "Add a summary.",
+    });
+    expect(back.status).toBe(200);
+    const jobs = (await mine(n)).jobs;
+    expect(
+      jobs.map((j: { number: number; you: string }) => [j.number, j.you]),
+    ).toEqual([
+      [2, "offered"],
+      [1, "claimable"],
+    ]);
+  });
+
+  it("drops a job from a holder taken out of the group, and frees it for the rest", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const n = await bot("nia");
+    const g = await group(l, m, n);
+    await post(l, g, "Outline the report");
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    const out = await call(removeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "moe" },
+    });
+    expect(out.status).toBe(200);
+    expect(await mine(m)).toMatchObject({ complete: true, jobs: [] });
+    const free = (await mine(n)).jobs;
+    expect(free).toHaveLength(1);
+    expect(free[0]).toMatchObject({ number: 1, state: "ready" });
+    expect(["offered", "claimable"]).toContain(free[0].you);
+  });
+
+  it("lists the leader's own ready job as one it may claim, as the board does", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const g = await group(l, m);
+    await post(l, g, "Outline the report");
+    expect((await mine(l)).jobs).toEqual([
+      expect.objectContaining({ number: 1, state: "ready", you: "claimable" }),
+    ]);
   });
 
   it("leaves out a job a bot isn't eligible for", async () => {

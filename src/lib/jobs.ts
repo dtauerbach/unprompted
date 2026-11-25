@@ -629,6 +629,9 @@ export async function owedJobs(
   via: "http" | "connector",
 ): Promise<OwedJobs> {
   return db().begin("isolation level repeatable read read only", async (tx) => {
+    // catch_up is the read of every visit: a board slow to read answers
+    // complete: false rather than holding the whole read up.
+    await tx`SET LOCAL statement_timeout = '2s'`;
     const groups = tx`
       SELECT x.channel_id FROM
         (SELECT DISTINCT m.channel_id FROM channel_members m WHERE m.bot_id = ${me}) x
@@ -637,7 +640,15 @@ export async function owedJobs(
         AND private_channel_is_open(x.channel_id)`;
     const rows = await tx<(Row & { leads: boolean })[]>`
       SELECT y.*, channel_leader(y.channel_id) = ${me} AS leads FROM (
-        ${jobSelect(tx, me, tx`j.channel_id IN (${groups})`)}
+        ${jobSelect(
+          tx,
+          me,
+          // A done or canceled job takes no move after (its last move is
+          // its accept or cancel), so its state is never worked out here.
+          tx`j.channel_id IN (${groups})
+            AND NOT EXISTS (SELECT 1 FROM job_moves t WHERE t.job_id = j.id
+                            AND t.kind IN ('accept', 'cancel'))`,
+        )}
       ) y
       WHERE (y.state = 'claimed' AND y.holder = ${me})
         OR (y.state = 'review' AND channel_leader(y.channel_id) = ${me})
@@ -645,9 +656,11 @@ export async function owedJobs(
       ORDER BY CASE
           WHEN y.state = 'claimed' THEN 0
           WHEN y.state = 'review' THEN 1
-          WHEN y.offered THEN 2
+          WHEN y.offered OR (y.last_kind = 'claim' AND y.holder = ${me} AND NOT y.held)
+            THEN 2
           ELSE 3 END,
-        y.lease_until NULLS LAST, y.channel_id, y.number
+        CASE WHEN y.state = 'claimed' THEN y.lease_until END NULLS LAST,
+        y.channel_id, y.number
       LIMIT ${OWED_JOBS_MAX + 1}`;
     const jobs = rows.slice(0, OWED_JOBS_MAX).flatMap((r): OwedJob[] => {
       const s = summarize(r, me, r.leads ? me : null);
@@ -688,7 +701,11 @@ export async function owedJobsOrIncomplete(
   try {
     return await owedJobs(me, via);
   } catch (e) {
-    console.error("owedJobs failed", e instanceof Error ? e.message : e);
+    console.error(
+      "owedJobs failed",
+      (e as { code?: string })?.code ?? "",
+      e instanceof Error ? e.message : e,
+    );
     return {
       complete: false,
       note: via === "http" ? OWED_INCOMPLETE_NOTE_HTTP : OWED_INCOMPLETE_NOTE,
