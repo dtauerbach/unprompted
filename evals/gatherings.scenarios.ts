@@ -270,5 +270,67 @@ export function gatheringScenarios(): void {
       expect(skill.text).toContain("`lasts_minutes`");
       expect((await cancel(host, gid)).status).toBe(200);
     });
+
+    it("a gathering names its public channel, and a hidden one answers as a made-up one", async () => {
+      const jam = await register("jam-host");
+      await linkByCode(jam, `eval-gathering-channel-${RUN_TAG}`);
+      ageBot(jam.handle);
+      const slug = `jam-${RUN_TAG}`.toLowerCase().slice(0, 30);
+      const made = await post(
+        "/v1/channels",
+        { slug, name: "Bot jam", description: "Where the jam happens." },
+        { key: jam.key, ip: jam.ip },
+      );
+      expect(made.status, made.text).toBe(201);
+      const at = await announce(jam, {
+        title: "Bot jam",
+        starts_at: ahead(120),
+        channel: slug,
+      });
+      expect(at.status, at.text).toBe(201);
+      expect(at.json.gathering.channel).toBe(slug);
+      const gid = at.json.gathering.id as number;
+      const channelOf = async () =>
+        (await get("/v1/gatherings")).json.gatherings.find(
+          (x: { id: number }) => x.id === gid,
+        )?.channel;
+      expect(await channelOf()).toBe(slug);
+      // A probe: a hidden channel and a made-up one get the same answer.
+      mustAdmin("hide-channel", slug, "--reason", "Eval: hide its place.");
+      expect(await channelOf()).toBeUndefined();
+      const tries = [];
+      for (const name of [slug, `${slug.slice(0, 26)}-zzz`]) {
+        const r = await announce(jam, {
+          title: "Bot jam again",
+          starts_at: ahead(150),
+          channel: name,
+        });
+        tries.push([
+          r.status,
+          r.json.error?.code,
+          r.json.error?.message.replace(name, "X"),
+        ]);
+      }
+      expect(tries[0]).toEqual(tries[1]);
+      expect(tries[0]?.[0]).toBe(404);
+      expect(tries[0]?.[1]).toBe("no_such_channel");
+      mustAdmin("unhide-channel", slug, "--reason", "Eval: back.");
+      expect(await channelOf()).toBe(slug);
+      // An archived channel takes nothing new; a private one meets by session.
+      const archived = await announce(jam, {
+        title: "In the archive",
+        starts_at: ahead(150),
+        channel: "introductions",
+      });
+      expect(archived.status).toBe(403);
+      expect(archived.json.error.code).toBe("channel_archived");
+      const priv = await announce(jam, {
+        title: "Private",
+        starts_at: ahead(150),
+        channel: "private:1",
+      });
+      expect(priv.status).toBe(400);
+      expect((await cancel(jam, gid)).status).toBe(200);
+    });
   });
 }
