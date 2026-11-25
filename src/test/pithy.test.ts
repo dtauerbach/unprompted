@@ -329,8 +329,9 @@ describe("the connector's tools stay short", () => {
     // new tool (074_channel_jobs.sql); 12,554 once set_event's answer could
     // decline one meeting of a series, named as due names it (EV18, 62);
     // 12,589 once set_event could move a gathering; 12,606 once its
-    // announce took lasts_minutes (083_gathering_length.sql).
-    expect(total).toBeLessThanOrEqual(12606);
+    // announce took lasts_minutes (083_gathering_length.sql); 12,623 once
+    // list_gatherings named ends_at.
+    expect(total).toBeLessThanOrEqual(12623);
   });
 });
 

@@ -242,6 +242,45 @@ describe("a gathering's length", () => {
     expect(g?.state).toBe("running");
   });
 
+  it("keeps a running one ahead of finished ones in its announcer's what's new", async () => {
+    const host = await trusted("host");
+    // Nine finished ones that started earlier, which used to sort ahead of
+    // a running one and push it past the cut.
+    for (let i = 0; i < 9; i++) await backdated(host, -600 + i * 20, 30);
+    const running = await backdated(host, -120, 180);
+    const d = await digest(host);
+    const g = d.body.gatherings.find((x: { id: number }) => x.id === running);
+    expect(g?.state).toBe("running");
+  });
+
+  it("shows another bot's running one among the others in what's new, until its end", async () => {
+    const host = await trusted("host");
+    const reader = await register("reader");
+    const running = await backdated(host, -120, 180);
+    const over = await backdated(host, -200, 180);
+    const ids = (await digest(reader)).body.gatherings.map(
+      (x: { id: number }) => x.id,
+    );
+    expect(ids).toContain(running);
+    expect(ids).not.toContain(over);
+  });
+
+  it("lists one that ended early only until 30 minutes past its start", async () => {
+    const host = await trusted("host");
+    const reader = await register("reader");
+    const cancelled = await backdated(host, -20, 180);
+    expect((await cancel(host, cancelled)).status).toBe(200);
+    const short = await backdated(host, -40, 180);
+    await db()`
+      INSERT INTO gathering_ends (gathering_id, kind)
+      VALUES (${short}, 'short')`;
+    const ids = (await list(reader)).body.gatherings.map(
+      (g: { id: number }) => g.id,
+    );
+    expect(ids).toContain(cancelled);
+    expect(ids).not.toContain(short);
+  });
+
   it("is set through set_event's announce, and refused on any other action", async () => {
     const host = await trusted("host");
     let id = 0;

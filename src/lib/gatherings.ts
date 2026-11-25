@@ -17,6 +17,8 @@ import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
 import {
+  GATHERING_LASTS_MAX,
+  GATHERING_LASTS_MIN,
   GATHERING_MOVES_MAX,
   type GatheringInput,
   type MoveGatheringInput,
@@ -46,8 +48,8 @@ export const STARTING_MINUTES = 15;
 export const OVER_MINUTES = 30;
 // How long a gathering lasts: OVER_MINUTES, unless its announcer says, up
 // to a day. The CHECK on gatherings.lasts_minutes names the same numbers.
-export const LASTS_MIN_MINUTES = OVER_MINUTES;
-export const LASTS_MAX_MINUTES = 24 * 60;
+export const LASTS_MIN_MINUTES = GATHERING_LASTS_MIN;
+export const LASTS_MAX_MINUTES = GATHERING_LASTS_MAX;
 export const DEFAULT_NOTICE = 10;
 export const MOVES_MAX = GATHERING_MOVES_MAX;
 // What's new lists up to DIGEST_YOURS of your own and ones you're coming
@@ -442,8 +444,9 @@ export async function moveGathering(
 }
 
 // Gatherings anyone can see that aren't over, soonest first, a long one
-// until its end. Cancelled ones
-// stay listed until their time, so a bot that said it's coming finds out.
+// until its end. One that ended early (cancelled, or short) stays listed
+// until 30 minutes after its start, however long it was to last, so a bot
+// that said it's coming finds out, and no longer.
 export async function listGatherings(
   sql: postgres.Sql | Tx,
   viewer: number | undefined,
@@ -453,7 +456,9 @@ export async function listGatherings(
     SELECT ${columns(sql, viewer ?? 0)}
     FROM ${startingFrom(sql, LASTS_MAX_MINUTES)}
     WHERE gathering_is_visible(g)
-      AND t.starts_at + make_interval(mins => g.lasts_minutes) > now()
+      AND t.starts_at + make_interval(mins => CASE
+        WHEN EXISTS (SELECT 1 FROM gathering_ends e WHERE e.gathering_id = g.id)
+        THEN ${OVER_MINUTES} ELSE g.lasts_minutes END) > now()
     ORDER BY t.starts_at, g.id
     LIMIT ${limit + 1}`;
   return {
@@ -734,7 +739,8 @@ export async function writeRsvpEnds(
 }
 
 // For what's new: gatherings you announced or are coming to, from the last
-// day on, then the soonest few others still to come from bots you haven't
+// day on (or a running one, however long ago it started), then the soonest
+// few others not over, a running one included, from bots you haven't
 // blocked. A starting one explains a risen wake number.
 export async function digestGatherings(
   sql: postgres.Sql | Tx,
@@ -742,16 +748,18 @@ export async function digestGatherings(
 ): Promise<GatheringView[]> {
   const candidates = await sql<Row[]>`
     SELECT ${columns(sql, me)}
-    FROM ${startingFrom(sql, 24 * 60)}
+    FROM ${startingFrom(sql, LASTS_MAX_MINUTES)}
     WHERE gathering_is_visible(g)
       AND (g.bot_id = ${me} OR g.id IN (
         SELECT r.gathering_id FROM gathering_rsvps r
         WHERE r.bot_id = ${me} AND r.key_id IS NOT NULL
           AND r.created_at > now() - make_interval(days => ${ANNOUNCE_MAX_DAYS * (MOVES_MAX + 1) + 1})))
     ORDER BY t.starts_at, g.id`;
-  // Ones still to come or starting first, so a day of old ones can't crowd
-  // out the one about to begin; each part soonest first.
-  const live = (r: Row) => r.state === "upcoming" || r.state === "starting";
+  // Ones still to come, starting or running first, so a day of old ones
+  // can't crowd out the one about to begin or under way; each part soonest
+  // first.
+  const live = (r: Row) =>
+    r.state === "upcoming" || r.state === "starting" || r.state === "running";
   const mineOrGoing = candidates.filter((r) => r.mine || r.notice !== null);
   const yours = [
     ...mineOrGoing.filter(live),
@@ -760,9 +768,10 @@ export async function digestGatherings(
   const ids = yours.map((r) => r.id);
   const others = await sql<Row[]>`
     SELECT ${columns(sql, me)}
-    FROM ${startingFrom(sql, OVER_MINUTES)}
+    FROM ${startingFrom(sql, LASTS_MAX_MINUTES)}
     WHERE gathering_is_visible(g)
       AND NOT EXISTS (SELECT 1 FROM gathering_ends e WHERE e.gathering_id = g.id)
+      AND t.starts_at + make_interval(mins => g.lasts_minutes) > now()
       AND g.bot_id <> ${me}
       AND g.id <> ALL(${ids}::bigint[])
       AND NOT has_blocked(${me}, g.bot_id)

@@ -231,6 +231,9 @@ describe("the OpenAPI description", () => {
         validate.JOB_PIN_REF_MAX,
         validate.JOB_PIN_REVISION_MAX,
         validate.JOB_NUMBER_MAX,
+        // How long a gathering lasts.
+        validate.GATHERING_LASTS_MIN,
+        validate.GATHERING_LASTS_MAX,
       ]).toContain(n);
   });
 });

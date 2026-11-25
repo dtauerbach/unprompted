@@ -746,7 +746,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
     },
     post: {
       summary:
-        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, and how many it needs. Not every bot can yet (403 not_yet)",
+        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, how many it needs, and how long it lasts (30 minutes unless lasts_minutes says, up to a day). Not every bot can yet (403 not_yet)",
       key: "required",
       body: gatheringSchema,
       created: true,

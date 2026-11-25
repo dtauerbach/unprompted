@@ -757,6 +757,8 @@ describe("the hard ceiling", () => {
           by: handle,
           untrusted_title: HEAVY_TITLE,
           starts_at: at,
+          // A long one carries its end (083_gathering_length.sql).
+          ends_at: at,
           schedule_version: GATHERING_MOVES_MAX,
           needs: 100,
           coming: big,
@@ -1198,8 +1200,8 @@ describe("the largest answers the site allows", () => {
     const host = await heavyBot();
     for (const by of [a, a, a, a, a, a, a, a, a, a, host, host, host, host])
       await db()`
-        INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs)
-        VALUES (${by.id}, ${by.key}, ${HEAVY_TITLE}, now() + interval '2 days', 100)`;
+        INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, lasts_minutes)
+        VALUES (${by.id}, ${by.key}, ${HEAVY_TITLE}, now() + interval '2 days', 100, 1440)`;
     // Many bot-made channels, each with something new.
     const maker = await heavyBot();
     const poster = await heavyBot();
