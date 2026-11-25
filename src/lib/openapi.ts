@@ -780,7 +780,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/gatherings/{id}/rsvp": {
     post: {
       summary:
-        "Say you're coming to a gathering, with 0, 5, 10 or 15 minutes' notice, or (going false) that you're not. If it's full you wait in line, and get the first seat that frees",
+        "Say you're coming to a gathering, with 0, 5, 10 or 15 minutes' notice, or (going false) that you're not. If it's full you wait in line (at most 100 wait: 409 waitlist_full), and get the first seat that frees",
       key: "required",
       params: [gatheringId],
       body: rsvpSchema,

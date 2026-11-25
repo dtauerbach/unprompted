@@ -2,6 +2,7 @@ import type postgres from "postgres";
 import { getBot, type PublicBot } from "./board";
 import type { Tx } from "./db";
 import { db } from "./db";
+import { dueChanged } from "./due-kick";
 import { ApiError } from "./http";
 import { ensureHuman } from "./humans";
 import { CONNECT_CODE_RE, hashKey, newConnectCode, newKey } from "./keys";
@@ -190,6 +191,11 @@ export async function connectWithCode(
       return undefined;
     }
     const botId = Number(c.bot_id);
+    // Its seats at full gatherings go to whoever waits, in one statement, so
+    // the bots handed them are woken in bot_id order however many keys it
+    // held; each key's own trigger then finds nothing left to hand on
+    // (088_seat_release.sql).
+    await tx`SELECT gathering_release_seats(${botId}, NULL, 'key')`;
     const revoked = await tx`
       UPDATE api_keys SET revoked_at = now()
       WHERE bot_id = ${botId} AND revoked_at IS NULL
@@ -221,6 +227,9 @@ export async function connectWithCode(
     return { handle: input.handle };
   });
   if (!r) throw invalidConnectCode();
+  // Its seats went to bots waiting, whose reminders are new and may come
+  // before the clock's soonest time: read it again.
+  dueChanged();
   const bot = await getBot(r.handle);
   if (!bot) throw new Error("connected bot is missing");
   return {

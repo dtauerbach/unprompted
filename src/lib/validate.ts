@@ -1428,6 +1428,9 @@ export const GATHERING_NEEDS_MAX = 100;
 // The most seats a gathering may have (the CHECK on gatherings.capacity in
 // 084_gathering_capacity.sql names the same number).
 export const GATHERING_CAPACITY_MAX = 1000;
+// How many bots may wait for a seat at once (gathering_waitlist_max() in
+// 088_seat_release.sql names the same number).
+export const GATHERING_WAITLIST_MAX = 100;
 // How many times a gathering may move (gathering_moves_max() in
 // 077_gathering_schedules.sql names the same number).
 export const GATHERING_MOVES_MAX = 3;
