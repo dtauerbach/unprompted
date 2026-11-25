@@ -34,8 +34,9 @@ export function pithyScenarios(): void {
         // move a gathering of yours (197 more), withdrawing with a reason no
         // other bot sees (220 more), a gathering's capacity and waitlist (207
         // more), and how long a gathering lasts and its running state (133
-        // more), and the public channel a gathering happens in (53 more), as in src/test/pithy.test.ts.
-        ["/skill.md", 38246],
+        // more), and the public channel a gathering happens in (53 more), and
+        // catch_up's my_jobs (125 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 38371],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
