@@ -531,6 +531,10 @@ export const OCCURRENCE_DECLINE_NOTE =
   "You declined this occurrence only. Your answers for the rest of the series did not change.";
 export const SERIES_DECLINE_NOTE =
   "You declined the whole series. This turns off notices for its upcoming occurrences until you change your answer.";
+// EV15b: said where a reason came with a decline that already stood with
+// another, so a bot never thinks the new one was kept.
+export const REASON_KEPT_NOTE =
+  "Your decline already stood, so its reason stays as it was made (none, if none was given). To give another, take it back (coming: true) and decline again.";
 
 // A member's own answer to its channel's sessions, which only it ever sees:
 // coming false declines the session in force (and any that replaces it while
@@ -560,6 +564,7 @@ export async function answerSession(
         session: first.session(now),
         yours: first.after,
         changed: false,
+        ...(first.reasonKept ? { note: REASON_KEPT_NOTE } : {}),
       };
     if (!first.declining) {
       await assertNotSilenced(tx, caller.botId);
@@ -571,7 +576,12 @@ export async function answerSession(
     await assertOpen(tx, found);
     const st = await answerState(tx, found.id, caller.botId, input);
     if (!st.changed)
-      return { session: st.session(now), yours: st.after, changed: false };
+      return {
+        session: st.session(now),
+        yours: st.after,
+        changed: false,
+        ...(st.reasonKept ? { note: REASON_KEPT_NOTE } : {}),
+      };
     // Counted as a decline, but no longer one: another answer or session
     // went in meanwhile. Rare, and the bot's own to send again.
     if (first.declining && !st.declining)
@@ -603,7 +613,11 @@ export async function answerSession(
       session: st.session(now),
       yours: st.after,
       changed: true,
-      ...(st.declining ? { note: SERIES_DECLINE_NOTE } : {}),
+      ...(st.declining
+        ? { note: SERIES_DECLINE_NOTE }
+        : st.reasonKept
+          ? { note: REASON_KEPT_NOTE }
+          : {}),
     };
   });
   if (result.changed) dueChanged();
@@ -726,16 +740,28 @@ async function occurrenceState(
     : changed
       ? (input.reason ?? null)
       : (prev?.reason ?? null);
+  const reasonKept =
+    !input.coming &&
+    !changed &&
+    input.reason !== undefined &&
+    input.reason !== (prev?.reason ?? null);
   const [series] = await tx<
-    { declined_chain: string | null; notice_minutes: number }[]
+    {
+      declined_chain: string | null;
+      notice_minutes: number;
+      reason: CantReason | null;
+    }[]
   >`
-    SELECT declined_chain, notice_minutes FROM channel_session_answers
+    SELECT declined_chain, notice_minutes, reason FROM channel_session_answers
     WHERE channel_id = ${channelId} AND bot_id = ${botId}
     ORDER BY id DESC LIMIT 1`;
-  // The series answer, unchanged, beside it.
+  // The series answer, unchanged, beside it, as the series answer shows it.
+  const seriesComing =
+    String(series?.declined_chain ?? "") !== String(current.chain_id);
   const yours: SessionAnswer = {
-    coming: String(series?.declined_chain ?? "") !== String(current.chain_id),
+    coming: seriesComing,
     notice_minutes: series?.notice_minutes ?? SESSION_DEFAULT_NOTICE,
+    ...(!seriesComing && series?.reason ? { reason: series.reason } : {}),
   };
   return {
     changed,
@@ -750,7 +776,11 @@ async function occurrenceState(
         ...(reason ? { reason } : {}),
       },
       changed,
-      ...(changed && !input.coming ? { note: OCCURRENCE_DECLINE_NOTE } : {}),
+      ...(changed && !input.coming
+        ? { note: OCCURRENCE_DECLINE_NOTE }
+        : reasonKept
+          ? { note: REASON_KEPT_NOTE }
+          : {}),
     }),
   };
 }
@@ -805,6 +835,10 @@ async function answerState(
   return {
     chain,
     after,
+    reasonKept:
+      wasDeclined &&
+      input.reason !== undefined &&
+      input.reason !== (prev?.reason ?? null),
     changed:
       after.coming !== before.coming ||
       after.notice_minutes !== before.notice_minutes,

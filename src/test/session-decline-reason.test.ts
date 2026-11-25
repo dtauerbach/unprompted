@@ -7,6 +7,7 @@ import { db } from "@/lib/db";
 import { dueFor } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
 import { startChannel } from "@/lib/private-channels";
+import { REASON_KEPT_NOTE } from "@/lib/sessions";
 import { CANT_REASONS } from "@/lib/validate";
 import { call, freshIp, register, resetDb } from "./helpers";
 
@@ -139,21 +140,48 @@ describe("a reason with a decline of the whole series", () => {
     expect(again.body).toMatchObject({
       changed: false,
       yours: { coming: false, reason: "unavailable" },
+      note: REASON_KEPT_NOTE,
+    });
+    // The same reason again, or none, needs no word about it.
+    const same = await answer(a, g, { coming: false, reason: "unavailable" });
+    expect(same.body).not.toHaveProperty("note");
+    expect((await answer(a, g, { coming: false })).body).not.toHaveProperty(
+      "note",
+    );
+    // Declining again with another reason and a new notice keeps the old
+    // reason too, and says so.
+    const both = await answer(a, g, {
+      coming: false,
+      reason: "cant_perform",
+      notice_minutes: 10,
+    });
+    expect(both.body).toMatchObject({
+      changed: true,
+      yours: { coming: false, notice_minutes: 10, reason: "unavailable" },
+      note: REASON_KEPT_NOTE,
     });
     const notice = await answer(a, g, { notice_minutes: 15 });
     expect(notice.body).toMatchObject({
       changed: true,
       yours: { coming: false, notice_minutes: 15, reason: "unavailable" },
     });
+    expect(notice.body).not.toHaveProperty("note");
     expect((await seriesRows(a)).map((x) => x.reason)).toEqual([
       "unavailable",
       "unavailable",
+      "unavailable",
     ]);
+    // A notice change is logged as an answer, still without the reason.
+    const logs = await db()<{ detail: unknown }[]>`
+      SELECT detail FROM action_log WHERE action = 'channel.session_answer'`;
+    expect(logs).toHaveLength(2);
+    expect(JSON.stringify(logs)).not.toContain("unavailable");
     // Taken back and declined anew, the new reason stands.
     await answer(a, g, { coming: true });
     const anew = await answer(a, g, { coming: false, reason: "cant_perform" });
     expect(anew.body.yours.reason).toBe("cant_perform");
     expect((await seriesRows(a)).map((x) => x.reason)).toEqual([
+      "unavailable",
       "unavailable",
       "unavailable",
       null,
@@ -218,6 +246,7 @@ describe("a reason with a decline of one meeting", () => {
     });
     expect(again.body.changed).toBe(false);
     expect(again.body.occurrence.reason).toBe("unavailable");
+    expect(again.body.note).toBe(REASON_KEPT_NOTE);
     const back = await one(a, g, ev, { coming: true });
     expect(back.body.occurrence).not.toHaveProperty("reason");
     const anew = await one(a, g, ev, {
@@ -232,6 +261,18 @@ describe("a reason with a decline of one meeting", () => {
       { coming: true, reason: null },
       { coming: false, reason: "missing_input" },
     ]);
+  });
+
+  it("shows the series reason beside it, as the series answer does", async () => {
+    const { a, g, ev } = await three();
+    await answer(a, g, { coming: false, reason: "unavailable" });
+    const r = await one(a, g, ev, { coming: false, reason: "cant_perform" });
+    expect(r.body.yours).toEqual({
+      coming: false,
+      notice_minutes: 5,
+      reason: "unavailable",
+    });
+    expect(r.body.occurrence.reason).toBe("cant_perform");
   });
 
   it("is refused with coming: true", async () => {
@@ -279,6 +320,65 @@ describe("a reason with a decline of one meeting", () => {
   });
 });
 
+// Moves every session row's times back, as if set `minutes` earlier, and
+// the memberships with them, as sessions.test.ts does: the tables are
+// append-only, so their triggers are off for one transaction.
+async function age(minutes: number) {
+  await db().begin(async (tx) => {
+    await tx`ALTER TABLE channel_sessions DISABLE TRIGGER channel_sessions_append_only`;
+    await tx`ALTER TABLE channel_members DISABLE TRIGGER channel_members_append_only`;
+    await tx`
+      UPDATE channel_sessions SET
+        created_at = created_at - make_interval(mins => ${minutes}),
+        chain_until = chain_until - make_interval(mins => ${minutes}),
+        first_at = first_at - make_interval(mins => ${minutes})`;
+    await tx`
+      UPDATE channel_members SET
+        created_at = created_at - make_interval(mins => ${minutes})`;
+    await tx`ALTER TABLE channel_members ENABLE TRIGGER channel_members_append_only`;
+    await tx`ALTER TABLE channel_sessions ENABLE TRIGGER channel_sessions_append_only`;
+  });
+}
+
+describe("a reason and the session's chain", () => {
+  it("stays with a decline that carries to a session replacing it", async () => {
+    const { a, b, g } = await three();
+    await answer(a, g, { coming: false, reason: "missing_input" });
+    const set = await event(b, {
+      action: "session",
+      channel: g,
+      in_minutes: 20,
+    });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    const r = await answer(a, g, { notice_minutes: 10 });
+    expect(r.body.yours).toEqual({
+      coming: false,
+      notice_minutes: 10,
+      reason: "missing_input",
+    });
+  });
+
+  it("goes with the decline once a new chain starts", async () => {
+    const { a, b, g } = await three();
+    await answer(a, g, { coming: false, reason: "missing_input" });
+    await event(b, { action: "end", channel: g });
+    // Past the chain's last meeting, a new session starts a new chain.
+    await age(24 * 60);
+    const set = await event(b, {
+      action: "session",
+      channel: g,
+      in_minutes: 20,
+    });
+    expect(set.status, JSON.stringify(set.body)).toBe(200);
+    const r = await answer(a, g, { notice_minutes: 10 });
+    expect(r.body.yours).toEqual({ coming: true, notice_minutes: 10 });
+    // A new decline there takes its own reason.
+    const d = await answer(a, g, { coming: false, reason: "unavailable" });
+    expect(d.body.yours.reason).toBe("unavailable");
+    expect(d.body).not.toHaveProperty("note", REASON_KEPT_NOTE);
+  });
+});
+
 describe("the database", () => {
   it("holds a reason to the list and to a decline", async () => {
     const { a, g, ev } = await three();
@@ -291,15 +391,21 @@ describe("the database", () => {
     await expect(db()`
       INSERT INTO channel_session_answers
         (channel_id, bot_id, key_id, declined_chain, notice_minutes, reason)
-      VALUES (${x.ch}, ${x.bot}, ${x.key}, NULL, 5, 'unavailable')`).rejects.toThrow();
+      VALUES (${x.ch}, ${x.bot}, ${x.key}, NULL, 5, 'unavailable')`).rejects.toThrow(
+      "channel_session_answers_reason_declines",
+    );
     await expect(db()`
       INSERT INTO session_occurrence_answers
         (session_id, occurrence, bot_id, key_id, coming, reason)
-      VALUES (${ev}, 1, ${x.bot}, ${x.key}, true, 'unavailable')`).rejects.toThrow();
+      VALUES (${ev}, 1, ${x.bot}, ${x.key}, true, 'unavailable')`).rejects.toThrow(
+      "session_occurrence_answers_reason_declines",
+    );
     await expect(db()`
       INSERT INTO session_occurrence_answers
         (session_id, occurrence, bot_id, key_id, coming, reason)
-      VALUES (${ev}, 1, ${x.bot}, ${x.key}, false, 'busy')`).rejects.toThrow();
+      VALUES (${ev}, 1, ${x.bot}, ${x.key}, false, 'busy')`).rejects.toThrow(
+      "session_occurrence_answers_reason_check",
+    );
   });
 
   it("names the same list the API takes", async () => {
