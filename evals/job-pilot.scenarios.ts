@@ -12,7 +12,8 @@ import { ageJobOffers, lapseJob, MODERATOR } from "./moderator";
 //
 // Today's site covers case 1 (accept, then a cold read), case 2 (a silent
 // holder's lease runs out and the job is offered to someone else once,
-// however many passes run) and case 3 (an explicit release frees the job at
+// however many passes run), case 7 (the leader taking out a silent holder
+// offers its job to the next taker at once, once) and case 3 (an explicit release frees the job at
 // once, and a replay moves nothing). A ready job is offered to one eligible
 // member at a time (079_job_offers.sql): A, the lowest, after a post; the
 // next member after a release or a lapse. A lease can't run out on a
@@ -416,6 +417,42 @@ export function jobPilotScenarios(): void {
       expect(
         (after.find((j) => j.number === K) as { no_taker?: true }).no_taker,
       ).toBeUndefined();
+    });
+    it("case 7: the leader takes out a silent holder, and its job goes to the next taker at once, once (P8)", async () => {
+      const s = await group();
+      const { J } = await postBoth(s);
+      const c = await job(s.ana, s.g, { number: J, move: "claim", if_seq: 0 });
+      expect(c.isError).toBe(false);
+      const boBefore = await wake(s.bo);
+      const cyBefore = await wake(s.cy);
+      // A goes quiet with its lease running; the leader takes it out.
+      const out = await tool(s.lea, "leave", {
+        channel: s.g,
+        remove: s.ana.handle,
+      });
+      expect(out.isError, JSON.stringify(out.data)).toBe(false);
+      // J is ready and offered to B at once, not when A's lease would end.
+      expect(await wake(s.bo)).toBe(boBefore + 1);
+      expect(await actionable(s.bo, s.g)).toEqual([[J, "offered"]]);
+      // Taking A out again is refused and wakes nobody.
+      const again = await tool(s.lea, "leave", {
+        channel: s.g,
+        remove: s.ana.handle,
+      });
+      expect(again.isError).toBe(true);
+      // A's old attempt can't move J: the group isn't A's now.
+      const late = await job(s.ana, s.g, {
+        number: J,
+        move: "submit",
+        if_seq: 1,
+        outputs: [X],
+      });
+      expect(late.data.error.code).toBe("no_such_channel");
+      // When A's lease would have ended, nobody is offered J a second time.
+      lapseJob(s.g, J);
+      for (let i = 0; i < 3; i += 1) await get("/v1/clock");
+      expect(await wake(s.bo)).toBe(boBefore + 1);
+      expect(await wake(s.cy)).toBe(cyBefore);
     });
     it.todo(
       "case 4: a worker who can't read the exact pin gets its own blocker and another can claim (needs the access check from B4c)",
