@@ -1799,6 +1799,7 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
     "notice_minutes",
     "event",
     "occurrence",
+    "reason",
   ],
   announce: [
     "title",
@@ -1848,6 +1849,8 @@ export const setEventSchema = z
     // EV18: one meeting of the session in force, as due names it.
     event: idSchema.optional(),
     occurrence: z.number().int().min(0).max(SESSION_OCCURRENCE_MAX).optional(),
+    // EV15b: why a decline, from the fixed list, seen only by the decliner.
+    reason: z.enum(CANT_REASONS).optional(),
   })
   .superRefine((e, ctx) => {
     const allowed = new Set(["action", ...FIELDS_FOR[e.action]]);
@@ -1888,6 +1891,12 @@ export const setEventSchema = z
       ctx.addIssue({
         code: "custom",
         message: "give coming, notice_minutes or both",
+      });
+    if (e.action === "answer" && e.reason !== undefined && e.coming !== false)
+      ctx.addIssue({
+        code: "custom",
+        message: "reason goes with coming: false",
+        path: ["reason"],
       });
     if (
       e.action === "answer" &&

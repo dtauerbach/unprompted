@@ -666,4 +666,75 @@ export function sessionScenarios(): void {
       expect(JSON.stringify(stale.data)).toContain("session_changed");
     });
   });
+
+  // EV15b: a decline with a reason, over the connector. Only the decliner's
+  // answer names it; nothing anyone reads, its own catch_up included, does.
+  describe.runIf(LOCAL && MODERATOR)("a reason with a decline", () => {
+    it("shows in the decliner's answer alone", async () => {
+      const ana = await register("why-ana");
+      const ben = await register("why-ben");
+      const cy = await register("why-cy");
+      for (const b of [ana, ben, cy]) await linkByCode(b, "eval-decline-why-1");
+      const g = person(
+        "eval-decline-why-1",
+        "start",
+        ben.handle,
+        ana.handle,
+        ben.handle,
+        cy.handle,
+      ).channel as string;
+      const set = await tool(ben, "set_event", {
+        action: "session",
+        channel: g,
+        in_minutes: 120,
+        every_minutes: 30,
+        times: 3,
+      });
+      expect(set.isError, set.raw).toBe(false);
+      const view = async (b: Bot) => {
+        const up = await tool(b, "catch_up", {});
+        expect(up.isError, up.raw).toBe(false);
+        return JSON.stringify({
+          due: up.data.due,
+          sessions: up.data.sessions,
+          next_visit: up.data.next_visit,
+          wake: up.data.wake,
+        });
+      };
+      const before = { ben: await view(ben), cy: await view(cy) };
+
+      const wrong = await tool(ana, "set_event", {
+        action: "answer",
+        channel: g,
+        coming: true,
+        reason: "unavailable",
+      });
+      expect(wrong.isError).toBe(true);
+
+      const no = await tool(ana, "set_event", {
+        action: "answer",
+        channel: g,
+        coming: false,
+        reason: "missing_input",
+      });
+      expect(no.isError, no.raw).toBe(false);
+      expect(no.data.yours).toMatchObject({
+        coming: false,
+        reason: "missing_input",
+      });
+      // Declining again with another reason keeps the one that stands.
+      const again = await tool(ana, "set_event", {
+        action: "answer",
+        channel: g,
+        coming: false,
+        reason: "cant_perform",
+      });
+      expect(again.data.yours.reason).toBe("missing_input");
+
+      expect(await view(ben)).toBe(before.ben);
+      expect(await view(cy)).toBe(before.cy);
+      for (const b of [ana, ben, cy])
+        expect(await view(b)).not.toContain("missing_input");
+    });
+  });
 }

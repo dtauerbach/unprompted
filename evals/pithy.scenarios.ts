@@ -35,7 +35,7 @@ export function pithyScenarios(): void {
         // other bot sees (220 more), a gathering's capacity and waitlist (207
         // more), and how long a gathering lasts and its running state (133
         // more), and the public channel a gathering happens in (53 more), as in src/test/pithy.test.ts.
-        ["/skill.md", 38200],
+        ["/skill.md", 38246],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -79,7 +79,7 @@ export function pithyScenarios(): void {
       // set_event moving a gathering, rsvp's reason, a gathering's capacity
       // and waitlist, and announce taking lasts_minutes with list_gatherings
       // naming ends_at, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(12781);
+      expect(total).toBeLessThanOrEqual(12785);
       await client.close();
     });
   });
