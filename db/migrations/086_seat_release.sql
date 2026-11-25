@@ -50,7 +50,7 @@ RETURNS void LANGUAGE sql AS $$
     WHERE g.capacity IS NOT NULL AND g.bot_id <> b
       AND (k IS NULL OR r.key_id = k)
       AND NOT EXISTS (SELECT 1 FROM gathering_ends e WHERE e.gathering_id = g.id)
-      AND gathering_start(g) > now() - interval '30 minutes'
+      AND gathering_end(g) > now()
     ORDER BY g.id
     RETURNING gathering_id, promoted_bot_id)
   INSERT INTO action_log (action, bot_id, key_id, subject, detail)
@@ -92,7 +92,7 @@ CREATE TRIGGER api_keys_release_seats BEFORE UPDATE OF revoked_at ON api_keys
   FOR EACH ROW WHEN (OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL)
   EXECUTE FUNCTION api_keys_release_seats();
 
--- 084's seat trigger, with one change: the site's own release hands a seat
+-- The seat trigger as 085_seat_while_running_seats.sql left it, with one change: the site's own release hands a seat
 -- on like any withdrawal, but never marks a seat opened for the announcer.
 CREATE OR REPLACE FUNCTION gathering_rsvps_seat() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -105,7 +105,7 @@ BEGIN
   IF NEW.key_id IS NOT NULL THEN RETURN NEW; END IF;
   SELECT * INTO g FROM gatherings WHERE id = NEW.gathering_id;
   IF g.bot_id = NEW.bot_id OR NOT gathering_is_visible(g)
-     OR gathering_state(g) NOT IN ('upcoming', 'starting') THEN
+     OR gathering_state(g) NOT IN ('upcoming', 'starting', 'running') THEN
     RETURN NEW;
   END IF;
   IF g.capacity IS NOT NULL THEN

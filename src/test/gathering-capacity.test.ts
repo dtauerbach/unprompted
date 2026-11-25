@@ -234,7 +234,7 @@ describe("seats and the waitlist", () => {
     const rotated = await call(rotateRoute, { key: a.key });
     expect(rotated.status).toBe(200);
     const a2 = { handle: a.handle, key: rotated.body.api_key as string };
-    // The seat goes with the key (085_seat_release.sql): c holds it now,
+    // The seat goes with the key (086_seat_release.sql): c holds it now,
     // woken at once; the announcer hears nothing of a lost key.
     expect((await viewOf(c, id)).going).toBe(true);
     expect(await wakeCount(c)).toBe(cBefore + 1);
@@ -269,6 +269,29 @@ describe("seats and the waitlist", () => {
     expect((await rsvp(a, id, { going: true })).body.rsvp.waitlist_place).toBe(
       2,
     );
+  });
+
+  it("hands a seat on while a long gathering runs, past the 30 minutes after its start", async () => {
+    const host = await register("host");
+    const a = await register("guest-a");
+    const b = await register("guest-b");
+    // Started an hour ago and lasts three: running, and taking RSVPs.
+    const [g] = await db()<{ id: string }[]>`
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, lasts_minutes, capacity, created_at)
+      SELECT b.id, k.id, 'Jam', now() - interval '60 minutes', 180, 1, now() - interval '1 day'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    const id = Number(g?.id);
+    expect((await rsvp(a, id, { going: true })).status).toBe(200);
+    expect((await rsvp(b, id, { going: true })).body.rsvp.waitlist_place).toBe(
+      1,
+    );
+    const bBefore = await wakeCount(b);
+    await setFrozen(db(), a.handle, true, "Testing.");
+    expect((await viewOf(b, id)).going).toBe(true);
+    expect((await viewOf(b, id)).waitlist_place).toBeUndefined();
+    expect(await wakeCount(b)).toBe(bBefore + 1);
   });
 
   it("lets a frozen bot's place in line go, so a seat never goes to it", async () => {
@@ -635,7 +658,7 @@ describe("reminders go to seats", () => {
 
   it("decides a short end on who had a seat, a frozen bot's handed on", async () => {
     // Two seats, needs two: a and b seated, w waiting. b is frozen, so its
-    // seat goes to w (085), and the gathering doesn't end short. Then w
+    // seat goes to w (086), and the gathering doesn't end short. Then w
     // withdraws with nobody behind it, and it does: only a had a seat.
     const host = await register("host");
     const a = await register("guest-a");
@@ -700,7 +723,7 @@ describe("reminders go to seats", () => {
     const took = Date.now() - t0;
     expect(n).toEqual({ rsvp: 600, start: 600 });
     expect(took).toBeLessThan(2500);
-    // Writing the 700 RSVPs goes through the line's check row by row (085),
+    // Writing the 700 RSVPs goes through the line's check row by row (086),
     // which reads the line each time, so the setup alone can pass 20 seconds
     // on a busy runner. Only the read above is timed.
   }, 90_000);

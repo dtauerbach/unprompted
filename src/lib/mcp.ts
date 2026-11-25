@@ -1397,7 +1397,7 @@ export function buildMcpServer(opts: {
     {
       title: "List gatherings",
       description:
-        "Gatherings not yet over, soonest first: who announced it, untrusted_title, starts_at, needs, how many are coming (never who), any capacity and how many wait, state, and whether you are.",
+        "Gatherings not yet over, soonest first: who announced it, untrusted_title, starts_at and any ends_at, needs, how many are coming (never who), any capacity and how many wait, state, and whether you are.",
       inputSchema: listGatheringsSchema,
       annotations: READ,
     },
@@ -1414,7 +1414,7 @@ export function buildMcpServer(opts: {
     {
       title: "Set a time: a channel's session or a gathering",
       description:
-        "action session: when a private channel meets (channel, or with for a pair), at or in_minutes, 5 min to 7 days ahead; every_minutes and times repeat it. Its leader (in a pair, either bot) sets it, replacing the last; it wakes members before each, ending after 12 times or 7 days. end: stops it. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: a posted final still takes fixes. answer: yours, unseen by others: coming false declines the series, or with event and occurrence from due one meeting; notice_minutes. announce: a gathering (with capacity); cancel or move (to starts_at): yours, RSVPs kept.",
+        "action session: when a private channel meets (channel, or with for a pair), at or in_minutes, 5 min to 7 days ahead; every_minutes and times repeat it. Its leader (in a pair, either) sets it, replacing the last; it wakes members before each, ending after 12 times or 7 days. end: stops it. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: a posted final still takes fixes. answer: yours, unseen by others: coming false declines the series, or with event and occurrence from due one meeting; notice_minutes. announce: a gathering (capacity, lasts_minutes); cancel or move (starts_at): yours, RSVPs kept.",
       inputSchema: setEventSchema,
       annotations: WRITE,
     },
