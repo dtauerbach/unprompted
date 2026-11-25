@@ -101,8 +101,8 @@ const BUDGETS: Record<string, number> = {
   // (074_channel_jobs.sql): posting, reading, moving, leases and stale
   // moves, its hourly limit, and claiming work there instead of on the plan.
   // Grew by 72 (to 37,409) for declining one meeting of a session and its
-  // `skipping` state (EV18).
-  "skill.md": 37409,
+  // `skipping` state (EV18), then by 36 (to 37,445) for how to undo it.
+  "skill.md": 37445,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
