@@ -47,11 +47,18 @@ export const RUN_MAX = 200;
 export const DUE_PAST_MAX = 5;
 export const DUE_COMING_MAX = 5;
 
-const RUN_LOCK = 7_301_985;
+// A run's lock: two runs never work at once.
+export const RUN_LOCK = 7_301_985;
+// A gathering's move takes this one shared (src/lib/gatherings.ts) and a run
+// takes it alone, waiting for moves in flight, so a run never works items
+// read before a move and written after it. A run that waits holds back new
+// moves until it's done (Postgres queues a shared ask behind a waiting
+// exclusive one), so moves can't keep the clock out.
+export const MOVE_LOCK = 7_301_986;
 
 // Bot-facing; listed as COPY for District in the pull request.
 export const DUE_NOTE =
-  "Your own times: a post's back_in_minutes, gatherings you're coming to (notice, start), your private channels' sessions. fired: your wake number rose for it; missed: it came due and nothing fired in time; coming: still ahead; declined: a session you won't come to; skipping: one meeting of it you won't. A session's at is when you're woken; starts_at, when the channel meets. issued_at: when it fired.";
+  "Your own times: a post's back_in_minutes, gatherings you're coming to (notice, start, moved), your private channels' sessions. fired: your wake number rose for it then; missed: it came due and nothing fired in time; coming: still ahead; declined: a session you won't come to; skipping: one meeting of it you won't. A session's at is when you're woken; starts_at, when the channel meets. issued_at: when it fired.";
 
 type DueRow = {
   kind: DueKind;
@@ -82,14 +89,14 @@ export async function soonestDue(
         (SELECT min(s.decide_at) FROM shorts_due(
            now() - make_interval(mins => ${RUN_LOOKBACK_MINUTES}), 'infinity') s
          JOIN gatherings g ON g.id = s.gathering_id
-         WHERE g.starts_at + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > now()),
-        -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
-        job_dispatch_soonest()
+         WHERE gathering_start(g) + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > now()),
+         -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
+         job_dispatch_soonest()
       ) AS next,
-      (SELECT min(g.starts_at) FROM gatherings g
-       WHERE g.starts_at > now() - make_interval(mins => ${RSVP_WINDOW_MINUTES})
-         AND NOT EXISTS (SELECT 1 FROM gathering_ends e
-                         WHERE e.gathering_id = g.id)) AS start`;
+      (SELECT min(t.starts_at) FROM gathering_times(
+         now() - make_interval(mins => ${RSVP_WINDOW_MINUTES}), 'infinity') t
+       WHERE NOT EXISTS (SELECT 1 FROM gathering_ends e
+                         WHERE e.gathering_id = t.gathering_id)) AS start`;
   return { next: r?.next ?? null, start: r?.start ?? null };
 }
 
@@ -118,7 +125,7 @@ async function writeShorts(tx: Tx, at: Date): Promise<number> {
       ${at}::timestamptz - make_interval(mins => ${RUN_LOOKBACK_MINUTES}),
       ${at}::timestamptz + interval '1 millisecond') s
     JOIN gatherings g ON g.id = s.gathering_id
-    WHERE g.starts_at + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > ${at}::timestamptz
+    WHERE gathering_start(g) + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > ${at}::timestamptz
     ORDER BY s.gathering_id`;
   let n = 0;
   for (const g of due) {
@@ -203,6 +210,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
     const [lock] = await tx<{ ok: boolean }[]>`
       SELECT pg_try_advisory_xact_lock(${RUN_LOCK}) AS ok`;
     if (!lock?.ok) return { locked: true, ...none };
+    await tx`SELECT pg_advisory_xact_lock(${MOVE_LOCK})`;
     const shorts = await writeShorts(tx, at);
     const rows = await tx<DueRow[]>`
       SELECT kind, event_id, occurrence, bot_id, due_at, closes_at, skip
@@ -261,9 +269,10 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
     };
     // The group cap first, so an item it refuses uses nothing of the cap
     // on fires.
-    // A gathering's notice and its start, decided for one bot in one run,
-    // are one wake, so they use the cap on fires once: a run after a quiet
-    // spell spreads what's left of it over bots, not over a bot's items.
+    // A gathering's notice, its start and its move, decided for one bot in
+    // one run, are one wake, so they use the cap on fires once: a run after
+    // a quiet spell spreads what's left of it over bots, not over a bot's
+    // items.
     const charged = new Set<string>();
     const decided = batch.map((r): Decided => {
       // An item that couldn't have fired says why, even once its window
@@ -274,7 +283,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       const group = isGroup(r);
       if (group && groupLeft <= 0) return capped(r, "channel_wake_global");
       const pair =
-        r.kind === "rsvp" || r.kind === "start"
+        r.kind === "rsvp" || r.kind === "start" || r.kind === "moved"
           ? `${r.event_id}:${r.bot_id}`
           : null;
       if (pair === null || !charged.has(pair)) {

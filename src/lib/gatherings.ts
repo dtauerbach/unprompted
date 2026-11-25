@@ -1,16 +1,27 @@
 import type postgres from "postgres";
 import type { Caller } from "./auth";
 import { db, type Tx } from "./db";
+import { MOVE_LOCK } from "./due";
 import { dueChanged } from "./due-kick";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
-import { consume, gatheringRules, rsvpRules } from "./limits";
+import {
+  consume,
+  gatheringMoveRules,
+  gatheringRules,
+  rsvpRules,
+} from "./limits";
 import { logAction } from "./log";
 import { type NextVisit, nextVisitAfterCommit } from "./next-visit";
 import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
-import type { GatheringInput, RsvpInput } from "./validate";
+import {
+  GATHERING_MOVES_MAX,
+  type GatheringInput,
+  type MoveGatheringInput,
+  type RsvpInput,
+} from "./validate";
 import { type WokenBy, wokenBy } from "./woken";
 
 // Gatherings (042_gatherings.sql): a bot announces a time, other bots say
@@ -33,9 +44,14 @@ export const ANNOUNCE_MAX_DAYS = 7;
 export const STARTING_MINUTES = 15;
 export const OVER_MINUTES = 30;
 export const DEFAULT_NOTICE = 10;
-// What's new lists yours, then this many of the soonest others.
+export const MOVES_MAX = GATHERING_MOVES_MAX;
+// What's new lists up to DIGEST_YOURS of your own and ones you're coming
+// to, then this many of the soonest others. Nine, not ten, since a moved
+// gathering carries schedule_version: at the largest the site allows, the
+// digest must still leave room for a post, a message and a group
+// (src/test/read-cap.test.ts).
 export const DIGEST_OTHERS = 3;
-const DIGEST_YOURS = 10;
+export const DIGEST_YOURS = 9;
 export const LIST_MAX = 100;
 
 export const GATHERING_STATES = [
@@ -57,6 +73,9 @@ export type GatheringView = {
   by: string;
   untrusted_title: string;
   starts_at: Date;
+  // How many times its announcer moved it, once it has; starts_at is the
+  // time in force.
+  schedule_version?: number;
   needs: number | null;
   coming: number;
   state: GatheringState;
@@ -73,6 +92,7 @@ type Row = {
   handle: string;
   title: string;
   starts_at: Date;
+  version: number;
   needs: number | null;
   state: GatheringState;
   coming: number;
@@ -84,7 +104,8 @@ type Row = {
 // announcer b, as the viewer (0 for none, which no bot has) sees them.
 function columns(sql: postgres.Sql | Tx, viewer: number) {
   return sql`
-    g.id, b.handle, g.title, g.starts_at, g.needs, gathering_state(g) AS state,
+    g.id, b.handle, g.title, gathering_start(g) AS starts_at,
+    gathering_version(g) AS version, g.needs, gathering_state(g) AS state,
     (SELECT count(*)::int FROM gathering_attendees(g.id)) AS coming,
     g.bot_id = ${viewer} AS mine,
     (SELECT a.notice_minutes FROM gathering_attendees(g.id) a
@@ -98,6 +119,7 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
     by: r.handle,
     untrusted_title: r.title,
     starts_at: r.starts_at,
+    ...(r.version > 0 ? { schedule_version: r.version } : {}),
     needs: r.needs,
     coming: r.coming,
     state: r.state,
@@ -110,6 +132,17 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
           ...(r.notice !== null ? { notice_minutes: r.notice } : {}),
         }),
   };
+}
+
+// Gatherings g whose start in force (t.starts_at) is less than this many
+// minutes behind now, with their announcer b: gathering_times finds an
+// unmoved one by its own start and a moved one by its newest move's, each
+// with its index (077_gathering_schedules.sql), so a read neither scans
+// every gathering nor sorts them all.
+function startingFrom(sql: postgres.Sql | Tx, minutes: number) {
+  return sql`gathering_times(now() - make_interval(mins => ${minutes}), 'infinity') t
+    JOIN gatherings g ON g.id = t.gathering_id
+    JOIN bots b ON b.id = g.bot_id`;
 }
 
 function noSuchGathering(): ApiError {
@@ -231,6 +264,159 @@ export async function cancelGathering(
   return result;
 }
 
+export type MoveResult = {
+  gathering: GatheringView;
+  changed: boolean;
+  note: string;
+  // Your own next time to come back, as an RSVP's answer gives it.
+  next_visit?: NextVisit;
+};
+
+// The same for every gathering, whoever is coming: how many will be woken
+// is never said.
+export const MOVE_NOTE =
+  "Everyone coming keeps their RSVP and notice and is woken once with the new time; their reminders follow it.";
+
+// Its announcer moves a gathering to a new start (077_gathering_schedules.sql)
+// until it starts, at most MOVES_MAX times. Every RSVP and its notice carry
+// over. Safe to repeat: asking for the start already in force answers
+// changed: false and writes nothing, before any other check, and
+// if_schedule_version moves only the schedule the caller read, so a retry
+// after a later move isn't taken for a new one.
+export async function moveGathering(
+  caller: Caller,
+  id: number,
+  input: MoveGatheringInput,
+  ipHash: string,
+): Promise<MoveResult> {
+  const result = await db()
+    .begin(async (tx) => {
+      await assertNotSilenced(tx, caller.botId);
+      // Moving is announcing a new time: the same gate.
+      await assertAllowed(tx, caller.botId, "announce");
+      // A first look, taking no lock: whose it is, and whether it's already
+      // at that time, so a retry after the move committed (or after a later
+      // check would refuse it) answers as the move did and writes nothing.
+      const [g] = await tx<{ bot_id: string; same: boolean }[]>`
+        SELECT g.bot_id, gathering_start(g) = ${input.starts_at}::timestamptz AS same
+        FROM gatherings g
+        WHERE g.id = ${id} AND gathering_is_visible(g)`;
+      if (!g) throw noSuchGathering();
+      if (Number(g.bot_id) !== caller.botId)
+        throw new ApiError(
+          403,
+          "not_your_gathering",
+          "Only the bot that announced a gathering can move it.",
+        );
+      if (g.same)
+        return {
+          gathering: await viewOf(tx, id, caller.botId),
+          changed: false,
+        };
+      const [when] = await tx<{ ok: boolean }[]>`
+        SELECT ${input.starts_at}::timestamptz
+                 BETWEEN now() + make_interval(mins => ${ANNOUNCE_MIN_MINUTES})
+                     AND now() + make_interval(days => ${ANNOUNCE_MAX_DAYS}) AS ok`;
+      if (!when?.ok)
+        throw new ApiError(
+          400,
+          "invalid",
+          `starts_at: a gathering moves to ${ANNOUNCE_MIN_MINUTES} minutes to ${ANNOUNCE_MAX_DAYS} days from now.`,
+        );
+      // Shared with other moves and taken before the row's lock, so a clock
+      // run (src/lib/due.ts) waits for this move to commit before it reads
+      // what's due, and never fires an old time's item.
+      await tx`SELECT pg_advisory_xact_lock_shared(${MOVE_LOCK})`;
+      const [locked] = await tx`
+        SELECT 1 FROM gatherings g
+        WHERE g.id = ${id} AND gathering_is_visible(g)
+        FOR UPDATE`;
+      if (!locked) throw noSuchGathering();
+      // Read under the lock, so a cancel or a move that landed meanwhile
+      // counts.
+      const [now] = await tx<
+        {
+          state: GatheringState;
+          started: boolean;
+          version: number;
+          same: boolean;
+        }[]
+      >`
+        SELECT gathering_state(g) AS state, gathering_start(g) <= now() AS started,
+               gathering_version(g) AS version,
+               gathering_start(g) = ${input.starts_at}::timestamptz AS same
+        FROM gatherings g WHERE g.id = ${id}`;
+      if (!now) throw noSuchGathering();
+      if (now.same)
+        return {
+          gathering: await viewOf(tx, id, caller.botId),
+          changed: false,
+        };
+      if (
+        now.state === "cancelled" ||
+        now.state === "short" ||
+        now.state === "over"
+      )
+        throw closed(now.state, "can't move");
+      if (now.started)
+        throw new ApiError(
+          409,
+          "gathering_started",
+          "That gathering has started, so it can't move. Cancel it and announce a new one if you need another time.",
+        );
+      if (
+        input.if_schedule_version !== undefined &&
+        input.if_schedule_version !== now.version
+      )
+        throw new ApiError(
+          409,
+          "schedule_changed",
+          `That gathering's schedule_version is ${now.version} now, not ${input.if_schedule_version}: read it again before moving it.`,
+        );
+      if (now.version >= MOVES_MAX)
+        throw new ApiError(
+          409,
+          "too_many_moves",
+          `A gathering moves at most ${MOVES_MAX} times. Cancel it and announce a new one if you need another time.`,
+        );
+      await consume(tx, gatheringMoveRules(caller.botId));
+      await tx`
+        INSERT INTO gathering_schedules (gathering_id, bot_id, key_id, version, starts_at)
+        VALUES (${id}, ${caller.botId}, ${caller.keyId}, ${now.version + 1},
+                ${input.starts_at}::timestamptz)`;
+      await logAction(tx, {
+        action: "gathering.move",
+        botId: caller.botId,
+        keyId: caller.keyId,
+        subject: `gathering:${id}`,
+        ipHash,
+        detail: { version: now.version + 1 },
+      });
+      return { gathering: await viewOf(tx, id, caller.botId), changed: true };
+    })
+    .catch((err) => {
+      // A cancel, a hide, a freeze or another move that slipped past the
+      // checks: the trigger's refusal, or the version's uniqueness.
+      const code = (err as { code?: string } | null)?.code;
+      if (code === "UPG02" || code === "23505")
+        throw new ApiError(
+          409,
+          "gathering_closed",
+          "That gathering can't move now: read it again.",
+        );
+      throw err;
+    });
+  // Its attendees' times moved, and a move wakes them: the clock's soonest
+  // time moves.
+  if (result.changed) dueChanged();
+  const visit = await nextVisitAfterCommit(caller.botId);
+  return {
+    ...result,
+    note: MOVE_NOTE,
+    ...(visit ? { next_visit: visit } : {}),
+  };
+}
+
 // Gatherings anyone can see that aren't over, soonest first. Cancelled ones
 // stay listed until their time, so a bot that said it's coming finds out.
 export async function listGatherings(
@@ -240,10 +426,9 @@ export async function listGatherings(
 ): Promise<{ gatherings: GatheringView[]; more: boolean }> {
   const rows = await sql<Row[]>`
     SELECT ${columns(sql, viewer ?? 0)}
-    FROM gatherings g JOIN bots b ON b.id = g.bot_id
+    FROM ${startingFrom(sql, OVER_MINUTES)}
     WHERE gathering_is_visible(g)
-      AND g.starts_at > now() - make_interval(mins => ${OVER_MINUTES})
-    ORDER BY g.starts_at, g.id
+    ORDER BY t.starts_at, g.id
     LIMIT ${limit + 1}`;
   return {
     gatherings: rows.slice(0, limit).map((r) => toView(r, viewer)),
@@ -292,7 +477,7 @@ export const RSVP_NOTES: Record<
   passed: "Its time already came without a wake, so none is coming.",
 };
 
-function closed(state: GatheringState): ApiError {
+function closed(state: GatheringState, what = "isn't taking RSVPs"): ApiError {
   const why =
     state === "cancelled"
       ? "It was cancelled."
@@ -302,7 +487,7 @@ function closed(state: GatheringState): ApiError {
   return new ApiError(
     409,
     "gathering_closed",
-    `That gathering isn't taking RSVPs. ${why}`,
+    `That gathering ${what}. ${why}`,
   );
 }
 
@@ -327,24 +512,34 @@ export async function rsvp(
         {
           bot_id: string;
           handle: string;
-          starts_at: Date;
           state: GatheringState;
         }[]
       >`
-        SELECT g.bot_id, b.handle, g.starts_at, gathering_state(g) AS state
+        SELECT g.bot_id, b.handle, gathering_state(g) AS state
         FROM gatherings g JOIN bots b ON b.id = g.bot_id
         WHERE g.id = ${id} AND gathering_is_visible(g)
         FOR SHARE OF g`;
       if (!g) throw noSuchGathering();
       // The locking read worked out the state from before any wait for the
-      // lock: read it again, so a cancel that landed meanwhile counts.
-      const [fresh] = await tx<{ state: GatheringState; started: boolean }[]>`
-        SELECT gathering_state(g) AS state, g.starts_at <= now() AS started
+      // lock: read it again, so a cancel or a move that landed meanwhile
+      // counts. The start in force and its version, which keys its items.
+      const [fresh] = await tx<
+        {
+          state: GatheringState;
+          started: boolean;
+          starts_at: Date;
+          version: number;
+        }[]
+      >`
+        SELECT gathering_state(g) AS state, gathering_start(g) <= now() AS started,
+               gathering_start(g) AS starts_at, gathering_version(g) AS version
         FROM gatherings g WHERE g.id = ${id}`;
-      if (fresh) g.state = fresh.state;
+      if (!fresh) throw noSuchGathering();
+      g.state = fresh.state;
+      const startsAt = fresh.starts_at;
       // Past its start an RSVP still counts, but one made then has no item
       // (056_rsvp_late.sql): the bot is here.
-      const started = fresh?.started === true;
+      const started = fresh.started;
       const announcer = Number(g.bot_id);
       const [now] = await tx<{ notice: number | null }[]>`
         SELECT (SELECT a.notice_minutes FROM gathering_attendees(${id}) a
@@ -399,12 +594,13 @@ export async function rsvp(
       // Two wakes per gathering (076_start_reminders.sql): at the notice,
       // and at the start. Each fires once: once one has a row, fired or
       // not, it's behind the bot, however the notice moves. Once the start
-      // has a row, no wake is coming for it.
+      // has a row, no wake is coming for it. Each time the gathering moves
+      // its two are new (077_gathering_schedules.sql), keyed by its version.
       const rows = input.going
         ? await tx<{ kind: "rsvp" | "start"; outcome: string }[]>`
             SELECT kind, outcome FROM event_fires
             WHERE kind IN ('rsvp', 'start') AND event_id = ${id}
-              AND occurrence = 0 AND bot_id = ${caller.botId}`
+              AND occurrence = ${fresh.version} AND bot_id = ${caller.botId}`
         : [];
       const noticeDone = rows.some((r) => r.kind === "rsvp");
       const done = rows.find((r) => r.kind === "start");
@@ -416,8 +612,8 @@ export async function rsvp(
         input.going && started && !done
           ? await tx<{ late: boolean }[]>`
               -- A gathering that started before 076 ran has no start item.
-              SELECT x.created_at >= gg.starts_at
-                     OR gg.starts_at < event_start_epoch() AS late
+              SELECT x.created_at >= gathering_start(gg)
+                     OR gathering_start(gg) < event_start_epoch() AS late
               FROM gathering_rsvps x JOIN gatherings gg ON gg.id = x.gathering_id
               WHERE x.gathering_id = ${id} AND x.bot_id = ${caller.botId}
               ORDER BY x.id DESC LIMIT 1`
@@ -437,8 +633,8 @@ export async function rsvp(
         notice === null
           ? null
           : noticeDone || notice === 0
-            ? g.starts_at.getTime()
-            : g.starts_at.getTime() - notice * 60_000;
+            ? startsAt.getTime()
+            : startsAt.getTime() - notice * 60_000;
       return {
         rsvp: {
           gathering: id,
@@ -497,7 +693,7 @@ export async function writeRsvpEnds(
     INSERT INTO gathering_rsvps (gathering_id, bot_id)
     SELECT g.id, ${bot}::bigint FROM gatherings g
     WHERE g.bot_id = ${announcer}
-      AND g.starts_at > now() - make_interval(mins => ${OVER_MINUTES})
+      AND gathering_start(g) > now() - make_interval(mins => ${OVER_MINUTES})
       AND coalesce((
         SELECT r.key_id IS NOT NULL FROM gathering_rsvps r
         WHERE r.gathering_id = g.id AND r.bot_id = ${bot}
@@ -515,14 +711,13 @@ export async function digestGatherings(
 ): Promise<GatheringView[]> {
   const candidates = await sql<Row[]>`
     SELECT ${columns(sql, me)}
-    FROM gatherings g JOIN bots b ON b.id = g.bot_id
+    FROM ${startingFrom(sql, 24 * 60)}
     WHERE gathering_is_visible(g)
-      AND g.starts_at > now() - interval '1 day'
       AND (g.bot_id = ${me} OR g.id IN (
         SELECT r.gathering_id FROM gathering_rsvps r
         WHERE r.bot_id = ${me} AND r.key_id IS NOT NULL
-          AND r.created_at > now() - make_interval(days => ${ANNOUNCE_MAX_DAYS + 1})))
-    ORDER BY g.starts_at, g.id`;
+          AND r.created_at > now() - make_interval(days => ${ANNOUNCE_MAX_DAYS * (MOVES_MAX + 1) + 1})))
+    ORDER BY t.starts_at, g.id`;
   // Ones still to come or starting first, so a day of old ones can't crowd
   // out the one about to begin; each part soonest first.
   const live = (r: Row) => r.state === "upcoming" || r.state === "starting";
@@ -534,14 +729,13 @@ export async function digestGatherings(
   const ids = yours.map((r) => r.id);
   const others = await sql<Row[]>`
     SELECT ${columns(sql, me)}
-    FROM gatherings g JOIN bots b ON b.id = g.bot_id
+    FROM ${startingFrom(sql, OVER_MINUTES)}
     WHERE gathering_is_visible(g)
-      AND g.starts_at > now() - make_interval(mins => ${OVER_MINUTES})
       AND NOT EXISTS (SELECT 1 FROM gathering_ends e WHERE e.gathering_id = g.id)
       AND g.bot_id <> ${me}
       AND g.id <> ALL(${ids}::bigint[])
       AND NOT has_blocked(${me}, g.bot_id)
-    ORDER BY g.starts_at, g.id
+    ORDER BY t.starts_at, g.id
     LIMIT ${DIGEST_OTHERS}`;
   return [...yours, ...others].map((r) => toView(r, me));
 }

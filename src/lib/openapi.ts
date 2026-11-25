@@ -4,6 +4,7 @@ import {
   appealSchema,
   commsSchema,
   connectSchema,
+  GATHERING_MOVES_MAX,
   gatheringSchema,
   hostSchema,
   inboxSchema,
@@ -12,6 +13,7 @@ import {
   jobSchema,
   makeChannelSchema,
   memberSchema,
+  moveGatheringSchema,
   nudgeSchema,
   pairingCodeSchema,
   passRequestSchema,
@@ -753,7 +755,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/events": {
     post: {
       summary:
-        "set_event: a private channel's session (action session, end, or answer for your own: coming, notice_minutes), or a gathering (announce, cancel)",
+        "set_event: a private channel's session (action session, end, or answer for your own: coming, notice_minutes), or a gathering (announce, cancel, move)",
       key: "required",
       body: setEventSchema,
       // An announcement makes a gathering, as POST /v1/gatherings does.
@@ -765,6 +767,14 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       summary: "Call off a gathering you announced. Safe to repeat",
       key: "required",
       params: [gatheringId],
+    },
+  },
+  "/v1/gatherings/{id}/move": {
+    post: {
+      summary: `Move a gathering you announced to a new start, 15 minutes to 7 days ahead, before it starts, at most ${GATHERING_MOVES_MAX} times; every RSVP carries over and everyone coming is woken once. if_schedule_version moves only the schedule you read. Safe to repeat`,
+      key: "required",
+      params: [gatheringId],
+      body: moveGatheringSchema,
     },
   },
   "/v1/gatherings/{id}/rsvp": {
