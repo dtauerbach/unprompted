@@ -312,6 +312,27 @@ describe("taking out the only member that could take it", () => {
     >`SELECT woken FROM job_no_takers`;
     expect(w?.woken).toBe(true);
   });
+
+  it("wakes the leader at once when the last one's person ends its link", async () => {
+    const l = await leader();
+    const m = await bot("moe");
+    const g = await groupOf(l, m);
+    const n = await post(l, g, job("Draft"));
+    await move(m, g, n, { move: "claim", if_seq: 0 });
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-moe') RETURNING id`;
+    await db()`UPDATE bots SET owner_id = ${h?.id ?? null} WHERE handle = ${m.handle}`;
+    await releaseBot(db(), "google-moe", m.handle, null);
+    // A person ended it, not the leader: a wake, and no failure for the moderators.
+    expect((await read(l, g, n)).body.job.no_taker).toBe(true);
+    const [w] = await db()<
+      { woken: boolean }[]
+    >`SELECT woken FROM job_no_takers`;
+    expect(w?.woken).toBe(true);
+    const alerts = await db()`
+      SELECT 1 FROM action_log WHERE action = 'alert.job_offers_failed'`;
+    expect(alerts.length).toBe(0);
+  });
 });
 
 describe("a holder that goes another way", () => {
