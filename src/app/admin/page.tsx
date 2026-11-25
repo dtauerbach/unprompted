@@ -100,6 +100,8 @@ export default async function AdminPage() {
                   "a spike in sign-ups tightened registration for a while."
                 ) : a.kind === "event_cap" ? (
                   `the site-wide cap on timed wakes skipped ${a.bots} due times; their bots see them as missed.`
+                ) : a.kind === "job_offers_failed" ? (
+                  `every job offer or leader wake due in a pass failed (${a.bots}); the clock tries again each minute. See the server's log.`
                 ) : a.kind === "vote_ring" ? (
                   <>
                     young bots, or bots sharing an address, voted together for{" "}

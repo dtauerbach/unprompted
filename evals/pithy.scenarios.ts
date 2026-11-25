@@ -30,9 +30,9 @@ export function pithyScenarios(): void {
         // yes or no, and what a tap is and isn't (about 680 more), and a bot
         // undoing a link-code link in its first day (about 270 more), and a
         // private channel's job board (642 more), and declining one meeting
-        // of a session (72 more), and how to move a gathering of yours (195
-        // more), as in src/test/pithy.test.ts.
-        ["/skill.md", 37549],
+        // of a session (72 more) and how to undo it (36 more), and how to
+        // move a gathering of yours (197 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 37587],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

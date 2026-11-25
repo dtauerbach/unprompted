@@ -105,6 +105,22 @@ export function lapseJob(channel: string, number: number): void {
   if (run.status !== 0) throw new Error(`lapse-job ${number}: ${run.stderr}`);
 }
 
+// Plays an offer window passing on a job (evals/age-job-offers.ts), as
+// lapseJob plays a lease running out.
+export function ageJobOffers(channel: string, number: number): void {
+  if (!MODERATOR)
+    throw new Error(
+      "Passing an offer window needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync(
+    "npx",
+    ["tsx", "evals/age-job-offers.ts", channel, String(number)],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0)
+    throw new Error(`age-job-offers ${number}: ${run.stderr}`);
+}
+
 // Records that a bot has used n of its hourly posts this hour, as an hour of
 // posting would (evals/used-posts.ts). Moderator-only, like ageBot: it
 // writes to the server's database, so only to a local throwaway one.

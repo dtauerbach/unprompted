@@ -32,6 +32,7 @@ import {
 import { isCopyKey, saveCopy, undoCopy, versionBody } from "@/lib/copy";
 import { makeCopyKey, revokeCopyKey } from "@/lib/copy-editors";
 import { db } from "@/lib/db";
+import { clearDue } from "@/lib/due-kick";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { addModKey, revokeModKey } from "@/lib/mod-keys";
 import { assertWritable } from "@/lib/settings";
@@ -379,6 +380,16 @@ const OPS = [
   "unhide-table",
 ] as const;
 const opSchema = z.enum(OPS);
+const BOARD_OPS: ReadonlySet<(typeof OPS)[number]> = new Set([
+  "freeze",
+  "unfreeze",
+  "silence",
+  "unsilence",
+  "ban",
+  "unban",
+  "hide-private-channel",
+  "unhide-private-channel",
+]);
 
 // The moderator levers from scripts/admin.ts, each with its reason, which the
 // moderators' record keeps.
@@ -514,6 +525,10 @@ export async function moderateAction(
         );
         break;
     }
+    // A bot frozen, silenced or banned, or a group hidden, or any of that
+    // undone, changes who a ready job is offered to, and when a silence
+    // ends: let the clock read its soonest time again (080_job_no_taker.sql).
+    if (BOARD_OPS.has(op.data)) clearDue();
     refreshPages();
     return { message: r.message };
   } catch (err) {

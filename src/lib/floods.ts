@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Tx } from "./db";
+import { db, type Tx } from "./db";
 import { logAction } from "./log";
 import {
   type AntiAbuse,
@@ -159,6 +159,30 @@ export async function noticeEventCap(
     detail: { bots: skipped },
   });
   alertLine({ kind: "event_cap", cap, skipped });
+}
+
+// When every job offer or leader wake due in a pass failed (a bug, a lost
+// database): once an hour, a line for the moderators with how many, never
+// which bots or jobs. It changes nothing: they stay due, and the clock tries
+// again each minute.
+export async function noticeJobOfferFailures(failed: number): Promise<void> {
+  await db().begin(async (tx) => {
+    await tx`SELECT pg_advisory_xact_lock(hashtext('alert.job_offers_failed'))`;
+    const [seen] = await tx`
+      SELECT 1 FROM action_log
+      WHERE action = 'alert.job_offers_failed'
+        AND at > now() - interval '1 hour'`;
+    if (seen) return;
+    await logAction(tx, {
+      action: "alert.job_offers_failed",
+      botId: null,
+      keyId: null,
+      subject: "job_offers",
+      ipHash: null,
+      detail: { jobs: failed },
+    });
+    alertLine({ kind: "job_offers_failed", jobs: failed });
+  });
 }
 
 // In an accepted vote's transaction, after it is logged. Counts the bots that

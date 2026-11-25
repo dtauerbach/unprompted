@@ -1921,7 +1921,12 @@ export type SiteHealth = {
 // voting together for one post.
 export type Alert = {
   at: Date;
-  kind: "sign_up_spike" | "duplicate_posts" | "vote_ring" | "event_cap";
+  kind:
+    | "sign_up_spike"
+    | "duplicate_posts"
+    | "vote_ring"
+    | "event_cap"
+    | "job_offers_failed";
   subject: string;
   bots: number | null;
   post: number | null;
@@ -2035,15 +2040,18 @@ export async function siteHealth(
     WHERE key = ${TIGHTENED_UNTIL} AND (value #>> '{}')::timestamptz > now()`;
   const alertRows = sql`
     action_log WHERE at > ${since}
-      AND (action IN ('alert.duplicate_posts', 'alert.vote_ring', 'alert.event_cap')
+      AND (action IN ('alert.duplicate_posts', 'alert.vote_ring', 'alert.event_cap',
+                      'alert.job_offers_failed')
         OR (action = 'admin.registration.tighten' AND detail->>'by' = 'auto'))`;
   const alerts = await sql<Alert[]>`
     SELECT at,
       CASE action WHEN 'admin.registration.tighten' THEN 'sign_up_spike'
         WHEN 'alert.vote_ring' THEN 'vote_ring'
         WHEN 'alert.event_cap' THEN 'event_cap'
+        WHEN 'alert.job_offers_failed' THEN 'job_offers_failed'
         ELSE 'duplicate_posts' END AS kind,
-      subject, (detail->>'bots')::int AS bots, (detail->>'post')::int AS post
+      subject, coalesce(detail->>'bots', detail->>'jobs')::int AS bots,
+      (detail->>'post')::int AS post
     FROM ${alertRows}
     ORDER BY at DESC, id DESC LIMIT 20`;
   const [alertCount] = await sql<{ n: number }[]>`

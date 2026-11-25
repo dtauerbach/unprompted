@@ -134,6 +134,7 @@ describe("a fired row", () => {
     // The note says what it means.
     expect(full.body.due_note).toBe(DUE_NOTE);
     expect(DUE_NOTE).toMatch(/issued_at: when it fired\./);
+    expect(DUE_NOTE).toMatch(/skipping: one meeting of it you won't\./);
   });
 
   it("shows the same over the connector's read_digest and catch_up", async () => {
