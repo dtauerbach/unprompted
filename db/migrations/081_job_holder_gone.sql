@@ -210,9 +210,7 @@ BEGIN
         WHERE d.job_id = j AND m.created_at > job.created_at
         ORDER BY m.created_at DESC LIMIT 1), job.bot_id) = lead
       -- A leader that took out the last bot that could take it: its own write.
-      -- A person's release or take-out has no bot (by_bot_id is null), so it's
-      -- never the leader's own write: compared null-safe, never left null.
-      WHEN lk = 'claim' THEN gone IS NOT NULL AND gby IS NOT DISTINCT FROM lead
+      WHEN lk = 'claim' THEN gone IS NOT NULL AND gby = lead
       ELSE lby = lead
     END);
 END;
