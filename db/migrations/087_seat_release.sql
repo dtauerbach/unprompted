@@ -161,7 +161,7 @@ BEGIN
   FROM gathering_seats(NEW.gathering_id) s;
   IF NOT staying AND waiting >= gathering_waitlist_max() THEN
     RAISE EXCEPTION 'gathering % has no room left in line', NEW.gathering_id
-      USING ERRCODE = 'UPG03';
+      USING ERRCODE = 'UPG04';
   END IF;
   RETURN NEW;
 END;

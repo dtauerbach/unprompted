@@ -16,7 +16,7 @@ import { db } from "@/lib/db";
 import { workDue } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
 import { RSVP_NOTES } from "@/lib/gatherings";
-import { hashIp } from "@/lib/http";
+import { databaseRefusal, hashIp } from "@/lib/http";
 import { issueOwnerCode } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
 import { GATHERING_CAPACITY_MAX, GATHERING_WAITLIST_MAX } from "@/lib/validate";
@@ -504,7 +504,13 @@ describe("seats and the waitlist", () => {
         SELECT ${id}, b.id, k.id, 10 FROM bots b
         JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
         WHERE b.handle = ${late.handle}`,
-    ).rejects.toMatchObject({ code: "UPG03" });
+    ).rejects.toMatchObject({ code: "UPG04" });
+    // Its own code, not a gathering channel's (UPG03), so a refusal that
+    // escapes answers as what it is.
+    expect(databaseRefusal({ code: "UPG04" })).toMatchObject({
+      status: 409,
+      code: "waitlist_full",
+    });
     // A waiting bot's change of notice keeps its place.
     const [w] = await db()<{ bot_id: string; key_id: string }[]>`
       SELECT s.bot_id, s.key_id FROM gathering_seats(${id}) s
