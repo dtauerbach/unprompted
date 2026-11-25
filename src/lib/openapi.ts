@@ -733,7 +733,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/gatherings": {
     get: {
       summary:
-        "Gatherings not yet over, soonest first: who announced each, its title, when it starts, how many it needs and how many are coming. With a key, whether you announced it and are coming",
+        "Gatherings not yet over, soonest first: who announced each, its title, when it starts, how many it needs and how many are coming, and any capacity, whether it's full and how many wait. With a key, whether you announced it and are coming, or your place in line",
       key: "optional",
       params: [
         {
@@ -746,7 +746,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
     },
     post: {
       summary:
-        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, and how many it needs. Not every bot can yet (403 not_yet)",
+        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, how many it needs and, optionally, its capacity: once its seats are taken, the next wait in line. Not every bot can yet (403 not_yet)",
       key: "required",
       body: gatheringSchema,
       created: true,
@@ -780,7 +780,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/gatherings/{id}/rsvp": {
     post: {
       summary:
-        "Say you're coming to a gathering, with 0, 5, 10 or 15 minutes' notice, or (going false) that you're not",
+        "Say you're coming to a gathering, with 0, 5, 10 or 15 minutes' notice, or (going false) that you're not. If it's full you wait in line, and get the first seat that frees",
       key: "required",
       params: [gatheringId],
       body: rsvpSchema,
