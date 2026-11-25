@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
+import { POST as cancelRoute } from "@/app/v1/gatherings/[id]/cancel/route";
 import { POST as rsvpRoute } from "@/app/v1/gatherings/[id]/rsvp/route";
 import {
   POST as announceRoute,
@@ -234,7 +235,7 @@ describe("seats and the waitlist", () => {
     const rotated = await call(rotateRoute, { key: a.key });
     expect(rotated.status).toBe(200);
     const a2 = { handle: a.handle, key: rotated.body.api_key as string };
-    // The seat goes with the key (086_seat_release.sql): c holds it now,
+    // The seat goes with the key (087_seat_release.sql): c holds it now,
     // woken at once; the announcer hears nothing of a lost key.
     expect((await viewOf(c, id)).going).toBe(true);
     expect(await wakeCount(c)).toBe(cBefore + 1);
@@ -292,6 +293,68 @@ describe("seats and the waitlist", () => {
     expect((await viewOf(b, id)).going).toBe(true);
     expect((await viewOf(b, id)).waitlist_place).toBeUndefined();
     expect(await wakeCount(b)).toBe(bBefore + 1);
+  });
+
+  it("hands a seat on with a rotated key while a long gathering runs", async () => {
+    const host = await register("host");
+    const a = await register("guest-a");
+    const b = await register("guest-b");
+    // Started an hour ago and lasts three: running, and taking RSVPs.
+    const [g] = await db()<{ id: string }[]>`
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, lasts_minutes, capacity, created_at)
+      SELECT b.id, k.id, 'Jam', now() - interval '60 minutes', 180, 1, now() - interval '1 day'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    const id = Number(g?.id);
+    expect((await rsvp(a, id, { going: true })).status).toBe(200);
+    expect((await rsvp(b, id, { going: true })).body.rsvp.waitlist_place).toBe(
+      1,
+    );
+    const bBefore = await wakeCount(b);
+    expect((await call(rotateRoute, { key: a.key })).status).toBe(200);
+    expect((await viewOf(b, id)).going).toBe(true);
+    expect((await viewOf(b, id)).waitlist_place).toBeUndefined();
+    expect(await wakeCount(b)).toBe(bBefore + 1);
+  });
+
+  it("releases nothing once a gathering has ended, cancelled or short", async () => {
+    const host = await register("host");
+    const a = await register("guest-a");
+    const b = await register("guest-b");
+    // One its announcer cancels and one the clock called short: a's seat
+    // goes without a release in either, and b waits on. (Nothing can hold a
+    // seat past a gathering's end: the site refuses an RSVP to one that's
+    // over, and the two running tests above cover the window before it.)
+    const cancelled = await gathering(host, 1);
+    const short = await gathering(host, 1);
+    for (const id of [cancelled, short]) {
+      expect((await rsvp(a, id, { going: true })).status).toBe(200);
+      expect(
+        (await rsvp(b, id, { going: true })).body.rsvp.waitlist_place,
+      ).toBe(1);
+    }
+    expect(
+      (
+        await call(cancelRoute, {
+          key: host.key,
+          method: "POST",
+          params: { id: String(cancelled) },
+          path: `/v1/gatherings/${cancelled}/cancel`,
+        })
+      ).status,
+    ).toBe(200);
+    await db()`
+      INSERT INTO gathering_ends (gathering_id, kind) VALUES (${short}, 'short')`;
+    const bBefore = await wakeCount(b);
+    await setFrozen(db(), a.handle, true, "Testing.");
+    const rows = await db()<{ gathering_id: string }[]>`
+      SELECT gathering_id FROM gathering_rsvps WHERE released_by IS NOT NULL`;
+    expect(rows).toHaveLength(0);
+    expect(await wakeCount(b)).toBe(bBefore);
+    const log = await db()`
+      SELECT 1 FROM action_log WHERE action = 'gathering.seat_release'`;
+    expect(log).toHaveLength(0);
   });
 
   it("lets a frozen bot's place in line go, so a seat never goes to it", async () => {

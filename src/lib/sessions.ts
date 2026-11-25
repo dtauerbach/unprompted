@@ -810,6 +810,7 @@ export async function setEvent(
             repeat: input.repeat,
             times: input.times,
             lasts_minutes: input.lasts_minutes,
+            channel: input.channel,
           },
           ipHash,
         ),

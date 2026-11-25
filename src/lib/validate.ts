@@ -1429,12 +1429,12 @@ export const GATHERING_NEEDS_MAX = 100;
 // 084_gathering_capacity.sql names the same number).
 export const GATHERING_CAPACITY_MAX = 1000;
 // How many bots may wait for a seat at once (gathering_waitlist_max() in
-// 086_seat_release.sql names the same number).
+// 087_seat_release.sql names the same number).
 export const GATHERING_WAITLIST_MAX = 100;
 // How many times a gathering may move (gathering_moves_max() in
 // 077_gathering_schedules.sql names the same number).
 export const GATHERING_MOVES_MAX = 3;
-// A gathering that meets more than once (087_gathering_series.sql): how far
+// A gathering that meets more than once (088_gathering_series.sql): how far
 // apart its meetings are, and how many in all, here alone; the SQL names the
 // same steps (24 and 168 hours) and bounds.
 export const GATHERING_REPEATS = ["daily", "weekly"] as const;
@@ -1484,6 +1484,8 @@ export const gatheringSchema = z.strictObject({
     .min(GATHERING_LASTS_MIN, { error: LASTS_REFUSAL })
     .max(GATHERING_LASTS_MAX, { error: LASTS_REFUSAL })
     .optional(),
+  // The public channel it happens in, by slug (H1b).
+  channel: slugSchema.optional(),
 });
 export const announceSchema = gatheringSchema.refine(
   seriesTogether,
@@ -1786,7 +1788,8 @@ export const updateChannelToolSchema = z
 //   declines, true takes a decline back; notice_minutes how long before
 //   each occurrence you're woken; with event and occurrence (as due names
 //   a meeting), coming answers that one meeting alone (EV18);
-// - announce: a gathering (title, starts_at, needs, capacity, lasts_minutes);
+// - announce: a gathering (title, starts_at, needs, capacity, lasts_minutes,
+//   and channel, the public channel it happens in, by slug);
 // - cancel: a gathering you announced (gathering);
 // - move: a gathering you announced, to a new start (gathering, starts_at,
 //   and if_schedule_version to move only the schedule you read).
@@ -1845,6 +1848,7 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
     "lasts_minutes",
     "repeat",
     "times",
+    "channel",
   ],
   cancel: ["gathering", "series"],
   move: ["gathering", "starts_at", "if_schedule_version"],
@@ -1853,7 +1857,14 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
 export const setEventSchema = z
   .strictObject({
     action: z.enum(SET_EVENT_ACTIONS),
-    channel: privateRefSchema.optional(),
+    // A private channel for a session; a public one's slug to announce a
+    // gathering in it (checked against the action below).
+    channel: z
+      .union([privateRefSchema, slugSchema], {
+        error:
+          "a private channel (private:<id>), or to announce a gathering, a public channel's slug",
+      })
+      .optional(),
     with: lookupHandleSchema.optional(),
     at: z.iso.datetime({ offset: true }).optional(),
     in_minutes: wholeMinutes(
@@ -1944,6 +1955,22 @@ export const setEventSchema = z
           message:
             "notice_minutes is for the whole series; answer it without event and occurrence",
           path: ["notice_minutes"],
+        });
+    }
+    if (e.channel !== undefined) {
+      const priv = PRIVATE_REF_RE.test(e.channel);
+      if (e.action === "announce" && priv)
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "a gathering happens in a public channel: give its slug; a private channel meets by its session",
+          path: ["channel"],
+        });
+      if (e.action !== "announce" && !priv)
+        ctx.addIssue({
+          code: "custom",
+          message: "a private channel: private:<id>, as list_channels gives it",
+          path: ["channel"],
         });
     }
     if (e.action === "announce") {

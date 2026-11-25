@@ -19,7 +19,7 @@ import { forgetDueMinute } from "@/lib/due-check";
 import { RSVP_NOTES } from "@/lib/gatherings";
 import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
-// A gathering that meets more than once (EV4, 087_gathering_series.sql).
+// A gathering that meets more than once (EV4, 088_gathering_series.sql).
 // The announcer says how far apart (daily or weekly) and how many times;
 // each meeting is a gathering of its own, made once it's within the
 // announcement window, at the announcement or by the clock. One RSVP with
@@ -1175,6 +1175,104 @@ describe("hiding a series", () => {
     expect((await call(listRoute, { key: a.key })).body.gatherings.length).toBe(
       3,
     );
+  });
+});
+
+describe("a series in a public channel", () => {
+  const slugId = async (slug: string) => {
+    const [c] = await db()<
+      { id: string }[]
+    >`SELECT id FROM channels WHERE slug = ${slug}`;
+    return Number(c?.id);
+  };
+
+  it("carries its channel into every meeting, at the announcement and from the clock", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const res = await announce(host, {
+      title: "Jam",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 3,
+      channel: "research",
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.gathering.channel).toBe("research");
+    const g = res.body.gathering as { series: { id: number } };
+    const rows = await db()<{ channel_id: string }[]>`
+      SELECT channel_id FROM gatherings WHERE series_id = ${g.series.id}`;
+    expect(rows.map((r) => Number(r.channel_id))).toEqual(
+      Array(3).fill(await slugId("research")),
+    );
+    const list = await call(listRoute, { key: a.key });
+    expect(
+      list.body.gatherings.map((x: { channel?: string }) => x.channel),
+    ).toEqual(["research", "research", "research"]);
+    // The clock copies it too.
+    const [old] = await db()<{ id: string }[]>`
+      INSERT INTO gathering_series
+        (bot_id, key_id, title, starts_at, repeat, times, channel_id, created_at)
+      SELECT b.id, k.id, 'Standup', now() - interval '6 days' + interval '1 hour',
+             'daily', 12, ${await slugId("writing")}, now() - interval '6 days'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    expect((await workDue()).made).toBe(6);
+    const made = await db()<{ channel_id: string }[]>`
+      SELECT channel_id FROM gatherings WHERE series_id = ${Number(old?.id)}`;
+    expect(made.map((m) => Number(m.channel_id))).toEqual(
+      Array(6).fill(await slugId("writing")),
+    );
+  });
+
+  it("refuses a series in an archived or hidden channel whole, writing no series", async () => {
+    const host = await trusted("host");
+    await db()`UPDATE channels SET archived_at = now() WHERE slug = 'small-talk'`;
+    const arch = await announce(host, {
+      title: "Jam",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 3,
+      channel: "small-talk",
+    });
+    expect(arch.status).toBe(403);
+    expect(arch.body.error.code).toBe("channel_archived");
+    await db()`INSERT INTO hidden_channels (channel_id) VALUES (${await slugId("writing")})`;
+    const hid = await announce(host, {
+      title: "Jam",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 3,
+      channel: "writing",
+    });
+    expect(hid.status).toBe(404);
+    expect(hid.body.error.code).toBe("no_such_channel");
+    expect((await db()`SELECT 1 FROM gathering_series`).length).toBe(0);
+    expect((await db()`SELECT 1 FROM gatherings`).length).toBe(0);
+  });
+
+  it("holds the clock's meetings while the channel is hidden or archived, and makes them once it's back", async () => {
+    const host = await trusted("host");
+    const research = await slugId("research");
+    const [s] = await db()<{ id: string }[]>`
+      INSERT INTO gathering_series
+        (bot_id, key_id, title, starts_at, repeat, times, channel_id, created_at)
+      SELECT b.id, k.id, 'Standup', now() - interval '6 days' + interval '1 hour',
+             'daily', 12, ${research}, now() - interval '6 days'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    const sid = Number(s?.id);
+    await db()`INSERT INTO hidden_channels (channel_id) VALUES (${research})`;
+    expect((await workDue()).made).toBe(0);
+    // The one within 75 minutes takes its last try now; the rest wait.
+    expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "channel" }]);
+    await db()`DELETE FROM hidden_channels WHERE channel_id = ${research}`;
+    await db()`UPDATE channels SET archived_at = now() WHERE id = ${research}`;
+    expect((await workDue()).made).toBe(0);
+    await db()`UPDATE channels SET archived_at = NULL WHERE id = ${research}`;
+    expect((await workDue()).made).toBe(5);
+    expect([...(await meetings(sid)).keys()]).toEqual([8, 9, 10, 11, 12]);
   });
 });
 

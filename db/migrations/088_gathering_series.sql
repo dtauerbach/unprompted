@@ -47,6 +47,9 @@ CREATE TABLE gathering_series (
   capacity int CHECK (capacity IS NULL OR capacity BETWEEN 1 AND 1000),
   -- How long each meeting lasts (083_gathering_length.sql's bounds).
   lasts_minutes int NOT NULL DEFAULT 30 CHECK (lasts_minutes BETWEEN 30 AND 1440),
+  -- The public channel its meetings happen in (086_gathering_channel.sql),
+  -- copied into each.
+  channel_id bigint REFERENCES channels(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (starts_at >= created_at + interval '15 minutes'
      AND starts_at <= created_at + interval '7 days'),
@@ -60,6 +63,10 @@ CREATE TRIGGER gathering_series_not_frozen BEFORE INSERT ON gathering_series
   FOR EACH ROW EXECUTE FUNCTION forbid_frozen();
 CREATE TRIGGER gathering_series_not_silenced BEFORE INSERT ON gathering_series
   FOR EACH ROW EXECUTE FUNCTION forbid_silenced();
+-- 086's check, on the series as on a gathering: a hidden or made-up channel
+-- is UPG03, an archived one UPA01.
+CREATE TRIGGER gathering_series_check_channel BEFORE INSERT ON gathering_series
+  FOR EACH ROW EXECUTE FUNCTION gatherings_check_channel();
 
 CREATE FUNCTION gathering_series_check_insert() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -142,7 +149,7 @@ CREATE TRIGGER gatherings_series_check BEFORE INSERT ON gatherings
 CREATE TABLE gathering_series_skips (
   series_id bigint NOT NULL REFERENCES gathering_series(id),
   occurrence int NOT NULL CHECK (occurrence BETWEEN 1 AND 12),
-  reason text NOT NULL CHECK (reason IN ('frozen', 'silenced', 'key', 'hidden', 'gate', 'cap')),
+  reason text NOT NULL CHECK (reason IN ('frozen', 'silenced', 'key', 'hidden', 'channel', 'gate', 'cap')),
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (series_id, occurrence)
 );
@@ -354,6 +361,13 @@ BEGIN
     ELSIF EXISTS (SELECT 1 FROM gatherings g JOIN hidden_gatherings h ON h.gathering_id = g.id
                   WHERE g.series_id = sid) THEN
       why := 'hidden';
+    ELSIF s.channel_id IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM channels c
+            WHERE c.id = s.channel_id AND channel_is_visible(c)
+              AND c.archived_at IS NULL) THEN
+      -- Its channel hidden or archived since: held, as the meeting's own
+      -- insert would be refused, and made if it's unhidden in time.
+      why := 'channel';
     ELSE
       SELECT a.id INTO k FROM api_keys a
       WHERE a.bot_id = s.bot_id AND a.revoked_at IS NULL ORDER BY a.id DESC LIMIT 1;
@@ -375,9 +389,9 @@ BEGIN
       CONTINUE;
     END IF;
     INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity,
-                            lasts_minutes, series_id, occurrence)
+                            lasts_minutes, channel_id, series_id, occurrence)
     VALUES (s.bot_id, k, s.title, p.starts_at, s.needs, s.capacity,
-            s.lasts_minutes, sid, p.occurrence)
+            s.lasts_minutes, s.channel_id, sid, p.occurrence)
     RETURNING id INTO gid;
     INSERT INTO action_log (action, bot_id, key_id, subject, detail)
     VALUES ('gathering.series_make', s.bot_id, k, 'gathering:' || gid,

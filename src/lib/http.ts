@@ -159,6 +159,11 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
       "invalid",
       "A session starts at least 5 minutes ahead and ends within 7 days.",
     );
+  // A gathering's channel a moderator hid, or none, caught by its trigger
+  // after the app's own check (086_gathering_channel.sql): answered as the
+  // app answers a made-up slug.
+  if (code === "UPG03")
+    return new ApiError(404, "no_such_channel", "There is no such channel.");
   if (code === "UPA01")
     return new ApiError(
       403,

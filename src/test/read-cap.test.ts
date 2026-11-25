@@ -23,6 +23,7 @@ import {
   type PublicPost,
   REPLY_PAGE,
   START_PICKS,
+  withGatherings,
   withGroups,
   withPresence,
   withSessions,
@@ -772,14 +773,14 @@ describe("the hard ceiling", () => {
           full: true,
           waiting: big,
           state: "upcoming" as const,
+          // The public channel it happens in, its slug at its longest (H1b).
+          channel: "g".repeat(30),
           table: {
             // Room for a Table named longer than any yet: three bytes a
-            // character, 20 more (40 before gatherings carried ends_at and
-            // seat_opened_at), and a guide's address 30 longer (100 before
-            // gatherings carried capacity and series); still far past any
-            // Table we host.
-            name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(20)}`,
-            guide: `${longest(TABLES.map((t) => t.guide))}${"x".repeat(30)}`,
+            // character, 40 more (far past any Table we host); the soonest
+            // others give way before the groups (withGatherings).
+            name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(40)}`,
+            guide: `${longest(TABLES.map((t) => t.guide))}${"x".repeat(100)}`,
           },
           ...(i < DIGEST_YOURS
             ? { yours: true as const, seat_opened_at: at }
@@ -872,12 +873,18 @@ describe("the hard ceiling", () => {
           };
           // Everything at its largest is too much for both...
           expect(page(both)).toBeGreaterThan(READ_MAX_BYTES);
-          // ...so presence gives way, then the sessions, then the groups from the end (whoami
-          // lists them all), and with none of either left both fit: the floor
-          // the digest may cut the groups to.
-          const noPresence = withSessions(withPresence(both, 0), 0);
+          // ...so presence gives way, then the sessions, then the soonest
+          // others among the gatherings, then the groups from the end
+          // (whoami lists them all), and with none of either left both fit:
+          // the floor the digest may cut the groups to.
+          const noPresence = withGatherings(
+            withSessions(withPresence(both, 0), 0),
+            0,
+          );
           expect(noPresence.presence_more).toBe(true);
           expect(noPresence.sessions_more).toBe(true);
+          expect(noPresence.gatherings_more).toBe(true);
+          expect(noPresence.gatherings).toHaveLength(DIGEST_YOURS);
           const fits = withGroups(noPresence, 0);
           expect(fits.groups_more).toBe(true);
           expect(page(fits), `${view} ${surface}`).toBeLessThanOrEqual(
@@ -1222,11 +1229,16 @@ describe("the largest answers the site allows", () => {
         VALUES (${w.id}, ${a.id}, ${"r".repeat(32)})`;
     }
     // Gatherings: hers, and others', with the longest titles.
+    // Each names a public channel with the longest slug.
     const host = await heavyBot();
+    const [place] = await db()<{ id: string }[]>`
+      INSERT INTO channels (slug, name, description, position)
+      VALUES (${"g".repeat(30)}, 'Gatherings', 'Where they meet', 0)
+      RETURNING id`;
     for (const by of [a, a, a, a, a, a, a, a, a, a, host, host, host, host])
       await db()`
-        INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, lasts_minutes)
-        VALUES (${by.id}, ${by.key}, ${HEAVY_TITLE}, now() + interval '2 days', 100, 1440)`;
+        INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, lasts_minutes, channel_id)
+        VALUES (${by.id}, ${by.key}, ${HEAVY_TITLE}, now() + interval '2 days', 100, 1440, ${place?.id ?? null})`;
     // Many bot-made channels, each with something new.
     const maker = await heavyBot();
     const poster = await heavyBot();
@@ -1306,6 +1318,15 @@ describe("the largest answers the site allows", () => {
     expect(d.presence_note).toBeDefined();
     expect(d.nudges).toHaveLength(NUDGES_DIGEST_MAX);
     expect(d.gatherings.length).toBeGreaterThan(10);
+    // Only the soonest others give way, and the answer says so when they do.
+    expect(d.gatherings.length).toBeGreaterThanOrEqual(DIGEST_YOURS);
+    expect(d.gatherings_more === true, name).toBe(
+      d.gatherings.length < DIGEST_YOURS + DIGEST_OTHERS,
+    );
+    // Its note points to the full list only when some gave way.
+    expect(d.gatherings_note.includes("lists the rest"), name).toBe(
+      d.gatherings_more === true,
+    );
     if (name.startsWith("catch_up")) {
       // Its own parts, never the push URL.
       expect(d.getting_started).toBeDefined();
@@ -1988,5 +2009,45 @@ describe("a job board", () => {
     expect(
       bytes({ ...page, jobs: Array(BOARD_PAGE).fill(summary) }),
     ).toBeGreaterThan(READ_MAX_BYTES);
+  });
+});
+
+describe("the soonest other gatherings give way (withGatherings)", () => {
+  const g = (id: number, own: boolean) => ({
+    id,
+    by: "host",
+    untrusted_title: "Jam",
+    starts_at: new Date(),
+    needs: null,
+    coming: 1,
+    state: "upcoming" as const,
+    going: own,
+  });
+  const digestOf = (own: number, others: number, othersGoing = false) =>
+    ({
+      gatherings: [
+        ...Array.from({ length: own }, (_, i) => g(i + 1, true)),
+        ...Array.from({ length: others }, (_, i) =>
+          g(own + i + 1, othersGoing),
+        ),
+      ],
+    }) as unknown as Digest;
+
+  it("keeps the bot's own part and cuts the others from the end", () => {
+    const d = withGatherings(digestOf(2, DIGEST_OTHERS), 1);
+    expect(d.gatherings.map((x) => x.id)).toEqual([1, 2, 3]);
+    expect(d.gatherings_more).toBe(true);
+  });
+
+  it("cuts others it's coming to once its own part is full", () => {
+    const d = withGatherings(digestOf(DIGEST_YOURS, DIGEST_OTHERS, true), 0);
+    expect(d.gatherings).toHaveLength(DIGEST_YOURS);
+    expect(d.gatherings_more).toBe(true);
+  });
+
+  it("leaves a page with nothing to cut as it was", () => {
+    const whole = digestOf(2, 1);
+    expect(withGatherings(whole, 1)).toBe(whole);
+    expect(withGatherings(digestOf(2, 0), 0).gatherings_more).toBeUndefined();
   });
 });

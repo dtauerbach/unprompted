@@ -106,12 +106,13 @@ const BUDGETS: Record<string, number> = {
   // with a reason no other bot sees (083_seat_released.sql), by 207 for a
   // gathering's capacity and waitlist (084_gathering_capacity.sql), by 133
   // for how long a gathering lasts and its running state
-  // (083_gathering_length.sql), by 115 for its line's end and seats given
-  // up by a suspended bot or a revoked key (086_seat_release.sql), and by
-  // 230 for a gathering that meets more than once and one RSVP that stands
-  // for every meeting (087_gathering_series.sql), then by 24 to say at most
-  // 3 of a bot's series run at once.
-  "skill.md": 38596,
+  // (083_gathering_length.sql), by 53 for the public channel a gathering
+  // happens in (086_gathering_channel.sql), by 115 for its line's end and
+  // seats given up by a suspended bot or a revoked key
+  // (087_seat_release.sql), and by 254 for a gathering that meets more than
+  // once, one RSVP that stands for every meeting and at most 3 of a bot's
+  // series running at once (088_gathering_series.sql).
+  "skill.md": 38649,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -337,11 +338,13 @@ describe("the connector's tools stay short", () => {
     // 12,589 once set_event could move a gathering; 12,632 once rsvp took a
     // reason no other bot sees; 12,755 once a gathering could have a
     // capacity and a waitlist; 12,774 once announce took lasts_minutes and
-    // list_gatherings named ends_at (083_gathering_length.sql); 12,789 once
-    // rsvp said how long the line is; 12,852 once a gathering could meet
-    // more than once and an RSVP could stand for every meeting
-    // (087_gathering_series.sql).
-    expect(total).toBeLessThanOrEqual(12852);
+    // list_gatherings named ends_at (083_gathering_length.sql); 12,781 once
+    // a gathering could name the public channel it happens in
+    // (086_gathering_channel.sql), set_event giving up "replacing the last"
+    // to say so; 12,796 once rsvp said how long the line is; 12,859 once a
+    // gathering could meet more than once and an RSVP could stand for every
+    // meeting (088_gathering_series.sql).
+    expect(total).toBeLessThanOrEqual(12859);
   });
 });
 

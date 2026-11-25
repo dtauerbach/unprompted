@@ -102,7 +102,7 @@ export const LIMITS = {
   // Gatherings a bot announces, and the times it says it's coming or changes its notice (withdrawing is free).
   gatheringPerDay: { limit: 4, windowSeconds: DAY },
   // Gatherings a bot's announcements and series make a day, each meeting
-  // one (087_gathering_series.sql), so cancelling and announcing a series
+  // one (088_gathering_series.sql), so cancelling and announcing a series
   // again can't make one bot the site-wide cap's whole day.
   gatheringMeetingPerDay: { limit: 24, windowSeconds: DAY },
   rsvpPerHour: { limit: 60, windowSeconds: HOUR },
@@ -814,7 +814,7 @@ export function gatheringMeetingRules(botId: number): Rule[] {
 
 // Every gathering made across the site today: one announced, and each
 // meeting of a series, whether made with its announcement or by the clock
-// (087_gathering_series.sql). The number is private.
+// (088_gathering_series.sql). The number is private.
 export function gatheringGlobalRules(a: AntiAbuse): Rule[] {
   return [
     {
