@@ -14,6 +14,7 @@ import {
   LASTS_MIN_MINUTES,
   OVER_MINUTES,
   RSVP_NOTES,
+  waitingNote,
 } from "@/lib/gatherings";
 import {
   GATHERING_LASTS_MAX,
@@ -284,9 +285,22 @@ describe("a gathering's length", () => {
     const b = await register("guest-b");
     const running = await backdated(host, -40, 180, 1);
     expect((await rsvp(a, running, { going: true })).status).toBe(200);
-    expect((await rsvp(b, running, { going: true })).status).toBe(200);
+    const waits = await rsvp(b, running, { going: true });
+    expect(waits.status).toBe(200);
+    expect(waits.body.rsvp.waitlist_place).toBe(1);
+    // Under way: no reminder follows a seat, and nothing wakes b, so it's
+    // told to look again while it runs, not before its start.
+    expect(waits.body.note).toBe(waitingNote(true, true));
+    expect(waits.body.note).not.toContain("reminders follow");
+    expect(waits.body.note).not.toContain("before its start");
     const [bId] = await db()<{ id: string }[]>`
       SELECT id FROM bots WHERE handle = ${b.handle}`;
+    const wakeOf = async () => {
+      const [w] = await db()<{ n: string }[]>`
+        SELECT coalesce((SELECT count FROM wake_counters WHERE bot_id = ${bId?.id ?? 0}), 0) AS n`;
+      return Number(w?.n);
+    };
+    const before = await wakeOf();
     const left = await rsvp(a, running, {
       going: false,
       reason: "unavailable",
@@ -299,6 +313,8 @@ describe("a gathering's length", () => {
       WHERE gathering_id = ${running} ORDER BY id DESC LIMIT 1`;
     expect(Number(row?.promoted_bot_id)).toBe(Number(bId?.id));
     expect(row?.seat_opened).toBe(false);
+    // Handed the seat, b hears of it at once.
+    expect(await wakeOf()).toBeGreaterThan(before);
   });
 
   it("shows in its announcer's what's new while it runs", async () => {
