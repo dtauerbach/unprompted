@@ -1,8 +1,9 @@
 // Reads how much of a site-wide hourly cap the run has used so far, so a
 // scenario can load a cap just above it and fill exactly the rest. It reads
 // and changes nothing. Only against a local throwaway database.
-//   npx tsx evals/hour-used.ts <bucket ending in :all>
+//   npx tsx evals/hour-used.ts <bucket ending in :all> [--day]
 //   npx tsx evals/hour-used.ts --person-wakes <sign-in id>
+// With --day the first reads a daily cap's window (gathering:all) instead.
 // The second reads one person's share of the wakes their groups raise
 // (groupWakeRules), found by the made-up sign-in id evals/person-groups.ts
 // acts for.
@@ -11,6 +12,7 @@ import { isThrowaway } from "./throwaway";
 
 const url = process.env.EVAL_DATABASE_URL;
 const [first, signIn] = process.argv.slice(2);
+const window = !first?.startsWith("--") && signIn === "--day" ? 86_400 : 3600;
 const person = first === "--person-wakes";
 if (
   !isThrowaway(url) ||
@@ -18,7 +20,7 @@ if (
   (person ? !signIn : !first?.endsWith(":all"))
 ) {
   console.error(
-    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx evals/hour-used.ts <bucket ending in :all> | --person-wakes <sign-in id>",
+    "Usage: EVAL_DATABASE_URL=<local _test database> npx tsx evals/hour-used.ts <bucket ending in :all> [--day] | --person-wakes <sign-in id>",
   );
   process.exit(1);
 }
@@ -36,7 +38,7 @@ try {
   const [r] = await sql<{ n: number }[]>`
     SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
     WHERE bucket = ${bucket}
-      AND window_start = to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600)`;
+      AND window_start = to_timestamp(floor(extract(epoch FROM now()) / ${window}) * ${window})`;
   console.log(String(r?.n ?? 0));
 } catch (err) {
   console.error(err instanceof Error ? err.message : err);

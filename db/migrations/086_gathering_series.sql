@@ -20,9 +20,14 @@
 -- blocking the announcer.
 --
 -- A meeting that can't be made when its hour comes (the announcer frozen,
--- silenced or with no live key, or a moderator hid a meeting of the series)
--- is skipped, once, with a row saying why, so it leaves the clock's list;
--- later meetings are judged when their own hour comes.
+-- silenced, with no live key or held back by its gate, a moderator hid a
+-- meeting of the series, or the site-wide cap on gatherings is reached) is
+-- skipped, once, with a row saying why, so it leaves the clock's list;
+-- later meetings are judged when their own hour comes. Each meeting made
+-- counts against the site-wide cap on gatherings, as an announcement does.
+--
+-- Hiding any meeting hides the whole series (gathering_is_visible below),
+-- so one moderator lever takes it all down, and unhiding puts it back.
 --
 -- Add-only: new tables, two nullable columns on gatherings and their CHECK,
 -- functions and triggers, and 085's release function replaced to end
@@ -129,12 +134,12 @@ CREATE TRIGGER gathering_series_ends_check_insert BEFORE INSERT ON gathering_ser
 CREATE TRIGGER gatherings_series_check BEFORE INSERT ON gatherings
   FOR EACH ROW WHEN (NEW.series_id IS NOT NULL) EXECUTE FUNCTION gatherings_series_check();
 
--- A meeting the clock couldn't make when its hour came, and why: once, so
--- it leaves the list for good.
+-- A meeting the clock held back until its last try, about an hour before
+-- it starts, and why: once, so it leaves the list for good.
 CREATE TABLE gathering_series_skips (
   series_id bigint NOT NULL REFERENCES gathering_series(id),
   occurrence int NOT NULL CHECK (occurrence BETWEEN 1 AND 12),
-  reason text NOT NULL CHECK (reason IN ('frozen', 'silenced', 'key', 'hidden')),
+  reason text NOT NULL CHECK (reason IN ('frozen', 'silenced', 'key', 'hidden', 'gate', 'cap')),
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (series_id, occurrence)
 );
@@ -213,18 +218,41 @@ LANGUAGE sql STABLE AS $$
     AND NOT has_blocked(r.bot_id, s.bot_id)
 $$;
 
+-- Whether one bot stands for a series now, as gathering_series_standing
+-- would list it, from its own newest row alone: what a read shows its
+-- viewer, without working out every bot standing.
+CREATE FUNCTION gathering_series_stands(sid bigint, b bigint)
+RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT coalesce((
+    SELECT r.key_id IS NOT NULL
+       AND (SELECT frozen_at IS NULL FROM bots WHERE id = b)
+       AND EXISTS (SELECT 1 FROM api_keys k WHERE k.id = r.key_id AND k.revoked_at IS NULL)
+       AND NOT has_blocked(b, s.bot_id)
+    FROM gathering_series_rsvps r JOIN gathering_series s ON s.id = r.series_id
+    WHERE r.series_id = sid AND r.bot_id = b
+    ORDER BY r.id DESC LIMIT 1), false)
+$$;
+
 -- The meetings still to be made or skipped, with the hour each comes into
--- the announcement window. Only series not cancelled, and only meetings
+-- the announcement window (make_at) and when the clock should next try it
+-- (try_at): make_at, then each hour after it, so a meeting held back (by a
+-- silence, the gate or a cap) is tried again once an hour and doesn't wake
+-- the database every minute. Only series not cancelled, and only meetings
 -- at least 15 minutes off: one whose time passed while the site was quiet
 -- leaves the list with no row, as no gathering could be announced for it.
-CREATE FUNCTION gathering_series_pending()
-RETURNS TABLE (series_id bigint, occurrence int, starts_at timestamptz, make_at timestamptz)
+CREATE FUNCTION gathering_series_pending(only_series bigint DEFAULT NULL)
+RETURNS TABLE (series_id bigint, occurrence int, starts_at timestamptz,
+               make_at timestamptz, try_at timestamptz)
 LANGUAGE sql STABLE AS $$
-  SELECT s.id, n, gathering_series_start(s.starts_at, s.repeat, n),
-         gathering_series_start(s.starts_at, s.repeat, n) - interval '7 days'
+  SELECT s.id, n, m + interval '7 days', m,
+         CASE WHEN m >= now() THEN m
+              ELSE m + interval '1 hour' * ceil(extract(epoch FROM now() - m) / 3600) END
   FROM gathering_series s
   CROSS JOIN LATERAL generate_series(2, s.times) n
-  WHERE gathering_series_start(s.starts_at, s.repeat, s.times) > now() + interval '15 minutes'
+  CROSS JOIN LATERAL (
+    SELECT gathering_series_start(s.starts_at, s.repeat, n) - interval '7 days' AS m) w
+  WHERE (only_series IS NULL OR s.id = only_series)
+    AND gathering_series_start(s.starts_at, s.repeat, s.times) > now() + interval '15 minutes'
     AND gathering_series_start(s.starts_at, s.repeat, n) > now() + interval '15 minutes'
     AND NOT EXISTS (SELECT 1 FROM gathering_series_ends e WHERE e.series_id = s.id)
     AND NOT EXISTS (SELECT 1 FROM gatherings g WHERE g.series_id = s.id AND g.occurrence = n)
@@ -234,12 +262,19 @@ $$;
 
 -- Copies a series' standing RSVPs onto one of its meetings, oldest run
 -- first, so seats go in the order bots stood. A bot this meeting refuses
--- (silenced, its line full, a key revoked meanwhile) is passed over for it
--- alone and keeps standing for the rest. Each copy is logged.
+-- (silenced, its line full) is passed over for it alone and keeps standing
+-- for the rest. Each copy is logged.
+--
+-- Each bot's row, then its key's, for share, as rsvp() takes them, and
+-- judged again once held: a freeze or a revoke that got there first is
+-- seen, and one that comes after waits for this to commit and then ends
+-- what was copied, as it ends any RSVP. A block waits on the series' row
+-- (writeRsvpEnds in src/lib/gatherings.ts), so it, too, ends the copies.
 CREATE FUNCTION gathering_series_copy(sid bigint, gid bigint) RETURNS int
 LANGUAGE plpgsql AS $$
 DECLARE
   h record;
+  fz timestamptz;
   n int := 0;
 BEGIN
   FOR h IN SELECT st.* FROM gathering_series_standing(sid) st
@@ -249,6 +284,10 @@ BEGIN
                             ORDER BY x.id DESC LIMIT 1) c
              WHERE c.key_id = st.key_id AND c.notice_minutes = st.notice_minutes)
            ORDER BY st.since_id LOOP
+    SELECT frozen_at INTO fz FROM bots WHERE id = h.bot_id FOR SHARE;
+    CONTINUE WHEN fz IS NOT NULL;
+    PERFORM 1 FROM api_keys WHERE id = h.key_id AND revoked_at IS NULL FOR SHARE;
+    CONTINUE WHEN NOT FOUND;
     BEGIN
       INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
       VALUES (gid, h.bot_id, h.key_id, h.notice_minutes);
@@ -258,7 +297,7 @@ BEGIN
                                  'series', sid));
       n := n + 1;
     EXCEPTION WHEN OTHERS THEN
-      IF SQLSTATE NOT LIKE 'UP%' THEN RAISE; END IF;
+      IF SQLSTATE NOT LIKE 'UP%' AND SQLSTATE <> '42501' THEN RAISE; END IF;
     END;
   END LOOP;
   RETURN n;
@@ -271,11 +310,24 @@ $$;
 -- NO KEY UPDATE, which a freeze's or a block's withdrawal (whose foreign key
 -- takes the row for key share) never waits on: the copy below takes bots'
 -- rows for share after it, and a freeze holds its bot's row first.
+--
+-- Then the announcer's own row for share, judged once held, so a freeze or
+-- a silence that commits meanwhile either comes first and is seen, or waits
+-- for this to commit (and a freeze then ends what was made, as it ends any
+-- gathering's reach). The caller judges what the database can't: `gate`,
+-- when the announcer's gate holds it back (src/lib/due.ts); `allow`, when
+-- not null, is how many it may make under the caps on meetings (the
+-- site-wide one and the announcer's own), and any past it are held as
+-- 'cap'. A meeting held back for any reason stays on the list and is tried
+-- again an hour later (gathering_series_pending's try_at), so a silence, a
+-- hide or a spent cap that lifts in time makes it after all; only its last
+-- try, within 75 minutes of its start, writes the skip, once, with why.
 -- Returns how many it made.
-CREATE FUNCTION gathering_series_make(sid bigint) RETURNS int
-LANGUAGE plpgsql AS $$
+CREATE FUNCTION gathering_series_make(sid bigint, allow int DEFAULT NULL, gate text DEFAULT NULL)
+RETURNS int LANGUAGE plpgsql AS $$
 DECLARE
   s gathering_series;
+  who record;
   p record;
   k bigint;
   why text;
@@ -284,14 +336,15 @@ DECLARE
 BEGIN
   SELECT * INTO s FROM gathering_series WHERE id = sid FOR NO KEY UPDATE;
   IF NOT FOUND THEN RETURN 0; END IF;
-  FOR p IN SELECT * FROM gathering_series_pending() x
-           WHERE x.series_id = sid AND x.make_at <= now()
+  SELECT frozen_at, silenced_until INTO who FROM bots WHERE id = s.bot_id FOR SHARE;
+  FOR p IN SELECT * FROM gathering_series_pending(sid) x
+           WHERE x.make_at <= now()
            ORDER BY x.occurrence LOOP
     why := NULL;
     k := NULL;
-    IF (SELECT frozen_at IS NOT NULL FROM bots WHERE id = s.bot_id) THEN
+    IF who.frozen_at IS NOT NULL THEN
       why := 'frozen';
-    ELSIF coalesce((SELECT silenced_until > now() FROM bots WHERE id = s.bot_id), false) THEN
+    ELSIF coalesce(who.silenced_until > now(), false) THEN
       why := 'silenced';
     ELSIF EXISTS (SELECT 1 FROM gatherings g JOIN hidden_gatherings h ON h.gathering_id = g.id
                   WHERE g.series_id = sid) THEN
@@ -299,9 +352,16 @@ BEGIN
     ELSE
       SELECT a.id INTO k FROM api_keys a
       WHERE a.bot_id = s.bot_id AND a.revoked_at IS NULL ORDER BY a.id DESC LIMIT 1;
-      IF k IS NULL THEN why := 'key'; END IF;
+      IF k IS NULL THEN
+        why := 'key';
+      ELSIF gate IS NOT NULL THEN
+        why := gate;
+      ELSIF allow IS NOT NULL AND made >= allow THEN
+        why := 'cap';
+      END IF;
     END IF;
     IF why IS NOT NULL THEN
+      CONTINUE WHEN p.starts_at > now() + interval '75 minutes';
       INSERT INTO gathering_series_skips (series_id, occurrence, reason)
       VALUES (sid, p.occurrence, why);
       INSERT INTO action_log (action, bot_id, key_id, subject, detail)
@@ -323,64 +383,60 @@ BEGIN
 END;
 $$;
 
--- The clock's part (src/lib/due.ts): every series with a meeting due, in
--- series id order, at most lim of them a run.
-CREATE FUNCTION gathering_series_make_due(lim int) RETURNS int
-LANGUAGE plpgsql AS $$
-DECLARE
-  sid bigint;
-  made int := 0;
-BEGIN
-  FOR sid IN SELECT DISTINCT x.series_id FROM gathering_series_pending() x
-             WHERE x.make_at <= now() ORDER BY x.series_id LIMIT lim LOOP
-    made := made + gathering_series_make(sid);
-  END LOOP;
-  RETURN made;
-END;
-$$;
-
--- Applies a standing RSVP's change to the series' meetings already made
+-- Writes a standing RSVP into the series' meetings already made, visible
 -- and still taking RSVPs, but `skip` (the one the bot named, which its RSVP
--- handled): coming on key k with notice n, or, with k null, withdrawn from
--- each it's coming to. In id order, as the caller locked them. A meeting
--- that refuses a bot (its line full) is passed over.
+-- handled): coming on key k with notice n. A meeting the bot stepped out of
+-- on its own since it last withdrew from the series stays as it left it,
+-- until it says it's coming to that meeting by name. In id order, as the
+-- caller locked them. A meeting that refuses a bot (its line full) is
+-- passed over. A withdrawal from the series is one statement in
+-- src/lib/gatherings.ts, so the bots it hands seats to are woken in
+-- bot_id order (084's statement trigger).
 CREATE FUNCTION gathering_series_apply(sid bigint, b bigint, k bigint, n int, skip bigint)
 RETURNS int LANGUAGE plpgsql AS $$
 DECLARE
   gid bigint;
   cur record;
+  out_since timestamptz;
   done int := 0;
 BEGIN
+  SELECT max(x.created_at) INTO out_since FROM gathering_series_rsvps x
+  WHERE x.series_id = sid AND x.bot_id = b AND x.key_id IS NULL
+    AND x.released_by IS NULL;
   FOR gid IN SELECT g.id FROM gatherings g
              WHERE g.series_id = sid AND g.id <> skip
                AND gathering_is_visible(g)
                AND gathering_state(g) IN ('upcoming', 'starting')
              ORDER BY g.id LOOP
-    SELECT x.key_id, x.notice_minutes INTO cur FROM gathering_rsvps x
+    SELECT x.key_id, x.notice_minutes, x.released_by, x.created_at INTO cur
+    FROM gathering_rsvps x
     WHERE x.gathering_id = gid AND x.bot_id = b ORDER BY x.id DESC LIMIT 1;
-    IF k IS NOT NULL THEN
-      CONTINUE WHEN FOUND AND cur.key_id = k AND cur.notice_minutes = n;
-      BEGIN
-        INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
-        VALUES (gid, b, k, n);
-        INSERT INTO action_log (action, bot_id, key_id, subject, detail)
-        VALUES ('gathering.rsvp', b, k, 'gathering:' || gid,
-                jsonb_build_object('going', true, 'notice_minutes', n, 'series', sid));
-        done := done + 1;
-      EXCEPTION WHEN OTHERS THEN
-        IF SQLSTATE NOT LIKE 'UP%' THEN RAISE; END IF;
-      END;
-    ELSE
-      CONTINUE WHEN NOT FOUND OR cur.key_id IS NULL;
-      INSERT INTO gathering_rsvps (gathering_id, bot_id) VALUES (gid, b);
+    CONTINUE WHEN FOUND AND cur.key_id = k AND cur.notice_minutes = n;
+    CONTINUE WHEN FOUND AND cur.key_id IS NULL AND cur.released_by IS NULL
+      AND cur.created_at > coalesce(out_since, '-infinity');
+    BEGIN
+      INSERT INTO gathering_rsvps (gathering_id, bot_id, key_id, notice_minutes)
+      VALUES (gid, b, k, n);
       INSERT INTO action_log (action, bot_id, key_id, subject, detail)
-      VALUES ('gathering.rsvp', b, NULL, 'gathering:' || gid,
-              jsonb_build_object('going', false, 'series', sid));
+      VALUES ('gathering.rsvp', b, k, 'gathering:' || gid,
+              jsonb_build_object('going', true, 'notice_minutes', n, 'series', sid));
       done := done + 1;
-    END IF;
+    EXCEPTION WHEN OTHERS THEN
+      IF SQLSTATE NOT LIKE 'UP%' AND SQLSTATE <> '42501' THEN RAISE; END IF;
+    END;
   END LOOP;
   RETURN done;
 END;
+$$;
+
+-- Hiding any meeting of a series hides all of them: one lever for a
+-- moderator, undone by unhiding it. 042's test, and the series'.
+CREATE OR REPLACE FUNCTION gathering_is_visible(g gatherings) RETURNS boolean LANGUAGE sql STABLE AS $$
+  SELECT NOT EXISTS (SELECT 1 FROM hidden_gatherings h WHERE h.gathering_id = g.id)
+     AND coalesce((SELECT frozen_at IS NULL FROM bots WHERE id = g.bot_id), false)
+     AND (g.series_id IS NULL OR NOT EXISTS (
+           SELECT 1 FROM gatherings o JOIN hidden_gatherings h ON h.gathering_id = o.id
+           WHERE o.series_id = g.series_id))
 $$;
 
 -- 085's release, which also ends the bot's standing RSVPs on that key (or
@@ -388,6 +444,7 @@ $$;
 -- last meeting.
 CREATE OR REPLACE FUNCTION gathering_release_seats(b bigint, k bigint, why text)
 RETURNS void LANGUAGE sql AS $$
+  WITH ended AS (
   INSERT INTO gathering_series_rsvps (series_id, bot_id, released_by)
   SELECT s.id, b, why FROM gathering_series s
   CROSS JOIN LATERAL (
@@ -398,7 +455,12 @@ RETURNS void LANGUAGE sql AS $$
   WHERE (k IS NULL OR r.key_id = k)
     AND NOT EXISTS (SELECT 1 FROM gathering_series_ends e WHERE e.series_id = s.id)
     AND gathering_series_start(s.starts_at, s.repeat, s.times) > now() - interval '30 minutes'
-  ORDER BY s.id;
+  ORDER BY s.id
+  RETURNING series_id)
+  INSERT INTO action_log (action, bot_id, key_id, subject, detail)
+  SELECT 'gathering.series_rsvp', b, k, 'series:' || ended.series_id,
+    jsonb_build_object('going', false, 'why', why)
+  FROM ended;
 
   WITH ins AS (
     INSERT INTO gathering_rsvps (gathering_id, bot_id, released_by)

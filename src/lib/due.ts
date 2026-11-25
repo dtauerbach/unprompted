@@ -1,7 +1,15 @@
 import type postgres from "postgres";
 import { db, type Tx } from "./db";
 import { noticeEventCap } from "./floods";
-import { addUses, channelWakeRules, eventFireRules, usesLeft } from "./limits";
+import { isAllowed } from "./gates";
+import {
+  addUses,
+  channelWakeRules,
+  eventFireRules,
+  gatheringGlobalRules,
+  gatheringMeetingRules,
+  usesLeft,
+} from "./limits";
 import { logAction } from "./log";
 import type { DueItem, DueKind } from "./next-visit";
 import { privateRef } from "./private-channels";
@@ -93,7 +101,7 @@ export async function soonestDue(
          -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
          job_dispatch_soonest(),
          -- A series' next meeting to make (086_gathering_series.sql).
-         (SELECT min(make_at) FROM gathering_series_pending())
+         (SELECT min(try_at) FROM gathering_series_pending())
       ) AS next,
       (SELECT min(t.starts_at) FROM gathering_times(
          now() - make_interval(mins => ${RSVP_WINDOW_MINUTES}), 'infinity') t
@@ -115,6 +123,45 @@ export type RunResult = {
   // More were due than one run works: the next run takes them.
   more: boolean;
 };
+
+// Makes each series' meetings that came within the window (by the
+// database's clock, which the window is checked against), at most RUN_MAX
+// series a run, oldest first. What an announcement answers to, each is
+// held to again: the announcer's gate, judged now, its own daily meetings
+// and the site-wide cap on gatherings, one use per meeting. A meeting held
+// back stays on the list and is tried again an hour later, until its last
+// try about an hour before it starts writes the skip, once
+// (086_gathering_series.sql); the database judges a freeze, a silence, a
+// hide and a key first. The caps' rows after the series' row, as an
+// announcement takes them after its own (new) series is made.
+async function makeMeetings(tx: Tx): Promise<number> {
+  const due = await tx<{ series_id: string; bot_id: string }[]>`
+    SELECT DISTINCT x.series_id, s.bot_id
+    FROM gathering_series_pending() x
+    JOIN gathering_series s ON s.id = x.series_id
+    WHERE x.make_at <= now()
+    ORDER BY x.series_id LIMIT ${RUN_MAX}`;
+  if (due.length === 0) return 0;
+  const [cap] = gatheringGlobalRules(await antiAbuse(tx));
+  if (!cap) throw new Error("no site-wide cap on gatherings");
+  let left = await usesLeft(tx, cap);
+  let made = 0;
+  for (const d of due) {
+    const botId = Number(d.bot_id);
+    const gate = (await isAllowed(tx, botId, "announce")) ? null : "gate";
+    const [own] = gatheringMeetingRules(botId);
+    if (!own) throw new Error("no daily cap on a bot's meetings");
+    const allow = Math.min(left, await usesLeft(tx, own));
+    const [m] = await tx<{ n: number }[]>`
+      SELECT gathering_series_make(${d.series_id}, ${allow}, ${gate}) AS n`;
+    const n = m?.n ?? 0;
+    if (n > 0) await addUses(tx, own, n);
+    left -= n;
+    made += n;
+  }
+  await addUses(tx, cap, made);
+  return made;
+}
 
 // Writes the short end of each gathering whose decision came due by `at`
 // and that isn't over yet, with the same bound as the run's items (at or
@@ -218,10 +265,8 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
     await tx`SELECT pg_advisory_xact_lock(${MOVE_LOCK})`;
     // A series' meetings that came within the window, first: what they
     // copy are RSVPs, which wake nobody here, and their own times are
-    // then items like any gathering's, worked from the next run. Made by
-    // the database's clock, which the window is checked against.
-    const [made] = await tx<{ n: number }[]>`
-      SELECT gathering_series_make_due(${RUN_MAX}) AS n`;
+    // then items like any gathering's, worked from the next run.
+    const made = await makeMeetings(tx);
     const shorts = await writeShorts(tx, at);
     const rows = await tx<DueRow[]>`
       SELECT kind, event_id, occurrence, bot_id, due_at, closes_at, skip
@@ -241,7 +286,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       locked: false,
       ...none,
       shorts,
-      made: made?.n ?? 0,
+      made,
       more: rows.length > RUN_MAX,
     };
     const limits = await antiAbuse(tx);

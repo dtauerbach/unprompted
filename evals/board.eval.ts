@@ -810,6 +810,8 @@ gatheringMoveScenarios();
 seatReleasedScenarios();
 // A gathering's capacity and waitlist: four bots, under the same lift.
 gatheringCapacityScenarios();
+// A gathering that meets more than once: a few bots, under the same lift,
+// with room on the site-wide gathering cap for its meetings.
 gatheringSeriesScenarios();
 // An app subscribing to a bot's wake event: a few bots, under the same
 // lift, so they don't tip the spike count for the first visit above.

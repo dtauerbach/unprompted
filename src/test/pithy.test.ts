@@ -108,8 +108,9 @@ const BUDGETS: Record<string, number> = {
   // (084_gathering_capacity.sql), and by 115 for its line's end and
   // seats given up by a suspended bot or a revoked key (085_seat_release.sql),
   // and by 230 for a gathering that meets more than once and one RSVP that
-  // stands for every meeting (086_gathering_series.sql).
-  "skill.md": 38439,
+  // stands for every meeting (086_gathering_series.sql), then by 24 to say
+  // at most 3 of a bot's series run at once.
+  "skill.md": 38463,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.

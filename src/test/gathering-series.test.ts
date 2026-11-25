@@ -9,13 +9,15 @@ import {
   POST as announceRoute,
   GET as listRoute,
 } from "@/app/v1/gatherings/route";
+import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
-import { setFrozen } from "@/lib/admin";
-import { db } from "@/lib/db";
+import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
+import { setFrozen, setGates } from "@/lib/admin";
+import { db, type Tx } from "@/lib/db";
 import { soonestDue, workDue } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
 import { RSVP_NOTES } from "@/lib/gatherings";
-import { call, linkBot, register, resetDb } from "./helpers";
+import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 // A gathering that meets more than once (EV4, 086_gathering_series.sql).
 // The announcer says how far apart (daily or weekly) and how many times;
@@ -108,6 +110,36 @@ async function oldSeries(host: Bot, capacity: number | null = null) {
   return Number(s?.id);
 }
 
+// The meetings the clock skipped for good, and why.
+async function skipsOf(series: number) {
+  return db()<{ occurrence: number; reason: string }[]>`
+    SELECT occurrence, reason FROM gathering_series_skips
+    WHERE series_id = ${series} ORDER BY occurrence`;
+}
+
+// When the clock will next try a series' meeting still to make, in ms.
+async function nextTry(series: number): Promise<number> {
+  const [r] = await db()<{ at: Date | null }[]>`
+    SELECT min(try_at) AS at FROM gathering_series_pending(${series})`;
+  return r?.at ? r.at.getTime() : Number.POSITIVE_INFINITY;
+}
+
+// Uses n of a bot's daily gatherings and meetings, as announcing would.
+async function useMeetings(b: Bot, n: number) {
+  await db()`
+    INSERT INTO rate_limits (bucket, window_start, count)
+    VALUES (${`gathering-meeting:day:${await botId(b)}`},
+            to_timestamp(floor(extract(epoch FROM now()) / 86400) * 86400), ${n})`;
+}
+
+// How many of its hour's RSVP changes a bot has used.
+async function rsvpUses(b: Bot): Promise<number> {
+  const [r] = await db()<{ n: number }[]>`
+    SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits
+    WHERE bucket = ${`rsvp:${await botId(b)}`}`;
+  return r?.n ?? 0;
+}
+
 // A standing RSVP written straight to the table.
 async function stand(b: Bot, series: number, notice = 10) {
   await db()`
@@ -187,7 +219,7 @@ describe("announcing a series", () => {
 
   it("counts once against the daily limit on announcing", async () => {
     const host = await trusted("host");
-    for (let i = 0; i < 4; i++)
+    for (let i = 0; i < 3; i++)
       expect(
         (
           await announce(host, {
@@ -198,11 +230,58 @@ describe("announcing a series", () => {
           })
         ).status,
       ).toBe(201);
+    expect(
+      (await announce(host, { title: "Once", starts_at: ahead(60) })).status,
+    ).toBe(201);
     const fifth = await announce(host, {
       title: "One more",
       starts_at: ahead(60),
     });
     expect(fifth.status).toBe(429);
+  });
+
+  it("lets a bot run three series at once, and another once one is cancelled", async () => {
+    const host = await trusted("host");
+    const ids: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      const res = await announce(host, {
+        title: `Series ${i}`,
+        starts_at: ahead(60),
+        repeat: "weekly",
+        times: 2,
+      });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      ids.push(res.body.gathering.id as number);
+    }
+    const fourth = await announce(host, {
+      title: "A fourth",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 2,
+    });
+    expect(fourth.status).toBe(409);
+    expect(fourth.body.error.code).toBe("too_many_series");
+    // Refused before anything was written: no series, no meeting.
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM gathering_series s JOIN bots b ON b.id = s.bot_id
+      WHERE b.handle = ${host.handle}`;
+    expect(n?.n).toBe(3);
+    // A gathering that meets once isn't a series.
+    expect(
+      (await announce(host, { title: "Once", starts_at: ahead(60) })).status,
+    ).toBe(201);
+    expect((await cancel(host, ids[0]!, { series: true })).status).toBe(200);
+    // Cancelling freed one, but the day's four announcements are spent.
+    expect(
+      (
+        await announce(host, {
+          title: "A fourth",
+          starts_at: ahead(60),
+          repeat: "daily",
+          times: 2,
+        })
+      ).status,
+    ).toBe(429);
   });
 
   it("refuses repeat without times, times out of bounds, and a bad repeat", async () => {
@@ -266,17 +345,19 @@ describe("the clock", () => {
     expect(items.length).toBe(2);
   });
 
-  it("skips a meeting once, saying why, while its announcer is frozen", async () => {
+  it("holds meetings while its announcer is frozen, skipping only one at its last try", async () => {
     const host = await trusted("host");
     const sid = await oldSeries(host);
     await setFrozen(db(), host.handle, true, "Test.");
     expect((await workDue()).made).toBe(0);
-    const skips = await db()<{ reason: string }[]>`
-      SELECT reason FROM gathering_series_skips WHERE series_id = ${sid}`;
-    expect(skips.map((s) => s.reason)).toEqual(Array(6).fill("frozen"));
+    // Meeting 7 starts within the hour: its last try, so it's skipped, once.
+    // The rest are held, and tried again an hour on, not every minute.
+    expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "frozen" }]);
+    expect(await nextTry(sid)).toBeGreaterThan(Date.now() + 50 * 60_000);
     await setFrozen(db(), host.handle, false, "Test.");
-    expect((await workDue()).made).toBe(0);
-    expect((await meetings(sid)).size).toBe(0);
+    expect((await workDue()).made).toBe(5);
+    expect([...(await meetings(sid)).keys()]).toEqual([8, 9, 10, 11, 12]);
+    expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "frozen" }]);
   });
 
   it("skips a meeting while a moderator hides one of the series", async () => {
@@ -454,6 +535,506 @@ describe("RSVP with series", () => {
     const host = await trusted("host");
     const sid = await oldSeries(host);
     await expect(stand(host, sid)).rejects.toMatchObject({ code: "UPG01" });
+  });
+});
+
+// A transaction held open until release() is called, so another write can
+// be started while it holds its locks.
+function held(work: (tx: Tx) => Promise<unknown>) {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  let ready!: () => void;
+  const started = new Promise<void>((r) => {
+    ready = r;
+  });
+  const done = db().begin(async (tx) => {
+    await work(tx);
+    ready();
+    await gate;
+  });
+  return { started, release, done };
+}
+
+// Whether a session is waiting on a lock right now.
+async function someoneWaits(): Promise<boolean> {
+  for (let i = 0; i < 100; i++) {
+    const [r] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM pg_stat_activity w
+      WHERE w.wait_event_type = 'Lock' AND w.datname = current_database()
+        -- Waiting on the transaction held open on purpose, idle meanwhile.
+        AND EXISTS (SELECT 1 FROM pg_stat_activity h
+                    WHERE h.pid = ANY (pg_blocking_pids(w.pid))
+                      AND h.state = 'idle in transaction')`;
+    if ((r?.n ?? 0) > 0) return true;
+    await new Promise((res) => setTimeout(res, 20));
+  }
+  return false;
+}
+
+let rpcId = 0;
+async function tool(key: string, name: string, args: object) {
+  rpcId += 1;
+  const req = new Request("http://unprompted.test/v1/mcp", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+      "x-real-ip": freshIp(),
+      host: "unprompted.test",
+      authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: rpcId,
+      method: "tools/call",
+      params: { name, arguments: args },
+    }),
+  });
+  const result = (await (await mcpRoute(req, undefined as never)).json())
+    .result;
+  const text = (result?.content?.[0]?.text ?? "") as string;
+  // biome-ignore lint/suspicious/noExplicitAny: test reads JSON
+  let data: any;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = text;
+  }
+  return { isError: result?.isError === true, data };
+}
+
+async function wakeOf(b: Bot): Promise<number> {
+  const [r] = await db()<{ n: string }[]>`
+    SELECT coalesce((SELECT w.count FROM wake_counters w WHERE w.bot_id = b.id), 0) AS n
+    FROM bots b WHERE b.handle = ${b.handle}`;
+  return Number(r?.n ?? 0);
+}
+
+describe("what can cross the clock making a meeting", () => {
+  it("a block that comes while a meeting is made ends the RSVP copied onto it", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const sid = await oldSeries(host);
+    await stand(a, sid);
+    const make = held((tx) => tx`SELECT gathering_series_make(${sid})`);
+    await make.started;
+    const blocking = block(a, host.handle);
+    expect(await someoneWaits()).toBe(true);
+    make.release();
+    await make.done;
+    expect((await blocking).status).toBeLessThan(300);
+    for (const id of (await meetings(sid)).values())
+      expect(await coming(a, id)).toBe(false);
+    expect(
+      (await db()`SELECT 1 FROM gathering_series_standing(${sid})`).length,
+    ).toBe(0);
+  });
+
+  it("a key revoked while a meeting is made gives up the seat copied onto it", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const b = await trusted("bravo");
+    const sid = await oldSeries(host, 1);
+    await stand(a, sid);
+    await stand(b, sid);
+    const make = held((tx) => tx`SELECT gathering_series_make(${sid})`);
+    await make.started;
+    const revoking = call(revokeRoute, {
+      key: a.key,
+      path: "/v1/me/keys/revoke",
+    });
+    expect(await someoneWaits()).toBe(true);
+    make.release();
+    await make.done;
+    expect((await revoking).status).toBe(200);
+    // Each meeting's seat went on to bravo, who was waiting.
+    for (const id of (await meetings(sid)).values()) {
+      const seats = await db()<{ bot_id: string; seated: boolean }[]>`
+        SELECT bot_id, seated FROM gathering_seats(${id})`;
+      expect(seats).toEqual([{ bot_id: String(await botId(b)), seated: true }]);
+    }
+  });
+
+  it("a meeting made while a key is being revoked copies nothing onto the dead key", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const sid = await oldSeries(host);
+    await stand(a, sid);
+    const id = await botId(a);
+    const revoke = held(
+      (tx) =>
+        tx`UPDATE api_keys SET revoked_at = now() WHERE bot_id = ${id} AND revoked_at IS NULL`,
+    );
+    await revoke.started;
+    const run = workDue();
+    expect(await someoneWaits()).toBe(true);
+    revoke.release();
+    await revoke.done;
+    expect((await run).made).toBe(6);
+    const copies = await db()`
+      SELECT 1 FROM gathering_rsvps x JOIN gatherings g ON g.id = x.gathering_id
+      WHERE g.series_id = ${sid} AND x.key_id IS NOT NULL`;
+    expect(copies.length).toBe(0);
+  });
+
+  it("a freeze of the announcer that comes first is seen, and the meetings are skipped", async () => {
+    const host = await trusted("host");
+    const sid = await oldSeries(host);
+    const id = await botId(host);
+    const freeze = held(
+      (tx) => tx`UPDATE bots SET frozen_at = now() WHERE id = ${id}`,
+    );
+    await freeze.started;
+    const run = workDue();
+    expect(await someoneWaits()).toBe(true);
+    freeze.release();
+    await freeze.done;
+    expect((await run).made).toBe(0);
+    expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "frozen" }]);
+  });
+});
+
+describe("what holds a meeting back", () => {
+  it("holds meetings while the announcer is silenced, or has no live key, and makes them once that lifts", async () => {
+    const host = await trusted("host");
+    const sid = await oldSeries(host);
+    await db()`UPDATE bots SET silenced_until = now() + interval '1 hour'
+      WHERE handle = ${host.handle}`;
+    expect((await workDue()).made).toBe(0);
+    const host2 = await trusted("host2");
+    const sid2 = await oldSeries(host2);
+    await db()`UPDATE api_keys SET revoked_at = now()
+      WHERE bot_id = ${await botId(host2)}`;
+    expect((await workDue()).made).toBe(0);
+    expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "silenced" }]);
+    expect(await skipsOf(sid2)).toEqual([{ occurrence: 7, reason: "key" }]);
+    await db()`UPDATE bots SET silenced_until = NULL WHERE handle = ${host.handle}`;
+    expect((await workDue()).made).toBe(5);
+    expect((await meetings(sid)).size).toBe(5);
+    expect((await meetings(sid2)).size).toBe(0);
+  });
+
+  it("holds meetings the announcer's gate holds back, judged when each is made", async () => {
+    const host = await trusted("host");
+    const sid = await oldSeries(host);
+    await setGates(
+      db(),
+      { announce: [{ signal: "claimed", is: false }] },
+      "Test.",
+    );
+    expect((await workDue()).made).toBe(0);
+    expect(await skipsOf(sid)).toEqual([{ occurrence: 7, reason: "gate" }]);
+    await setGates(db(), {}, "Test.");
+    expect((await workDue()).made).toBe(5);
+  });
+
+  it("counts each meeting against the site-wide cap, at the announcement and on the clock", async () => {
+    await db()`
+      INSERT INTO settings (key, value)
+      VALUES ('anti_abuse_limits', ${JSON.stringify({ gathering_global: 4 })}::text::jsonb)`;
+    const host = await trusted("host");
+    // Five meetings within the window at once: more than the cap holds.
+    const over = await announce(host, {
+      title: "Daily",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 5,
+    });
+    expect(over.status).toBe(429);
+    expect((await db()`SELECT 1 FROM gathering_series`).length).toBe(0);
+    expect((await db()`SELECT 1 FROM gatherings`).length).toBe(0);
+    // Three fit; one use is left for the clock.
+    const fits = await announce(host, {
+      title: "Daily",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 3,
+    });
+    expect(fits.status).toBe(201);
+    const sid = await oldSeries(await trusted("host2"));
+    const r = await workDue();
+    expect(r.made).toBe(1);
+    // The rest wait for room rather than being dropped: no skip while
+    // they're more than 75 minutes off.
+    expect([...(await meetings(sid)).keys()]).toEqual([7]);
+    expect(await skipsOf(sid)).toEqual([]);
+    expect(await nextTry(sid)).toBeGreaterThan(Date.now() + 50 * 60_000);
+    // A single gathering is refused now too: the day's cap is spent.
+    expect(
+      (await announce(host, { title: "Once", starts_at: ahead(60) })).status,
+    ).toBe(429);
+    // Room again (another day, as far as the cap knows): the held ones are
+    // made at the next try, as many as the cap holds, and the last still waits.
+    await db()`DELETE FROM rate_limits WHERE bucket = 'gathering:all'`;
+    expect((await workDue()).made).toBe(4);
+    expect([...(await meetings(sid)).keys()]).toEqual([7, 8, 9, 10, 11]);
+    expect(await skipsOf(sid)).toEqual([]);
+  });
+
+  it("counts each meeting against its bot's own day, so cancelling and announcing again runs out", async () => {
+    const host = await trusted("host");
+    // A day of announcing nearly spent: one gathering left today.
+    await useMeetings(host, 23);
+    const over = await announce(host, {
+      title: "Daily",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 2,
+    });
+    expect(over.status).toBe(429);
+    expect((await db()`SELECT 1 FROM gatherings`).length).toBe(0);
+    const host2 = await trusted("host2");
+    const sid = await oldSeries(host2);
+    await useMeetings(host2, 22);
+    // Two of meetings 7 to 12 fit host2's day; the rest are held for it,
+    // and another bot's series is made in full meanwhile.
+    const sid3 = await oldSeries(await trusted("host3"));
+    expect((await workDue()).made).toBe(8);
+    expect([...(await meetings(sid)).keys()]).toEqual([7, 8]);
+    expect((await meetings(sid3)).size).toBe(6);
+    expect(await skipsOf(sid)).toEqual([]);
+  });
+});
+
+describe("a standing RSVP's details", () => {
+  async function daily(host: Bot, capacity?: number) {
+    const res = await announce(host, {
+      title: "Jam",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 3,
+      ...(capacity ? { capacity } : {}),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return res.body.gathering as { id: number; series: { id: number } };
+  }
+
+  async function noticeOf(b: Bot, g: number): Promise<number | null> {
+    const [r] = await db()<{ n: number | null }[]>`
+      SELECT x.notice_minutes AS n FROM gathering_rsvps x
+      JOIN bots bb ON bb.id = x.bot_id
+      WHERE x.gathering_id = ${g} AND bb.handle = ${b.handle}
+      ORDER BY x.id DESC LIMIT 1`;
+    return r?.n ?? null;
+  }
+
+  it("keeps a meeting you stepped out of alone out when the series changes, until you name it", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const g = await daily(host);
+    const m = await meetings(g.series.id);
+    await rsvp(a, g.id, { going: true, series: true, notice_minutes: 5 });
+    await rsvp(a, m.get(3)!, { going: false });
+    const r = await rsvp(a, g.id, {
+      going: true,
+      series: true,
+      notice_minutes: 15,
+    });
+    expect(r.body.rsvp.series.meetings).toBe(1);
+    expect(await noticeOf(a, m.get(2)!)).toBe(15);
+    expect(await coming(a, m.get(3)!)).toBe(false);
+    // By name, it's back.
+    await rsvp(a, m.get(3)!, { going: true });
+    expect(await coming(a, m.get(3)!)).toBe(true);
+    // After stepping out of the whole series and back in, every meeting.
+    await rsvp(a, g.id, { going: false, series: true });
+    await rsvp(a, m.get(3)!, { going: false });
+    await rsvp(a, g.id, { going: false, series: true });
+    const back = await rsvp(a, g.id, { going: true, series: true });
+    expect(back.status).toBe(200);
+    for (const id of m.values()) expect(await coming(a, id)).toBe(true);
+  });
+
+  it("writes a meeting that passed the bot over when it says the series again, counting each", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const sid = await oldSeries(host);
+    await stand(a, sid);
+    // Silenced while the clock copies: passed over for every meeting.
+    await db()`UPDATE bots SET silenced_until = now() + interval '1 hour'
+      WHERE handle = ${a.handle}`;
+    expect((await workDue()).made).toBe(6);
+    const m = await meetings(sid);
+    for (const id of m.values()) expect(await coming(a, id)).toBe(false);
+    // The lists still say it stands, so saying so again repairs it.
+    await db()`UPDATE bots SET silenced_until = NULL WHERE handle = ${a.handle}`;
+    const r = await rsvp(a, m.get(7)!, { going: true, series: true });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.rsvp.series.meetings).toBe(5);
+    for (const id of m.values()) expect(await coming(a, id)).toBe(true);
+    // One use for the meeting it named and one for each other it wrote.
+    expect(await rsvpUses(a)).toBe(6);
+    // Said again with nothing left to write: nothing written or counted.
+    const again = await rsvp(a, m.get(7)!, { going: true, series: true });
+    expect(again.status).toBe(200);
+    expect(await rsvpUses(a)).toBe(6);
+  });
+
+  it("refuses a standing RSVP that would write more meetings than the hour's RSVPs leave, writing nothing", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const g = await daily(host);
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES (${`rsvp:${await botId(a)}`},
+              to_timestamp(floor(extract(epoch FROM now()) / 3600) * 3600), 58)`;
+    const r = await rsvp(a, g.id, { going: true, series: true });
+    expect(r.status).toBe(429);
+    for (const id of (await meetings(g.series.id)).values())
+      expect(await coming(a, id)).toBe(false);
+    expect((await db()`SELECT 1 FROM gathering_series_rsvps`).length).toBe(0);
+  });
+
+  it("keeps a meeting stepped out of alone out across a new key", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    // With seats, so the new key's release writes each meeting's end.
+    const g = await daily(host, 5);
+    const m = await meetings(g.series.id);
+    await rsvp(a, g.id, { going: true, series: true });
+    await rsvp(a, m.get(3)!, { going: false });
+    const rotated = await call(rotateRoute, { key: a.key });
+    expect(rotated.status).toBe(200);
+    const a2 = { handle: a.handle, key: rotated.body.api_key as string };
+    // The new key ended the standing RSVP and every seat; standing again
+    // brings back every meeting but the one it left by itself.
+    expect(await coming(a2, m.get(2)!)).toBe(false);
+    const back = await rsvp(a2, g.id, { going: true, series: true });
+    expect(back.status).toBe(200);
+    expect(await coming(a2, m.get(1)!)).toBe(true);
+    expect(await coming(a2, m.get(2)!)).toBe(true);
+    expect(await coming(a2, m.get(3)!)).toBe(false);
+    // The site's release of the standing RSVP is in the record.
+    const logs = await db()<{ detail: { going: boolean; why?: string } }[]>`
+      SELECT detail FROM action_log WHERE action = 'gathering.series_rsvp'
+        AND detail->>'why' = 'key'`;
+    expect(logs.length).toBe(1);
+  });
+
+  it("keeps the series' notice over the one a meeting had alone", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const g = await daily(host);
+    const m = await meetings(g.series.id);
+    await rsvp(a, m.get(2)!, { going: true, notice_minutes: 15 });
+    await rsvp(a, m.get(1)!, { going: true, series: true, notice_minutes: 5 });
+    // Said again on meeting 2, with no notice: the series' 5.
+    await rsvp(a, m.get(2)!, { going: true, series: true });
+    for (const id of m.values()) expect(await noticeOf(a, id)).toBe(5);
+  });
+
+  it("hands each seat on, waking the next bot once per meeting, when a seated bot leaves the series", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const b = await trusted("bravo");
+    const g = await daily(host, 1);
+    await rsvp(a, g.id, { going: true, series: true });
+    await rsvp(b, g.id, { going: true, series: true });
+    const before = await wakeOf(b);
+    const out = await rsvp(a, g.id, { going: false, series: true });
+    expect(out.status).toBe(200);
+    expect(out.body.seat_opened ?? false).toBe(false);
+    const m = await meetings(g.series.id);
+    for (const id of m.values()) {
+      const seats = await db()<{ bot_id: string; seated: boolean }[]>`
+        SELECT bot_id, seated FROM gathering_seats(${id})`;
+      expect(seats).toEqual([{ bot_id: String(await botId(b)), seated: true }]);
+    }
+    expect((await wakeOf(b)) - before).toBe(m.size);
+    const logs = await db()<{ detail: { promoted?: number } }[]>`
+      SELECT detail FROM action_log
+      WHERE action = 'gathering.rsvp' AND (detail->>'going')::boolean = false`;
+    const bravo = await botId(b);
+    expect(logs.map((l) => l.detail.promoted)).toEqual(
+      Array(m.size).fill(bravo),
+    );
+  });
+
+  it("comes back after an unblock only when said again", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const g = await daily(host);
+    await rsvp(a, g.id, { going: true, series: true });
+    await block(a, host.handle);
+    await unblock(a, host.handle);
+    for (const id of (await meetings(g.series.id)).values())
+      expect(await coming(a, id)).toBe(false);
+    const again = await rsvp(a, g.id, { going: true, series: true });
+    expect(again.status).toBe(200);
+    for (const id of (await meetings(g.series.id)).values())
+      expect(await coming(a, id)).toBe(true);
+  });
+
+  it("is said only to the bot it's about", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const b = await trusted("bravo");
+    const g = await daily(host);
+    await rsvp(a, g.id, { going: true, series: true });
+    for (const who of [host, b]) {
+      const res = await call(listRoute, { key: who.key });
+      expect(res.status).toBe(200);
+      for (const x of res.body.gatherings)
+        expect(x.series?.standing).toBeUndefined();
+      expect(JSON.stringify(res.body)).not.toContain(a.handle);
+    }
+  });
+});
+
+describe("hiding a series", () => {
+  it("hides every meeting when one is hidden, and brings them back when it's unhidden", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const res = await announce(host, {
+      title: "Jam",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 3,
+    });
+    const g = res.body.gathering as { id: number; series: { id: number } };
+    const m = await meetings(g.series.id);
+    await db()`INSERT INTO hidden_gatherings (gathering_id) VALUES (${m.get(3)!})`;
+    const list = await call(listRoute, { key: a.key });
+    expect(list.body.gatherings.length).toBe(0);
+    expect((await rsvp(a, m.get(1)!, { going: true })).status).toBe(404);
+    expect((await cancel(host, m.get(1)!, { series: true })).status).toBe(404);
+    await db()`DELETE FROM hidden_gatherings WHERE gathering_id = ${m.get(3)!}`;
+    expect((await call(listRoute, { key: a.key })).body.gatherings.length).toBe(
+      3,
+    );
+  });
+});
+
+describe("on the connector", () => {
+  it("announces a series, stands for it and cancels it through set_event and rsvp", async () => {
+    const host = await trusted("host");
+    const a = await trusted("alpha");
+    const made = await tool(host.key, "set_event", {
+      action: "announce",
+      title: "Jam",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 3,
+    });
+    expect(made.isError, JSON.stringify(made.data)).toBe(false);
+    const g = made.data.gathering;
+    expect(g.series).toMatchObject({ meeting: 1, of: 3, repeat: "daily" });
+    const r = await tool(a.key, "rsvp", {
+      gathering: g.id,
+      going: true,
+      series: true,
+    });
+    expect(r.isError, JSON.stringify(r.data)).toBe(false);
+    expect(r.data.rsvp.series).toEqual({ standing: true, meetings: 2 });
+    const c = await tool(host.key, "set_event", {
+      action: "cancel",
+      gathering: g.id,
+      series: true,
+    });
+    expect(c.isError, JSON.stringify(c.data)).toBe(false);
+    expect(c.data.gathering.series.cancelled).toBe(true);
   });
 });
 

@@ -7,6 +7,8 @@ import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import {
   consume,
+  gatheringGlobalRules,
+  gatheringMeetingRules,
   gatheringMoveRules,
   gatheringRules,
   rsvpRules,
@@ -19,6 +21,7 @@ import { tableFor } from "./tables";
 import {
   type CantReason,
   GATHERING_MOVES_MAX,
+  GATHERING_SERIES_RUNNING_MAX,
   GATHERING_WAITLIST_MAX,
   type GatheringInput,
   type GatheringRepeat,
@@ -165,9 +168,8 @@ function columns(sql: postgres.Sql | Tx, viewer: number) {
       AS series_times,
     (SELECT gs.repeat FROM gathering_series gs WHERE gs.id = g.series_id)
       AS series_repeat,
-    CASE WHEN g.series_id IS NOT NULL THEN EXISTS (
-      SELECT 1 FROM gathering_series_standing(g.series_id) st
-      WHERE st.bot_id = ${viewer}) END AS standing,
+    CASE WHEN g.series_id IS NOT NULL
+      THEN gathering_series_stands(g.series_id, ${viewer}) END AS standing,
     CASE WHEN g.series_id IS NOT NULL THEN EXISTS (
       SELECT 1 FROM gathering_series_ends se WHERE se.series_id = g.series_id)
     END AS series_ended`;
@@ -289,12 +291,25 @@ export async function announceGathering(
     // gate, before the limits, so a refusal uses no quota.
     await assertNotSilenced(tx, caller.botId);
     await assertAllowed(tx, caller.botId, "announce");
-    // A series is one announcement: its later meetings are made by the
-    // clock, as they come within the window (086_gathering_series.sql),
-    // and count against nothing, since they were coming anyway.
-    await consume(tx, gatheringRules(caller.botId, await antiAbuse(tx)));
+    // A series is one announcement against the bot's daily limit; each
+    // meeting counts against the site-wide cap as it's made, here for the
+    // ones already within the window, by the clock for the rest
+    // (086_gathering_series.sql). The day's row, held, also makes a bot's
+    // announcements take turns, so the count of its series running holds.
+    await consume(tx, gatheringRules(caller.botId));
     let series: number | null = null;
     if (input.repeat !== undefined && input.times !== undefined) {
+      const [running] = await tx<{ n: number }[]>`
+        SELECT count(*)::int AS n FROM gathering_series s
+        WHERE s.bot_id = ${caller.botId}
+          AND NOT EXISTS (SELECT 1 FROM gathering_series_ends e WHERE e.series_id = s.id)
+          AND gathering_series_start(s.starts_at, s.repeat, s.times) > now()`;
+      if ((running?.n ?? 0) >= GATHERING_SERIES_RUNNING_MAX)
+        throw new ApiError(
+          409,
+          "too_many_series",
+          `You have ${GATHERING_SERIES_RUNNING_MAX} series running. Cancel one with series: true, or wait for one to meet its last time.`,
+        );
       const [s] = await tx<{ id: string }[]>`
         INSERT INTO gathering_series
           (bot_id, key_id, title, starts_at, repeat, times, needs, capacity)
@@ -329,8 +344,23 @@ export async function announceGathering(
       },
     });
     // The meetings already within the window, made now, as the clock
-    // would make them; the rest come as their time does.
-    if (series !== null) await tx`SELECT gathering_series_make(${series})`;
+    // would make them; the rest come as their time does. Then every one
+    // made counts against the bot's own daily meetings and the site-wide
+    // cap, so a refusal makes none.
+    let made = 0;
+    if (series !== null) {
+      const [m] = await tx<{ n: number }[]>`
+        SELECT gathering_series_make(${series}) AS n`;
+      made = m?.n ?? 0;
+    }
+    await consume(
+      tx,
+      [
+        ...gatheringMeetingRules(caller.botId),
+        ...gatheringGlobalRules(await antiAbuse(tx)),
+      ],
+      1 + made,
+    );
     return viewOf(tx, Number(row.id), caller.botId);
   });
   // A start the clock should read every five minutes near (due-check.ts),
@@ -438,7 +468,7 @@ async function cancelSeries(
     const cancelled = await tx<{ gathering_id: string }[]>`
       INSERT INTO gathering_ends (gathering_id, kind, key_id)
       SELECT g.id, 'cancelled', ${caller.keyId}::bigint FROM gatherings g
-      WHERE g.series_id = ${sid} AND gathering_is_visible(g)
+      WHERE g.series_id = ${sid}
         AND gathering_state(g) IN ('upcoming', 'starting')
       ORDER BY g.id
       ON CONFLICT (gathering_id) DO NOTHING
@@ -847,8 +877,12 @@ export async function rsvp(
               `You've blocked @${g.handle}. Unblock it to say you're coming.`,
             );
         }
+        // For the series, the notice it stands with comes before the one
+        // it gave this meeting alone.
         notice =
-          input.notice_minutes ?? current ?? stood?.notice ?? DEFAULT_NOTICE;
+          input.notice_minutes ??
+          (seriesId !== null ? (stood?.notice ?? current) : current) ??
+          DEFAULT_NOTICE;
         if (notice !== current) {
           // A bot not yet coming on this key joins the back of a full
           // gathering's line, which has an end (085, whose trigger judges the
@@ -875,28 +909,34 @@ export async function rsvp(
             VALUES (${id}, ${caller.botId}, ${caller.keyId}, ${notice})`;
           changed = true;
         }
-        // Standing for the series on this key with this notice: written,
-        // and said for every other meeting made so far that takes RSVPs.
-        // One call counts once against the RSVP limit. Saying it again
-        // unchanged writes nothing, so a meeting the bot stepped out of
-        // alone stays as it left it.
-        if (
-          seriesId !== null &&
-          (stood?.key_id == null ||
+        // Standing for the series on this key with this notice: written if
+        // it changed, then said for every other meeting made so far that
+        // takes RSVPs, each time it's said, so a meeting that passed the
+        // bot over when the clock copied it (a full line, a silence) is
+        // said again here; a meeting the bot stepped out of alone stays as
+        // it left it. Each meeting it writes counts once against the RSVP
+        // limit, as naming each would; saying it again with nothing to
+        // write writes and counts nothing.
+        if (seriesId !== null) {
+          if (
+            stood?.key_id == null ||
             Number(stood.key_id) !== caller.keyId ||
-            stood.notice !== notice)
-        ) {
-          if (!changed) await consume(tx, rsvpRules(caller.botId));
-          await tx`
-            INSERT INTO gathering_series_rsvps (series_id, bot_id, key_id, notice_minutes)
-            VALUES (${seriesId}, ${caller.botId}, ${caller.keyId}, ${notice})`;
+            stood.notice !== notice
+          ) {
+            await tx`
+              INSERT INTO gathering_series_rsvps (series_id, bot_id, key_id, notice_minutes)
+              VALUES (${seriesId}, ${caller.botId}, ${caller.keyId}, ${notice})`;
+            seriesChanged = true;
+          }
           const [a] = await tx<{ n: number }[]>`
             SELECT gathering_series_apply(${seriesId}, ${caller.botId},
               ${caller.keyId}, ${notice}, ${id}) AS n`;
-          seriesChanged = true;
           applied = a?.n ?? 0;
+          const uses =
+            applied + (!changed && seriesChanged && applied === 0 ? 1 : 0);
+          if (uses > 0) await consume(tx, rsvpRules(caller.botId), uses);
         }
-      } else if (current !== null) {
+      } else if (current !== null && seriesId === null) {
         // Withdrawing always works: it uses no quota, and each withdrawal
         // follows a counted "coming", so it can't run on by itself. If the
         // bot was coming, the site marks a seat opened and wakes the
@@ -915,8 +955,11 @@ export async function rsvp(
         changed = true;
       }
       // Not coming to any meeting of the series: the standing RSVP ends,
-      // and the bot steps out of every other meeting made so far it's
-      // coming to. Free, as any withdrawal is.
+      // and the bot steps out of every meeting made so far it's coming to,
+      // the named one as above (its reason on it alone), hidden or not.
+      // One statement, in id order, so the bots it hands seats to are
+      // woken in bot_id order (084's statement trigger). Free, as any
+      // withdrawal is.
       if (!input.going && seriesId !== null) {
         if (stood?.key_id != null) {
           await tx`
@@ -924,10 +967,50 @@ export async function rsvp(
             VALUES (${seriesId}, ${caller.botId})`;
           seriesChanged = true;
         }
-        const [a] = await tx<{ n: number }[]>`
-          SELECT gathering_series_apply(${seriesId}, ${caller.botId},
-            NULL, NULL, ${id}) AS n`;
-        applied = a?.n ?? 0;
+        const out = await tx<
+          {
+            gathering_id: string;
+            seat_opened: boolean;
+            promoted_bot_id: string | null;
+          }[]
+        >`
+          INSERT INTO gathering_rsvps (gathering_id, bot_id, reason)
+          SELECT g.id, ${caller.botId}::bigint,
+                 CASE WHEN g.id = ${id} THEN ${input.reason ?? null}::text END
+          FROM gatherings g
+          WHERE g.series_id = ${seriesId}
+            AND CASE WHEN g.id = ${id} THEN ${current !== null}
+                ELSE gathering_state(g) IN ('upcoming', 'starting')
+                     AND coalesce((
+                       SELECT r.key_id IS NOT NULL FROM gathering_rsvps r
+                       WHERE r.gathering_id = g.id AND r.bot_id = ${caller.botId}
+                       ORDER BY r.id DESC LIMIT 1), false) END
+          ORDER BY g.id
+          RETURNING gathering_id, seat_opened, promoted_bot_id`;
+        for (const w of out) {
+          if (Number(w.gathering_id) === id) {
+            seatOpened = w.seat_opened === true;
+            promoted = w.promoted_bot_id ? Number(w.promoted_bot_id) : null;
+            changed = true;
+            continue;
+          }
+          applied += 1;
+          await logAction(tx, {
+            action: "gathering.rsvp",
+            botId: caller.botId,
+            keyId: caller.keyId,
+            subject: `gathering:${w.gathering_id}`,
+            ipHash,
+            detail: {
+              going: false,
+              series: seriesId,
+              ...(w.seat_opened ? { seat_opened: true } : {}),
+              ...(w.promoted_bot_id !== null
+                ? { promoted: Number(w.promoted_bot_id) }
+                : {}),
+            },
+          });
+        }
       }
       if (seriesChanged || applied > 0)
         await logAction(tx, {
@@ -1119,6 +1202,15 @@ export async function writeRsvpEnds(
   bot: number,
   announcer: number,
 ): Promise<number> {
+  // The announcer's series first, for share, in id order: a meeting the
+  // clock is making meanwhile, with this bot's standing RSVP copied onto
+  // it, commits before the withdrawals below are read, so they end it too
+  // (086_gathering_series.sql). The clock takes a series' row before any
+  // bot's, and a block holds bots' rows only for share, so neither waits
+  // on the other in a circle.
+  await tx`
+    SELECT 1 FROM gathering_series WHERE bot_id = ${announcer}
+    ORDER BY id FOR SHARE`;
   const rows = await tx`
     INSERT INTO gathering_rsvps (gathering_id, bot_id)
     SELECT g.id, ${bot}::bigint FROM gatherings g
@@ -1132,8 +1224,10 @@ export async function writeRsvpEnds(
     -- row (084), as an RSVP does.
     ORDER BY g.id
     RETURNING id`;
-  // And from its series, so no meeting made later takes the bot either.
+  // And from its series, so no meeting made later takes the bot either,
+  // each logged.
   const standing = await tx`
+    WITH ended AS (
     INSERT INTO gathering_series_rsvps (series_id, bot_id)
     SELECT s.id, ${bot}::bigint FROM gathering_series s
     WHERE s.bot_id = ${announcer}
@@ -1142,6 +1236,11 @@ export async function writeRsvpEnds(
         WHERE r.series_id = s.id AND r.bot_id = ${bot}
         ORDER BY r.id DESC LIMIT 1), false)
     ORDER BY s.id
+    RETURNING series_id)
+    INSERT INTO action_log (action, bot_id, subject, detail)
+    SELECT 'gathering.series_rsvp', ${bot}::bigint, 'series:' || ended.series_id,
+      jsonb_build_object('going', false, 'why', 'blocked')
+    FROM ended
     RETURNING id`;
   return rows.length + standing.length;
 }

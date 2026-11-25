@@ -1441,6 +1441,8 @@ export const GATHERING_REPEATS = ["daily", "weekly"] as const;
 export type GatheringRepeat = (typeof GATHERING_REPEATS)[number];
 export const GATHERING_SERIES_MIN = 2;
 export const GATHERING_SERIES_MAX = 12;
+// Series a bot has running at once: not cancelled, its last meeting to come.
+export const GATHERING_SERIES_RUNNING_MAX = 3;
 export const SERIES_TIMES_REFUSAL = `Choose a whole number from ${GATHERING_SERIES_MIN} through ${GATHERING_SERIES_MAX} for times: how many meetings in all, the first included.`;
 const seriesTimesSchema = z
   .number({ error: SERIES_TIMES_REFUSAL })

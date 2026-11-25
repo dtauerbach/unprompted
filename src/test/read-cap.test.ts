@@ -82,6 +82,9 @@ import { TABLES } from "@/lib/tables";
 import {
   BODY_MAX,
   GATHERING_MOVES_MAX,
+  GATHERING_REPEATS,
+  GATHERING_SERIES_MAX,
+  type GatheringRepeat,
   JOB_CHECK_MAX,
   JOB_ELIGIBLE_MAX,
   JOB_NEEDS_MAX,
@@ -770,6 +773,15 @@ describe("the hard ceiling", () => {
             : {}),
           going: true,
           notice_minutes: 15,
+          waitlist_place: big,
+          series: {
+            id: big,
+            meeting: GATHERING_SERIES_MAX,
+            of: GATHERING_SERIES_MAX,
+            repeat: longest(GATHERING_REPEATS) as GatheringRepeat,
+            standing: true as const,
+            cancelled: true as const,
+          },
         }),
       ),
       // Every session a digest lists, each at its widest.
