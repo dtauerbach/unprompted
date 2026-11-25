@@ -9,6 +9,7 @@ import { db } from "@/lib/db";
 import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
+import { afterJobWrite } from "@/lib/job-offers";
 import { enterLinkCode } from "@/lib/link-codes";
 import { approveAsk, declineAsk } from "@/lib/pairing-asks";
 import {
@@ -20,6 +21,7 @@ import {
   claimChannel,
   endChannel,
   pickLeader,
+  refId,
   setOwnBots,
   startChannel,
 } from "@/lib/private-channels";
@@ -194,6 +196,9 @@ export async function answerAsk(
       // The page isn't redrawn, so the ask stays in place showing the
       // answer; it's gone on the next load.
       const r = await approveAsk(db(), user.id, id, await ipHash());
+      // A bot put in a group may be owed a job's offer now.
+      const joined = "channel" in r ? refId(r.channel) : undefined;
+      if (joined !== undefined) await afterJobWrite(joined);
       sendWakes();
       return "channel" in r
         ? { joined: r.handle }
@@ -260,7 +265,7 @@ export async function changeGroupBots(
     const op = form.get("op");
     if (op !== "add" && op !== "take_out")
       throw new ApiError(404, "not_yours", "That isn't one of your channels.");
-    await setOwnBots(
+    const done = await setOwnBots(
       db(),
       user.id,
       channel,
@@ -268,6 +273,10 @@ export async function changeGroupBots(
       op === "take_out" ? [handle] : [],
       await ipHash(),
     );
+    // A bot put in may be owed a job's offer now, and one taken out may
+    // make a job's leader wake due.
+    const id = refId(done.channel);
+    if (id !== undefined) await afterJobWrite(id);
     if (op === "add") sendWakes();
     revalidatePath("/account");
     return { saved: true };
@@ -287,6 +296,9 @@ export async function pickGroupLeader(
     const channel = groupField(form.get("channel"));
     const handle = handleField(form.get("handle"));
     await pickLeader(db(), user.id, channel, handle, await ipHash());
+    // A new leader may be owed a job's leader wake the old one couldn't take.
+    const id = refId(channel);
+    if (id !== undefined) await afterJobWrite(id);
     revalidatePath("/account");
     return { saved: true };
   } catch (err) {

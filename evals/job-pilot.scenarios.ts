@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, register } from "./client";
 import { tool } from "./group-channels.scenarios";
 import { linkByCode } from "./humans.scenarios";
-import { lapseJob, MODERATOR } from "./moderator";
+import { ageJobOffers, lapseJob, MODERATOR } from "./moderator";
 
 // The job board's pilot script (B4e, Dot's R184 cases with R215's
 // given/when/then), against what the site has today: a leader L posts J and
@@ -356,6 +356,66 @@ export function jobPilotScenarios(): void {
       for (let i = 0; i < 2; i += 1) await get("/v1/clock");
       expect(await wake(s.cy)).toBe(cyBefore + 1);
       expect(await wake(s.ana)).toBe(anaBefore);
+    });
+    it("case 6: a job nobody takes wakes the leader once, and only the leader reads no_taker", async () => {
+      const s = await group();
+      // K may go to C alone, who never claims it.
+      const k = await job(s.lea, s.g, {
+        title: "Check the links",
+        body: "Every link in the outline.",
+        check: "None broken.",
+        eligible: [s.cy.handle],
+      });
+      expect(k.isError, JSON.stringify(k.data)).toBe(false);
+      const K = k.data.job.number as number;
+      expect(await actionable(s.cy, s.g)).toEqual([[K, "offered"]]);
+      const leaBefore = await wake(s.lea);
+      const boBefore = await wake(s.bo);
+      const cyBefore = await wake(s.cy);
+      // Before C's window is over, nothing wakes the leader.
+      for (let i = 0; i < 2; i += 1) await get("/v1/clock");
+      expect(await wake(s.lea)).toBe(leaBefore);
+      // C's window passes; the next write in the channel runs a pass: the
+      // leader posts L for B.
+      ageJobOffers(s.g, K);
+      const l = await job(s.lea, s.g, {
+        title: "Name it",
+        body: "A title for the outline.",
+        check: "One line.",
+        eligible: [s.bo.handle],
+      });
+      expect(l.isError, JSON.stringify(l.data)).toBe(false);
+      const L = l.data.job.number as number;
+      expect(await wake(s.lea)).toBe(leaBefore + 1);
+      expect(await wake(s.bo)).toBe(boBefore + 1);
+      expect(await wake(s.cy)).toBe(cyBefore);
+      const lead = await board(s.lea, s.g);
+      expect(
+        lead.map((j) => [j.number, (j as { no_taker?: true }).no_taker]),
+      ).toEqual([
+        [K, true],
+        [L, undefined],
+      ]);
+      for (const who of [s.ana, s.bo, s.cy])
+        for (const j of await board(who, s.g))
+          expect((j as { no_taker?: true }).no_taker).toBeUndefined();
+      // Once an episode, however many passes run.
+      ageJobOffers(s.g, K);
+      for (let i = 0; i < 3; i += 1) await get("/v1/clock");
+      await job(s.lea, s.g, {
+        title: "Spell-check it",
+        body: "The outline.",
+        check: "No typos.",
+        eligible: [s.ana.handle],
+      });
+      expect(await wake(s.lea)).toBe(leaBefore + 1);
+      // C claims after all: no_taker goes.
+      const c = await job(s.cy, s.g, { number: K, move: "claim", if_seq: 0 });
+      expect(c.isError, JSON.stringify(c.data)).toBe(false);
+      const after = await board(s.lea, s.g);
+      expect(
+        (after.find((j) => j.number === K) as { no_taker?: true }).no_taker,
+      ).toBeUndefined();
     });
     it.todo(
       "case 4: a worker who can't read the exact pin gets its own blocker and another can claim (needs the access check from B4c)",

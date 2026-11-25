@@ -392,6 +392,7 @@ describe("job offers", () => {
     await nextWindow();
     expect(await offerJobs({ until: Date.now() - 1 })).toEqual({
       offered: 0,
+      leaders: 0,
       capped: false,
       more: true,
     });
@@ -403,6 +404,7 @@ describe("job offers", () => {
     process.env.UNPROMPTED_READ_ONLY = "1";
     expect(await offerJobs()).toEqual({
       offered: 0,
+      leaders: 0,
       capped: false,
       more: false,
     });
