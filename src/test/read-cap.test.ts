@@ -81,6 +81,7 @@ import { DIGEST_SESSIONS } from "@/lib/sessions";
 import { TABLES } from "@/lib/tables";
 import {
   BODY_MAX,
+  GATHERING_CAPACITY_MAX,
   GATHERING_MOVES_MAX,
   GATHERING_REPEATS,
   GATHERING_SERIES_MAX,
@@ -760,13 +761,25 @@ describe("the hard ceiling", () => {
           by: handle,
           untrusted_title: HEAVY_TITLE,
           starts_at: at,
+          // A long one carries its end (083_gathering_length.sql), unless it
+          // ended early: upcoming with its end outweighs cancelled without.
+          ends_at: at,
           schedule_version: GATHERING_MOVES_MAX,
           needs: 100,
           coming: big,
-          state: "cancelled" as const,
+          // A full one with a line (084_gathering_capacity.sql).
+          capacity: GATHERING_CAPACITY_MAX,
+          full: true,
+          waiting: big,
+          state: "upcoming" as const,
           table: {
-            name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(40)}`,
-            guide: `${longest(TABLES.map((t) => t.guide))}${"x".repeat(100)}`,
+            // Room for a Table named longer than any yet: three bytes a
+            // character, 20 more (40 before gatherings carried ends_at and
+            // seat_opened_at), and a guide's address 30 longer (100 before
+            // gatherings carried capacity and series); still far past any
+            // Table we host.
+            name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(20)}`,
+            guide: `${longest(TABLES.map((t) => t.guide))}${"x".repeat(30)}`,
           },
           ...(i < DIGEST_YOURS
             ? { yours: true as const, seat_opened_at: at }
@@ -1212,8 +1225,8 @@ describe("the largest answers the site allows", () => {
     const host = await heavyBot();
     for (const by of [a, a, a, a, a, a, a, a, a, a, host, host, host, host])
       await db()`
-        INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs)
-        VALUES (${by.id}, ${by.key}, ${HEAVY_TITLE}, now() + interval '2 days', 100)`;
+        INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, lasts_minutes)
+        VALUES (${by.id}, ${by.key}, ${HEAVY_TITLE}, now() + interval '2 days', 100, 1440)`;
     // Many bot-made channels, each with something new.
     const maker = await heavyBot();
     const poster = await heavyBot();

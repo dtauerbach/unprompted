@@ -20,6 +20,8 @@ import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
 import {
   type CantReason,
+  GATHERING_LASTS_MAX,
+  GATHERING_LASTS_MIN,
   GATHERING_MOVES_MAX,
   GATHERING_SERIES_RUNNING_MAX,
   GATHERING_WAITLIST_MAX,
@@ -46,23 +48,30 @@ import { type WokenBy, wokenBy } from "./woken";
 export const ANNOUNCE_MIN_MINUTES = 15;
 export const ANNOUNCE_MAX_DAYS = 7;
 // A gathering is starting from the most notice a bot can ask for before it,
-// until this long after; then it's over.
+// until this long after; then it's running until its end, or over if it
+// ends then (083_gathering_length.sql).
 export const STARTING_MINUTES = 15;
 export const OVER_MINUTES = 30;
+// How long a gathering lasts: OVER_MINUTES, unless its announcer says, up
+// to a day. The CHECK on gatherings.lasts_minutes names the same numbers.
+export const LASTS_MIN_MINUTES = GATHERING_LASTS_MIN;
+export const LASTS_MAX_MINUTES = GATHERING_LASTS_MAX;
 export const DEFAULT_NOTICE = 10;
 export const MOVES_MAX = GATHERING_MOVES_MAX;
 // What's new lists up to DIGEST_YOURS of your own and ones you're coming
-// to, then this many of the soonest others. Nine, not ten, since a moved
-// gathering carries schedule_version: at the largest the site allows, the
-// digest must still leave room for a post, a message and a group
-// (src/test/read-cap.test.ts).
+// to, then this many of the soonest others. Eight: ten until a moved
+// gathering carried schedule_version, nine until one carried its seats and
+// its series. At the largest the site allows, the digest must still leave
+// room for a post, a message and a group (src/test/read-cap.test.ts);
+// list_gatherings lists the rest.
 export const DIGEST_OTHERS = 3;
-export const DIGEST_YOURS = 9;
+export const DIGEST_YOURS = 8;
 export const LIST_MAX = 100;
 
 export const GATHERING_STATES = [
   "upcoming",
   "starting",
+  "running",
   "cancelled",
   "short",
   "over",
@@ -82,6 +91,8 @@ export type GatheringView = {
   // How many times its announcer moved it, once it has; starts_at is the
   // time in force.
   schedule_version?: number;
+  // When it ends, for one that lasts longer than OVER_MINUTES.
+  ends_at?: Date;
   needs: number | null;
   coming: number;
   // With a capacity (084): how many seats, whether they're all taken, and
@@ -101,7 +112,7 @@ export type GatheringView = {
   // On yours: when a seat last opened up, to the minute (079). Never who
   // or why.
   seat_opened_at?: Date;
-  // A meeting of a gathering that meets more than once (086): which one, of
+  // A meeting of a gathering that meets more than once (087): which one, of
   // how many, how far apart; with a key, whether your RSVP stands for the
   // whole series; and whether its announcer cancelled what was left of it.
   series?: {
@@ -119,6 +130,8 @@ type Row = {
   handle: string;
   title: string;
   starts_at: Date;
+  ends_at: Date;
+  lasts: number;
   version: number;
   needs: number | null;
   state: GatheringState;
@@ -143,6 +156,7 @@ type Row = {
 function columns(sql: postgres.Sql | Tx, viewer: number) {
   return sql`
     g.id, b.handle, g.title, gathering_start(g) AS starts_at,
+    gathering_end(g) AS ends_at, g.lasts_minutes AS lasts,
     gathering_version(g) AS version, g.needs, gathering_state(g) AS state,
     (SELECT count(*)::int FROM gathering_attendees(g.id)) AS coming,
     g.capacity,
@@ -183,6 +197,7 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
     untrusted_title: r.title,
     starts_at: r.starts_at,
     ...(r.version > 0 ? { schedule_version: r.version } : {}),
+    ...(r.lasts > OVER_MINUTES ? { ends_at: r.ends_at } : {}),
     needs: r.needs,
     coming: r.coming,
     ...(r.capacity !== null
@@ -294,7 +309,7 @@ export async function announceGathering(
     // A series is one announcement against the bot's daily limit; each
     // meeting counts against the site-wide cap as it's made, here for the
     // ones already within the window, by the clock for the rest
-    // (086_gathering_series.sql). The day's row, held, also makes a bot's
+    // (087_gathering_series.sql). The day's row, held, also makes a bot's
     // announcements take turns, so the count of its series running holds.
     await consume(tx, gatheringRules(caller.botId));
     let series: number | null = null;
@@ -312,21 +327,23 @@ export async function announceGathering(
         );
       const [s] = await tx<{ id: string }[]>`
         INSERT INTO gathering_series
-          (bot_id, key_id, title, starts_at, repeat, times, needs, capacity)
+          (bot_id, key_id, title, starts_at, repeat, times, needs, capacity,
+           lasts_minutes)
         VALUES (${caller.botId}, ${caller.keyId}, ${input.title},
                 ${input.starts_at}::timestamptz, ${input.repeat}, ${input.times},
-                ${input.needs ?? null}, ${input.capacity ?? null})
+                ${input.needs ?? null}, ${input.capacity ?? null},
+                ${input.lasts_minutes ?? OVER_MINUTES})
         RETURNING id`;
       if (!s) throw new Error("series insert returned nothing");
       series = Number(s.id);
     }
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity,
-                              series_id, occurrence)
+                              lasts_minutes, series_id, occurrence)
       VALUES (${caller.botId}, ${caller.keyId}, ${input.title},
               ${input.starts_at}::timestamptz, ${input.needs ?? null},
-              ${input.capacity ?? null}, ${series},
-              ${series === null ? null : 1})
+              ${input.capacity ?? null}, ${input.lasts_minutes ?? OVER_MINUTES},
+              ${series}, ${series === null ? null : 1})
       RETURNING id`;
     if (!row) throw new Error("gathering insert returned nothing");
     await logAction(tx, {
@@ -341,6 +358,7 @@ export async function announceGathering(
         ...(series !== null
           ? { series, repeat: input.repeat, times: input.times }
           : {}),
+        lasts_minutes: input.lasts_minutes ?? OVER_MINUTES,
       },
     });
     // The meetings already within the window, made now, as the clock
@@ -403,6 +421,14 @@ export async function cancelGathering(
         409,
         "gathering_over",
         "That gathering is over, so there's nothing to cancel.",
+      );
+    // A long one stays open past its first half hour, but bots are at it
+    // by then: it can't be called off under them (083_gathering_length.sql).
+    if (state === "running")
+      throw new ApiError(
+        409,
+        "gathering_started",
+        "That gathering is under way, so it can't be cancelled.",
       );
     if (state === "cancelled" || state === "short")
       return { gathering: await viewOf(tx, id, caller.botId), changed: false };
@@ -644,8 +670,10 @@ export async function moveGathering(
   };
 }
 
-// Gatherings anyone can see that aren't over, soonest first. Cancelled ones
-// stay listed until their time, so a bot that said it's coming finds out.
+// Gatherings anyone can see that aren't over, soonest first, a long one
+// until its end. One that ended early (cancelled, or short) stays listed
+// until 30 minutes after its start, however long it was to last, so a bot
+// that said it's coming finds out, and no longer.
 export async function listGatherings(
   sql: postgres.Sql | Tx,
   viewer: number | undefined,
@@ -653,8 +681,11 @@ export async function listGatherings(
 ): Promise<{ gatherings: GatheringView[]; more: boolean }> {
   const rows = await sql<Row[]>`
     SELECT ${columns(sql, viewer ?? 0)}
-    FROM ${startingFrom(sql, OVER_MINUTES)}
+    FROM ${startingFrom(sql, LASTS_MAX_MINUTES)}
     WHERE gathering_is_visible(g)
+      AND t.starts_at + make_interval(mins => CASE
+        WHEN EXISTS (SELECT 1 FROM gathering_ends e WHERE e.gathering_id = g.id)
+        THEN ${OVER_MINUTES} ELSE g.lasts_minutes END) > now()
     ORDER BY t.starts_at, g.id
     LIMIT ${limit + 1}`;
   return {
@@ -680,7 +711,7 @@ export type RsvpResult = {
     next_visit?: NextVisit;
     // Why you're not coming, if you said: yours alone.
     reason?: CantReason;
-    // With series (086): whether your RSVP now stands for the whole series,
+    // With series (087): whether your RSVP now stands for the whole series,
     // and how many of its other meetings made so far this call changed.
     series?: { standing: boolean; meetings: number };
     // It's full: your place in line for a seat, 1 first (084).
@@ -768,7 +799,7 @@ export async function rsvp(
       // The bot's own row before the gathering's, as the insert's frozen
       // check takes it: a freeze or a revoked key holds the bot's or the
       // key's row and then the gathering's, to hand on a seat
-      // (085_seat_release.sql), so taking them the other way could deadlock.
+      // (086_seat_release.sql), so taking them the other way could deadlock.
       await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
       // Then the caller's key, which a revoke or a rotation holds while it
       // hands the key's seats on: an RSVP that waited on it finds the key
@@ -780,7 +811,7 @@ export async function rsvp(
         throw new ApiError(401, "invalid_key", "That key was revoked.");
       // For a series: its row, then every meeting made so far in id order,
       // the named one among them, before anything else of the gathering's
-      // (086_gathering_series.sql). A cancel of the series and the clock's
+      // (087_gathering_series.sql). A cancel of the series and the clock's
       // making a meeting take the series' row first too.
       let seriesId: number | null = null;
       if (input.series) {
@@ -862,7 +893,11 @@ export async function rsvp(
       if (input.going) {
         await assertNotSilenced(tx, caller.botId);
         await assertAllowed(tx, caller.botId, "rsvp");
-        if (g.state !== "upcoming" && g.state !== "starting")
+        if (
+          g.state !== "upcoming" &&
+          g.state !== "starting" &&
+          g.state !== "running"
+        )
           throw closed(g.state);
         // Under the pair's lock, taken above, so a block can't cross the
         // RSVP. Only the caller's own block counts: the announcer's changes
@@ -885,7 +920,7 @@ export async function rsvp(
           DEFAULT_NOTICE;
         if (notice !== current) {
           // A bot not yet coming on this key joins the back of a full
-          // gathering's line, which has an end (085, whose trigger judges the
+          // gathering's line, which has an end (086, whose trigger judges the
           // same way). One already in it, or seated, on this key keeps its
           // place, so changing its notice always works; one that changes
           // nothing writes nothing, and isn't refused.
@@ -1196,7 +1231,8 @@ export async function rsvp(
 
 // A bot that blocks another stops coming to its gatherings, for good:
 // unblocking doesn't bring the RSVPs back. Inside setBlocked's transaction,
-// which holds the pair's lock. Only gatherings not yet over.
+// which holds the pair's lock. Only gatherings not yet over, a long one
+// until its end.
 export async function writeRsvpEnds(
   tx: Tx,
   bot: number,
@@ -1205,7 +1241,7 @@ export async function writeRsvpEnds(
   // The announcer's series first, for share, in id order: a meeting the
   // clock is making meanwhile, with this bot's standing RSVP copied onto
   // it, commits before the withdrawals below are read, so they end it too
-  // (086_gathering_series.sql). The clock takes a series' row before any
+  // (087_gathering_series.sql). The clock takes a series' row before any
   // bot's, and a block holds bots' rows only for share, so neither waits
   // on the other in a circle.
   await tx`
@@ -1215,7 +1251,7 @@ export async function writeRsvpEnds(
     INSERT INTO gathering_rsvps (gathering_id, bot_id)
     SELECT g.id, ${bot}::bigint FROM gatherings g
     WHERE g.bot_id = ${announcer}
-      AND gathering_start(g) > now() - make_interval(mins => ${OVER_MINUTES})
+      AND gathering_end(g) > now()
       AND coalesce((
         SELECT r.key_id IS NOT NULL FROM gathering_rsvps r
         WHERE r.gathering_id = g.id AND r.bot_id = ${bot}
@@ -1246,7 +1282,8 @@ export async function writeRsvpEnds(
 }
 
 // For what's new: gatherings you announced or are coming to, from the last
-// day on, then the soonest few others still to come from bots you haven't
+// day on (or a running one, however long ago it started), then the soonest
+// few others not over, a running one included, from bots you haven't
 // blocked. A starting one explains a risen wake number.
 export async function digestGatherings(
   sql: postgres.Sql | Tx,
@@ -1254,16 +1291,18 @@ export async function digestGatherings(
 ): Promise<GatheringView[]> {
   const candidates = await sql<Row[]>`
     SELECT ${columns(sql, me)}
-    FROM ${startingFrom(sql, 24 * 60)}
+    FROM ${startingFrom(sql, LASTS_MAX_MINUTES)}
     WHERE gathering_is_visible(g)
       AND (g.bot_id = ${me} OR g.id IN (
         SELECT r.gathering_id FROM gathering_rsvps r
         WHERE r.bot_id = ${me} AND r.key_id IS NOT NULL
           AND r.created_at > now() - make_interval(days => ${ANNOUNCE_MAX_DAYS * (MOVES_MAX + 1) + 1})))
     ORDER BY t.starts_at, g.id`;
-  // Ones still to come or starting first, so a day of old ones can't crowd
-  // out the one about to begin; each part soonest first.
-  const live = (r: Row) => r.state === "upcoming" || r.state === "starting";
+  // Ones still to come, starting or running first, so a day of old ones
+  // can't crowd out the one about to begin or under way; each part soonest
+  // first.
+  const live = (r: Row) =>
+    r.state === "upcoming" || r.state === "starting" || r.state === "running";
   const mineOrGoing = candidates.filter(
     (r) => r.mine || r.notice !== null || r.waiting_place !== null,
   );
@@ -1274,9 +1313,10 @@ export async function digestGatherings(
   const ids = yours.map((r) => r.id);
   const others = await sql<Row[]>`
     SELECT ${columns(sql, me)}
-    FROM ${startingFrom(sql, OVER_MINUTES)}
+    FROM ${startingFrom(sql, LASTS_MAX_MINUTES)}
     WHERE gathering_is_visible(g)
       AND NOT EXISTS (SELECT 1 FROM gathering_ends e WHERE e.gathering_id = g.id)
+      AND t.starts_at + make_interval(mins => g.lasts_minutes) > now()
       AND g.bot_id <> ${me}
       AND g.id <> ALL(${ids}::bigint[])
       AND NOT has_blocked(${me}, g.bot_id)

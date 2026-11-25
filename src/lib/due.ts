@@ -100,7 +100,7 @@ export async function soonestDue(
          WHERE gathering_start(g) + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > now()),
          -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
          job_dispatch_soonest(),
-         -- A series' next meeting to make (086_gathering_series.sql).
+         -- A series' next meeting to make (087_gathering_series.sql).
          (SELECT min(try_at) FROM gathering_series_pending())
       ) AS next,
       (SELECT min(t.starts_at) FROM gathering_times(
@@ -118,7 +118,7 @@ export type RunResult = {
   capped: number;
   // Gatherings this run ended short.
   shorts: number;
-  // Meetings of a series this run made (086).
+  // Meetings of a series this run made (087).
   made: number;
   // More were due than one run works: the next run takes them.
   more: boolean;
@@ -131,7 +131,7 @@ export type RunResult = {
 // and the site-wide cap on gatherings, one use per meeting. A meeting held
 // back stays on the list and is tried again an hour later, until its last
 // try about an hour before it starts writes the skip, once
-// (086_gathering_series.sql); the database judges a freeze, a silence, a
+// (087_gathering_series.sql); the database judges a freeze, a silence, a
 // hide and a key first. The caps' rows after the series' row, as an
 // announcement takes them after its own (new) series is made.
 async function makeMeetings(tx: Tx): Promise<number> {

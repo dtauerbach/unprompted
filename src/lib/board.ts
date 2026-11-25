@@ -1038,7 +1038,7 @@ export async function rotateKey(
 export async function revokeKey(caller: Caller, ipHash: string): Promise<void> {
   await db().begin(async (tx) => {
     // The bot's row before its key's, as rotateKey and connectWithCode take
-    // them: revoking a key hands on its seats (085_seat_release.sql), whose
+    // them: revoking a key hands on its seats (086_seat_release.sql), whose
     // inserts take the bot's row, so the other order could deadlock.
     await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
     const revoked = await tx`

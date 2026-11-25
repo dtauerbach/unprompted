@@ -1429,12 +1429,12 @@ export const GATHERING_NEEDS_MAX = 100;
 // 084_gathering_capacity.sql names the same number).
 export const GATHERING_CAPACITY_MAX = 1000;
 // How many bots may wait for a seat at once (gathering_waitlist_max() in
-// 085_seat_release.sql names the same number).
+// 086_seat_release.sql names the same number).
 export const GATHERING_WAITLIST_MAX = 100;
 // How many times a gathering may move (gathering_moves_max() in
 // 077_gathering_schedules.sql names the same number).
 export const GATHERING_MOVES_MAX = 3;
-// A gathering that meets more than once (086_gathering_series.sql): how far
+// A gathering that meets more than once (087_gathering_series.sql): how far
 // apart its meetings are, and how many in all, here alone; the SQL names the
 // same steps (24 and 168 hours) and bounds.
 export const GATHERING_REPEATS = ["daily", "weekly"] as const;
@@ -1458,6 +1458,11 @@ const seriesMessage = {
   message:
     "give repeat and times together, for a gathering that meets more than once",
 };
+// How long a gathering lasts (083_gathering_length.sql's CHECK names the
+// same numbers): 30 minutes, the default, to a day.
+export const GATHERING_LASTS_MIN = 30;
+export const GATHERING_LASTS_MAX = 24 * 60;
+export const LASTS_REFUSAL = `Choose a whole number from ${GATHERING_LASTS_MIN} through ${GATHERING_LASTS_MAX.toLocaleString("en-US")} for lasts_minutes: how long the gathering lasts from its start.`;
 
 export const gatheringSchema = z.strictObject({
   title: titleSchema,
@@ -1473,6 +1478,12 @@ export const gatheringSchema = z.strictObject({
   // To meet more than once: how far apart, and how many meetings in all.
   repeat: repeatSchema.optional(),
   times: seriesTimesSchema.optional(),
+  lasts_minutes: z
+    .number({ error: LASTS_REFUSAL })
+    .int({ error: LASTS_REFUSAL, abort: true })
+    .min(GATHERING_LASTS_MIN, { error: LASTS_REFUSAL })
+    .max(GATHERING_LASTS_MAX, { error: LASTS_REFUSAL })
+    .optional(),
 });
 export const announceSchema = gatheringSchema.refine(
   seriesTogether,
@@ -1775,7 +1786,7 @@ export const updateChannelToolSchema = z
 //   declines, true takes a decline back; notice_minutes how long before
 //   each occurrence you're woken; with event and occurrence (as due names
 //   a meeting), coming answers that one meeting alone (EV18);
-// - announce: a gathering (title, starts_at, needs, capacity);
+// - announce: a gathering (title, starts_at, needs, capacity, lasts_minutes);
 // - cancel: a gathering you announced (gathering);
 // - move: a gathering you announced, to a new start (gathering, starts_at,
 //   and if_schedule_version to move only the schedule you read).
@@ -1826,7 +1837,15 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
     "event",
     "occurrence",
   ],
-  announce: ["title", "starts_at", "needs", "capacity", "repeat", "times"],
+  announce: [
+    "title",
+    "starts_at",
+    "needs",
+    "capacity",
+    "lasts_minutes",
+    "repeat",
+    "times",
+  ],
   cancel: ["gathering", "series"],
   move: ["gathering", "starts_at", "if_schedule_version"],
 };
@@ -1856,6 +1875,7 @@ export const setEventSchema = z
     capacity: gatheringSchema.shape.capacity,
     repeat: repeatSchema.optional(),
     series: z.literal(true).optional(),
+    lasts_minutes: gatheringSchema.shape.lasts_minutes,
     gathering: idSchema.optional(),
     if_schedule_version: scheduleVersionSchema.optional(),
     // EV18: one meeting of the session in force, as due names it.

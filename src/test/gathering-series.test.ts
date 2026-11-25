@@ -19,7 +19,7 @@ import { forgetDueMinute } from "@/lib/due-check";
 import { RSVP_NOTES } from "@/lib/gatherings";
 import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
-// A gathering that meets more than once (EV4, 086_gathering_series.sql).
+// A gathering that meets more than once (EV4, 087_gathering_series.sql).
 // The announcer says how far apart (daily or weekly) and how many times;
 // each meeting is a gathering of its own, made once it's within the
 // announcement window, at the announcement or by the clock. One RSVP with
@@ -193,6 +193,45 @@ describe("announcing a series", () => {
     const makes = await db()`
       SELECT 1 FROM action_log WHERE action = 'gathering.series_make'`;
     expect(makes.length).toBe(2);
+  });
+
+  it("gives every meeting the series' length, at the announcement and from the clock", async () => {
+    const host = await trusted("host");
+    const res = await announce(host, {
+      title: "Long jam",
+      starts_at: ahead(60),
+      repeat: "daily",
+      times: 3,
+      lasts_minutes: 180,
+    });
+    expect(res.status).toBe(201);
+    const sid = res.body.gathering.series.id as number;
+    expect([...(await meetings(sid)).keys()]).toEqual([1, 2, 3]);
+    // Each meeting says when it ends, as a long gathering of its own does.
+    const list = await call(listRoute, { path: "/v1/gatherings" });
+    expect(list.body.gatherings).toHaveLength(3);
+    for (const g of list.body.gatherings as {
+      starts_at: string;
+      ends_at: string;
+    }[])
+      expect(
+        new Date(g.ends_at).getTime() - new Date(g.starts_at).getTime(),
+      ).toBe(180 * 60_000);
+    // The clock writes the same length into a meeting it makes itself.
+    const other = await trusted("other");
+    const [s2] = await db()<{ id: string }[]>`
+      INSERT INTO gathering_series
+        (bot_id, key_id, title, starts_at, repeat, times, lasts_minutes, created_at)
+      SELECT b.id, k.id, 'Standup', now() - interval '6 days' + interval '1 hour',
+             'daily', 12, 240, now() - interval '6 days'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${other.handle}
+      RETURNING id`;
+    await workDue();
+    const rows = await db()<{ lasts_minutes: number }[]>`
+      SELECT lasts_minutes FROM gatherings WHERE series_id = ${Number(s2?.id)}`;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.lasts_minutes === 240)).toBe(true);
   });
 
   it("makes a weekly series' later meetings only as they come within the window", async () => {
@@ -911,6 +950,42 @@ describe("a standing RSVP's details", () => {
       SELECT detail FROM action_log WHERE action = 'gathering.series_rsvp'
         AND detail->>'why' = 'key'`;
     expect(logs.length).toBe(1);
+  });
+
+  it("writes a standing RSVP into a meeting under way, not only the ones to come", async () => {
+    const host = await trusted("host");
+    const guest = await register("guest");
+    // A daily series of two whose first meeting started an hour ago and
+    // lasts three, so it's running and still takes RSVPs.
+    const [s] = await db()<{ id: string }[]>`
+      INSERT INTO gathering_series
+        (bot_id, key_id, title, starts_at, repeat, times, lasts_minutes, created_at)
+      SELECT b.id, k.id, 'Long jam', now() - interval '60 minutes', 'daily', 2,
+             180, now() - interval '1 day'
+      FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
+      WHERE b.handle = ${host.handle}
+      RETURNING id`;
+    const sid = Number(s?.id);
+    // From the series' own row, so each meeting is at the series' time for
+    // it to the millisecond.
+    await db()`
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, lasts_minutes,
+                              series_id, occurrence, created_at)
+      SELECT x.bot_id, k.id, x.title,
+             gathering_series_start(x.starts_at, x.repeat, n), x.lasts_minutes,
+             x.id, n, now() - interval '1 day'
+      FROM gathering_series x
+      JOIN api_keys k ON k.bot_id = x.bot_id AND k.revoked_at IS NULL
+      CROSS JOIN generate_series(1, 2) AS n
+      WHERE x.id = ${sid}`;
+    const made = await meetings(sid);
+    const running = made.get(1) as number;
+    const next = made.get(2) as number;
+    const res = await rsvp(guest, next, { going: true, series: true });
+    expect(res.status).toBe(200);
+    expect(res.body.rsvp.series).toMatchObject({ standing: true });
+    expect(await coming(guest, running)).toBe(true);
+    expect(await coming(guest, next)).toBe(true);
   });
 
   it("keeps the series' notice over the one a meeting had alone", async () => {

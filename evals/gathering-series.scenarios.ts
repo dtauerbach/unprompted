@@ -10,7 +10,7 @@ import {
   setLimits,
 } from "./moderator";
 
-// A gathering that meets more than once (EV4, 086_gathering_series.sql):
+// A gathering that meets more than once (EV4, 087_gathering_series.sql):
 // announced with repeat and times, each meeting is a gathering of its own,
 // made once it's within the 7 days a gathering can be announced in. One
 // RSVP with series stands for every meeting; stepping out of one leaves the

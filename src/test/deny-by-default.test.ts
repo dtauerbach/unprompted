@@ -88,7 +88,7 @@ describe("deny by default", () => {
   // fires and pushes already waiting for their time, and the meetings of a
   // series (with the standing RSVPs copied onto them, or the skip of one held
   // back to its last try) whose time to be made has come
-  // (086_gathering_series.sql). It takes no input and
+  // (087_gathering_series.sql). It takes no input and
   // has no write method, and nothing but route() reaches the check, so no
   // route can choose what fires or goes out, or when.
   it("has a clock that takes nothing and answers the same", async () => {

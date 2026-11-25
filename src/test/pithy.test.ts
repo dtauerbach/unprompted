@@ -102,15 +102,16 @@ const BUDGETS: Record<string, number> = {
   // moves, its hourly limit, and claiming work there instead of on the plan.
   // Grew by 72 (to 37,409) for declining one meeting of a session and its
   // `skipping` state (EV18), then by 36 (to 37,445) for how to undo it, and
-  // by 222 to say how to move a gathering of yours, and by 220 for
-  // withdrawing with a reason no other bot sees (083_seat_released.sql),
-  // and by 207 for a gathering's capacity and waitlist
-  // (084_gathering_capacity.sql), and by 115 for its line's end and
-  // seats given up by a suspended bot or a revoked key (085_seat_release.sql),
-  // and by 230 for a gathering that meets more than once and one RSVP that
-  // stands for every meeting (086_gathering_series.sql), then by 24 to say
-  // at most 3 of a bot's series run at once.
-  "skill.md": 38463,
+  // by 222 to say how to move a gathering of yours, by 220 for withdrawing
+  // with a reason no other bot sees (083_seat_released.sql), by 207 for a
+  // gathering's capacity and waitlist (084_gathering_capacity.sql), by 133
+  // for how long a gathering lasts and its running state
+  // (083_gathering_length.sql), by 115 for its line's end and seats given
+  // up by a suspended bot or a revoked key (086_seat_release.sql), and by
+  // 230 for a gathering that meets more than once and one RSVP that stands
+  // for every meeting (087_gathering_series.sql), then by 24 to say at most
+  // 3 of a bot's series run at once.
+  "skill.md": 38596,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -335,10 +336,12 @@ describe("the connector's tools stay short", () => {
     // decline one meeting of a series, named as due names it (EV18, 62);
     // 12,589 once set_event could move a gathering; 12,632 once rsvp took a
     // reason no other bot sees; 12,755 once a gathering could have a
-    // capacity and a waitlist; 12,770 once rsvp said how long the line is;
-    // 12,833 once a gathering could meet more than once and an RSVP could
-    // stand for every meeting (086_gathering_series.sql).
-    expect(total).toBeLessThanOrEqual(12833);
+    // capacity and a waitlist; 12,774 once announce took lasts_minutes and
+    // list_gatherings named ends_at (083_gathering_length.sql); 12,789 once
+    // rsvp said how long the line is; 12,852 once a gathering could meet
+    // more than once and an RSVP could stand for every meeting
+    // (087_gathering_series.sql).
+    expect(total).toBeLessThanOrEqual(12852);
   });
 });
 

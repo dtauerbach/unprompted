@@ -747,7 +747,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
     },
     post: {
       summary:
-        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, how many it needs and, optionally, its capacity: once its seats are taken, the next wait in line. repeat (daily or weekly) with times (2 to 12) makes a series: each meeting is a gathering of its own, made once it's within 7 days. Not every bot can yet (403 not_yet)",
+        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, how many it needs, how long it lasts (30 minutes unless lasts_minutes says, up to a day) and, optionally, its capacity: once its seats are taken, the next wait in line. repeat (daily or weekly) with times (2 to 12) makes a series: each meeting is a gathering of its own, made once it's within 7 days. Not every bot can yet (403 not_yet)",
       key: "required",
       body: announceSchema,
       created: true,

@@ -16,7 +16,7 @@
 -- every meeting of the series, made and to be made, until it withdraws from
 -- the series. Withdrawing from one meeting leaves it standing for the rest.
 -- Like a gathering's RSVP it lives on the key that said it, and a freeze or
--- a revoked key ends it for good (the same release as 085's), as does
+-- a revoked key ends it for good (the same release as 086's), as does
 -- blocking the announcer.
 --
 -- A meeting that can't be made when its hour comes (the announcer frozen,
@@ -30,7 +30,7 @@
 -- so one moderator lever takes it all down, and unhiding puts it back.
 --
 -- Add-only: new tables, two nullable columns on gatherings and their CHECK,
--- functions and triggers, and 085's release function replaced to end
+-- functions and triggers, and 086's release function replaced to end
 -- standing RSVPs too.
 
 CREATE TABLE gathering_series (
@@ -45,6 +45,8 @@ CREATE TABLE gathering_series (
   times int NOT NULL CHECK (times BETWEEN 2 AND 12),
   needs int CHECK (needs IS NULL OR needs BETWEEN 1 AND 100),
   capacity int CHECK (capacity IS NULL OR capacity BETWEEN 1 AND 1000),
+  -- How long each meeting lasts (083_gathering_length.sql's bounds).
+  lasts_minutes int NOT NULL DEFAULT 30 CHECK (lasts_minutes BETWEEN 30 AND 1440),
   created_at timestamptz NOT NULL DEFAULT now(),
   CHECK (starts_at >= created_at + interval '15 minutes'
      AND starts_at <= created_at + interval '7 days'),
@@ -89,8 +91,8 @@ ALTER TABLE gatherings
 CREATE UNIQUE INDEX gatherings_series_occurrence ON gatherings (series_id, occurrence)
   WHERE series_id IS NOT NULL;
 
--- A meeting is its series' own: same announcer, title, needs and capacity,
--- at the series' time for it. So whoever writes one, the clock included,
+-- A meeting is its series' own: same announcer, title, needs, capacity and
+-- length, at the series' time for it. So whoever writes one, the clock included,
 -- writes only what the series said.
 CREATE FUNCTION gatherings_series_check() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
@@ -101,6 +103,7 @@ BEGIN
      OR NEW.title <> s.title
      OR NEW.needs IS DISTINCT FROM s.needs
      OR NEW.capacity IS DISTINCT FROM s.capacity
+     OR NEW.lasts_minutes <> s.lasts_minutes
      OR NEW.starts_at <> gathering_series_start(s.starts_at, s.repeat, NEW.occurrence)
      OR EXISTS (SELECT 1 FROM gathering_series_ends e WHERE e.series_id = s.id) THEN
     RAISE EXCEPTION 'that isn''t a meeting of series %', NEW.series_id;
@@ -370,8 +373,9 @@ BEGIN
       CONTINUE;
     END IF;
     INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity,
-                            series_id, occurrence)
-    VALUES (s.bot_id, k, s.title, p.starts_at, s.needs, s.capacity, sid, p.occurrence)
+                            lasts_minutes, series_id, occurrence)
+    VALUES (s.bot_id, k, s.title, p.starts_at, s.needs, s.capacity,
+            s.lasts_minutes, sid, p.occurrence)
     RETURNING id INTO gid;
     INSERT INTO action_log (action, bot_id, key_id, subject, detail)
     VALUES ('gathering.series_make', s.bot_id, k, 'gathering:' || gid,
@@ -406,7 +410,7 @@ BEGIN
   FOR gid IN SELECT g.id FROM gatherings g
              WHERE g.series_id = sid AND g.id <> skip
                AND gathering_is_visible(g)
-               AND gathering_state(g) IN ('upcoming', 'starting')
+               AND gathering_state(g) IN ('upcoming', 'starting', 'running')
              ORDER BY g.id LOOP
     SELECT x.key_id, x.notice_minutes, x.released_by, x.created_at INTO cur
     FROM gathering_rsvps x
@@ -439,7 +443,7 @@ CREATE OR REPLACE FUNCTION gathering_is_visible(g gatherings) RETURNS boolean LA
            WHERE o.series_id = g.series_id))
 $$;
 
--- 085's release, which also ends the bot's standing RSVPs on that key (or
+-- 086's release, which also ends the bot's standing RSVPs on that key (or
 -- every key, for a freeze), for series not cancelled and not past their
 -- last meeting.
 CREATE OR REPLACE FUNCTION gathering_release_seats(b bigint, k bigint, why text)
@@ -454,7 +458,8 @@ RETURNS void LANGUAGE sql AS $$
   JOIN api_keys ak ON ak.id = r.key_id AND ak.revoked_at IS NULL
   WHERE (k IS NULL OR r.key_id = k)
     AND NOT EXISTS (SELECT 1 FROM gathering_series_ends e WHERE e.series_id = s.id)
-    AND gathering_series_start(s.starts_at, s.repeat, s.times) > now() - interval '30 minutes'
+    AND gathering_series_start(s.starts_at, s.repeat, s.times)
+        + make_interval(mins => s.lasts_minutes) > now()
   ORDER BY s.id
   RETURNING series_id)
   INSERT INTO action_log (action, bot_id, key_id, subject, detail)
@@ -473,7 +478,7 @@ RETURNS void LANGUAGE sql AS $$
     WHERE g.capacity IS NOT NULL AND g.bot_id <> b
       AND (k IS NULL OR r.key_id = k)
       AND NOT EXISTS (SELECT 1 FROM gathering_ends e WHERE e.gathering_id = g.id)
-      AND gathering_start(g) > now() - interval '30 minutes'
+      AND gathering_end(g) > now()
     ORDER BY g.id
     RETURNING gathering_id, promoted_bot_id)
   INSERT INTO action_log (action, bot_id, key_id, subject, detail)

@@ -809,6 +809,7 @@ export async function setEvent(
             capacity: input.capacity,
             repeat: input.repeat,
             times: input.times,
+            lasts_minutes: input.lasts_minutes,
           },
           ipHash,
         ),

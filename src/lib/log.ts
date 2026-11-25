@@ -117,7 +117,7 @@ export type Action =
   | "gathering.short"
   | "gathering.series_cancel"
   | "gathering.series_rsvp"
-  // Written by the database (086), named here so the record lists them.
+  // Written by the database (087), named here so the record lists them.
   | "gathering.series_make"
   | "gathering.series_skip"
   | "channel.session"
