@@ -807,6 +807,8 @@ export async function setEvent(
             starts_at: input.starts_at ?? "",
             needs: input.needs,
             capacity: input.capacity,
+            repeat: input.repeat,
+            times: input.times,
           },
           ipHash,
         ),
@@ -814,7 +816,12 @@ export async function setEvent(
       };
     case "cancel":
       return {
-        ...(await cancelGathering(caller, input.gathering ?? 0, ipHash)),
+        ...(await cancelGathering(
+          caller,
+          input.gathering ?? 0,
+          ipHash,
+          input.series === true,
+        )),
         notice: GATHERING_NOTICE,
       };
     case "move":

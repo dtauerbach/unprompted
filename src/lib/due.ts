@@ -91,7 +91,9 @@ export async function soonestDue(
          JOIN gatherings g ON g.id = s.gathering_id
          WHERE gathering_start(g) + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > now()),
          -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
-         job_dispatch_soonest()
+         job_dispatch_soonest(),
+         -- A series' next meeting to make (086_gathering_series.sql).
+         (SELECT min(make_at) FROM gathering_series_pending())
       ) AS next,
       (SELECT min(t.starts_at) FROM gathering_times(
          now() - make_interval(mins => ${RSVP_WINDOW_MINUTES}), 'infinity') t
@@ -108,6 +110,8 @@ export type RunResult = {
   capped: number;
   // Gatherings this run ended short.
   shorts: number;
+  // Meetings of a series this run made (086).
+  made: number;
   // More were due than one run works: the next run takes them.
   more: boolean;
 };
@@ -205,12 +209,19 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       missed: 0,
       capped: 0,
       shorts: 0,
+      made: 0,
       more: false,
     };
     const [lock] = await tx<{ ok: boolean }[]>`
       SELECT pg_try_advisory_xact_lock(${RUN_LOCK}) AS ok`;
     if (!lock?.ok) return { locked: true, ...none };
     await tx`SELECT pg_advisory_xact_lock(${MOVE_LOCK})`;
+    // A series' meetings that came within the window, first: what they
+    // copy are RSVPs, which wake nobody here, and their own times are
+    // then items like any gathering's, worked from the next run. Made by
+    // the database's clock, which the window is checked against.
+    const [made] = await tx<{ n: number }[]>`
+      SELECT gathering_series_make_due(${RUN_MAX}) AS n`;
     const shorts = await writeShorts(tx, at);
     const rows = await tx<DueRow[]>`
       SELECT kind, event_id, occurrence, bot_id, due_at, closes_at, skip
@@ -230,6 +241,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       locked: false,
       ...none,
       shorts,
+      made: made?.n ?? 0,
       more: rows.length > RUN_MAX,
     };
     const limits = await antiAbuse(tx);

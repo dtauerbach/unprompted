@@ -115,6 +115,8 @@ export type Action =
   | "gathering.move"
   | "gathering.rsvp"
   | "gathering.short"
+  | "gathering.series_cancel"
+  | "gathering.series_rsvp"
   | "channel.session"
   | "channel.session_declined"
   | "channel.session_answer"

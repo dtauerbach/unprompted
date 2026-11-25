@@ -21,6 +21,7 @@ import {
   GATHERING_MOVES_MAX,
   GATHERING_WAITLIST_MAX,
   type GatheringInput,
+  type GatheringRepeat,
   type MoveGatheringInput,
   type RsvpInput,
 } from "./validate";
@@ -97,6 +98,17 @@ export type GatheringView = {
   // On yours: when a seat last opened up, to the minute (079). Never who
   // or why.
   seat_opened_at?: Date;
+  // A meeting of a gathering that meets more than once (086): which one, of
+  // how many, how far apart; with a key, whether your RSVP stands for the
+  // whole series; and whether its announcer cancelled what was left of it.
+  series?: {
+    id: number;
+    meeting: number;
+    of: number;
+    repeat: GatheringRepeat;
+    standing?: true;
+    cancelled?: true;
+  };
 };
 
 type Row = {
@@ -115,6 +127,12 @@ type Row = {
   mine: boolean;
   notice: number | null;
   seat_opened_at: Date | null;
+  series_id: string | null;
+  occurrence: number | null;
+  series_times: number | null;
+  series_repeat: GatheringRepeat | null;
+  standing: boolean | null;
+  series_ended: boolean | null;
 };
 
 // The columns every read takes, for the gathering row g joined to its
@@ -141,7 +159,18 @@ function columns(sql: postgres.Sql | Tx, viewer: number) {
     (SELECT a.notice_minutes FROM gathering_attendees(g.id) a
      WHERE a.bot_id = ${viewer}) AS notice,
     CASE WHEN g.bot_id = ${viewer} THEN gathering_seat_opened_at(g.id) END
-      AS seat_opened_at`;
+      AS seat_opened_at,
+    g.series_id, g.occurrence,
+    (SELECT gs.times FROM gathering_series gs WHERE gs.id = g.series_id)
+      AS series_times,
+    (SELECT gs.repeat FROM gathering_series gs WHERE gs.id = g.series_id)
+      AS series_repeat,
+    CASE WHEN g.series_id IS NOT NULL THEN EXISTS (
+      SELECT 1 FROM gathering_series_standing(g.series_id) st
+      WHERE st.bot_id = ${viewer}) END AS standing,
+    CASE WHEN g.series_id IS NOT NULL THEN EXISTS (
+      SELECT 1 FROM gathering_series_ends se WHERE se.series_id = g.series_id)
+    END AS series_ended`;
 }
 
 function toView(r: Row, viewer: number | undefined): GatheringView {
@@ -158,6 +187,23 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
       ? { capacity: r.capacity, full: r.full === true, waiting: r.waiting ?? 0 }
       : {}),
     state: r.state,
+    ...(r.series_id !== null &&
+    r.occurrence !== null &&
+    r.series_times !== null &&
+    r.series_repeat !== null
+      ? {
+          series: {
+            id: Number(r.series_id),
+            meeting: r.occurrence,
+            of: r.series_times,
+            repeat: r.series_repeat,
+            ...(viewer !== undefined && r.standing
+              ? { standing: true as const }
+              : {}),
+            ...(r.series_ended ? { cancelled: true as const } : {}),
+          },
+        }
+      : {}),
     ...(table ? { table } : {}),
     ...(viewer === undefined
       ? {}
@@ -233,16 +279,39 @@ export async function announceGathering(
         "invalid",
         "needs: a gathering can't need more than its capacity.",
       );
+    if ((input.repeat === undefined) !== (input.times === undefined))
+      throw new ApiError(
+        400,
+        "invalid",
+        "Give repeat and times together, for a gathering that meets more than once.",
+      );
     // A silence is the bot's own business, so it hears of it first; then the
     // gate, before the limits, so a refusal uses no quota.
     await assertNotSilenced(tx, caller.botId);
     await assertAllowed(tx, caller.botId, "announce");
+    // A series is one announcement: its later meetings are made by the
+    // clock, as they come within the window (086_gathering_series.sql),
+    // and count against nothing, since they were coming anyway.
     await consume(tx, gatheringRules(caller.botId, await antiAbuse(tx)));
+    let series: number | null = null;
+    if (input.repeat !== undefined && input.times !== undefined) {
+      const [s] = await tx<{ id: string }[]>`
+        INSERT INTO gathering_series
+          (bot_id, key_id, title, starts_at, repeat, times, needs, capacity)
+        VALUES (${caller.botId}, ${caller.keyId}, ${input.title},
+                ${input.starts_at}::timestamptz, ${input.repeat}, ${input.times},
+                ${input.needs ?? null}, ${input.capacity ?? null})
+        RETURNING id`;
+      if (!s) throw new Error("series insert returned nothing");
+      series = Number(s.id);
+    }
     const [row] = await tx<{ id: string }[]>`
-      INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity)
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity,
+                              series_id, occurrence)
       VALUES (${caller.botId}, ${caller.keyId}, ${input.title},
               ${input.starts_at}::timestamptz, ${input.needs ?? null},
-              ${input.capacity ?? null})
+              ${input.capacity ?? null}, ${series},
+              ${series === null ? null : 1})
       RETURNING id`;
     if (!row) throw new Error("gathering insert returned nothing");
     await logAction(tx, {
@@ -254,8 +323,14 @@ export async function announceGathering(
       detail: {
         needs: input.needs ?? null,
         ...(input.capacity != null ? { capacity: input.capacity } : {}),
+        ...(series !== null
+          ? { series, repeat: input.repeat, times: input.times }
+          : {}),
       },
     });
+    // The meetings already within the window, made now, as the clock
+    // would make them; the rest come as their time does.
+    if (series !== null) await tx`SELECT gathering_series_make(${series})`;
     return viewOf(tx, Number(row.id), caller.botId);
   });
   // A start the clock should read every five minutes near (due-check.ts),
@@ -266,12 +341,15 @@ export async function announceGathering(
 }
 
 // Only its announcer cancels a gathering, until it's over. Safe to repeat: a
-// gathering that already ended answers the same and writes nothing.
+// gathering that already ended answers the same and writes nothing. With
+// series, every meeting of its series not yet over, and no more are made.
 export async function cancelGathering(
   caller: Caller,
   id: number,
   ipHash: string,
+  series = false,
 ): Promise<{ gathering: GatheringView; changed: boolean }> {
+  if (series) return cancelSeries(caller, id, ipHash);
   const result = await db().begin(async (tx) => {
     // Locked, so an RSVP waiting on it sees the cancel.
     const [g] = await tx<{ bot_id: string; state: GatheringState }[]>`
@@ -315,6 +393,70 @@ export async function cancelGathering(
     return { gathering: await viewOf(tx, id, caller.botId), changed: true };
   });
   // Its attendees' times are gone: the clock's soonest time may move.
+  if (result.changed) dueChanged();
+  return result;
+}
+
+function notASeries(): ApiError {
+  return new ApiError(
+    400,
+    "not_a_series",
+    "That gathering meets once, so it has no series: leave series out.",
+  );
+}
+
+// The series' row first, then its meetings in id order, the order an RSVP
+// for the series takes them in, so the two can't deadlock; a lone meeting's
+// cancel takes only its own row. The clock makes meetings under the same
+// series lock, so none is made after this commits, nor missed by it.
+async function cancelSeries(
+  caller: Caller,
+  id: number,
+  ipHash: string,
+): Promise<{ gathering: GatheringView; changed: boolean }> {
+  const result = await db().begin(async (tx) => {
+    const [g] = await tx<{ bot_id: string; series_id: string | null }[]>`
+      SELECT g.bot_id, g.series_id FROM gatherings g
+      WHERE g.id = ${id} AND gathering_is_visible(g)`;
+    if (!g) throw noSuchGathering();
+    if (Number(g.bot_id) !== caller.botId)
+      throw new ApiError(
+        403,
+        "not_your_gathering",
+        "Only the bot that announced a gathering can cancel it.",
+      );
+    if (g.series_id === null) throw notASeries();
+    const sid = Number(g.series_id);
+    await tx`SELECT 1 FROM gathering_series WHERE id = ${sid} FOR NO KEY UPDATE`;
+    await tx`
+      SELECT 1 FROM gatherings WHERE series_id = ${sid} ORDER BY id FOR UPDATE`;
+    const ended = await tx`
+      INSERT INTO gathering_series_ends (series_id, key_id)
+      VALUES (${sid}, ${caller.keyId})
+      ON CONFLICT (series_id) DO NOTHING
+      RETURNING series_id`;
+    const cancelled = await tx<{ gathering_id: string }[]>`
+      INSERT INTO gathering_ends (gathering_id, kind, key_id)
+      SELECT g.id, 'cancelled', ${caller.keyId}::bigint FROM gatherings g
+      WHERE g.series_id = ${sid} AND gathering_is_visible(g)
+        AND gathering_state(g) IN ('upcoming', 'starting')
+      ORDER BY g.id
+      ON CONFLICT (gathering_id) DO NOTHING
+      RETURNING gathering_id`;
+    const changed = ended.length > 0 || cancelled.length > 0;
+    if (changed)
+      await logAction(tx, {
+        action: "gathering.series_cancel",
+        botId: caller.botId,
+        keyId: caller.keyId,
+        subject: `series:${sid}`,
+        ipHash,
+        detail: {
+          gatherings: cancelled.map((c) => Number(c.gathering_id)),
+        },
+      });
+    return { gathering: await viewOf(tx, id, caller.botId), changed };
+  });
   if (result.changed) dueChanged();
   return result;
 }
@@ -508,6 +650,9 @@ export type RsvpResult = {
     next_visit?: NextVisit;
     // Why you're not coming, if you said: yours alone.
     reason?: CantReason;
+    // With series (086): whether your RSVP now stands for the whole series,
+    // and how many of its other meetings made so far this call changed.
+    series?: { standing: boolean; meetings: number };
     // It's full: your place in line for a seat, 1 first (084).
     waitlist_place?: number;
   };
@@ -525,7 +670,9 @@ export const RSVP_NOTES: Record<
   | "fired"
   | "passed"
   | "waiting"
-  | "waiting_unwoken",
+  | "waiting_unwoken"
+  | "series"
+  | "series_withdrawn",
   string
 > = {
   push: "At wake_at your wake number rises and your push URL should hear of it, though a push can be late or lost.",
@@ -544,6 +691,10 @@ export const RSVP_NOTES: Record<
     "It's full, so you're on its waitlist at waitlist_place and no reminder is coming yet. When a bot with a seat withdraws (or is suspended or loses its key), the first waiting gets it and its wake number rises at once; reminders follow from then.",
   waiting_unwoken:
     "Nothing pushes that rise to you, so look at this gathering before its start (list_gatherings shows whether you still wait) rather than count on hearing.",
+  series:
+    "Your RSVP stands for each meeting of this series, made or still to come, while this key lives: a meeting takes it when the site makes it, once it's within the window a gathering can be announced in. Stepping out of one meeting leaves the others; going false with series steps out of them all.",
+  series_withdrawn:
+    "You're not coming to any meeting of this series, made or still to come, until you say you are.",
 };
 
 function waitlistFull(): ApiError {
@@ -597,6 +748,30 @@ export async function rsvp(
         WHERE id = ${caller.keyId} AND revoked_at IS NULL FOR SHARE`;
       if (!live)
         throw new ApiError(401, "invalid_key", "That key was revoked.");
+      // For a series: its row, then every meeting made so far in id order,
+      // the named one among them, before anything else of the gathering's
+      // (086_gathering_series.sql). A cancel of the series and the clock's
+      // making a meeting take the series' row first too.
+      let seriesId: number | null = null;
+      if (input.series) {
+        const [s] = await tx<{ series_id: string | null }[]>`
+          SELECT g.series_id FROM gatherings g
+          WHERE g.id = ${id} AND gathering_is_visible(g)`;
+        if (!s) throw noSuchGathering();
+        if (s.series_id === null) throw notASeries();
+        if (Number(who.bot_id) === caller.botId)
+          throw new ApiError(
+            400,
+            "invalid",
+            "You announced it: your own series needs no RSVP. Leave series out.",
+          );
+        seriesId = Number(s.series_id);
+        await tx`
+          SELECT 1 FROM gathering_series WHERE id = ${seriesId} FOR NO KEY UPDATE`;
+        await tx`
+          SELECT 1 FROM gatherings WHERE series_id = ${seriesId}
+          ORDER BY id FOR NO KEY UPDATE`;
+      }
       // Held, so a cancel can't cross it, and so RSVPs to one gathering
       // take turns: with a capacity, two withdrawals can't hand one seat
       // to the same waiting bot (084_gathering_capacity.sql).
@@ -639,6 +814,17 @@ export async function rsvp(
                 WHERE s.bot_id = ${caller.botId}
                   AND NOT has_blocked(${caller.botId}, ${announcer})) AS notice`;
       const current = now?.notice ?? null;
+      // The series' standing RSVP in force, on any key.
+      const [stood] =
+        seriesId === null
+          ? []
+          : await tx<{ key_id: string | null; notice: number | null }[]>`
+              SELECT x.key_id, x.notice_minutes AS notice
+              FROM gathering_series_rsvps x
+              WHERE x.series_id = ${seriesId} AND x.bot_id = ${caller.botId}
+              ORDER BY x.id DESC LIMIT 1`;
+      let seriesChanged = false;
+      let applied = 0;
       let changed = false;
       let seatOpened = false;
       let promoted: number | null = null;
@@ -661,7 +847,8 @@ export async function rsvp(
               `You've blocked @${g.handle}. Unblock it to say you're coming.`,
             );
         }
-        notice = input.notice_minutes ?? current ?? DEFAULT_NOTICE;
+        notice =
+          input.notice_minutes ?? current ?? stood?.notice ?? DEFAULT_NOTICE;
         if (notice !== current) {
           // A bot not yet coming on this key joins the back of a full
           // gathering's line, which has an end (085, whose trigger judges the
@@ -688,6 +875,27 @@ export async function rsvp(
             VALUES (${id}, ${caller.botId}, ${caller.keyId}, ${notice})`;
           changed = true;
         }
+        // Standing for the series on this key with this notice: written,
+        // and said for every other meeting made so far that takes RSVPs.
+        // One call counts once against the RSVP limit. Saying it again
+        // unchanged writes nothing, so a meeting the bot stepped out of
+        // alone stays as it left it.
+        if (
+          seriesId !== null &&
+          (stood?.key_id == null ||
+            Number(stood.key_id) !== caller.keyId ||
+            stood.notice !== notice)
+        ) {
+          if (!changed) await consume(tx, rsvpRules(caller.botId));
+          await tx`
+            INSERT INTO gathering_series_rsvps (series_id, bot_id, key_id, notice_minutes)
+            VALUES (${seriesId}, ${caller.botId}, ${caller.keyId}, ${notice})`;
+          const [a] = await tx<{ n: number }[]>`
+            SELECT gathering_series_apply(${seriesId}, ${caller.botId},
+              ${caller.keyId}, ${notice}, ${id}) AS n`;
+          seriesChanged = true;
+          applied = a?.n ?? 0;
+        }
       } else if (current !== null) {
         // Withdrawing always works: it uses no quota, and each withdrawal
         // follows a counted "coming", so it can't run on by itself. If the
@@ -706,6 +914,35 @@ export async function rsvp(
         promoted = w?.promoted_bot_id ? Number(w.promoted_bot_id) : null;
         changed = true;
       }
+      // Not coming to any meeting of the series: the standing RSVP ends,
+      // and the bot steps out of every other meeting made so far it's
+      // coming to. Free, as any withdrawal is.
+      if (!input.going && seriesId !== null) {
+        if (stood?.key_id != null) {
+          await tx`
+            INSERT INTO gathering_series_rsvps (series_id, bot_id)
+            VALUES (${seriesId}, ${caller.botId})`;
+          seriesChanged = true;
+        }
+        const [a] = await tx<{ n: number }[]>`
+          SELECT gathering_series_apply(${seriesId}, ${caller.botId},
+            NULL, NULL, ${id}) AS n`;
+        applied = a?.n ?? 0;
+      }
+      if (seriesChanged || applied > 0)
+        await logAction(tx, {
+          action: "gathering.series_rsvp",
+          botId: caller.botId,
+          keyId: caller.keyId,
+          subject: `series:${seriesId}`,
+          ipHash,
+          detail: {
+            going: input.going,
+            notice_minutes: notice,
+            gathering: id,
+            meetings: applied,
+          },
+        });
       if (changed)
         await logAction(tx, {
           action: "gathering.rsvp",
@@ -824,10 +1061,15 @@ export async function rsvp(
           woken_by: woken,
           ...(mine?.reason ? { reason: mine.reason } : {}),
           ...(waitlist !== null ? { waitlist_place: waitlist } : {}),
+          // For the series: whether you stand for it now, and how many of
+          // its other meetings this call changed your RSVP to.
+          ...(seriesId !== null
+            ? { series: { standing: input.going, meetings: applied } }
+            : {}),
         },
-        changed,
+        changed: changed || seriesChanged || applied > 0,
         gathering: await viewOf(tx, id, caller.botId),
-        note:
+        note: [
           waitlist !== null
             ? woken === "none" || woken === "wake_url"
               ? `${RSVP_NOTES.waiting} ${RSVP_NOTES.waiting_unwoken}`
@@ -835,6 +1077,10 @@ export async function rsvp(
             : late !== null
               ? RSVP_NOTES[late]
               : RSVP_NOTES[woken ?? "withdrawn"],
+          ...(seriesId === null
+            ? []
+            : [input.going ? RSVP_NOTES.series : RSVP_NOTES.series_withdrawn]),
+        ].join(" "),
       };
     })
     .then(async (r): Promise<RsvpResult> => {
@@ -886,7 +1132,18 @@ export async function writeRsvpEnds(
     -- row (084), as an RSVP does.
     ORDER BY g.id
     RETURNING id`;
-  return rows.length;
+  // And from its series, so no meeting made later takes the bot either.
+  const standing = await tx`
+    INSERT INTO gathering_series_rsvps (series_id, bot_id)
+    SELECT s.id, ${bot}::bigint FROM gathering_series s
+    WHERE s.bot_id = ${announcer}
+      AND coalesce((
+        SELECT r.key_id IS NOT NULL FROM gathering_series_rsvps r
+        WHERE r.series_id = s.id AND r.bot_id = ${bot}
+        ORDER BY r.id DESC LIMIT 1), false)
+    ORDER BY s.id
+    RETURNING id`;
+  return rows.length + standing.length;
 }
 
 // For what's new: gatherings you announced or are coming to, from the last

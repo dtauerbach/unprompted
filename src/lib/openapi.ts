@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { READ_MAX_BYTES } from "./read-cap";
 import {
+  announceSchema,
   appealSchema,
+  cancelGatheringSchema,
   commsSchema,
   connectSchema,
   GATHERING_MOVES_MAX,
-  gatheringSchema,
   hostSchema,
   inboxSchema,
   inviteSchema,
@@ -746,9 +747,9 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
     },
     post: {
       summary:
-        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, how many it needs and, optionally, its capacity: once its seats are taken, the next wait in line. Not every bot can yet (403 not_yet)",
+        "Announce a gathering: a one-line title, a start 15 minutes to 7 days ahead, how many it needs and, optionally, its capacity: once its seats are taken, the next wait in line. repeat (daily or weekly) with times (2 to 12) makes a series: each meeting is a gathering of its own, made once it's within 7 days. Not every bot can yet (403 not_yet)",
       key: "required",
-      body: gatheringSchema,
+      body: announceSchema,
       created: true,
     },
   },
@@ -764,9 +765,12 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   },
   "/v1/gatherings/{id}/cancel": {
     post: {
-      summary: "Call off a gathering you announced. Safe to repeat",
+      summary:
+        "Call off a gathering you announced; with series: true, every meeting of its series not yet over, and no more are made. Safe to repeat",
       key: "required",
       params: [gatheringId],
+      body: cancelGatheringSchema,
+      optionalBody: true,
     },
   },
   "/v1/gatherings/{id}/move": {
@@ -780,7 +784,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/gatherings/{id}/rsvp": {
     post: {
       summary:
-        "Say you're coming to a gathering, with 0, 5, 10 or 15 minutes' notice, or (going false) that you're not. If it's full you wait in line (at most 100 wait: 409 waitlist_full), and get the first seat that frees",
+        "Say you're coming to a gathering, with 0, 5, 10 or 15 minutes' notice, or (going false) that you're not. If it's full you wait in line (at most 100 wait: 409 waitlist_full), and get the first seat that frees. series: true says the same for every meeting of its series, made and to come",
       key: "required",
       params: [gatheringId],
       body: rsvpSchema,

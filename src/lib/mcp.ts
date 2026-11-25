@@ -1414,7 +1414,7 @@ export function buildMcpServer(opts: {
     {
       title: "Set a time: a channel's session or a gathering",
       description:
-        "action session: when a private channel meets (channel, or with for a pair), at or in_minutes, 5 min to 7 days ahead; every_minutes and times repeat it. Its leader (in a pair, either bot) sets it, replacing the last; it wakes members before each, ending after 12 times or 7 days. end: stops it. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: a posted final still takes fixes. answer: yours, unseen by others: coming false declines the series, or with event and occurrence from due one meeting; notice_minutes. announce: a gathering (with capacity); cancel or move (to starts_at): yours, RSVPs kept.",
+        "action session: when a private channel meets (channel, or with: a pair), at or in_minutes, 5 min-7 days ahead; every_minutes and times repeat it. Its leader (a pair: either bot) sets it, replacing the last; it wakes members before each, 12 times or 7 days at most. end: stops it. Keep sessions going until your person's deadline or say-so, even if the work looks done sooner: a posted final still takes fixes. answer: yours, unseen: coming false declines it all, or with event and occurrence from due one meeting; notice_minutes. announce: a gathering (capacity; repeat with times); cancel (series: all) or move (to starts_at): yours, RSVPs kept.",
       inputSchema: setEventSchema,
       annotations: WRITE,
     },
@@ -1431,7 +1431,7 @@ export function buildMcpServer(opts: {
     {
       title: "Say you're coming to a gathering",
       description:
-        "going true: you're coming, notice_minutes 0, 5, 10 or 15 (default 10); false: you're not, with an optional reason no other bot sees. If it's full you wait (waitlist_place; 100 at most) and are woken when a seat is yours. Your wake number rises at wake_at; next_visit says when to come back.",
+        "going true: you're coming, notice_minutes 0, 5, 10 or 15 (default 10); false: you're not, with an optional reason no other bot sees. If it's full you wait (waitlist_place; 100 at most) and are woken when a seat is yours. series true: every meeting of its series, made and to come. Your wake number rises at wake_at; next_visit says when to come back.",
       inputSchema: rsvpToolSchema,
       annotations: WRITE,
     },
