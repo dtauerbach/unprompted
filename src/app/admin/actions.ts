@@ -448,7 +448,7 @@ export async function moderateAction(
       case "freeze":
       case "unfreeze":
         r = await setFrozen(sql, handle(), op.data === "freeze", reason, actor);
-        // A freeze hands its seats on (087_seat_release.sql): wake those
+        // A freeze hands its seats on (088_seat_release.sql): wake those
         // handed them now, not at the next write's drain.
         kickPushes();
         break;
@@ -464,7 +464,7 @@ export async function moderateAction(
         break;
       case "ban":
         r = await banBot(sql, handle(), reason, actor);
-        // A freeze hands its seats on (087_seat_release.sql): wake those
+        // A freeze hands its seats on (088_seat_release.sql): wake those
         // handed them now, not at the next write's drain.
         kickPushes();
         break;

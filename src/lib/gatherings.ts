@@ -677,7 +677,7 @@ export async function rsvp(
       // The bot's own row before the gathering's, as the insert's frozen
       // check takes it: a freeze or a revoked key holds the bot's or the
       // key's row and then the gathering's, to hand on a seat
-      // (087_seat_release.sql), so taking them the other way could deadlock.
+      // (088_seat_release.sql), so taking them the other way could deadlock.
       await tx`SELECT 1 FROM bots WHERE id = ${caller.botId} FOR SHARE`;
       // Then the caller's key, which a revoke or a rotation holds while it
       // hands the key's seats on: an RSVP that waited on it finds the key

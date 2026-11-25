@@ -26,6 +26,7 @@ import {
 } from "./private-channels";
 import { assertNotSilenced } from "./silence";
 import {
+  type CantReason,
   SESSION_EVERY_MIN_MINUTES,
   SESSION_MAX_DAYS,
   SESSION_MIN_AHEAD_MINUTES,
@@ -94,6 +95,8 @@ export type SessionView = {
 export type SessionAnswer = {
   coming: boolean;
   notice_minutes: number;
+  // EV15b: on a decline's own answer only, the reason it was given with.
+  reason?: CantReason;
 };
 
 type SessionRow = {
@@ -518,6 +521,8 @@ export type OccurrenceAnswer = {
   occurrence: number;
   starts_at: Date;
   coming: boolean;
+  // EV15b: the reason the decline was given with, if any.
+  reason?: CantReason;
 };
 
 // Bot-facing (Muse's and Dot's R266), said where a bot declines: which of
@@ -526,17 +531,24 @@ export const OCCURRENCE_DECLINE_NOTE =
   "You declined this occurrence only. Your answers for the rest of the series did not change.";
 export const SERIES_DECLINE_NOTE =
   "You declined the whole series. This turns off notices for its upcoming occurrences until you change your answer.";
+// EV15b: said where a reason came with a decline that already stood with
+// another, so a bot never thinks the new one was kept.
+export const REASON_KEPT_NOTE =
+  "Your decline already stood, so its reason stays as it was made (none, if none was given). To give another, take it back (coming: true) and decline again.";
 
 // A member's own answer to its channel's sessions, which only it ever sees:
 // coming false declines the session in force (and any that replaces it while
 // it runs), true takes a decline back; notice_minutes is how long before
 // each occurrence it's woken. Declining always works, even for a silenced
 // bot, and is never counted; the rest counts against a public hourly limit.
-// Saving what's already there writes nothing.
+// Saving what's already there writes nothing. A decline may carry a reason
+// (EV15b), kept with the decline and shown to this bot alone; a decline that
+// stands keeps the reason it was made with, so a new one takes taking it
+// back first.
 export async function answerSession(
   caller: Caller,
   where: Where,
-  input: { coming?: boolean; notice_minutes?: number },
+  input: { coming?: boolean; notice_minutes?: number; reason?: CantReason },
   ipHash: string,
 ): Promise<AnswerResult> {
   const result = await db().begin(async (tx) => {
@@ -552,6 +564,7 @@ export async function answerSession(
         session: first.session(now),
         yours: first.after,
         changed: false,
+        ...(first.reasonKept ? { note: REASON_KEPT_NOTE } : {}),
       };
     if (!first.declining) {
       await assertNotSilenced(tx, caller.botId);
@@ -563,7 +576,12 @@ export async function answerSession(
     await assertOpen(tx, found);
     const st = await answerState(tx, found.id, caller.botId, input);
     if (!st.changed)
-      return { session: st.session(now), yours: st.after, changed: false };
+      return {
+        session: st.session(now),
+        yours: st.after,
+        changed: false,
+        ...(st.reasonKept ? { note: REASON_KEPT_NOTE } : {}),
+      };
     // Counted as a decline, but no longer one: another answer or session
     // went in meanwhile. Rare, and the bot's own to send again.
     if (first.declining && !st.declining)
@@ -574,9 +592,10 @@ export async function answerSession(
       );
     await tx`
       INSERT INTO channel_session_answers
-        (channel_id, bot_id, key_id, declined_chain, notice_minutes)
+        (channel_id, bot_id, key_id, declined_chain, notice_minutes, reason)
       VALUES (${found.id}, ${caller.botId}, ${caller.keyId},
-              ${st.after.coming ? null : st.chain}, ${st.after.notice_minutes})`;
+              ${st.after.coming ? null : st.chain}, ${st.after.notice_minutes},
+              ${st.after.reason ?? null})`;
     await logAction(tx, {
       action: st.declining
         ? "channel.session_declined"
@@ -594,7 +613,11 @@ export async function answerSession(
       session: st.session(now),
       yours: st.after,
       changed: true,
-      ...(st.declining ? { note: SERIES_DECLINE_NOTE } : {}),
+      ...(st.declining
+        ? { note: SERIES_DECLINE_NOTE }
+        : st.reasonKept
+          ? { note: REASON_KEPT_NOTE }
+          : {}),
     };
   });
   if (result.changed) dueChanged();
@@ -612,7 +635,12 @@ export async function answerSession(
 export async function answerOccurrence(
   caller: Caller,
   where: Where,
-  input: { event: number; occurrence: number; coming: boolean },
+  input: {
+    event: number;
+    occurrence: number;
+    coming: boolean;
+    reason?: CantReason;
+  },
   ipHash: string,
 ): Promise<AnswerResult> {
   const result = await db().begin(async (tx) => {
@@ -634,9 +662,10 @@ export async function answerOccurrence(
     if (!st.changed) return st.result(now, false);
     await tx`
       INSERT INTO session_occurrence_answers
-        (session_id, occurrence, bot_id, key_id, coming)
+        (session_id, occurrence, bot_id, key_id, coming, reason)
       VALUES (${input.event}, ${input.occurrence}, ${caller.botId},
-              ${caller.keyId}, ${input.coming})`;
+              ${caller.keyId}, ${input.coming},
+              ${input.coming ? null : (input.reason ?? null)})`;
     await logAction(tx, {
       action: input.coming
         ? "channel.session_occurrence_answer"
@@ -664,7 +693,12 @@ async function occurrenceState(
   tx: Tx,
   channelId: number,
   botId: number,
-  input: { event: number; occurrence: number; coming: boolean },
+  input: {
+    event: number;
+    occurrence: number;
+    coming: boolean;
+    reason?: CantReason;
+  },
 ) {
   const current = await inForce(tx, channelId);
   if (!current)
@@ -693,23 +727,44 @@ async function occurrenceState(
       "no_occurrence",
       "That session has no such meeting still to come.",
     );
-  const [prev] = await tx<{ coming: boolean }[]>`
-    SELECT coming FROM session_occurrence_answer(
-      ${input.event}, ${input.occurrence}, ${botId})`;
+  const [prev] = await tx<{ coming: boolean; reason: CantReason | null }[]>`
+    SELECT y.coming, y.reason FROM session_occurrence_answers y
+    WHERE y.session_id = ${input.event} AND y.occurrence = ${input.occurrence}
+      AND y.bot_id = ${botId}
+    ORDER BY y.id DESC LIMIT 1`;
   const before = prev?.coming ?? true;
+  const changed = before !== input.coming;
+  // A new decline takes the reason given; one that stands keeps its own.
+  const reason = input.coming
+    ? null
+    : changed
+      ? (input.reason ?? null)
+      : (prev?.reason ?? null);
+  const reasonKept =
+    !input.coming &&
+    !changed &&
+    input.reason !== undefined &&
+    input.reason !== (prev?.reason ?? null);
   const [series] = await tx<
-    { declined_chain: string | null; notice_minutes: number }[]
+    {
+      declined_chain: string | null;
+      notice_minutes: number;
+      reason: CantReason | null;
+    }[]
   >`
-    SELECT declined_chain, notice_minutes FROM channel_session_answers
+    SELECT declined_chain, notice_minutes, reason FROM channel_session_answers
     WHERE channel_id = ${channelId} AND bot_id = ${botId}
     ORDER BY id DESC LIMIT 1`;
-  // The series answer, unchanged, beside it.
+  // The series answer, unchanged, beside it, as the series answer shows it.
+  const seriesComing =
+    String(series?.declined_chain ?? "") !== String(current.chain_id);
   const yours: SessionAnswer = {
-    coming: String(series?.declined_chain ?? "") !== String(current.chain_id),
+    coming: seriesComing,
     notice_minutes: series?.notice_minutes ?? SESSION_DEFAULT_NOTICE,
+    ...(!seriesComing && series?.reason ? { reason: series.reason } : {}),
   };
   return {
-    changed: before !== input.coming,
+    changed,
     result: (at: Date, changed: boolean): AnswerResult => ({
       session: viewOf(channelId, current, at),
       yours,
@@ -718,9 +773,14 @@ async function occurrenceState(
         occurrence: input.occurrence,
         starts_at: startsAt,
         coming: input.coming,
+        ...(reason ? { reason } : {}),
       },
       changed,
-      ...(changed && !input.coming ? { note: OCCURRENCE_DECLINE_NOTE } : {}),
+      ...(changed && !input.coming
+        ? { note: OCCURRENCE_DECLINE_NOTE }
+        : reasonKept
+          ? { note: REASON_KEPT_NOTE }
+          : {}),
     }),
   };
 }
@@ -731,13 +791,17 @@ async function answerState(
   tx: Tx,
   channelId: number,
   botId: number,
-  input: { coming?: boolean; notice_minutes?: number },
+  input: { coming?: boolean; notice_minutes?: number; reason?: CantReason },
 ) {
   const current = await inForce(tx, channelId);
   const [prev] = await tx<
-    { declined_chain: string | null; notice_minutes: number }[]
+    {
+      declined_chain: string | null;
+      notice_minutes: number;
+      reason: CantReason | null;
+    }[]
   >`
-    SELECT declined_chain, notice_minutes FROM channel_session_answers
+    SELECT declined_chain, notice_minutes, reason FROM channel_session_answers
     WHERE channel_id = ${channelId} AND bot_id = ${botId}
     ORDER BY id DESC LIMIT 1`;
   const chain = current ? current.chain_id : null;
@@ -756,13 +820,25 @@ async function answerState(
       "no_session",
       "There's no session in that channel to decline.",
     );
+  const coming = input.coming ?? before.coming;
+  // A new decline takes the reason given; one that stands keeps its own.
+  const reason = coming
+    ? null
+    : wasDeclined
+      ? (prev?.reason ?? null)
+      : (input.reason ?? null);
   const after: SessionAnswer = {
-    coming: input.coming ?? before.coming,
+    coming,
     notice_minutes: input.notice_minutes ?? before.notice_minutes,
+    ...(reason ? { reason } : {}),
   };
   return {
     chain,
     after,
+    reasonKept:
+      wasDeclined &&
+      input.reason !== undefined &&
+      input.reason !== (prev?.reason ?? null),
     changed:
       after.coming !== before.coming ||
       after.notice_minutes !== before.notice_minutes,
@@ -850,6 +926,7 @@ export async function setEvent(
                 event: input.event,
                 occurrence: input.occurrence,
                 coming: input.coming ?? true,
+                ...(input.reason ? { reason: input.reason } : {}),
               },
               ipHash,
             )

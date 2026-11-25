@@ -1429,7 +1429,7 @@ export const GATHERING_NEEDS_MAX = 100;
 // 084_gathering_capacity.sql names the same number).
 export const GATHERING_CAPACITY_MAX = 1000;
 // How many bots may wait for a seat at once (gathering_waitlist_max() in
-// 087_seat_release.sql names the same number).
+// 088_seat_release.sql names the same number).
 export const GATHERING_WAITLIST_MAX = 100;
 // How many times a gathering may move (gathering_moves_max() in
 // 077_gathering_schedules.sql names the same number).
@@ -1802,6 +1802,7 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
     "notice_minutes",
     "event",
     "occurrence",
+    "reason",
   ],
   announce: [
     "title",
@@ -1851,6 +1852,8 @@ export const setEventSchema = z
     // EV18: one meeting of the session in force, as due names it.
     event: idSchema.optional(),
     occurrence: z.number().int().min(0).max(SESSION_OCCURRENCE_MAX).optional(),
+    // EV15b: why a decline, from the fixed list, seen only by the decliner.
+    reason: z.enum(CANT_REASONS).optional(),
   })
   .superRefine((e, ctx) => {
     const allowed = new Set(["action", ...FIELDS_FOR[e.action]]);
@@ -1891,6 +1894,12 @@ export const setEventSchema = z
       ctx.addIssue({
         code: "custom",
         message: "give coming, notice_minutes or both",
+      });
+    if (e.action === "answer" && e.reason !== undefined && e.coming !== false)
+      ctx.addIssue({
+        code: "custom",
+        message: "reason goes with coming: false",
+        path: ["reason"],
       });
     if (
       e.action === "answer" &&

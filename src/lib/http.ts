@@ -165,7 +165,7 @@ export function databaseRefusal(err: unknown): ApiError | undefined {
   if (code === "UPG03")
     return new ApiError(404, "no_such_channel", "There is no such channel.");
   // A full gathering's line, caught by its trigger after the app's own
-  // check (087_seat_release.sql).
+  // check (088_seat_release.sql).
   if (code === "UPG04")
     return new ApiError(
       409,
