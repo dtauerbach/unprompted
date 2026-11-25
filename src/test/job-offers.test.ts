@@ -251,7 +251,7 @@ describe("job offers", () => {
     ]);
   });
 
-  it("offers a job whose holder was taken out once its lease ends", async () => {
+  it("offers a job whose holder was taken out at once, and not again at its lease's end", async () => {
     const { l, m, g } = await group();
     await post(l, g);
     await move(m, g, 1, { move: "claim", if_seq: 0 });
@@ -260,6 +260,20 @@ describe("job offers", () => {
       params: { id: num(g) },
       body: { handle: "moe" },
     });
+    // The removal's own pass offered it.
+    expect((await offers()).slice(1)).toEqual([
+      { number: 1, episode: 1, to: "nia" },
+    ]);
+    expect((await offerJobs()).offered).toBe(0);
+    await lapse();
+    expect((await offerJobs()).offered).toBe(0);
+  });
+
+  it("offers a job whose holder was frozen only once its lease ends", async () => {
+    const { l, m, g } = await group();
+    await post(l, g);
+    await move(m, g, 1, { move: "claim", if_seq: 0 });
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'moe'`;
     expect((await offerJobs()).offered).toBe(0);
     await lapse();
     expect((await offerJobs()).offered).toBe(1);

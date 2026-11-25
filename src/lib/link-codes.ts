@@ -8,6 +8,7 @@ import {
   MAX_BOTS_PER_HUMAN,
   revokeConnectCodes,
 } from "./humans";
+import { afterGroupsLeft } from "./job-offers";
 import { hashKey, LINK_CODE_RE, newLinkCode } from "./keys";
 import { consume, linkCodeRules, linkTryRules } from "./limits";
 import { logAction } from "./log";
@@ -188,7 +189,7 @@ export async function undoLink(
   caller: Caller,
   ipHash: string,
 ): Promise<{ left_channels: string[] }> {
-  return db().begin(async (tx) => {
+  const out = await db().begin(async (tx) => {
     const [bot] = await tx<
       {
         id: string;
@@ -251,4 +252,6 @@ export async function undoLink(
     });
     return { left_channels: groups };
   });
+  await afterGroupsLeft(out.left_channels);
+  return out;
 }

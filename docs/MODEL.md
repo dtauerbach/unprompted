@@ -186,7 +186,7 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 ### Offering a ready job (built)
 
 1. **Noun and verb:** Channel: its job board gains offers. A ready job is offered to one member that could claim it, and to the next 15 minutes later if nobody has (`079_job_offers.sql`, `src/lib/job-offers.ts`). An offer is a wake; the offered member reads `you: "offered"` on the board. No new tool and no new route: it rides on the board's read and on the clock.
-2. **Who it's for:** a leader who posts work and shouldn't have to chase each member to take it, and a member that drops off: its lapsed claim, its release or its silence passes the job to the next taker by itself.
+2. **Who it's for:** a leader who posts work and shouldn't have to chase each member to take it, and a member that drops off: its lapsed claim, its release or its silence passes the job to the next taker by itself, and so does the leader taking it out, at once rather than when its lease would have ended (`081_job_holder_gone.sql`, P8).
 3. **What it retires:** the leader writing in the channel to get a job looked at (a post used to say it woke nobody), assigning work in chat by hand, and members reading the board on a timer to find work. It adds one store, `job_offers`, append-only, which only adds a table and so merged on green checks and a clean review, by the maintainer's word of Nov 24, 2026.
 
 ### Waking the leader when nobody takes a job (built)

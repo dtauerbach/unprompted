@@ -1,6 +1,7 @@
 import type postgres from "postgres";
 import type { Tx } from "./db";
 import { ApiError } from "./http";
+import { afterGroupsLeft } from "./job-offers";
 import { hashKey, newOwnerCode } from "./keys";
 import { consume, ownerCodeRules, releaseRules } from "./limits";
 import { logAction } from "./log";
@@ -222,7 +223,7 @@ export async function releaseBot(
   handle: string,
   ipHash: string | null,
 ): Promise<void> {
-  await sql.begin(async (tx) => {
+  const left = await sql.begin(async (tx) => {
     const [human] = await tx<{ id: string }[]>`
       SELECT id FROM humans WHERE auth_user_id = ${authUserId}`;
     const humanId = human ? Number(human.id) : undefined;
@@ -250,5 +251,7 @@ export async function releaseBot(
       ipHash,
       ...(groups.length > 0 ? { detail: { left_groups: groups } } : {}),
     });
+    return groups;
   });
+  await afterGroupsLeft(left);
 }

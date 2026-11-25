@@ -3,7 +3,7 @@ import { dueChanged } from "./due-kick";
 import { noticeJobOfferFailures } from "./floods";
 import { addUses, channelWakeRules, usesLeft } from "./limits";
 import { logAction } from "./log";
-import { privateRef } from "./private-channels";
+import { privateRef, refId } from "./private-channels";
 import { isReadOnly } from "./read-only";
 import { antiAbuse } from "./settings";
 
@@ -135,6 +135,16 @@ async function offerOne(d: Due): Promise<number | "capped" | null> {
 // put in may be owed an offer at once), and let the clock read the next
 // time an offer, a leader wake or a lease comes due. Best effort: an offer that fails here is made
 // by the clock's next run, since it's still due.
+// A bot's link ending takes it out of every group it's in
+// (releaseFromGroups): each may owe a job's offer now, its holder gone
+// (081_job_holder_gone.sql). Run after the release commits.
+export async function afterGroupsLeft(refs: string[]): Promise<void> {
+  for (const ref of refs) {
+    const id = refId(ref);
+    if (id !== undefined) await afterJobWrite(id);
+  }
+}
+
 export async function afterJobWrite(channel: number): Promise<void> {
   try {
     await offerJobs({ channel });
