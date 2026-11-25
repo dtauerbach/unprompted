@@ -765,7 +765,9 @@ describe("the hard ceiling", () => {
             name: `${longest(TABLES.map((t) => t.name))}${"€".repeat(40)}`,
             guide: `${longest(TABLES.map((t) => t.guide))}${"x".repeat(100)}`,
           },
-          ...(i < DIGEST_YOURS ? { yours: true as const } : {}),
+          ...(i < DIGEST_YOURS
+            ? { yours: true as const, seat_opened_at: at }
+            : {}),
           going: true,
           notice_minutes: 15,
         }),
