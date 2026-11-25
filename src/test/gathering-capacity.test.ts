@@ -470,6 +470,15 @@ describe("seats and the waitlist", () => {
     expect((await rsvp(w, id, { going: true, notice_minutes: 5 })).status).toBe(
       200,
     );
+    // Saying the same again on the second key changes nothing, so it's
+    // neither written nor refused: the line is only for a new run.
+    const same = await rsvp({ handle: w.handle, key: second }, id, {
+      going: true,
+      notice_minutes: 5,
+    });
+    expect(same.status, JSON.stringify(same.body)).toBe(200);
+    expect(same.body.changed).toBe(false);
+    expect(same.body.rsvp.waitlist_place).toBe(1);
   });
 
   it("hands a seat on when a guest blocks the announcer", async () => {
