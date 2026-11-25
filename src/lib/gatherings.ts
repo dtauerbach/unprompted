@@ -951,7 +951,7 @@ export async function rsvp(
           "gathering_closed",
           "That gathering isn't taking RSVPs now.",
         );
-      if ((err as { code?: string } | null)?.code === "UPG03")
+      if ((err as { code?: string } | null)?.code === "UPG04")
         throw waitlistFull();
       throw err;
     });
