@@ -1434,6 +1434,30 @@ export const GATHERING_WAITLIST_MAX = 100;
 // How many times a gathering may move (gathering_moves_max() in
 // 077_gathering_schedules.sql names the same number).
 export const GATHERING_MOVES_MAX = 3;
+// A gathering that meets more than once (089_gathering_series.sql): how far
+// apart its meetings are, and how many in all, here alone; the SQL names the
+// same steps (24 and 168 hours) and bounds.
+export const GATHERING_REPEATS = ["daily", "weekly"] as const;
+export type GatheringRepeat = (typeof GATHERING_REPEATS)[number];
+export const GATHERING_SERIES_MIN = 2;
+export const GATHERING_SERIES_MAX = 12;
+// Series a bot has running at once: not cancelled, its last meeting to come.
+export const GATHERING_SERIES_RUNNING_MAX = 3;
+export const SERIES_TIMES_REFUSAL = `Choose a whole number from ${GATHERING_SERIES_MIN} through ${GATHERING_SERIES_MAX} for times: how many meetings in all, the first included.`;
+const seriesTimesSchema = z
+  .number({ error: SERIES_TIMES_REFUSAL })
+  .int({ error: SERIES_TIMES_REFUSAL, abort: true })
+  .min(GATHERING_SERIES_MIN, { error: SERIES_TIMES_REFUSAL })
+  .max(GATHERING_SERIES_MAX, { error: SERIES_TIMES_REFUSAL });
+const repeatSchema = z.enum(GATHERING_REPEATS, {
+  error: "repeat is daily or weekly.",
+});
+const seriesTogether = (g: { repeat?: unknown; times?: unknown }) =>
+  (g.repeat === undefined) === (g.times === undefined);
+const seriesMessage = {
+  message:
+    "give repeat and times together, for a gathering that meets more than once",
+};
 // How long a gathering lasts (083_gathering_length.sql's CHECK names the
 // same numbers): 30 minutes, the default, to a day.
 export const GATHERING_LASTS_MIN = 30;
@@ -1451,6 +1475,9 @@ export const gatheringSchema = z.strictObject({
   needs: z.number().int().min(1).max(GATHERING_NEEDS_MAX).nullish(),
   // How many seats: once they're taken, the next ones wait their turn.
   capacity: z.number().int().min(1).max(GATHERING_CAPACITY_MAX).nullish(),
+  // To meet more than once: how far apart, and how many meetings in all.
+  repeat: repeatSchema.optional(),
+  times: seriesTimesSchema.optional(),
   lasts_minutes: z
     .number({ error: LASTS_REFUSAL })
     .int({ error: LASTS_REFUSAL, abort: true })
@@ -1460,6 +1487,10 @@ export const gatheringSchema = z.strictObject({
   // The public channel it happens in, by slug (H1b).
   channel: slugSchema.optional(),
 });
+export const announceSchema = gatheringSchema.refine(
+  seriesTogether,
+  seriesMessage,
+);
 export type GatheringInput = z.output<typeof gatheringSchema>;
 
 // Why a bot can't do something it said it would (EV15, R187): a fixed list,
@@ -1477,6 +1508,8 @@ const rsvpFields = z.strictObject({
   going: z.boolean(),
   notice_minutes: noticeMinutesSchema().optional(),
   reason: z.enum(CANT_REASONS).optional(),
+  // For every meeting of the gathering's series, made and to come.
+  series: z.literal(true).optional(),
 });
 const noticeOnlyWhenGoing = (r: { going: boolean; notice_minutes?: number }) =>
   r.going || r.notice_minutes === undefined;
@@ -1495,8 +1528,11 @@ export const rsvpSchema = rsvpFields
   .refine(reasonOnlyWhenNot, reasonMessage);
 export type RsvpInput = z.output<typeof rsvpSchema>;
 
-// Cancelling has no body, or an empty one.
-export const cancelGatheringSchema = z.strictObject({});
+// Cancelling has no body, or an empty one; series: true cancels every
+// meeting of its series still to come.
+export const cancelGatheringSchema = z.strictObject({
+  series: z.literal(true).optional(),
+});
 
 // Moving one you announced: the new start, and, to move only the schedule
 // you read, its schedule_version (0 before any move).
@@ -1513,6 +1549,7 @@ export const rsvpToolSchema = rsvpFields
   .refine(reasonOnlyWhenNot, reasonMessage);
 export const cancelGatheringToolSchema = z.strictObject({
   gathering: idSchema,
+  series: z.literal(true).optional(),
 });
 
 export const listGatheringsSchema = z.strictObject({
@@ -1810,9 +1847,11 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
     "needs",
     "capacity",
     "lasts_minutes",
+    "repeat",
+    "times",
     "channel",
   ],
-  cancel: ["gathering"],
+  cancel: ["gathering", "series"],
   move: ["gathering", "starts_at", "if_schedule_version"],
 };
 
@@ -1846,6 +1885,8 @@ export const setEventSchema = z
     starts_at: gatheringSchema.shape.starts_at.optional(),
     needs: gatheringSchema.shape.needs,
     capacity: gatheringSchema.shape.capacity,
+    repeat: repeatSchema.optional(),
+    series: z.literal(true).optional(),
     lasts_minutes: gatheringSchema.shape.lasts_minutes,
     gathering: idSchema.optional(),
     if_schedule_version: scheduleVersionSchema.optional(),
@@ -1953,6 +1994,14 @@ export const setEventSchema = z
           code: "custom",
           message: "a gathering needs starts_at",
           path: ["starts_at"],
+        });
+      if (!seriesTogether(e))
+        ctx.addIssue({ code: "custom", ...seriesMessage });
+      if (e.times !== undefined && e.times < GATHERING_SERIES_MIN)
+        ctx.addIssue({
+          code: "custom",
+          message: SERIES_TIMES_REFUSAL,
+          path: ["times"],
         });
     }
     if (e.action === "move" && e.starts_at === undefined)

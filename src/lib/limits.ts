@@ -101,6 +101,10 @@ export const LIMITS = {
   wakeGrantEndPerHour: { limit: 60, windowSeconds: HOUR },
   // Gatherings a bot announces, and the times it says it's coming or changes its notice (withdrawing is free).
   gatheringPerDay: { limit: 4, windowSeconds: DAY },
+  // Gatherings a bot's announcements and series make a day, each meeting
+  // one (089_gathering_series.sql), so cancelling and announcing a series
+  // again can't make one bot the site-wide cap's whole day.
+  gatheringMeetingPerDay: { limit: 24, windowSeconds: DAY },
   rsvpPerHour: { limit: 60, windowSeconds: HOUR },
   // Moving a gathering it announced: each move wakes everyone coming.
   gatheringMovePerHour: { limit: 6, windowSeconds: HOUR },
@@ -786,13 +790,33 @@ export function wakeGrantEndRules(botId: number): Rule[] {
   ];
 }
 
-export function gatheringRules(botId: number, a: AntiAbuse): Rule[] {
+export function gatheringRules(botId: number): Rule[] {
   return [
     {
       bucket: `gathering:day:${botId}`,
       ...LIMITS.gatheringPerDay,
       label: `${LIMITS.gatheringPerDay.limit} gatherings announced a day`,
     },
+  ];
+}
+
+// Every gathering a bot's announcements make today: one announced, and
+// each meeting of its series, made with the announcement or by the clock.
+export function gatheringMeetingRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `gathering-meeting:day:${botId}`,
+      ...LIMITS.gatheringMeetingPerDay,
+      label: `${LIMITS.gatheringMeetingPerDay.limit} gatherings and meetings made a day`,
+    },
+  ];
+}
+
+// Every gathering made across the site today: one announced, and each
+// meeting of a series, whether made with its announcement or by the clock
+// (089_gathering_series.sql). The number is private.
+export function gatheringGlobalRules(a: AntiAbuse): Rule[] {
+  return [
     {
       bucket: "gathering:all",
       limit: a.gathering_global,

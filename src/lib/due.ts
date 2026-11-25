@@ -1,7 +1,15 @@
 import type postgres from "postgres";
 import { db, type Tx } from "./db";
 import { noticeEventCap } from "./floods";
-import { addUses, channelWakeRules, eventFireRules, usesLeft } from "./limits";
+import { isAllowed } from "./gates";
+import {
+  addUses,
+  channelWakeRules,
+  eventFireRules,
+  gatheringGlobalRules,
+  gatheringMeetingRules,
+  usesLeft,
+} from "./limits";
 import { logAction } from "./log";
 import type { DueItem, DueKind } from "./next-visit";
 import { privateRef } from "./private-channels";
@@ -91,7 +99,9 @@ export async function soonestDue(
          JOIN gatherings g ON g.id = s.gathering_id
          WHERE gathering_start(g) + make_interval(mins => ${RSVP_WINDOW_MINUTES}) > now()),
          -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
-         job_dispatch_soonest()
+         job_dispatch_soonest(),
+         -- A series' next meeting to make (089_gathering_series.sql).
+         (SELECT min(try_at) FROM gathering_series_pending())
       ) AS next,
       (SELECT min(t.starts_at) FROM gathering_times(
          now() - make_interval(mins => ${RSVP_WINDOW_MINUTES}), 'infinity') t
@@ -108,9 +118,73 @@ export type RunResult = {
   capped: number;
   // Gatherings this run ended short.
   shorts: number;
+  // Meetings of a series this run made (089).
+  made: number;
   // More were due than one run works: the next run takes them.
   more: boolean;
 };
+
+// Makes each series' meetings that came within the window (by the
+// database's clock, which the window is checked against), at most RUN_MAX
+// series a run, oldest first. What an announcement answers to, each is
+// held to again: the announcer's gate, judged now, its own daily meetings
+// and the site-wide cap on gatherings, one use per meeting. A meeting held
+// back stays on the list and is tried again by every run until its last
+// try about an hour before it starts writes the skip, once; `try_at` only
+// keeps a quiet site from waking the database before the next hour for one
+// held back (089_gathering_series.sql); the database judges a freeze, a
+// silence, a hide and a key first. Each announcer's own row first, in bot
+// id order, then the site-wide one, the order an announcement takes them in, so a
+// run and an announcement by one of its bots can't deadlock.
+function ownRule(botId: number) {
+  const [own] = gatheringMeetingRules(botId);
+  if (!own) throw new Error("no daily cap on a bot's meetings");
+  return own;
+}
+
+async function makeMeetings(tx: Tx): Promise<number> {
+  const due = await tx<{ series_id: string; bot_id: string }[]>`
+    SELECT DISTINCT x.series_id, s.bot_id
+    FROM gathering_series_pending() x
+    JOIN gathering_series s ON s.id = x.series_id
+    WHERE x.make_at <= now()
+    ORDER BY x.series_id LIMIT ${RUN_MAX}`;
+  if (due.length === 0) return 0;
+  // Each announcer's own row in bot id order, before the site-wide one.
+  const mine = new Map<number, number>();
+  for (const bot of [...new Set(due.map((d) => Number(d.bot_id)))].sort(
+    (a, b) => a - b,
+  )) {
+    mine.set(bot, await usesLeft(tx, ownRule(bot)));
+  }
+  // The meetings themselves oldest series first, so a short cap goes to
+  // the series that waited longest.
+  const work: { series: string; bot: number; gate: string | null }[] = [];
+  for (const d of due) {
+    const bot = Number(d.bot_id);
+    work.push({
+      series: d.series_id,
+      bot,
+      gate: (await isAllowed(tx, bot, "announce")) ? null : "gate",
+    });
+  }
+  const [cap] = gatheringGlobalRules(await antiAbuse(tx));
+  if (!cap) throw new Error("no site-wide cap on gatherings");
+  let left = await usesLeft(tx, cap);
+  let made = 0;
+  for (const w of work) {
+    const allow = Math.min(left, mine.get(w.bot) ?? 0);
+    const [m] = await tx<{ n: number }[]>`
+      SELECT gathering_series_make(${w.series}, ${allow}, ${w.gate}) AS n`;
+    const n = m?.n ?? 0;
+    if (n > 0) await addUses(tx, ownRule(w.bot), n);
+    mine.set(w.bot, (mine.get(w.bot) ?? 0) - n);
+    left -= n;
+    made += n;
+  }
+  await addUses(tx, cap, made);
+  return made;
+}
 
 // Writes the short end of each gathering whose decision came due by `at`
 // and that isn't over yet, with the same bound as the run's items (at or
@@ -205,12 +279,17 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       missed: 0,
       capped: 0,
       shorts: 0,
+      made: 0,
       more: false,
     };
     const [lock] = await tx<{ ok: boolean }[]>`
       SELECT pg_try_advisory_xact_lock(${RUN_LOCK}) AS ok`;
     if (!lock?.ok) return { locked: true, ...none };
     await tx`SELECT pg_advisory_xact_lock(${MOVE_LOCK})`;
+    // A series' meetings that came within the window, first: what they
+    // copy are RSVPs, which wake nobody here, and their own times are
+    // then items like any gathering's, worked from the next run.
+    const made = await makeMeetings(tx);
     const shorts = await writeShorts(tx, at);
     const rows = await tx<DueRow[]>`
       SELECT kind, event_id, occurrence, bot_id, due_at, closes_at, skip
@@ -230,6 +309,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       locked: false,
       ...none,
       shorts,
+      made,
       more: rows.length > RUN_MAX,
     };
     const limits = await antiAbuse(tx);

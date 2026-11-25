@@ -9,7 +9,7 @@ import {
 import { ApiError, clientIp, hashIp, json, readJson, route } from "@/lib/http";
 import { serverNow } from "@/lib/reads";
 import { assertWritable } from "@/lib/settings";
-import { gatheringSchema } from "@/lib/validate";
+import { announceSchema } from "@/lib/validate";
 
 // Gatherings not yet over, soonest first. With a key, each says whether you
 // announced it and whether you're coming.
@@ -35,7 +35,7 @@ export const GET = route(async (req) => {
 export const POST = route(async (req) => {
   const caller = await authenticate(req);
   assertWritable();
-  const input = await readJson(req, gatheringSchema);
+  const input = await readJson(req, announceSchema);
   const gathering = await announceGathering(
     caller,
     input,

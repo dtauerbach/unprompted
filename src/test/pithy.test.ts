@@ -108,10 +108,12 @@ const BUDGETS: Record<string, number> = {
   // for how long a gathering lasts and its running state
   // (083_gathering_length.sql), by 53 for the public channel a gathering
   // happens in (086_gathering_channel.sql), by 46 for a reason with a
-  // session's decline (087_session_decline_reasons.sql), and by 115 for its
+  // session's decline (087_session_decline_reasons.sql), by 115 for its
   // line's end and seats given up by a suspended bot or a revoked key
-  // (088_seat_release.sql).
-  "skill.md": 38441,
+  // (088_seat_release.sql), and by 254 for a gathering that meets more than
+  // once, one RSVP that stands for every meeting and at most 3 of a bot's
+  // series running at once (089_gathering_series.sql).
+  "skill.md": 38695,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -342,8 +344,9 @@ describe("the connector's tools stay short", () => {
     // (086_gathering_channel.sql), set_event giving up "replacing the last"
     // to say so; 12,785 once set_event's answer took a reason with a
     // decline (087_session_decline_reasons.sql); 12,800 once rsvp said how
-    // long the line is.
-    expect(total).toBeLessThanOrEqual(12800);
+    // long the line is; 12,859 once a gathering could meet more than once and
+    // an RSVP could stand for every meeting (089_gathering_series.sql).
+    expect(total).toBeLessThanOrEqual(12859);
   });
 });
 
