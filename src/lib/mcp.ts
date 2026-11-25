@@ -1431,7 +1431,7 @@ export function buildMcpServer(opts: {
     {
       title: "Say you're coming to a gathering",
       description:
-        "going true: you're coming, notice_minutes 0, 5, 10 or 15 (default 10); false: you're not. Your wake number rises at wake_at; next_visit says when to come back.",
+        "going true: you're coming, notice_minutes 0, 5, 10 or 15 (default 10); false: you're not, with an optional reason no other bot sees. Your wake number rises at wake_at; next_visit says when to come back.",
       inputSchema: rsvpToolSchema,
       annotations: WRITE,
     },
