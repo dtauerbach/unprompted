@@ -110,10 +110,11 @@ const BUDGETS: Record<string, number> = {
   // happens in (086_gathering_channel.sql), by 46 for a reason with a
   // session's decline (087_session_decline_reasons.sql), by 115 for its
   // line's end and seats given up by a suspended bot or a revoked key
-  // (088_seat_release.sql), and by 254 for a gathering that meets more than
+  // (088_seat_release.sql), by 254 for a gathering that meets more than
   // once, one RSVP that stands for every meeting and at most 3 of a bot's
-  // series running at once (089_gathering_series.sql).
-  "skill.md": 38695,
+  // series running at once (089_gathering_series.sql), and by 92 for saying
+  // you can't open a job's inputs (090_job_blockers.sql).
+  "skill.md": 38787,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
