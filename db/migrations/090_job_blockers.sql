@@ -70,7 +70,11 @@ CREATE FUNCTION job_blocked(j bigint, b bigint) RETURNS boolean LANGUAGE sql STA
 $$;
 
 -- Every member the leader can see could take the job has a blocker standing,
--- and there is at least one.
+-- and there is at least one. Unlike the offers, this keeps in the bot whose
+-- claim or release ended the last attempt: it didn't say it can't open the
+-- inputs (its claim ended any word it had), so a job it left with every
+-- other member blocked isn't marked inputs_unreadable; the leader hears
+-- no_taker on its usual time instead, which says only that nobody took it.
 CREATE FUNCTION job_all_blocked(j bigint) RETURNS boolean LANGUAGE sql STABLE AS $$
   WITH cand AS (
     SELECT r.bot_id AS b FROM channel_jobs x
@@ -216,6 +220,8 @@ DECLARE
   gby bigint;
   lead bigint;
   seen int;
+  cause bigint;
+  own boolean;
 BEGIN
   SELECT * INTO job FROM channel_jobs x WHERE x.id = j;
   IF NOT FOUND OR NOT is_group(job.channel_id)
@@ -259,19 +265,38 @@ BEGIN
   -- case 4). A member's own word, never a private gate, so it's a wake.
   IF job_all_blocked(j) THEN
     began := (SELECT max(bl.created_at) FROM job_blockers_live(j) bl);
-    RETURN QUERY SELECT st.seq, lead, began,
-      -- As 082 has it, nothing wakes a leader for its own write: when what
-      -- left every remaining taker blocked, just now, was the leader's own
-      -- move (a revision, its claim's release) or its taking a member out,
-      -- the leader gets the mark alone. A job with no move yet has no
-      -- mover: compared null-safe, never left null.
-      NOT (
-        coalesce(lby = lead AND lat >= began AND at - lat < interval '1 minute', false)
-        OR EXISTS (SELECT 1 FROM channel_members cm
-                   WHERE cm.channel_id = job.channel_id AND NOT cm.member
-                     AND cm.by_bot_id = lead AND cm.bot_id <> lead
-                     AND cm.created_at >= began
-                     AND at - cm.created_at < interval '1 minute'));
+    -- As 082 has it, nothing wakes a leader for its own write. Here that's
+    -- whoever made every remaining taker blocked, last: a member's own
+    -- cant_read (the leader's own, when it could take the job itself), the
+    -- episode's move (a revision, a claim's release), or a take-out of a
+    -- member that could take it and hadn't said so (the leader's, or a
+    -- person's, whose by_bot_id is null), or a freeze of a member that
+    -- could take it, which is never the leader's write. Judged by order alone, never by
+    -- how long ago, so a later pass reads the same. When it was the
+    -- leader's own write, the leader gets the mark alone, and only once an
+    -- episode: a mark it already has without a wake stands for it.
+    SELECT x.who INTO cause FROM (
+      SELECT bl.bot_id AS who, bl.created_at AS t, 0 AS o FROM job_blockers_live(j) bl
+      UNION ALL
+      SELECT lby, lat, 1 WHERE lat IS NOT NULL
+      UNION ALL
+      SELECT cm.by_bot_id, cm.created_at, 2 FROM channel_members cm
+      WHERE cm.channel_id = job.channel_id AND NOT cm.member
+        AND cm.bot_id <> job.bot_id
+        AND (job.eligible IS NULL OR cm.bot_id = ANY (job.eligible))
+        AND NOT job_blocked(j, cm.bot_id)
+      UNION ALL
+      SELECT NULL::bigint, y.frozen_at, 3 FROM channel_roster(job.channel_id) r
+      JOIN bots y ON y.id = r.bot_id
+      WHERE y.frozen_at IS NOT NULL AND r.bot_id <> job.bot_id
+        AND (job.eligible IS NULL OR r.bot_id = ANY (job.eligible))
+    ) x ORDER BY x.t DESC, x.o DESC, x.who LIMIT 1;
+    own := coalesce(cause = lead, false);
+    IF own AND EXISTS (SELECT 1 FROM job_no_takers n
+                       WHERE n.job_id = j AND n.episode = st.seq AND NOT n.woken) THEN
+      RETURN;
+    END IF;
+    RETURN QUERY SELECT st.seq, lead, began, NOT own;
     RETURN;
   END IF;
   -- When it turned ready, as job_offer_next has it.

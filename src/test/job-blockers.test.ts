@@ -9,6 +9,7 @@ import {
   GET as boardRoute,
   POST as postRoute,
 } from "@/app/v1/private-channels/[id]/jobs/route";
+import { POST as leaderRoute } from "@/app/v1/private-channels/[id]/leader/route";
 import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { POST as removeRoute } from "@/app/v1/private-channels/[id]/members/remove/route";
 import { setSilenced } from "@/lib/admin";
@@ -184,7 +185,8 @@ describe("a member that can't open a job's inputs", () => {
     expect(again.body.already).toBe(true);
     const rows = await db()`SELECT 1 FROM job_blockers`;
     expect(rows).toHaveLength(1);
-    // moe isn't asked again however long it waits.
+    // Each member is asked once an episode, so the windows end with oto;
+    // moe's word keeping it out of the next episode is held below.
     await window();
     await offerJobs();
     await window();
@@ -214,8 +216,12 @@ describe("a member that can't open a job's inputs", () => {
     expect(c.status).toBe(200);
     expect(c.body.job).toMatchObject({ state: "claimed", attempt: 1 });
     expect((await read(m, g)).you).toBeUndefined();
-    // Released, the job is ready again and moe still isn't asked.
+    // Released, the job is ready again in a new episode, and moe, whose
+    // word stands, isn't asked in it: oto is (nia let it go).
+    const asked = (await offers()).length;
     await move(n, g, 1, { move: "release", if_seq: 1, reason: "cant_do" });
+    await offerJobs();
+    expect((await offers()).slice(asked)).toEqual(["oto"]);
     expect((await read(m, g)).you).toBe("cant_read");
     // moe found access after all: it claims, and its word lapses.
     const mine = await move(m, g, 1, { move: "claim", if_seq: 2 });
@@ -434,6 +440,95 @@ describe("a member that can't open a job's inputs", () => {
       no_taker: true,
       inputs_unreadable: true,
     });
+  });
+
+  it("never wakes a leader for its own word, when it could take the job itself", async () => {
+    const { l, members, g } = await group(["moe", "nia"]);
+    const [m, n] = members as [Bot, Bot];
+    await post(l, g);
+    // lea hands the lead to moe, who can take the job, as nia can.
+    const handed = await call(leaderRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "moe" },
+    });
+    expect(handed.status, JSON.stringify(handed.body)).toBe(200);
+    await cantRead(n, g);
+    const before = await wake(m);
+    // moe says so last: every taker is blocked by its own word.
+    expect((await cantRead(m, g)).status).toBe(200);
+    await offerJobs();
+    const marks = await db()<{ woken: boolean; to: string }[]>`
+      SELECT n.woken, b.handle AS to FROM job_no_takers n JOIN bots b ON b.id = n.bot_id`;
+    expect(marks).toEqual([{ woken: false, to: "moe" }]);
+    expect(await wake(m)).toBe(before);
+    expect((await read(m, g)).inputs_unreadable).toBe(true);
+  });
+
+  it("wakes a leader whose own word came before a freeze that left nobody", async () => {
+    const { l, members, g } = await group(["moe", "nia", "pia"]);
+    const [m, n, p] = members as [Bot, Bot, Bot];
+    await post(l, g);
+    const handed = await call(leaderRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "moe" },
+    });
+    expect(handed.status, JSON.stringify(handed.body)).toBe(200);
+    await cantRead(n, g);
+    await cantRead(m, g);
+    // pia could still take it, so nobody is told yet.
+    await offerJobs();
+    expect(await db()`SELECT 1 FROM job_no_takers`).toHaveLength(0);
+    await age(60);
+    const before = await wake(m);
+    // A moderator freezes pia, long after moe's own word: that, not moe,
+    // left every taker blocked, so moe hears of it.
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = ${p.handle}`;
+    await offerJobs();
+    const marks = await db()<{ woken: boolean }[]>`
+      SELECT woken FROM job_no_takers`;
+    expect(marks).toEqual([{ woken: true }]);
+    expect(await wake(m)).toBeGreaterThan(before);
+  });
+
+  it("marks a leader once an episode however often its own take-out leaves nobody", async () => {
+    const { l, members, g } = await group(["moe", "nia"]);
+    const [m] = members as [Bot, Bot];
+    await post(l, g);
+    await cantRead(m, g);
+    const before = await wake(l);
+    const takeOut = async (handle: string) => {
+      const r = await call(removeRoute, {
+        key: l.key,
+        params: { id: num(g) },
+        body: { handle },
+      });
+      expect(r.status, JSON.stringify(r.body)).toBe(200);
+    };
+    await takeOut("nia");
+    await offerJobs();
+    // A member comes in and is asked; the leader takes it out too.
+    const pia = await bot("pia");
+    await join(pia, l, g);
+    await window();
+    await offerJobs();
+    expect(await offers()).toEqual(["moe", "nia", "pia"]);
+    await takeOut("pia");
+    // Nothing more is due for the leader, now or later, and nothing failed.
+    await offerJobs();
+    await window();
+    expect(await offerJobs()).toMatchObject({ offered: 0, leaders: 0 });
+    expect(
+      await db()`SELECT 1 FROM job_no_takers_due(clock_timestamp(), NULL)`,
+    ).toHaveLength(0);
+    const marks = await db()<{ woken: boolean }[]>`
+      SELECT woken FROM job_no_takers`;
+    expect(marks).toEqual([{ woken: false }]);
+    expect(await wake(l)).toBe(before);
+    expect(
+      await db()`SELECT 1 FROM action_log WHERE action LIKE 'alert.%'`,
+    ).toHaveLength(0);
   });
 
   it("wakes the leader once when every member says so at the same time", async () => {
