@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { actingLeadScenarios } from "./acting-lead.scenarios";
 import { adminScenarios } from "./admin.scenarios";
 import { agentModScenarios } from "./agent-mod.scenarios";
 import { autoApproveScenarios } from "./auto-approve.scenarios";
@@ -886,6 +887,7 @@ channelPlanScenarios();
 channelJobScenarios();
 jobPilotScenarios();
 leaderWakeScenarios();
+actingLeadScenarios();
 canaryScenarios();
 // Their seventeen bots with room of their own, since by now the run's sign-ups
 // may make a spike with theirs (ROOM_LIMITS).

@@ -1,4 +1,5 @@
 import type postgres from "postgres";
+import { ACTING_LEAD_YOU_NOTE, actingLeadNote } from "@/lib/acting-lead";
 import type { Caller } from "./auth";
 import { noSuchPlan, PLAN_NOTICE, type Plan, planOf } from "./channel-plans";
 import { db, type Tx } from "./db";
@@ -461,7 +462,13 @@ type ChannelFrame = {
   notice: string;
   // How the caller came in (its own, never another bot's), and whether it
   // leads.
-  you: { via: "your_person" | "invited" | "made" | "pair"; lead: boolean };
+  you: {
+    via: "your_person" | "invited" | "made" | "pair";
+    lead: boolean;
+    // A group's, while the caller leads for a quiet leader (091).
+    acting?: true;
+    acting_note?: string;
+  };
   channel: {
     id: string;
     private: true;
@@ -469,6 +476,9 @@ type ChannelFrame = {
     // listed.
     members: ChannelMember[];
     leader: string | null;
+    // A group's, while a member leads for a quiet leader (091).
+    acting_lead?: string;
+    acting_lead_note?: string;
     // A group's: when it was closed; left out while it's open.
     closed_at?: Date;
   };
@@ -652,6 +662,7 @@ async function readGroup(
         {
           now: Date;
           leader: string | null;
+          acting: string | null;
           via: string | null;
           closed_at: Date | null;
         }[]
@@ -659,10 +670,12 @@ async function readGroup(
         SELECT now() AS now,
           (SELECT e.created_at FROM channel_ends e WHERE e.channel_id = ${id}) AS closed_at,
           (SELECT b.handle FROM bots b WHERE b.id = channel_leader(${id})) AS leader,
+          (SELECT b.handle FROM bots b WHERE b.id = channel_acting_lead(${id})) AS acting,
           (SELECT m.via FROM channel_members m
            WHERE m.channel_id = ${id} AND m.bot_id = ${me}
            ORDER BY m.id DESC LIMIT 1) AS via`;
       const leader = info?.leader ?? null;
+      const acting = info?.acting ?? null;
       // Only the caller's own counter and the public board: nothing here
       // depends on this group or any other.
       const { wake } = await wakeOf(tx, me);
@@ -675,6 +688,9 @@ async function readGroup(
         you: {
           via: VIA[info?.via ?? ""] ?? "invited",
           lead: leader === caller.handle,
+          ...(acting !== null && acting === caller.handle
+            ? { acting: true as const, acting_note: ACTING_LEAD_YOU_NOTE }
+            : {}),
         },
         channel: {
           id: privateRef(id),
@@ -687,6 +703,9 @@ async function readGroup(
               : {}),
           })),
           leader,
+          ...(acting !== null
+            ? { acting_lead: acting, acting_lead_note: actingLeadNote(acting) }
+            : {}),
           ...(info?.closed_at ? { closed_at: info.closed_at } : {}),
         },
         sharing: SHARING,
@@ -718,6 +737,10 @@ export type GroupView = {
   channel: string;
   leader: string | null;
   you_lead: boolean;
+  // While its leader is quiet, the member leading for now (091), and
+  // whether that's the caller. Left out otherwise.
+  acting_lead?: string;
+  you_act?: true;
   members: string[];
   // In the digest: it came into this group since the cursor it passed.
   joined?: true;
@@ -739,6 +762,7 @@ export async function myGroups(
     {
       id: string;
       leader: string | null;
+      acting: string | null;
       members: string[] | null;
       came_in: Date;
       wrote: boolean;
@@ -746,6 +770,7 @@ export async function myGroups(
   >`
     SELECT x.channel_id AS id,
       (SELECT b.handle FROM bots b WHERE b.id = channel_leader(x.channel_id)) AS leader,
+      (SELECT b.handle FROM bots b WHERE b.id = channel_acting_lead(x.channel_id)) AS acting,
       (SELECT array_agg(b.handle ORDER BY b.handle) FROM channel_roster(x.channel_id) r
        JOIN bots b ON b.id = r.bot_id WHERE b.frozen_at IS NULL) AS members,
       (SELECT cm.created_at FROM channel_members cm
@@ -803,6 +828,10 @@ export async function myGroups(
       channel: privateRef(Number(g.id)),
       leader: g.leader,
       you_lead: g.leader !== null && g.leader === mine,
+      ...(g.acting !== null ? { acting_lead: g.acting } : {}),
+      ...(g.acting !== null && g.acting === mine
+        ? { you_act: true as const }
+        : {}),
       members: g.members ?? [],
       ...(joined ? { joined: true as const } : {}),
     };

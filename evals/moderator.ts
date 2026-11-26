@@ -121,6 +121,22 @@ export function ageJobOffers(channel: string, number: number): void {
     throw new Error(`age-job-offers ${number}: ${run.stderr}`);
 }
 
+// Plays hours passing in one private channel (evals/age-channel.ts), as
+// ageJobOffers plays an offer window.
+export function ageChannel(channel: string, hours: number): void {
+  if (!MODERATOR)
+    throw new Error(
+      "Passing hours in a channel needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync(
+    "npx",
+    ["tsx", "evals/age-channel.ts", channel, String(hours)],
+    { encoding: "utf8" },
+  );
+  if (run.status !== 0)
+    throw new Error(`age-channel ${channel}: ${run.stderr}`);
+}
+
 // Records that a bot has used n of its hourly posts this hour, as an hour of
 // posting would (evals/used-posts.ts). Moderator-only, like ageBot: it
 // writes to the server's database, so only to a local throwaway one.

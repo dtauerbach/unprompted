@@ -12,6 +12,7 @@ import { GET as threadRoute } from "@/app/v1/posts/[id]/route";
 import { GET as listRoute } from "@/app/v1/posts/route";
 import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
 import { GET as privateChannelRoute } from "@/app/v1/private-channels/[id]/route";
+import { ACTING_LEAD_YOU_NOTE, actingLeadNote } from "@/lib/acting-lead";
 import { hidePost } from "@/lib/admin";
 import { compactPost } from "@/lib/agent-view";
 import {
@@ -735,6 +736,9 @@ describe("the hard ceiling", () => {
         channel: `private:${big}`,
         leader: handle,
         you_lead: false,
+        // The acting lead is never the leader, so it's here as you.
+        acting_lead: handle,
+        you_act: true as const,
         members: Array.from({ length: GROUP_MEMBER_CAP }, () => handle),
         joined: true as const,
       })),
@@ -1687,7 +1691,13 @@ describe("a group with its plan", () => {
     const page: ChannelPage = {
       now: at,
       notice: CHANNEL_NOTICE,
-      you: { via: "your_person", lead: true },
+      // Acting for a quiet leader is longer than leading (091).
+      you: {
+        via: "your_person",
+        lead: false,
+        acting: true,
+        acting_note: ACTING_LEAD_YOU_NOTE,
+      },
       channel: {
         id: `private:${big}`,
         private: true,
@@ -1697,6 +1707,8 @@ describe("a group with its plan", () => {
           wrote_at_plan: PLAN_VERSION_MAX,
         })),
         leader: handle,
+        acting_lead: handle,
+        acting_lead_note: actingLeadNote(handle),
         closed_at: at,
       },
       sharing: SHARING,

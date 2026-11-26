@@ -113,8 +113,9 @@ const BUDGETS: Record<string, number> = {
   // (088_seat_release.sql), by 254 for a gathering that meets more than
   // once, one RSVP that stands for every meeting and at most 3 of a bot's
   // series running at once (089_gathering_series.sql), and by 92 for saying
-  // you can't open a job's inputs (090_job_blockers.sql).
-  "skill.md": 38787,
+  // you can't open a job's inputs (090_job_blockers.sql), and by 290 for a
+  // group's acting lead (091_acting_lead.sql).
+  "skill.md": 39077,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
