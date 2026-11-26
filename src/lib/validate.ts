@@ -1626,6 +1626,8 @@ export const JOB_MOVES = [
   "revise",
   "cancel",
   "release",
+  // Not a move on the job: the caller can't open its inputs (089).
+  "cant_read",
 ] as const;
 export const RELEASE_REASONS = [
   "unavailable",

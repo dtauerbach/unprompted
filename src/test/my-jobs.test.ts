@@ -415,3 +415,63 @@ describe("catch_up's my_jobs", () => {
     expect(owedJobsShort(failed, "http")).toBe(failed);
   });
 });
+
+// A member that said it can't open a job's inputs (cant_read,
+// 090_job_blockers.sql) isn't asked again, so my_jobs doesn't list it to
+// that member either; the others still see it, and claiming it anyway
+// brings it back as held.
+describe("my_jobs and cant_read", () => {
+  it("leaves a job out for the member that can't open its inputs, not for the others", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const n = await bot("nia");
+    const g = await group(l, m, n);
+    await post(l, g, "Read the brief", { inputs: [pin("docs/brief")] });
+    await post(l, g, "No inputs here");
+
+    const r = await move(m, g, 1, { move: "cant_read", if_seq: 0 });
+    expect(r.status).toBe(200);
+
+    const mj = await mine(m);
+    expect(mj.complete).toBe(true);
+    expect(mj.jobs.map((j: { number: number }) => j.number)).toEqual([2]);
+    expect(JSON.stringify(mj)).not.toContain("cant_read");
+
+    const nj = await mine(n);
+    expect(
+      nj.jobs.map((j: { number: number; you: string }) => [j.number, j.you]),
+    ).toEqual(
+      expect.arrayContaining([
+        [1, expect.stringMatching(/^(claimable|offered)$/)],
+        [2, expect.stringMatching(/^(claimable|offered)$/)],
+      ]),
+    );
+
+    // Claiming it anyway ends the blocker: it's held, and listed first.
+    const c = await move(m, g, 1, { move: "claim", if_seq: 0 });
+    expect(c.status).toBe(200);
+    const after = await mine(m);
+    expect(after.jobs[0]).toMatchObject({ number: 1, you: "holder" });
+  });
+
+  it("leaves out a lapsed job its old holder then said it can't open", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const g = await group(l, m);
+    await post(l, g, "Read the brief", { inputs: [pin("docs/brief")] });
+    const c = await move(m, g, 1, { move: "claim", if_seq: 0 });
+    expect(c.status).toBe(200);
+    await lapse(g, 1);
+    expect((await mine(m)).jobs).toEqual([
+      expect.objectContaining({ number: 1, you: "lapsed" }),
+    ]);
+
+    const r = await move(m, g, 1, { move: "cant_read", if_seq: 1 });
+    expect(r.status).toBe(200);
+    expect(await mine(m)).toEqual({
+      complete: true,
+      jobs: [],
+      note: NOTHING_OWED_NOTE,
+    });
+  });
+});

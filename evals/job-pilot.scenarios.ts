@@ -18,9 +18,9 @@ import { ageJobOffers, lapseJob, MODERATOR } from "./moderator";
 // member at a time (079_job_offers.sql): A, the lowest, after a post; the
 // next member after a release or a lapse. A lease can't run out on a
 // running site's wall clock inside an eval, so a moderator plays it
-// (evals/lapse-job.ts). Cases 4 and 5 wait on what isn't built yet, named in
-// their todos: an access check on a pin with B4c, and catch_up's owed rows
-// for jobs.
+// (evals/lapse-job.ts). Case 4 is a worker's own word that it can't open an
+// exact pin (cant_read, 090_job_blockers.sql), since the site never opens
+// one. Case 5 waits on catch_up's owed rows for jobs, named in its todo.
 
 type Group = { lea: Bot; ana: Bot; bo: Bot; cy: Bot; g: string };
 let made = 0;
@@ -88,6 +88,24 @@ async function postBoth(s: Group) {
   });
   expect(d.isError, JSON.stringify(d.data)).toBe(false);
   return { J: j.data.job.number as number, D: d.data.job.number as number };
+}
+
+// J accepted on X, so D is ready on it and offered to A.
+async function readyOnX(s: Group) {
+  const ids = await postBoth(s);
+  const { J } = ids;
+  const c = await job(s.ana, s.g, { number: J, move: "claim", if_seq: 0 });
+  expect(c.isError, JSON.stringify(c.data)).toBe(false);
+  const sub = await job(s.ana, s.g, {
+    number: J,
+    move: "submit",
+    if_seq: 1,
+    outputs: [X],
+  });
+  expect(sub.isError, JSON.stringify(sub.data)).toBe(false);
+  const ok = await job(s.lea, s.g, { number: J, move: "accept", if_seq: 2 });
+  expect(ok.data.job.state).toBe("done");
+  return ids;
 }
 
 export function jobPilotScenarios(): void {
@@ -454,9 +472,95 @@ export function jobPilotScenarios(): void {
       expect(await wake(s.bo)).toBe(boBefore + 1);
       expect(await wake(s.cy)).toBe(cyBefore);
     });
-    it.todo(
-      "case 4: a worker who can't read the exact pin gets its own blocker and another can claim (needs the access check from B4c)",
-    );
+    it("case 4: a worker who can't read the exact pin gets its own blocker and another can claim", async () => {
+      const s = await group();
+      const { J, D } = await readyOnX(s);
+      // D went to A first, the lowest who may claim it.
+      expect(await actionable(s.ana, s.g)).toEqual([[D, "offered"]]);
+      const boBefore = await wake(s.bo);
+      const leaBefore = await wake(s.lea);
+      // A can't open X: its own word, no lease, no replacement pin.
+      const no = await job(s.ana, s.g, {
+        number: D,
+        move: "cant_read",
+        if_seq: 0,
+      });
+      expect(no.isError, JSON.stringify(no.data)).toBe(false);
+      expect(no.data.job).toMatchObject({
+        state: "ready",
+        seq: 0,
+        you: "cant_read",
+      });
+      expect(no.data.job.lease_until).toBeUndefined();
+      expect(no.data.job.inputs).toEqual([
+        expect.objectContaining({ ref: X.ref, revision: X.revision }),
+      ]);
+      // The site stops asking A about that input set.
+      expect(await actionable(s.ana, s.g)).toEqual([[D, "cant_read"]]);
+      // L's board: D ready, unclaimed, on X, and no reason from A.
+      const lBoard = (await board(s.lea, s.g)).find((j) => j.number === D);
+      expect(lBoard).toMatchObject({ state: "ready", inputs: 1 });
+      expect(lBoard?.holder).toBeUndefined();
+      expect(JSON.stringify(lBoard)).not.toContain("inputs_unreadable");
+      expect(await wake(s.lea)).toBe(leaBefore);
+      // B is asked at once, claims D and holds the only attempt.
+      expect(await wake(s.bo)).toBe(boBefore + 1);
+      expect(await actionable(s.bo, s.g)).toEqual([[D, "offered"]]);
+      const c = await job(s.bo, s.g, { number: D, move: "claim", if_seq: 0 });
+      expect(c.data.job).toMatchObject({
+        state: "claimed",
+        holder: s.bo.handle,
+        attempt: 1,
+      });
+      // J and X unchanged.
+      const jRow = (await board(s.lea, s.g)).find((j) => j.number === J);
+      expect(jRow).toMatchObject({ state: "done", seq: 3 });
+      const dRead = await tool(s.lea, "read_channel", { channel: s.g, job: D });
+      expect(dRead.data.job.inputs).toEqual([
+        expect.objectContaining({ ref: X.ref, revision: X.revision }),
+      ]);
+    });
+    it("case 4, variant: when no worker who may claim it can read the pin, the leader hears it once, never who", async () => {
+      const s = await group();
+      const { D } = await readyOnX(s);
+      const leaBefore = await wake(s.lea);
+      for (const b of [s.ana, s.bo]) {
+        const no = await job(b, s.g, {
+          number: D,
+          move: "cant_read",
+          if_seq: 0,
+        });
+        expect(no.isError, JSON.stringify(no.data)).toBe(false);
+      }
+      const row = (await board(s.lea, s.g)).find((j) => j.number === D) as
+        | (Row & { inputs_unreadable?: boolean; no_taker?: boolean })
+        | undefined;
+      expect(row).toMatchObject({
+        state: "ready",
+        inputs_unreadable: true,
+        no_taker: true,
+      });
+      // A flag, not a list: its eligible list is all that names A and B,
+      // as it did before either said a word.
+      expect(row?.you).toBeUndefined();
+      expect(
+        Object.keys(row ?? {}).filter((k) => /read|block|who/.test(k)),
+      ).toEqual(["inputs_unreadable"]);
+      expect(await wake(s.lea)).toBe(leaBefore + 1);
+      // No repeating offer and no second wake.
+      const anaBefore = await wake(s.ana);
+      const boBefore = await wake(s.bo);
+      ageJobOffers(s.g, D);
+      for (let i = 0; i < 3; i += 1) await get("/v1/clock");
+      expect(await wake(s.ana)).toBe(anaBefore);
+      expect(await wake(s.bo)).toBe(boBefore);
+      expect(await wake(s.lea)).toBe(leaBefore + 1);
+      // Only the leader is told.
+      for (const b of [s.ana, s.bo, s.cy]) {
+        const r = (await board(b, s.g)).find((j) => j.number === D);
+        expect(JSON.stringify(r)).not.toContain("inputs_unreadable");
+      }
+    });
     it.todo(
       "case 5: a day-late cold read says nothing is owed only on a complete read (needs catch_up's job rows, not built yet)",
     );

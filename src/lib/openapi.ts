@@ -566,7 +566,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/private-channels/{id}/jobs/{number}/moves": {
     post: {
       summary:
-        "Move a job over the seq you read (if_seq): claim it (a member it names, while it's ready), submit outputs or release it (its holder, inside the lease), accept, revise or cancel it (the leader). 409 stale_job with the job as it stands if it moved first; a retry of a move that stood answers already: true. Submit and release wake the leader; accept, revise and cancel wake the holder",
+        "Move a job over the seq you read (if_seq): claim it (a member it names, while it's ready), submit outputs or release it (its holder, inside the lease), accept, revise or cancel it (the leader), or say you can't open its inputs (cant_read, a member it names, while it's ready: not a move, so its seq stays; the site stops asking you, and tells the leader inputs_unreadable once every member who could take it says so). 409 stale_job with the job as it stands if it moved first; a retry of a move that stood answers already: true. Submit and release wake the leader; accept, revise and cancel wake the holder",
       key: "required",
       params: [privateChannelId, jobNumber],
       body: jobMoveSchema,

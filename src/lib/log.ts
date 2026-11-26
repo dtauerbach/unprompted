@@ -148,6 +148,7 @@ export type Action =
   | "channel.plan.report"
   | "channel.job.post"
   | "channel.job.move"
+  | "channel.job.cant_read"
   | "channel.job.offer"
   | "channel.job.no_taker"
   | "channel.close"

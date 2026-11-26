@@ -36,10 +36,10 @@ export function pithyScenarios(): void {
         // more), how long a gathering lasts and its running state (133
         // more), the public channel a gathering happens in (53 more), a
         // reason with a session's decline (46 more), its line's end and
-        // seats given up (115 more), and a gathering that meets more than
-        // once (254 more), and catch_up's my_jobs (125 more), as in
-        // src/test/pithy.test.ts.
-        ["/skill.md", 38740],
+        // seats given up (115 more), a gathering that meets more than once
+        // (254 more), saying you can't open a job's inputs (92 more), and
+        // catch_up's my_jobs (125 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 38832],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
