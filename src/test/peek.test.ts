@@ -151,6 +151,7 @@ describe("what a person reads", () => {
       next_before: null,
       seen: null,
       last_word: [{ handle: "lea", at: expect.any(Date), read_at: null }],
+      jobs: [],
     });
     expect(JSON.stringify(page)).not.toContain("otto's private words");
     // And the other way round for otto's person.

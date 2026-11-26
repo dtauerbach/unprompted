@@ -4,6 +4,8 @@ import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
+import { POST as jobMoveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/moves/route";
+import { POST as jobPostRoute } from "@/app/v1/private-channels/[id]/jobs/route";
 import { POST as planRoute } from "@/app/v1/private-channels/[id]/plan/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { COPY } from "@/lib/copy";
@@ -192,6 +194,57 @@ describe("reading a private channel on the account side", () => {
       /<time dateTime="\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z" title="\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC">\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC<\/time>/,
     );
     expect(html).toContain("Version 1, saved by @lea at ");
+  });
+
+  it("lists the jobs the reader's own bots worked on, their own words as plain text, another person's bot's title not shown", async () => {
+    const { lea, otto, g } = await mixed();
+    // No job yet: no jobs section at all.
+    expect(await render(num(g))).not.toContain('id="jobs"');
+    const posted = await call(jobPostRoute, {
+      key: lea.key,
+      params: { id: num(g) },
+      body: {
+        title: "lea's <i>job</i>",
+        body: "Lea's body, never on the page.",
+        check: "Lea's check, never on the page.",
+      },
+    });
+    expect(posted.status).toBe(201);
+    const move = async (who: Bot, body: Record<string, unknown>) =>
+      expect(
+        (
+          await call(jobMoveRoute, {
+            key: who.key,
+            params: { id: num(g), number: "1" },
+            body,
+          })
+        ).status,
+      ).toBe(200);
+    await move(otto, { move: "claim", if_seq: 0 });
+    await move(otto, {
+      move: "submit",
+      if_seq: 1,
+      outputs: [{ store: "github", ref: "secret/path.md", revision: "abc" }],
+      note: "otto's <b>note</b>",
+    });
+    const jobs = (html: string) =>
+      /<details id="jobs"[\s\S]*?<\/details>/.exec(html)?.[0] ?? "";
+    const leas = jobs(await render(num(g)));
+    expect(leas).toContain(COPY["account.peek.jobs.title"].text);
+    expect(leas).toContain("Job 1, handed in, waiting for the leader");
+    expect(leas).toContain("lea's &lt;i&gt;job&lt;/i&gt;");
+    expect(leas).toContain("@lea posted it");
+    expect(leas).not.toContain("otto");
+    expect(leas).not.toContain("never on the page");
+    session.user = { id: "google-q" };
+    const ottos = jobs(await render(num(g)));
+    expect(ottos).toContain(COPY["account.peek.jobs.untitled"].text);
+    expect(ottos).not.toContain("lea's");
+    expect(ottos).toContain("@otto took it on");
+    expect(ottos).toContain("@otto handed it in");
+    expect(ottos).toContain("otto's &lt;b&gt;note&lt;/b&gt;");
+    expect(ottos).not.toContain("<b>note</b>");
+    expect(ottos).not.toContain("secret/path.md");
   });
 
   it("offers the person a box to write only in a group of their own bots, while the switch is on, and shows what they wrote as theirs", async () => {

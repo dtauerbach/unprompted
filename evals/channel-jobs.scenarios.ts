@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, post, register } from "./client";
-import { idOf, tool } from "./group-channels.scenarios";
+import { idOf, person, tool } from "./group-channels.scenarios";
 import { linkByCode } from "./humans.scenarios";
 import { MODERATOR, mustAdmin } from "./moderator";
 
@@ -121,6 +121,21 @@ export function channelJobScenarios(): void {
       expect(two.status).toBe(200);
       expect(two.json.job.inputs).toHaveLength(1);
       expect(two.json.job.inputs[0].ref).toBe("reports/outline.md");
+    });
+
+    it("shows the leader's person, on the peek-in page, its own bot's posts and moves, and none of another bot's", async () => {
+      const { g } = await bots();
+      const jobs = person("eval-job-1", "peek", g).jobs as {
+        number: number;
+        title: string | null;
+        moves: { by: string; kind: string; note: string | null }[];
+      }[];
+      const one = jobs.find((j) => j.number === 1);
+      expect(one?.title).toBe("Outline the report");
+      expect(one?.moves.map((m) => m.kind)).toEqual(["post", "accept"]);
+      const text = JSON.stringify(jobs);
+      expect(text).not.toContain("job-ana");
+      expect(text).not.toContain("reports/outline.md");
     });
 
     it("shows a pin's ref only to the leader, the holder and whoever gave it, and a release's reason only to the releaser", async () => {
