@@ -3,12 +3,14 @@
 -- changes:
 --
 -- 1. A member's word that it can't open a job's inputs stands only while
---    the bot is still in the group under the membership it said it under,
---    and the key it said it with is live. A bot that leaves and comes back,
---    or connects again (a new key may be another app, with other access,
---    as the hosts rule has it), is asked again rather than reading a word
---    it never gave. job_blockers_live keeps its shape, so job_blocked,
---    job_all_blocked and the offers follow.
+--    the bot is still in the group under the membership it said it under:
+--    a bot that leaves and comes back reads as one that never said it, and
+--    may be asked again if it wasn't asked this episode. job_blockers_live
+--    keeps its shape, so job_blocked, job_all_blocked and the offers
+--    follow. A new key doesn't end it: the leader's flag goes by roster
+--    facts only (090), and a key that ended it would tell the leader that
+--    a member reconnected. A bot that connects again reads its word as
+--    cant_read and may still claim the job.
 --
 -- 2. A leader woken once in an episode because nobody took the job is woken
 --    once more if every member that could take it then says it can't open
@@ -23,8 +25,9 @@
 -- 3. A claim that lapsed is nobody's write. 092 named the claimer as what
 --    left every taker blocked, so a leader that claimed its own job and let
 --    the lease run out got a mark and no wake. Now the claim's end is the
---    move, at the time it ended, by whoever took the holder out (a person's
---    take-out, or a lapse, by nobody).
+--    move, at the time it ended, by whoever took the holder out before its
+--    lease ran out while it wasn't frozen (a person's take-out has no bot);
+--    a lapse, or taking out a holder already frozen, is nobody's.
 --
 -- 4. What left every taker blocked is the newest change that took a taker
 --    away, judged by the state just before it, not by the state when the
@@ -43,7 +46,7 @@
 -- from one time to another (only tests do it) writes no row, so the record
 -- keeps when the freeze began.
 
--- 1. A blocker stands under the membership and key it was said under.
+-- 1. A blocker stands under the membership it was said under.
 CREATE OR REPLACE FUNCTION job_blockers_live(j bigint)
 RETURNS TABLE (bot_id bigint, created_at timestamptz)
 LANGUAGE sql STABLE AS $$
@@ -56,7 +59,6 @@ LANGUAGE sql STABLE AS $$
   WHERE x.inputs = job_input_pins(j)
     AND NOT EXISTS (SELECT 1 FROM job_moves m WHERE m.job_id = j AND m.bot_id = x.bot_id
                     AND m.kind = 'claim' AND m.created_at >= x.created_at)
-    AND EXISTS (SELECT 1 FROM api_keys k WHERE k.id = x.key_id AND k.revoked_at IS NULL)
     AND channel_member_at(cj.channel_id, x.bot_id, x.created_at)
         = (SELECT r.since_id FROM channel_roster(cj.channel_id) r WHERE r.bot_id = x.bot_id)
 $$;
@@ -67,14 +69,13 @@ LANGUAGE sql STABLE AS $$
   SELECT EXISTS (
     SELECT 1 FROM channel_jobs cj
     CROSS JOIN LATERAL (
-      SELECT x.created_at, x.inputs, x.key_id FROM job_blockers x
+      SELECT x.created_at, x.inputs FROM job_blockers x
       WHERE x.job_id = j AND x.bot_id = b AND x.created_at < t
       ORDER BY x.id DESC LIMIT 1) x
     WHERE cj.id = j AND x.inputs = job_input_pins(j)
       AND NOT EXISTS (SELECT 1 FROM job_moves m WHERE m.job_id = j AND m.bot_id = b
                       AND m.kind = 'claim' AND m.created_at >= x.created_at
                       AND m.created_at < t)
-      AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.id = x.key_id AND k.revoked_at < t)
       AND channel_member_at(cj.channel_id, b, x.created_at)
           = channel_member_at(cj.channel_id, b, t - interval '1 microsecond'))
 $$;
@@ -99,6 +100,7 @@ DECLARE
   began timestamptz;
   gone timestamptz;
   gby bigint;
+  endby bigint;
   lead bigint;
   seen int;
   cause bigint;
@@ -124,6 +126,13 @@ BEGIN
     SELECT h.left_at, h.by_bot INTO gone, gby FROM job_holder_left(j, at) h;
     IF gone IS NULL AND st.lease_until > at THEN
       RETURN;
+    END IF;
+    -- Whose write ended the claim: whoever took the holder out, only if it
+    -- was before the lease ran out and the holder wasn't frozen then, since
+    -- taking out a frozen holder takes no one away (Fable's review of 095).
+    IF gone IS NOT NULL AND gone <= st.lease_until
+       AND NOT bot_was_frozen(lby, gone) THEN
+      endby := gby;
     END IF;
   END IF;
   IF EXISTS (SELECT 1 FROM job_offer_next(j, at)) THEN
@@ -161,7 +170,7 @@ BEGIN
     SELECT x.who INTO cause FROM (
       SELECT bl.bot_id AS who, bl.created_at AS t, 0 AS o FROM job_blockers_live(j) bl
       UNION ALL
-      SELECT CASE WHEN lk = 'claim' THEN gby ELSE lby END,
+      SELECT CASE WHEN lk = 'claim' THEN endby ELSE lby END,
              CASE WHEN lk = 'claim' THEN least(gone, st.lease_until) ELSE lat END, 1
       WHERE lat IS NOT NULL
       UNION ALL
@@ -246,10 +255,10 @@ BEGIN
         JOIN job_moves m ON m.job_id = d.needs_job_id AND m.kind = 'accept'
         WHERE d.job_id = j AND m.created_at > job.created_at
         ORDER BY m.created_at DESC LIMIT 1), job.bot_id) = lead
-      -- A leader that took out the last bot that could take it: its own write.
-      -- A person's release or take-out has no bot (by_bot_id is null), so it's
-      -- never the leader's own write: compared null-safe, never left null.
-      WHEN lk = 'claim' THEN gone IS NOT NULL AND gby IS NOT DISTINCT FROM lead
+      -- A leader that took out the last bot that could take it, before its
+      -- lease ran out and while it wasn't frozen: its own write. A person's
+      -- take-out has no bot, and a lapse is nobody's: never the leader's.
+      WHEN lk = 'claim' THEN coalesce(endby = lead, false)
       ELSE lby = lead
     END),
     'no_taker'::text;

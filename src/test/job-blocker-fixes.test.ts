@@ -112,6 +112,9 @@ async function age(minutes: number) {
              WHERE lease_until IS NOT NULL`;
     await tx`UPDATE bots SET frozen_at = frozen_at - make_interval(mins => ${minutes})
              WHERE frozen_at IS NOT NULL`;
+    await tx`ALTER TABLE bot_freeze_changes DISABLE TRIGGER bot_freeze_changes_append_only`;
+    await tx`UPDATE bot_freeze_changes SET at = at - make_interval(mins => ${minutes})`;
+    await tx`ALTER TABLE bot_freeze_changes ENABLE TRIGGER bot_freeze_changes_append_only`;
     for (const [t, trigger] of tables)
       await tx`ALTER TABLE ${tx(t)} ENABLE TRIGGER ${tx(trigger)}`;
   });
@@ -241,8 +244,7 @@ describe("job blockers after the review of #220", () => {
     expect(await wake(l)).toBe(before + 1);
   });
 
-  // Finding 5: a blocker outlives the membership and the key it was said
-  // under.
+  // Finding 5: a blocker outlived the membership it was said under.
   it("ends a member's cant_read when it leaves and comes back", async () => {
     const { l, members, g } = await group(["moe", "nia"]);
     const [, n] = members as [Bot, Bot];
@@ -259,18 +261,79 @@ describe("job blockers after the review of #220", () => {
     expect(await offers()).toEqual(["moe", "nia"]);
   });
 
-  it("ends a member's cant_read when it takes a new key", async () => {
+  // A key isn't a roster fact, so a new one leaves the word standing (the
+  // leader's flag goes by roster facts only, 090) and the bot may still
+  // claim the job.
+  it("keeps a member's cant_read through a new key", async () => {
     const { l, members, g } = await group(["moe", "nia"]);
-    const [, n] = members as [Bot, Bot];
+    const [m, n] = members as [Bot, Bot];
     await post(l, g);
+    expect((await cantRead(m, g)).status).toBe(200);
     expect((await cantRead(n, g)).status).toBe(200);
+    expect((await read(l, g)).inputs_unreadable).toBe(true);
+    expect(await offers()).toEqual(["moe", "nia"]);
     const rot = await call(rotateRoute, { key: n.key });
     expect(rot.status, JSON.stringify(rot.body)).toBe(200);
     const fresh = { handle: n.handle, key: rot.body.api_key as string };
-    expect((await read(fresh, g)).you).not.toBe("cant_read");
+    expect((await read(fresh, g)).you).toBe("cant_read");
+    expect((await read(l, g)).inputs_unreadable).toBe(true);
     await window();
     await offerJobs();
+    // Nobody is asked again.
     expect(await offers()).toEqual(["moe", "nia"]);
+    const c = await move(fresh, g, 1, { move: "claim", if_seq: 0 });
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+  });
+
+  // Fable's review of 095: taking out a holder already frozen takes no one
+  // away, so the claim's end is nobody's write and the leader is woken.
+  it("wakes a leader that takes out a frozen holder before its lease ends", async () => {
+    const { l, members, g } = await group(["moe", "nia"]);
+    const [m, n] = members as [Bot, Bot];
+    await post(l, g);
+    expect((await cantRead(m, g)).status).toBe(200);
+    const c = await move(n, g, 1, { move: "claim", if_seq: 0 });
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    // A lever pulled from the command line: no pass runs.
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'nia'`;
+    const before = await wake(l);
+    const r = await call(removeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "nia" },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    await offerJobs();
+    expect((await read(l, g)).inputs_unreadable).toBe(true);
+    expect(await marks()).toEqual([
+      { episode: 1, woken: true, reason: "inputs_unreadable" },
+    ]);
+    expect(await wake(l)).toBe(before + 1);
+  });
+
+  // The same review: a lease that ran out before the leader took its holder
+  // out ended by itself, so the take-out isn't the claim's end.
+  it("wakes a leader that takes out a holder after its lease ran out", async () => {
+    const { l, members, g } = await group(["moe", "nia"]);
+    const [m, n] = members as [Bot, Bot];
+    await post(l, g);
+    expect((await cantRead(m, g)).status).toBe(200);
+    const c = await move(n, g, 1, { move: "claim", if_seq: 0 });
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'nia'`;
+    await age(241);
+    const before = await wake(l);
+    const r = await call(removeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "nia" },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    await offerJobs();
+    expect(await marks()).toEqual([
+      { episode: 1, woken: true, reason: "inputs_unreadable" },
+    ]);
+    expect(await wake(l)).toBe(before + 1);
   });
 
   it("lets a member that came back say so again", async () => {
