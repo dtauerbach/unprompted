@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as profileRoute } from "@/app/v1/bots/[handle]/route";
+import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
 import { DELETE as undoRoute } from "@/app/v1/me/link/route";
 import { POST as pushRoute } from "@/app/v1/me/push/route";
@@ -35,6 +36,7 @@ import {
   FIRE_DEADLINE_MS,
   FIRE_RETRIES,
   fireExcerpt,
+  fireGapSeconds,
   firesAllowed,
   fireText,
   fireUrl,
@@ -44,7 +46,7 @@ import {
 import { localDeliver } from "@/lib/wake-adapters/mcp-events";
 import { openSecret, sealSecret } from "@/lib/wake-secrets";
 import { comeBackReach, wokenBy } from "@/lib/woken";
-import { ageLink, call, linkBot, register, resetDb } from "./helpers";
+import { ageLink, call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 // Waking a bot with a Claude routine, end to end: its person saves the
 // routine's id and token on the account page, the site seals the token, and
@@ -111,8 +113,58 @@ async function routined(handle = "alice", person = `google-${handle}`) {
 }
 
 const bump = (id: number) => db()`SELECT bump_wake(${id})`;
+
+// An app's event subscription for the bot (MCP events, tried before the
+// routine), its challenge echoed.
+const CALLBACK = "https://chatgpt.com/backend-api/events/cb_1";
+const events = () =>
+  sent.filter(
+    (s) => s.url === CALLBACK && JSON.parse(s.body).type !== "verification",
+  );
+async function subscribeEvents(key: string) {
+  const was = answer;
+  answer = (s) => {
+    const b = JSON.parse(s.body);
+    return b.type === "verification"
+      ? { status: 200, body: JSON.stringify({ challenge: b.challenge }) }
+      : was(s);
+  };
+  const res = await mcpRoute(
+    new Request("http://unprompted.test/v1/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "x-real-ip": freshIp(),
+        host: "unprompted.test",
+        authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "events/subscribe",
+        params: {
+          name: "wake",
+          arguments: {},
+          delivery: {
+            mode: "webhook",
+            url: CALLBACK,
+            secret: `whsec_${randomBytes(32).toString("base64")}`,
+          },
+          cursor: null,
+        },
+      }),
+    }),
+    undefined as never,
+  );
+  const body = await res.json();
+  expect(body.error, JSON.stringify(body)).toBeUndefined();
+  answer = was;
+}
 const GAP = ANTI_ABUSE_DEFAULTS.claude_fire_gap_seconds;
 const ACK = ANTI_ABUSE_DEFAULTS.claude_fire_ack_seconds;
+// The gap before the next fire once `open` fires in a row went unanswered.
+const gapAfter = (open: number) => fireGapSeconds(ANTI_ABUSE_DEFAULTS, open);
 
 // Sets private numbers for one test, as a moderator would load them.
 const limits = (v: Record<string, number>) =>
@@ -1334,12 +1386,13 @@ describe("fires nobody answers", () => {
     const a = await routined();
     await call(pushRoute, { key: a.key, body: { url: PUSH } });
     sent = [];
-    // Something new arrives every gap and a little: each fire carries a
-    // new number, so none of them is ever retried.
+    // Something new arrives every gap and a little, the gap growing as the
+    // fires go unanswered: each fire carries a new number, so none of them
+    // is ever retried.
     for (let i = 0; i < 4; i++) {
       await bump(a.id);
       await drainPushes();
-      await pass(a.id, GAP + 1);
+      await pass(a.id, gapAfter(i + 1) + 1);
     }
     expect(fires()).toHaveLength(4);
     expect((await state(a.id))?.retries).toBe(0);
@@ -1375,11 +1428,284 @@ describe("fires nobody answers", () => {
         ?.unanswered_at,
     ).toBeNull();
     for (let i = 0; i < 5; i++) {
-      await pass(a.id, GAP + ACK);
+      await pass(a.id, gapAfter(i) + ACK);
       await bump(a.id);
       await drainPushes();
     }
     expect(await alerts()).toHaveLength(2);
+  });
+
+  it("backs off while nobody answers, doubling the gap to its cap, and starts again once the bot reads its number", async () => {
+    // L1c: a bot that stopped answering (its person ran out of usage, a
+    // safety check stopped it) costs its person's plan fewer runs.
+    expect([1, 2, 3, 4, 5].map(gapAfter)).toEqual([
+      GAP,
+      GAP * 2,
+      GAP * 4,
+      GAP * 8,
+      GAP * 16,
+    ]);
+    expect(gapAfter(0)).toBe(GAP);
+    expect(gapAfter(40)).toBe(
+      ANTI_ABUSE_DEFAULTS.claude_fire_backoff_max_seconds,
+    );
+    // A cap under the gap never shortens it.
+    expect(
+      fireGapSeconds(
+        { claude_fire_gap_seconds: 600, claude_fire_backoff_max_seconds: 120 },
+        5,
+      ),
+    ).toBe(600);
+    const a = await routined();
+    const fireAfter = async (secs: number) => {
+      await pass(a.id, secs);
+      await bump(a.id);
+      await drainPushes();
+      return fires().length;
+    };
+    expect(await fireAfter(0)).toBe(1);
+    expect(await fireAfter(GAP + 1)).toBe(2);
+    // Two unanswered: twice the gap. Just past one gap isn't enough.
+    expect(await fireAfter(GAP + 1)).toBe(2);
+    expect(await fireAfter(GAP)).toBe(3);
+    // Three: four times.
+    expect(await fireAfter(GAP * 3)).toBe(3);
+    expect(await fireAfter(GAP + 1)).toBe(4);
+    // Reading its number answers them all, and the gap is back to one.
+    await call(wakeRoute, { key: a.key });
+    expect(await fireAfter(GAP + 1)).toBe(5);
+    expect(await fireAfter(GAP + 1)).toBe(6);
+  });
+
+  it("caps the backed-off gap at the private number in force", async () => {
+    await limits({ claude_fire_backoff_max_seconds: GAP * 2 });
+    const a = await routined();
+    // Five unanswered fires, each twice the gap apart: past the second the
+    // gap would be four, eight and sixteen times, but the cap holds it.
+    for (let i = 0; i < 5; i++) {
+      await bump(a.id);
+      await drainPushes();
+      await pass(a.id, GAP * 2 + 1);
+    }
+    expect(fires()).toHaveLength(5);
+    // Still backed off: one plain gap isn't enough.
+    await pass(a.id, -(GAP - 1));
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(5);
+    await pass(a.id, GAP);
+    await drainPushes();
+    expect(fires()).toHaveLength(6);
+  });
+
+  it("retries a backed-off fire at its answer's due time beside a push URL, rather than letting the push stand in for it", async () => {
+    // Fable's L1c review: the backed-off gap (four times, after three
+    // unanswered fires) is longer than the answer wait, so a retry held to
+    // it was still waiting, and not owed, when the drain sent the push URL
+    // alone; the retry was never queued again.
+    expect(gapAfter(3)).toBeGreaterThan(ACK);
+    const a = await routined();
+    await call(pushRoute, { key: a.key, body: { url: PUSH } });
+    sent = [];
+    for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+      await pass(a.id, wait);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(fires()).toHaveLength(3);
+    // The third fire's answer comes due unanswered: it's fired again, and
+    // the push URL goes beside it.
+    await pass(a.id, ACK + 1);
+    await drainPushes();
+    expect(fires()).toHaveLength(4);
+    expect((await state(a.id))?.retries).toBe(1);
+    expect(pushes().length).toBeGreaterThanOrEqual(1);
+    // And it's still waited on: the next retry comes when that answer is
+    // due, an hour on at most.
+    await pass(a.id, 3600);
+    await drainPushes();
+    expect(fires()).toHaveLength(5);
+    expect((await state(a.id))?.retries).toBe(2);
+  });
+
+  it("sends the push URL for an arrival while the routine waits out its backed-off gap", async () => {
+    // Fable's L1c review: a push that went during the routine's gap left
+    // the bot queued for the gap's end (the wake the routine owes), and an
+    // arrival didn't bring that forward, so a bot with a push URL heard
+    // nothing for the whole backed-off gap (096_owed_wait.sql).
+    const a = await routined();
+    for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+      await pass(a.id, wait);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(fires()).toHaveLength(3);
+    await call(pushRoute, { key: a.key, body: { url: PUSH } });
+    const before = pushes().length;
+    // Past one plain gap, inside the backed-off one (four times): the
+    // routine is held and the push goes, owing the routine's wake.
+    expect(gapAfter(3)).toBeGreaterThan(GAP * 2);
+    await pass(a.id, GAP + 1);
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(3);
+    expect(pushes()).toHaveLength(before + 1);
+    expect((await pending(a.id))?.pending_since?.getTime()).toBeGreaterThan(
+      Date.now() + 60_000,
+    );
+    // Another arrival, past the push gap: it goes at once, not at the end
+    // of the routine's gap.
+    await pass(a.id, 11);
+    await bump(a.id);
+    await drainPushes();
+    expect(pushes()).toHaveLength(before + 2);
+    expect(fires()).toHaveLength(3);
+    // And the routine still owes it: queued again for its gap's end.
+    const p = await pending(a.id);
+    expect(p?.pending_since?.getTime()).toBeGreaterThan(Date.now() + 60_000);
+    const [w] = await db()<{ owed_wait: boolean }[]>`
+      SELECT owed_wait FROM push_state WHERE bot_id = ${a.id}`;
+    expect(w?.owed_wait).toBe(true);
+    // Reading the number answers it: nothing more waits.
+    await call(wakeRoute, { key: a.key });
+    expect((await pending(a.id))?.pending_since ?? null).toBeNull();
+  });
+
+  it("keeps the routine's owed wait only while a failed method's retry comes no sooner", async () => {
+    // Fable's second L1c review: the retry after a failure (an event
+    // subscription's here) moves the bot's time; the owed wait, which an
+    // arrival brings forward, stands only if the time is still the
+    // routine's gap end.
+    const owedWait = async (id: number) => {
+      const [w] = await db()<{ owed_wait: boolean }[]>`
+        SELECT owed_wait FROM push_state WHERE bot_id = ${id}`;
+      return w?.owed_wait;
+    };
+    for (const [handle, eventGap] of [
+      ["alice", undefined],
+      ["bob", gapAfter(3) * 4],
+    ] as const) {
+      sent = [];
+      answer = () => ({ status: 200, body: FIRED });
+      if (eventGap) await limits({ mcp_event_gap_seconds: eventGap });
+      const a = await routined(handle);
+      for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+        await pass(a.id, wait);
+        await bump(a.id);
+        await drainPushes();
+      }
+      expect(fires()).toHaveLength(3);
+      await subscribeEvents(a.key);
+      // Inside the routine's backed-off gap, owing this wake; the event
+      // goes first and fails.
+      answer = (s) =>
+        s.url === CALLBACK ? { status: 500 } : { status: 200, body: FIRED };
+      await pass(a.id, GAP + 1);
+      await bump(a.id);
+      await drainPushes();
+      expect(events()).toHaveLength(1);
+      expect(fires()).toHaveLength(3);
+      const [st] = await db()<{ last_sent_at: Date }[]>`
+        SELECT last_sent_at FROM fire_state WHERE bot_id = ${a.id}`;
+      const gapEnd = (st?.last_sent_at.getTime() ?? 0) + gapAfter(3) * 1000;
+      const p = await pending(a.id);
+      if (!eventGap) {
+        // The event's retry comes first: the bot waits for it, and the
+        // routine's wait is no longer what it waits for.
+        expect(p?.pending_since?.getTime()).toBeLessThan(gapEnd);
+        expect(await owedWait(a.id)).toBe(false);
+      } else {
+        // The routine's gap ends first: still owed, and an arrival brings
+        // it forward.
+        expect(p?.pending_since?.getTime()).toBe(gapEnd);
+        expect(await owedWait(a.id)).toBe(true);
+        await bump(a.id);
+        expect(
+          (await pending(a.id))?.pending_since?.getTime(),
+        ).toBeLessThanOrEqual(Date.now() + 1000);
+      }
+    }
+  });
+
+  it("keeps a test fire to the plain gap during a back-off, and leaves the back-off as it was", async () => {
+    const a = await routined();
+    for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+      await pass(a.id, wait);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(fires()).toHaveLength(3);
+    // One plain gap on, still inside the backed-off one: the person's
+    // click goes, since it's theirs.
+    await pass(a.id, GAP + 1);
+    expect(
+      await testClaudeFire(db(), a.person, "alice", null, deliver),
+    ).toEqual({ ok: true, status: 200 });
+    expect(fires()).toHaveLength(4);
+    // A test isn't an answer, nor an unanswered drain fire: the count
+    // that backs the gap off stands.
+    const [f] = await db()<{ open_fires: number }[]>`
+      SELECT open_fires FROM fire_state WHERE bot_id = ${a.id}`;
+    expect(f?.open_fires).toBe(3);
+    // It stamps the send, so the backed-off gap starts again from it: an
+    // arrival one plain gap on still waits.
+    await pass(a.id, GAP + 1);
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(4);
+    // Reading the number puts the count back, and the gap with it.
+    await call(wakeRoute, { key: a.key });
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(5);
+  });
+
+  it("resends a failed fire at the backed-off gap, not one plain gap on", async () => {
+    // Fable's L1c review: retryAt() queued the resend at the plain gap,
+    // only for find() to put it off again to the backed-off one.
+    const a = await routined();
+    for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+      await pass(a.id, wait);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(fires()).toHaveLength(3);
+    answer = () => ({ status: 500 });
+    await pass(a.id, gapAfter(3) + 1);
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(4);
+    const [st] = await db()<{ last_sent_at: Date; open_fires: number }[]>`
+      SELECT last_sent_at, open_fires FROM fire_state WHERE bot_id = ${a.id}`;
+    const p = await pending(a.id);
+    expect(p?.pending_since?.getTime()).toBe(
+      (st?.last_sent_at.getTime() ?? 0) + gapAfter(st?.open_fires ?? 0) * 1000,
+    );
+    expect(gapAfter(st?.open_fires ?? 0)).toBeGreaterThan(GAP);
+  });
+
+  it("resends a failed retry of an overdue answer at the plain gap, as find() would send it", async () => {
+    // Fable's second L1c review: retryAt() backed off every resend, but
+    // find() holds a retry of an overdue answer to the plain gap.
+    const a = await routined();
+    for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+      await pass(a.id, wait);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(fires()).toHaveLength(3);
+    // Nothing new: the third fire's answer comes due, and its retry fails.
+    answer = () => ({ status: 500 });
+    await pass(a.id, Math.max(ACK, gapAfter(3)) * 8 + 1);
+    await drainPushes();
+    expect(fires()).toHaveLength(4);
+    const [st] = await db()<{ last_sent_at: Date; open_fires: number }[]>`
+      SELECT last_sent_at, open_fires FROM fire_state WHERE bot_id = ${a.id}`;
+    expect(gapAfter(st?.open_fires ?? 0)).toBeGreaterThan(GAP);
+    const p = await pending(a.id);
+    expect(p?.pending_since?.getTime()).toBe(
+      (st?.last_sent_at.getTime() ?? 0) + GAP * 1000,
+    );
   });
 
   it("holds a routine to its daily cap, going on to the push URL and noting it once a day", async () => {

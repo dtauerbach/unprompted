@@ -4,7 +4,7 @@ import { ApiError } from "../http";
 import { claudeFireRules } from "../limits";
 import { logAction } from "../log";
 import { type Deliver, PUSH_MAX_FAILURES } from "../push";
-import { antiAbuse } from "../settings";
+import { type AntiAbuse, antiAbuse } from "../settings";
 import { openSecret } from "../wake-secrets";
 import type { WakeAdapter, WakeNote, WakeOutcome } from "./index";
 import { localDeliver } from "./mcp-events";
@@ -179,6 +179,24 @@ export function planFire(s: FireState): FirePlan {
   return { send: true, after: s.ackDueAt };
 }
 
+// Which gap a fire waits (find() and retryAt() alike). The backed-off gap
+// spaces fires for new arrivals. A retry of a fire whose answer is overdue
+// keeps the plain gap: held past its answer's due time, it would be
+// waiting, and not owed, when the drain sends the push URL alone, and never
+// be queued again.
+function gapFor(
+  a: Pick<
+    AntiAbuse,
+    "claude_fire_gap_seconds" | "claude_fire_backoff_max_seconds"
+  >,
+  s: { openFires: number },
+  plan: FirePlan,
+): number {
+  return plan.send && plan.after !== null
+    ? a.claude_fire_gap_seconds
+    : fireGapSeconds(a, s.openFires);
+}
+
 const later = (...ds: (Date | null | undefined)[]): Date | null => {
   let out: Date | null = null;
   for (const d of ds) if (d && (!out || d > out)) out = d;
@@ -199,6 +217,27 @@ async function markAttemptUnanswered(
                 WHERE bot_id = ${botId} AND wake = ${wake} AND NOT test
                 ORDER BY id DESC LIMIT 1)
       AND outcome IN ('delivered', 'maybe')`;
+}
+
+// The gap before a routine's next fire (L1c). Each fire in a row still
+// unanswered (retries included), past the first, doubles it, up to
+// claude_fire_backoff_max_seconds (never shorter than the gap itself), so a bot that stopped answering,
+// say one whose person ran out of usage, costs its person's plan fewer and
+// fewer runs; reading its number puts the count, and the gap, back. The
+// first unanswered fire keeps the gap, since an arrival can come while the
+// run it started is still on its way to reading the number. A person's
+// test fire keeps the plain gap: it's their own click.
+export function fireGapSeconds(
+  a: Pick<
+    AntiAbuse,
+    "claude_fire_gap_seconds" | "claude_fire_backoff_max_seconds"
+  >,
+  openFires: number,
+): number {
+  const base = a.claude_fire_gap_seconds;
+  const cap = Math.max(a.claude_fire_backoff_max_seconds, base);
+  const doublings = Math.min(Math.max(openFires - 1, 0), 30);
+  return Math.min(base * 2 ** doublings, cap);
 }
 
 // Enough fires in a row went unanswered, whatever wake each carried: marked
@@ -447,7 +486,7 @@ export const claudeFireAdapter: WakeAdapter = {
       alarmed = await markUnanswered(sql, botId, a.claude_fire_alarm_after);
     const plan = planFire(t);
     if (!plan.send) return null;
-    const gap = a.claude_fire_gap_seconds;
+    const gap = gapFor(a, t, plan);
     // Past the daily cap: not sent now, and not owed, so a method after it
     // (a push URL) goes in its place; with none, the bot stays queued for
     // when the cap lifts, and the routine fires then.
@@ -544,13 +583,18 @@ export const claudeFireAdapter: WakeAdapter = {
     const s = outcome.status;
     if (s !== null && s !== 429 && s !== 401 && s !== 404 && s < 500)
       return null;
-    const gap = (await antiAbuse(sql)).claude_fire_gap_seconds;
-    const [r] = await sql<{ at: Date | null }[]>`
-      SELECT GREATEST(st.last_sent_at + make_interval(secs => ${gap}),
-                      st.retry_at) AS at
-      FROM fire_state st
-      WHERE st.bot_id = ${botId} AND fire_trigger_usable(${botId}, ${PUSH_MAX_FAILURES})`;
-    return r?.at ?? null;
+    // The gap find() will hold it to (gapFor), so the bot is queued again
+    // neither before the routine may go nor long after.
+    const [r] = await sql<{ ok: boolean }[]>`
+      SELECT fire_trigger_usable(${botId}, ${PUSH_MAX_FAILURES}) AS ok`;
+    if (!r?.ok) return null;
+    const t = await readTrigger(sql, botId);
+    if (!t) return null;
+    const gap = gapFor(await antiAbuse(sql), t, planFire(t));
+    return later(
+      t.lastSentAt ? new Date(t.lastSentAt.getTime() + gap * 1000) : null,
+      t.retryAt,
+    );
   },
 
   // Tokens nothing can fire with any more go, in case a change slipped past
@@ -680,12 +724,13 @@ export async function recordFire(
         FROM cur WHERE f.bot_id = ${botId}
         RETURNING NOT cur.seen AS waiting`;
       // Queued for the answer's check, marked as only that, so an arrival
-      // brings it forward (bump_wake, 062_claude_fire_fixes.sql). Not when
+      // brings it forward (bump_wake, 062_claude_fire_fixes.sql and 096). Not when
       // an arrival already queued it, nor when the bot already answered.
       if (w?.waiting)
         await tx`
           UPDATE push_state p
-          SET pending_since = f.ack_due_at, fire_check = true
+          SET pending_since = f.ack_due_at, fire_check = true,
+              owed_wait = false
           FROM fire_state f
           WHERE p.bot_id = ${botId} AND f.bot_id = ${botId}
             AND p.pending_since IS NULL`;
