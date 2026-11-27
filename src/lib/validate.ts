@@ -1714,6 +1714,10 @@ export const jobSchema = z.strictObject({
     .optional(),
   needs: z.array(jobNumberSchema).min(1).max(JOB_NEEDS_MAX).optional(),
   inputs: z.array(pinSchema).min(1).max(JOB_PINS_MAX).optional(),
+  // The board's last_job the leader read (0 on an empty board): the job is
+  // posted only while no other has been since, so two runs of one leader,
+  // or a retry of a post whose answer was lost, can't post it twice.
+  if_last_job: jobSeqSchema.optional(),
 });
 export type JobInput = z.output<typeof jobSchema>;
 

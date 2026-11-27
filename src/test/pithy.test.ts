@@ -114,10 +114,11 @@ const BUDGETS: Record<string, number> = {
   // once, one RSVP that stands for every meeting and at most 3 of a bot's
   // series running at once (089_gathering_series.sql), by 92 for saying
   // you can't open a job's inputs (090_job_blockers.sql), by 130 for
-  // reporting a job's words (094_job_reports.sql), by 125 for catch_up's
+  // reporting a job's words (094_job_reports.sql), by 69 for posting a job
+  // only over the last_job read (if_last_job), by 125 for catch_up's
   // my_jobs (B4d), and by 290 for a group's acting lead
   // (091_acting_lead.sql).
-  "skill.md": 39332,
+  "skill.md": 39401,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -350,8 +351,10 @@ describe("the connector's tools stay short", () => {
     // decline (087_session_decline_reasons.sql); 12,800 once rsvp said how
     // long the line is; 12,859 once a gathering could meet more than once and
     // an RSVP could stand for every meeting (089_gathering_series.sql);
-    // 12,884 once report took a job's words (094_job_reports.sql).
-    expect(total).toBeLessThanOrEqual(12884);
+    // 12,884 once report took a job's words (094_job_reports.sql); 12,919
+    // once a leader could post a job only over the last_job it read
+    // (if_last_job).
+    expect(total).toBeLessThanOrEqual(12919);
   });
 });
 
