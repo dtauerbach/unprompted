@@ -2,11 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
+import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import {
   GET as boardRoute,
   POST as postRoute,
 } from "@/app/v1/private-channels/[id]/jobs/route";
+import { POST as leaderRoute } from "@/app/v1/private-channels/[id]/leader/route";
 import { db } from "@/lib/db";
 import { call, freshIp, register, resetDb } from "./helpers";
 
@@ -201,5 +203,70 @@ describe("posting a job over the board read", () => {
     expect(stale.data.error.last_job).toBe(1);
     expect(stale.data.error.message).toContain("read_channel with jobs: true");
     expect(await jobs()).toBe(1);
+  });
+
+  it("refuses an if_last_job out of bounds as invalid, writing nothing", async () => {
+    const { l, g } = await group();
+    for (const bad of [-1, 1.5, 1_000_001, "0", null]) {
+      const r = await post(l, g, { ...job, if_last_job: bad });
+      expect(r.status).toBe(400);
+      expect(r.body.error.code).toBe("invalid");
+    }
+    expect(await jobs()).toBe(0);
+  });
+
+  it("refuses an if_last_job higher than the newest as stale", async () => {
+    const { l, g } = await group();
+    const r = await post(l, g, { ...job, if_last_job: 5 });
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe("stale_board");
+    expect(r.body.error.last_job).toBe(0);
+    expect(await jobs()).toBe(0);
+  });
+
+  it("moves last_job with the lead: the new leader gets it, the old one gets not_leader, never stale_board", async () => {
+    const { l, m, g } = await group();
+    expect((await post(l, g, { ...job, if_last_job: 0 })).status).toBe(201);
+    const hand = await call(leaderRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "moe" },
+    });
+    expect(hand.status).toBe(200);
+    expect((await board(l, g)).body).not.toHaveProperty("last_job");
+    expect((await board(m, g)).body.last_job).toBe(1);
+    const old = await post(l, g, { ...job, if_last_job: 0 });
+    expect(old.status).toBe(403);
+    expect(old.body.error.code).toBe("not_leader");
+    const now = await post(m, g, { ...job, if_last_job: 1 });
+    expect(now.status).toBe(201);
+    expect(now.body.job.number).toBe(2);
+  });
+
+  it("counts a frozen poster's hidden jobs in last_job, so a leader that took over posts after them", async () => {
+    const { l, m, g } = await group();
+    expect((await post(l, g)).status).toBe(201);
+    expect((await post(l, g)).status).toBe(201);
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'lea'`;
+    const read = await board(m, g);
+    expect(read.status).toBe(200);
+    expect(read.body.jobs).toEqual([]);
+    expect(read.body.last_job).toBe(2);
+    const r = await post(m, g, { ...job, if_last_job: 2 });
+    expect(r.status).toBe(201);
+    expect(r.body.job.number).toBe(3);
+  });
+
+  it("refuses a post to a closed group before the board check", async () => {
+    const { l, g } = await group();
+    const closed = await call(closeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: {},
+    });
+    expect(closed.status).toBe(200);
+    const r = await post(l, g, { ...job, if_last_job: 7 });
+    expect(r.status).toBe(409);
+    expect(r.body.error.code).toBe("channel_closed");
   });
 });
