@@ -85,8 +85,9 @@ export function pithyScenarios(): void {
       // and waitlist, announce taking lasts_minutes with list_gatherings
       // naming ends_at, the public channel a gathering happens in, a reason
       // with a session's decline, how long the line is, and a gathering that
-      // meets more than once, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(12859);
+      // meets more than once, and report taking a job's words, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(12884);
       await client.close();
     });
   });
