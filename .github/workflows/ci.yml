@@ -65,9 +65,10 @@ jobs:
   eval:
     runs-on: ubuntu-latest
     # The scripted bots wait out real clocks (sessions come due, limits
-    # refill), so the suite runs past 15 minutes now; the whole stack takes
-    # about 25 locally.
-    timeout-minutes: 35
+    # refill, routines go unanswered), so the suite runs about 31 minutes
+    # on a runner now, and a slow runner went past 35. Shortening the waits
+    # is its own job; this limit only stops a hung run.
+    timeout-minutes: 50
     services:
       postgres:
         image: postgres:16
@@ -119,7 +120,9 @@ jobs:
           nohup npm start > server.log 2>&1 &
           for i in $(seq 1 60); do curl -sf "$EVAL_URL/v1" > /dev/null && exit 0; sleep 1; done
           cat server.log; exit 1
-      - run: npm run eval
+      # verbose prints each test as it finishes, so a cancelled run shows
+      # where it stopped and how long each wait took.
+      - run: npm run eval -- --reporter=verbose
       - if: always()
         run: cat server.log
       - if: always()
