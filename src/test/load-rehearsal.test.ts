@@ -19,10 +19,17 @@ import { call, register, resetDb } from "./helpers";
 // there exactly once, nothing is missed or capped, no run of the clock is
 // cut at RUN_MAX, the dropped member's meetings are skipped as frozen and
 // wake nobody, and each bot's wake number is exactly its meetings plus the
-// messages others wrote while it was there. The hourly caps are counted on
-// the real clock, so the whole three hours land in one window here: a
-// harder test of the caps than the event itself would be. Production's
+// messages others wrote while it was there. Every site-wide and per-person
+// cap it touches is charged exactly once for each fire, message and wake,
+// read back from rate_limits. The load sits far under the default caps, so
+// what this holds is the counting, not a cap being reached. Production's
 // caps are private and may differ; this holds the defaults.
+//
+// Simulated time comes from workDue's own clock, but session_items() drops
+// an occurrence once the next one's due time has passed on the database's
+// real now(), so this would lose meetings if it ever ran for more than
+// about one session gap (15 minutes) of real time; its timeout fails it long
+// before that.
 
 beforeEach(async () => {
   await resetDb();
@@ -71,6 +78,17 @@ async function firedBy(): Promise<Map<number, number>> {
   return new Map(rows.map((r) => [Number(r.bot_id), r.n]));
 }
 
+// Uses counted so far, by limit bucket, summed over windows (a run may
+// straddle an hour).
+async function uses(): Promise<Map<string, number>> {
+  const rows = await db()<{ bucket: string; n: number }[]>`
+    SELECT bucket, sum(count)::int AS n FROM rate_limits
+    WHERE bucket LIKE 'event-fire:%' OR bucket LIKE 'channel-wake:%'
+      OR bucket LIKE 'group-message:%'
+    GROUP BY bucket`;
+  return new Map(rows.map((r) => [r.bucket, r.n]));
+}
+
 const wake = async (b: Bot): Promise<number> =>
   (await call(wakeRoute, { key: b.key })).body.wake;
 
@@ -116,8 +134,12 @@ describe("a load rehearsal: nine bots, three groups, three hours", () => {
 
     const last = Math.max(...firsts) + (TIMES - 1) * EVERY * MIN;
     const end = last + MIN;
-    const runs: number[] = [];
     let fired = 0;
+    let biggest = 0;
+    let messages = 0;
+    let messageWakes = 0;
+    const capsBefore = await uses();
+    let before = await firedBy();
     for (
       let t = Date.now() + MIN;
       t <= end + SESSION_DEFAULT_NOTICE * MIN;
@@ -127,33 +149,40 @@ describe("a load rehearsal: nine bots, three groups, three hours", () => {
         await setFrozen(db(), dropper.handle, true, "drops off");
         dropped = true;
       }
-      const before = await firedBy();
-      const began = performance.now();
       const run = await workDue(new Date(t));
-      runs.push(performance.now() - began);
       expect(run.locked).toBe(false);
       expect(run.more).toBe(false);
       expect(run.capped).toBe(0);
       expect(run.missed).toBe(0);
       fired += run.fired;
+      biggest = Math.max(biggest, run.fired + run.skipped + run.missed);
+      if (run.fired === 0 && run.skipped === 0) continue;
       const after = await firedBy();
+      // The groups meet minutes apart, so no bot has two meetings in one
+      // run: each fire is one bot woken once.
       const woken = [...after.keys()].filter(
         (id) => (after.get(id) ?? 0) > (before.get(id) ?? 0),
       );
+      for (const id of woken)
+        expect((after.get(id) ?? 0) - (before.get(id) ?? 0)).toBe(1);
       expect(woken.length).toBe(run.fired);
+      before = after;
       // Each woken member comes back and says something in its group.
       for (const id of woken) {
         bump(id);
-        const t3 = teams.find((x) => x.bots.some((b) => b.id === id));
-        const me = t3?.bots.find((b) => b.id === id) as Bot;
+        const mine = teams.find((x) => x.bots.some((b) => b.id === id));
+        const me = mine?.bots.find((b) => b.id === id) as Bot;
         const said = await call(sendRoute, {
           key: me.key,
-          body: { channel: t3?.channel, body: `Here at ${t}.` },
+          body: { channel: mine?.channel, body: `Here at ${t}.` },
         });
         expect(said.status, JSON.stringify(said.body)).toBe(201);
-        for (const other of t3?.bots ?? [])
-          if (other.id !== id && !(dropped && other.id === dropper.id))
+        messages += 1;
+        for (const other of mine?.bots ?? [])
+          if (other.id !== id && !(dropped && other.id === dropper.id)) {
             bump(other.id);
+            messageWakes += 1;
+          }
       }
     }
 
@@ -188,7 +217,25 @@ describe("a load rehearsal: nine bots, three groups, three hours", () => {
       expect(await wake(b), b.handle).toBe(expected.get(b.id));
 
     // No run of the clock came near the batch it can work at once.
-    expect(Math.max(...runs)).toBeGreaterThan(0);
-    expect(RUN_MAX).toBeGreaterThan(everyone.length);
+    expect(biggest).toBeGreaterThan(0);
+    expect(biggest).toBeLessThanOrEqual(teams[0]?.bots.length ?? 0);
+    expect(biggest * 10).toBeLessThan(RUN_MAX);
+
+    // Each cap was charged exactly once for each fire, message and wake:
+    // fires against event_fire_global, and with the messages' wakes
+    // against channel_wake_global; each message against its person's share
+    // and the site-wide group cap, and its wakes against its person's share.
+    const capsAfter = await uses();
+    const delta = (b: string) =>
+      (capsAfter.get(b) ?? 0) - (capsBefore.get(b) ?? 0);
+    const sumOf = (prefix: string) =>
+      [...capsAfter.keys()]
+        .filter((b) => b.startsWith(prefix) && !b.endsWith(":all"))
+        .reduce((n, b) => n + delta(b), 0);
+    expect(delta("event-fire:all")).toBe(fired);
+    expect(delta("channel-wake:all")).toBe(fired + messageWakes);
+    expect(sumOf("channel-wake:")).toBe(messageWakes);
+    expect(delta("group-message:all")).toBe(messages);
+    expect(sumOf("group-message:")).toBe(messages);
   }, 300_000);
 });
