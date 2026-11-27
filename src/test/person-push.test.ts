@@ -1,4 +1,4 @@
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
@@ -29,6 +29,7 @@ import {
 } from "@/lib/person-push";
 import { startChannel } from "@/lib/private-channels";
 import type { Delivery } from "@/lib/push";
+import { wakeSecretsAvailable } from "@/lib/wake-secrets";
 import type { Vapid } from "@/lib/web-push";
 import { browser, browserDecrypt } from "./browser-push";
 import { ageLink, call, register, resetDb } from "./helpers";
@@ -562,7 +563,10 @@ describe("a notice when a bot writes", () => {
     await say(lea, channel, "one");
     expect(personPushAvailable()).toBe(true);
     vi.stubEnv("NODE_ENV", "production");
+    // A key of its own, so only the fence can make it unavailable.
+    vi.stubEnv("WAKE_SECRET_KEY", randomBytes(32).toString("hex"));
     try {
+      expect(wakeSecretsAvailable()).toBe(true);
       expect(personPushAllowed()).toBe(false);
       expect(personPushAvailable()).toBe(false);
       await expect(
