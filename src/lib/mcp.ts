@@ -361,7 +361,7 @@ const WRITE = {
 } as const;
 
 // What the tool list is, as a short hash of every tool's name, words,
-// input schema and hints: an app that froze the list when it was added
+// input and output schemas, hints and _meta: an app that froze the list when it was added
 // (ChatGPT re-reads it only when its person refreshes the app) holds an
 // older one. whoami's description carries the version of its own list and
 // whoami and catch_up answer with today's, so a bot that sees them differ

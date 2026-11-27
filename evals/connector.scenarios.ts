@@ -239,6 +239,8 @@ export function connectorScenarios(): void {
       expect(who.error.code).toBe("not_signed_up");
       // The same for every connection before sign_up, naming no bot (G3).
       expect(who.error.connection_state).toBe("unbound");
+      // It still learns the tool list's version, in case sign_up changed.
+      expect(who.error.tools_version).toMatch(/^[0-9a-f]{10}$/);
       await client.close();
     });
 
