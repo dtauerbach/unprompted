@@ -44,6 +44,8 @@ import {
   MOVE_NOTES,
   OWED_JOBS_MAX,
   OWED_NOTE,
+  type OwedJob,
+  owedJobsShort,
   staleJob,
 } from "@/lib/jobs";
 import { newKey } from "@/lib/keys";
@@ -113,6 +115,25 @@ const HEAVY = "€".repeat(4000);
 const HEAVY_TITLE = "€".repeat(120);
 const HEAVY_NAME = "€".repeat(50);
 const bytes = (body: unknown) => Buffer.byteLength(JSON.stringify(body));
+
+// catch_up's my_jobs at its heaviest row. A real row is held (claimed,
+// holder, with its lease), owed for review, or ready: offered, lapsed,
+// claimable, or flagged to its leader (no_taker and inputs_unreadable,
+// never a lease). The heaviest, whole and as owedJobsShort cuts it, is a
+// ready job the leader may claim with both flags.
+function heaviestOwedRow(channel: number): OwedJob {
+  return {
+    channel: `private:${channel}`,
+    number: JOB_NUMBER_MAX,
+    untrusted_title: HEAVY_TITLE,
+    state: "ready",
+    seq: JOB_NUMBER_MAX,
+    attempt: JOB_NUMBER_MAX,
+    you: "claimable",
+    no_taker: true,
+    inputs_unreadable: true,
+  };
+}
 
 type Ids = { id: string; key: string };
 
@@ -1069,32 +1090,7 @@ async function largestCatchUpParts(
       // the longer surface's and its notice.
       my_jobs: {
         complete: true,
-        // A row is either held (with its lease) or ready and flagged to
-        // its leader (no_taker, inputs_unreadable, never a lease): every
-        // row is the heavier of the two.
-        jobs: Array.from({ length: OWED_JOBS_MAX }, () => {
-          const base = {
-            channel: `private:${big}`,
-            number: JOB_NUMBER_MAX,
-            untrusted_title: HEAVY_TITLE,
-            seq: JOB_NUMBER_MAX,
-            attempt: JOB_NUMBER_MAX,
-          };
-          const held = {
-            ...base,
-            state: "claimed" as const,
-            you: "reviewer" as const,
-            lease_until: at,
-          };
-          const flagged = {
-            ...base,
-            state: "ready" as const,
-            you: "claimable" as const,
-            no_taker: true as const,
-            inputs_unreadable: true as const,
-          };
-          return bytes(flagged) > bytes(held) ? flagged : held;
-        }),
+        jobs: Array.from({ length: OWED_JOBS_MAX }, () => heaviestOwedRow(big)),
         more: true,
         note: OWED_NOTE.http,
         notice: JOB_NOTICE,
@@ -2098,5 +2094,44 @@ describe("the soonest other gatherings give way (withGatherings)", () => {
     const whole = digestOf(2, 1);
     expect(withGatherings(whole, 1)).toBe(whole);
     expect(withGatherings(digestOf(2, 0), 0).gatherings_more).toBeUndefined();
+  });
+});
+
+describe("my_jobs' heaviest row", () => {
+  it("outweighs a held row and a flagged one, whole and cut", () => {
+    const at = new Date("2026-11-12T12:00:00.000Z");
+    const base = {
+      channel: "private:9007199254740991",
+      number: JOB_NUMBER_MAX,
+      untrusted_title: HEAVY_TITLE,
+      seq: JOB_NUMBER_MAX,
+      attempt: JOB_NUMBER_MAX,
+    };
+    const held: OwedJob = {
+      ...base,
+      state: "claimed",
+      you: "holder",
+      lease_until: at,
+    };
+    const reviewer: OwedJob = { ...base, state: "review", you: "reviewer" };
+    const flagged: OwedJob = {
+      ...base,
+      state: "ready",
+      you: "claimable",
+      no_taker: true,
+      inputs_unreadable: true,
+    };
+    const heavy = heaviestOwedRow(9007199254740991);
+    const part = (jobs: OwedJob[]) => ({
+      complete: true as const,
+      jobs,
+      note: OWED_NOTE.http,
+    });
+    for (const real of [held, reviewer, flagged]) {
+      expect(bytes(heavy)).toBeGreaterThanOrEqual(bytes(real));
+      expect(
+        bytes(owedJobsShort(part([heavy]), "http")),
+      ).toBeGreaterThanOrEqual(bytes(owedJobsShort(part([real]), "http")));
+    }
   });
 });

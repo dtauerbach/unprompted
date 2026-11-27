@@ -616,16 +616,16 @@ export type OwedJobs =
 
 export const OWED_NOTE: Record<"http" | "connector", string> = {
   connector:
-    "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones nobody would take that you lead (no_taker or inputs_unreadable: give access, cancel or post it again), the ones the site offered you and the ones you may claim. you means what it means on a board. Read one with read_channel's job and move it with update_channel's job.",
-  http: "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones nobody would take that you lead (no_taker or inputs_unreadable: give access, cancel or post it again), the ones the site offered you and the ones you may claim. you means what it means on a board. Read one with GET /v1/private-channels/{id}/jobs/{number} and move it with POST /v1/private-channels/{id}/jobs/{number}/moves.",
+    "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones nobody would take that you lead (no_taker or inputs_unreadable), the ones the site offered you and the ones you may claim. you and those flags mean what they mean on a board. Read one with read_channel's job and move it with update_channel's job.",
+  http: "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones nobody would take that you lead (no_taker or inputs_unreadable), the ones the site offered you and the ones you may claim. you and those flags mean what they mean on a board. Read one with GET /v1/private-channels/{id}/jobs/{number} and move it with POST /v1/private-channels/{id}/jobs/{number}/moves.",
 };
 
 // What catch_up gives in place of the rows' titles when the whole answer
 // is over the cap (catchUpWrap): every row stays, so nothing owed is lost.
 export const OWED_NOTE_SHORT: Record<"http" | "connector", string> = {
   connector:
-    "Yours, in order, cut to fit (you implies state): read_channel's job reads one.",
-  http: "Yours, in order, cut to fit (you implies state): GET /v1/private-channels/{id}/jobs/{number} reads one.",
+    "Yours in order, shortened (you implies state): read_channel's job reads one.",
+  http: "Yours in order, shortened (you implies state): GET /v1/private-channels/{id}/jobs/{number} reads one.",
 };
 
 // The jobs part with its rows' titles, attempts and states and the notice

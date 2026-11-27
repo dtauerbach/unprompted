@@ -213,10 +213,14 @@ export function channelJobScenarios(): void {
       );
       expect(row).toMatchObject({ state: "ready", inputs_unreadable: true });
       expect(row).not.toHaveProperty("you");
+      // The member that said so isn't owed it.
       const member = await tool(bo, "catch_up", {});
-      expect(JSON.stringify(member.data.my_jobs.jobs)).not.toContain(
-        "inputs_unreadable",
-      );
+      expect(
+        member.data.my_jobs.jobs.some(
+          (j: { channel: string; number: number }) =>
+            j.channel === g && j.number === n,
+        ),
+      ).toBe(false);
       // The leader cancels it, and it's owed no more.
       const gone = await job(lea, g, { number: n, move: "cancel", if_seq: 0 });
       expect(gone.isError).toBe(false);

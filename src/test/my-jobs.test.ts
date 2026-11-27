@@ -7,6 +7,7 @@ import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/moves/route";
 import { POST as postRoute } from "@/app/v1/private-channels/[id]/jobs/route";
+import { POST as leaderRoute } from "@/app/v1/private-channels/[id]/leader/route";
 import { POST as removeRoute } from "@/app/v1/private-channels/[id]/members/remove/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
@@ -558,10 +559,89 @@ describe("my_jobs and the jobs nobody would take", () => {
     });
     expect(lj.jobs[0]).not.toHaveProperty("you");
     expect(lj.jobs[1]).toMatchObject({ number: 1, you: "claimable" });
-    // The member that said so isn't owed it; it never reads the flag.
+    // The member that said so isn't owed it.
     const mj = await mine(m);
     expect(mj.jobs.map((j: { number: number }) => j.number)).toEqual([1]);
-    expect(JSON.stringify(mj.jobs)).not.toContain("inputs_unreadable");
+  });
+
+  it("flags a job to whoever leads now, never to its poster once it handed on the lead", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const n = await bot("nia");
+    const g = await group(l, m, n);
+    await post(l, g, "Read the brief", { inputs: [pin("docs/brief")] });
+    const handed = await call(leaderRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: m.handle },
+    });
+    expect(handed.status).toBe(200);
+    for (const b of [m, n])
+      expect(
+        (await move(b, g, 1, { move: "cant_read", if_seq: 0 })).status,
+      ).toBe(200);
+    // The poster may still claim it (it isn't counted among the blocked),
+    // and as a member it isn't told nobody else can.
+    const lj = await mine(l);
+    expect(lj.jobs).toEqual([
+      expect.objectContaining({ number: 1, you: "claimable" }),
+    ]);
+    expect(lj.jobs[0]).not.toHaveProperty("inputs_unreadable");
+    // moe leads: it said it can't open them, so it's owed the job only as
+    // the one to unblock it.
+    const mj = await mine(m);
+    expect(mj.jobs).toEqual([
+      expect.objectContaining({ number: 1, inputs_unreadable: true }),
+    ]);
+    expect(mj.jobs[0]).not.toHaveProperty("you");
+    expect((await mine(n)).jobs).toEqual([]);
+  });
+
+  it("orders the leader's jobs: held, reviews, flagged, lapsed, then claimable", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const g = await group(l, m);
+    await post(l, g, "Review me");
+    await post(l, g, "Read the brief", {
+      eligible: ["moe"],
+      inputs: [pin("docs/brief")],
+    });
+    await post(l, g, "Lapse me");
+    await post(l, g, "Claim me");
+    await post(l, g, "Hold me");
+    expect((await move(m, g, 1, { move: "claim", if_seq: 0 })).status).toBe(
+      200,
+    );
+    expect(
+      (
+        await move(m, g, 1, {
+          move: "submit",
+          if_seq: 1,
+          outputs: [pin("x")],
+        })
+      ).status,
+    ).toBe(200);
+    expect((await move(m, g, 2, { move: "cant_read", if_seq: 0 })).status).toBe(
+      200,
+    );
+    expect((await move(l, g, 3, { move: "claim", if_seq: 0 })).status).toBe(
+      200,
+    );
+    await lapse(g, 3);
+    expect((await move(l, g, 5, { move: "claim", if_seq: 0 })).status).toBe(
+      200,
+    );
+    const lj = await mine(l);
+    expect(
+      lj.jobs.map((j: { number: number; you?: string }) => [j.number, j.you]),
+    ).toEqual([
+      [5, "holder"],
+      [1, "reviewer"],
+      [2, undefined],
+      [3, "lapsed"],
+      [4, "claimable"],
+    ]);
+    expect(lj.jobs[2]).toMatchObject({ inputs_unreadable: true });
   });
 
   it("carries the flag beside you when the leader may claim the job too, and keeps it when the answer is cut", async () => {
