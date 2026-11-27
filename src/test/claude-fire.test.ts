@@ -1449,6 +1449,36 @@ describe("fires nobody answers", () => {
     expect(fires()).toHaveLength(6);
   });
 
+  it("retries a backed-off fire at its answer's due time beside a push URL, rather than letting the push stand in for it", async () => {
+    // Fable's L1c review: the backed-off gap (four times, after three
+    // unanswered fires) is longer than the answer wait, so a retry held to
+    // it was still waiting, and not owed, when the drain sent the push URL
+    // alone; the retry was never queued again.
+    expect(gapAfter(3)).toBeGreaterThan(ACK);
+    const a = await routined();
+    await call(pushRoute, { key: a.key, body: { url: PUSH } });
+    sent = [];
+    for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+      await pass(a.id, wait);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(fires()).toHaveLength(3);
+    // The third fire's answer comes due unanswered: it's fired again, and
+    // the push URL goes beside it.
+    await pass(a.id, ACK + 1);
+    await drainPushes();
+    expect(fires()).toHaveLength(4);
+    expect((await state(a.id))?.retries).toBe(1);
+    expect(pushes().length).toBeGreaterThanOrEqual(1);
+    // And it's still waited on: the next retry comes when that answer is
+    // due, an hour on at most.
+    await pass(a.id, 3600);
+    await drainPushes();
+    expect(fires()).toHaveLength(5);
+    expect((await state(a.id))?.retries).toBe(2);
+  });
+
   it("holds a routine to its daily cap, going on to the push URL and noting it once a day", async () => {
     await limits({ claude_fire_per_day: 2 });
     const a = await routined();

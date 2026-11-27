@@ -468,7 +468,14 @@ export const claudeFireAdapter: WakeAdapter = {
       alarmed = await markUnanswered(sql, botId, a.claude_fire_alarm_after);
     const plan = planFire(t);
     if (!plan.send) return null;
-    const gap = fireGapSeconds(a, t.openFires);
+    // The backed-off gap spaces fires for new arrivals. A retry of a fire
+    // whose answer is overdue keeps the plain gap: held past its answer's
+    // due time, it would be waiting, and not owed, when the drain sends the
+    // push URL alone, and never be queued again.
+    const gap =
+      plan.after === null
+        ? fireGapSeconds(a, t.openFires)
+        : a.claude_fire_gap_seconds;
     // Past the daily cap: not sent now, and not owed, so a method after it
     // (a push URL) goes in its place; with none, the bot stays queued for
     // when the cap lifts, and the routine fires then.
