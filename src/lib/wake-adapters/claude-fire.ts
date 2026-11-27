@@ -179,6 +179,24 @@ export function planFire(s: FireState): FirePlan {
   return { send: true, after: s.ackDueAt };
 }
 
+// Which gap a fire waits (find() and retryAt() alike). The backed-off gap
+// spaces fires for new arrivals. A retry of a fire whose answer is overdue
+// keeps the plain gap: held past its answer's due time, it would be
+// waiting, and not owed, when the drain sends the push URL alone, and never
+// be queued again.
+function gapFor(
+  a: Pick<
+    AntiAbuse,
+    "claude_fire_gap_seconds" | "claude_fire_backoff_max_seconds"
+  >,
+  s: { openFires: number },
+  plan: FirePlan,
+): number {
+  return plan.send && plan.after !== null
+    ? a.claude_fire_gap_seconds
+    : fireGapSeconds(a, s.openFires);
+}
+
 const later = (...ds: (Date | null | undefined)[]): Date | null => {
   let out: Date | null = null;
   for (const d of ds) if (d && (!out || d > out)) out = d;
@@ -202,8 +220,8 @@ async function markAttemptUnanswered(
 }
 
 // The gap before a routine's next fire (L1c). Each fire in a row still
-// unanswered (retries included), past the first, doubles it, up to claude_fire_backoff_max_seconds
-// (never shorter than the gap itself), so a bot that stopped answering,
+// unanswered (retries included), past the first, doubles it, up to
+// claude_fire_backoff_max_seconds (never shorter than the gap itself), so a bot that stopped answering,
 // say one whose person ran out of usage, costs its person's plan fewer and
 // fewer runs; reading its number puts the count, and the gap, back. The
 // first unanswered fire keeps the gap, since an arrival can come while the
@@ -468,14 +486,7 @@ export const claudeFireAdapter: WakeAdapter = {
       alarmed = await markUnanswered(sql, botId, a.claude_fire_alarm_after);
     const plan = planFire(t);
     if (!plan.send) return null;
-    // The backed-off gap spaces fires for new arrivals. A retry of a fire
-    // whose answer is overdue keeps the plain gap: held past its answer's
-    // due time, it would be waiting, and not owed, when the drain sends the
-    // push URL alone, and never be queued again.
-    const gap =
-      plan.after === null
-        ? fireGapSeconds(a, t.openFires)
-        : a.claude_fire_gap_seconds;
+    const gap = gapFor(a, t, plan);
     // Past the daily cap: not sent now, and not owed, so a method after it
     // (a push URL) goes in its place; with none, the bot stays queued for
     // when the cap lifts, and the routine fires then.
@@ -572,18 +583,18 @@ export const claudeFireAdapter: WakeAdapter = {
     const s = outcome.status;
     if (s !== null && s !== 429 && s !== 401 && s !== 404 && s < 500)
       return null;
-    // The gap find() will hold it to: backed off while fires go
-    // unanswered, so the bot isn't queued again before the routine may go.
-    const a = await antiAbuse(sql);
-    const [r] = await sql<
-      { last_sent_at: Date | null; retry_at: Date | null; open_fires: number }[]
-    >`
-      SELECT st.last_sent_at, st.retry_at, st.open_fires
-      FROM fire_state st
-      WHERE st.bot_id = ${botId} AND fire_trigger_usable(${botId}, ${PUSH_MAX_FAILURES})`;
-    if (!r?.last_sent_at) return r?.retry_at ?? null;
-    const gap = fireGapSeconds(a, r.open_fires ?? 0);
-    return later(new Date(r.last_sent_at.getTime() + gap * 1000), r.retry_at);
+    // The gap find() will hold it to (gapFor), so the bot is queued again
+    // neither before the routine may go nor long after.
+    const [r] = await sql<{ ok: boolean }[]>`
+      SELECT fire_trigger_usable(${botId}, ${PUSH_MAX_FAILURES}) AS ok`;
+    if (!r?.ok) return null;
+    const t = await readTrigger(sql, botId);
+    if (!t) return null;
+    const gap = gapFor(await antiAbuse(sql), t, planFire(t));
+    return later(
+      t.lastSentAt ? new Date(t.lastSentAt.getTime() + gap * 1000) : null,
+      t.retryAt,
+    );
   },
 
   // Tokens nothing can fire with any more go, in case a change slipped past
@@ -713,12 +724,13 @@ export async function recordFire(
         FROM cur WHERE f.bot_id = ${botId}
         RETURNING NOT cur.seen AS waiting`;
       // Queued for the answer's check, marked as only that, so an arrival
-      // brings it forward (bump_wake, 062_claude_fire_fixes.sql). Not when
+      // brings it forward (bump_wake, 062_claude_fire_fixes.sql and 096). Not when
       // an arrival already queued it, nor when the bot already answered.
       if (w?.waiting)
         await tx`
           UPDATE push_state p
-          SET pending_since = f.ack_due_at, fire_check = true
+          SET pending_since = f.ack_due_at, fire_check = true,
+              owed_wait = false
           FROM fire_state f
           WHERE p.bot_id = ${botId} AND f.bot_id = ${botId}
             AND p.pending_since IS NULL`;

@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET as profileRoute } from "@/app/v1/bots/[handle]/route";
+import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { GET as catchUpRoute } from "@/app/v1/me/catch-up/route";
 import { DELETE as undoRoute } from "@/app/v1/me/link/route";
 import { POST as pushRoute } from "@/app/v1/me/push/route";
@@ -45,7 +46,7 @@ import {
 import { localDeliver } from "@/lib/wake-adapters/mcp-events";
 import { openSecret, sealSecret } from "@/lib/wake-secrets";
 import { comeBackReach, wokenBy } from "@/lib/woken";
-import { ageLink, call, linkBot, register, resetDb } from "./helpers";
+import { ageLink, call, freshIp, linkBot, register, resetDb } from "./helpers";
 
 // Waking a bot with a Claude routine, end to end: its person saves the
 // routine's id and token on the account page, the site seals the token, and
@@ -112,6 +113,54 @@ async function routined(handle = "alice", person = `google-${handle}`) {
 }
 
 const bump = (id: number) => db()`SELECT bump_wake(${id})`;
+
+// An app's event subscription for the bot (MCP events, tried before the
+// routine), its challenge echoed.
+const CALLBACK = "https://chatgpt.com/backend-api/events/cb_1";
+const events = () =>
+  sent.filter(
+    (s) => s.url === CALLBACK && JSON.parse(s.body).type !== "verification",
+  );
+async function subscribeEvents(key: string) {
+  const was = answer;
+  answer = (s) => {
+    const b = JSON.parse(s.body);
+    return b.type === "verification"
+      ? { status: 200, body: JSON.stringify({ challenge: b.challenge }) }
+      : was(s);
+  };
+  const res = await mcpRoute(
+    new Request("http://unprompted.test/v1/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "x-real-ip": freshIp(),
+        host: "unprompted.test",
+        authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "events/subscribe",
+        params: {
+          name: "wake",
+          arguments: {},
+          delivery: {
+            mode: "webhook",
+            url: CALLBACK,
+            secret: `whsec_${randomBytes(32).toString("base64")}`,
+          },
+          cursor: null,
+        },
+      }),
+    }),
+    undefined as never,
+  );
+  const body = await res.json();
+  expect(body.error, JSON.stringify(body)).toBeUndefined();
+  answer = was;
+}
 const GAP = ANTI_ABUSE_DEFAULTS.claude_fire_gap_seconds;
 const ACK = ANTI_ABUSE_DEFAULTS.claude_fire_ack_seconds;
 // The gap before the next fire once `open` fires in a row went unanswered.
@@ -1522,6 +1571,62 @@ describe("fires nobody answers", () => {
     expect((await pending(a.id))?.pending_since ?? null).toBeNull();
   });
 
+  it("keeps the routine's owed wait only while a failed method's retry comes no sooner", async () => {
+    // Fable's second L1c review: the retry after a failure (an event
+    // subscription's here) moves the bot's time; the owed wait, which an
+    // arrival brings forward, stands only if the time is still the
+    // routine's gap end.
+    const owedWait = async (id: number) => {
+      const [w] = await db()<{ owed_wait: boolean }[]>`
+        SELECT owed_wait FROM push_state WHERE bot_id = ${id}`;
+      return w?.owed_wait;
+    };
+    for (const [handle, eventGap] of [
+      ["alice", undefined],
+      ["bob", gapAfter(3) * 4],
+    ] as const) {
+      sent = [];
+      answer = () => ({ status: 200, body: FIRED });
+      if (eventGap) await limits({ mcp_event_gap_seconds: eventGap });
+      const a = await routined(handle);
+      for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+        await pass(a.id, wait);
+        await bump(a.id);
+        await drainPushes();
+      }
+      expect(fires()).toHaveLength(3);
+      await subscribeEvents(a.key);
+      // Inside the routine's backed-off gap, owing this wake; the event
+      // goes first and fails.
+      answer = (s) =>
+        s.url === CALLBACK ? { status: 500 } : { status: 200, body: FIRED };
+      await pass(a.id, GAP + 1);
+      await bump(a.id);
+      await drainPushes();
+      expect(events()).toHaveLength(1);
+      expect(fires()).toHaveLength(3);
+      const [st] = await db()<{ last_sent_at: Date }[]>`
+        SELECT last_sent_at FROM fire_state WHERE bot_id = ${a.id}`;
+      const gapEnd = (st?.last_sent_at.getTime() ?? 0) + gapAfter(3) * 1000;
+      const p = await pending(a.id);
+      if (!eventGap) {
+        // The event's retry comes first: the bot waits for it, and the
+        // routine's wait is no longer what it waits for.
+        expect(p?.pending_since?.getTime()).toBeLessThan(gapEnd);
+        expect(await owedWait(a.id)).toBe(false);
+      } else {
+        // The routine's gap ends first: still owed, and an arrival brings
+        // it forward.
+        expect(p?.pending_since?.getTime()).toBe(gapEnd);
+        expect(await owedWait(a.id)).toBe(true);
+        await bump(a.id);
+        expect(
+          (await pending(a.id))?.pending_since?.getTime(),
+        ).toBeLessThanOrEqual(Date.now() + 1000);
+      }
+    }
+  });
+
   it("keeps a test fire to the plain gap during a back-off, and leaves the back-off as it was", async () => {
     const a = await routined();
     for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
@@ -1577,6 +1682,30 @@ describe("fires nobody answers", () => {
       (st?.last_sent_at.getTime() ?? 0) + gapAfter(st?.open_fires ?? 0) * 1000,
     );
     expect(gapAfter(st?.open_fires ?? 0)).toBeGreaterThan(GAP);
+  });
+
+  it("resends a failed retry of an overdue answer at the plain gap, as find() would send it", async () => {
+    // Fable's second L1c review: retryAt() backed off every resend, but
+    // find() holds a retry of an overdue answer to the plain gap.
+    const a = await routined();
+    for (const wait of [0, gapAfter(1) + 1, gapAfter(2) + 1]) {
+      await pass(a.id, wait);
+      await bump(a.id);
+      await drainPushes();
+    }
+    expect(fires()).toHaveLength(3);
+    // Nothing new: the third fire's answer comes due, and its retry fails.
+    answer = () => ({ status: 500 });
+    await pass(a.id, Math.max(ACK, gapAfter(3)) * 8 + 1);
+    await drainPushes();
+    expect(fires()).toHaveLength(4);
+    const [st] = await db()<{ last_sent_at: Date; open_fires: number }[]>`
+      SELECT last_sent_at, open_fires FROM fire_state WHERE bot_id = ${a.id}`;
+    expect(gapAfter(st?.open_fires ?? 0)).toBeGreaterThan(GAP);
+    const p = await pending(a.id);
+    expect(p?.pending_since?.getTime()).toBe(
+      (st?.last_sent_at.getTime() ?? 0) + GAP * 1000,
+    );
   });
 
   it("holds a routine to its daily cap, going on to the push URL and noting it once a day", async () => {

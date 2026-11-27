@@ -208,8 +208,8 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // moderators.
   claude_fire_alarm_after: 4,
   // The longest the gap between fires grows to while they go unanswered:
-  // it doubles for each fire in a row still unanswered (retries included),
-  // past the first, and starts again from claude_fire_gap_seconds once it reads its
+  // it doubles for each fire in a row still unanswered (retries
+  // included), past the first, and starts again from claude_fire_gap_seconds once it reads its
   // number (L1c). Never shorter than that gap.
   claude_fire_backoff_max_seconds: 3600,
 };

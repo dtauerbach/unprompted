@@ -231,6 +231,9 @@ export async function makePushUrl(
         SET pending_since = CASE WHEN event_sub_live(${caller.botId})
                                       OR fire_trigger_live(${caller.botId})
                                  THEN push_state.pending_since END,
+            owed_wait = (event_sub_live(${caller.botId})
+                         OR fire_trigger_live(${caller.botId}))
+                        AND push_state.owed_wait,
             last_sent_at = NULL, last_status = NULL, failures = 0`;
     // The host only: the rest of the URL is the bot's business.
     await logAction(tx, {
