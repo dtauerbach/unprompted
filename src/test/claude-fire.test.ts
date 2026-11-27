@@ -35,6 +35,7 @@ import {
   FIRE_DEADLINE_MS,
   FIRE_RETRIES,
   fireExcerpt,
+  fireGapSeconds,
   firesAllowed,
   fireText,
   fireUrl,
@@ -113,6 +114,8 @@ async function routined(handle = "alice", person = `google-${handle}`) {
 const bump = (id: number) => db()`SELECT bump_wake(${id})`;
 const GAP = ANTI_ABUSE_DEFAULTS.claude_fire_gap_seconds;
 const ACK = ANTI_ABUSE_DEFAULTS.claude_fire_ack_seconds;
+// The gap before the next fire once `open` fires in a row went unanswered.
+const gapAfter = (open: number) => fireGapSeconds(ANTI_ABUSE_DEFAULTS, open);
 
 // Sets private numbers for one test, as a moderator would load them.
 const limits = (v: Record<string, number>) =>
@@ -1334,12 +1337,13 @@ describe("fires nobody answers", () => {
     const a = await routined();
     await call(pushRoute, { key: a.key, body: { url: PUSH } });
     sent = [];
-    // Something new arrives every gap and a little: each fire carries a
-    // new number, so none of them is ever retried.
+    // Something new arrives every gap and a little, the gap growing as the
+    // fires go unanswered: each fire carries a new number, so none of them
+    // is ever retried.
     for (let i = 0; i < 4; i++) {
       await bump(a.id);
       await drainPushes();
-      await pass(a.id, GAP + 1);
+      await pass(a.id, gapAfter(i + 1) + 1);
     }
     expect(fires()).toHaveLength(4);
     expect((await state(a.id))?.retries).toBe(0);
@@ -1375,11 +1379,74 @@ describe("fires nobody answers", () => {
         ?.unanswered_at,
     ).toBeNull();
     for (let i = 0; i < 5; i++) {
-      await pass(a.id, GAP + ACK);
+      await pass(a.id, gapAfter(i) + ACK);
       await bump(a.id);
       await drainPushes();
     }
     expect(await alerts()).toHaveLength(2);
+  });
+
+  it("backs off while nobody answers, doubling the gap to its cap, and starts again once the bot reads its number", async () => {
+    // L1c: a bot that stopped answering (its person ran out of usage, a
+    // safety check stopped it) costs its person's plan fewer runs.
+    expect([1, 2, 3, 4, 5].map(gapAfter)).toEqual([
+      GAP,
+      GAP * 2,
+      GAP * 4,
+      GAP * 8,
+      GAP * 16,
+    ]);
+    expect(gapAfter(0)).toBe(GAP);
+    expect(gapAfter(40)).toBe(
+      ANTI_ABUSE_DEFAULTS.claude_fire_backoff_max_seconds,
+    );
+    // A cap under the gap never shortens it.
+    expect(
+      fireGapSeconds(
+        { claude_fire_gap_seconds: 600, claude_fire_backoff_max_seconds: 120 },
+        5,
+      ),
+    ).toBe(600);
+    const a = await routined();
+    const fireAfter = async (secs: number) => {
+      await pass(a.id, secs);
+      await bump(a.id);
+      await drainPushes();
+      return fires().length;
+    };
+    expect(await fireAfter(0)).toBe(1);
+    expect(await fireAfter(GAP + 1)).toBe(2);
+    // Two unanswered: twice the gap. Just past one gap isn't enough.
+    expect(await fireAfter(GAP + 1)).toBe(2);
+    expect(await fireAfter(GAP)).toBe(3);
+    // Three: four times.
+    expect(await fireAfter(GAP * 3)).toBe(3);
+    expect(await fireAfter(GAP + 1)).toBe(4);
+    // Reading its number answers them all, and the gap is back to one.
+    await call(wakeRoute, { key: a.key });
+    expect(await fireAfter(GAP + 1)).toBe(5);
+    expect(await fireAfter(GAP + 1)).toBe(6);
+  });
+
+  it("caps the backed-off gap at the private number in force", async () => {
+    await limits({ claude_fire_backoff_max_seconds: GAP * 2 });
+    const a = await routined();
+    // Five unanswered fires, each twice the gap apart: past the second the
+    // gap would be four, eight and sixteen times, but the cap holds it.
+    for (let i = 0; i < 5; i++) {
+      await bump(a.id);
+      await drainPushes();
+      await pass(a.id, GAP * 2 + 1);
+    }
+    expect(fires()).toHaveLength(5);
+    // Still backed off: one plain gap isn't enough.
+    await pass(a.id, -(GAP - 1));
+    await bump(a.id);
+    await drainPushes();
+    expect(fires()).toHaveLength(5);
+    await pass(a.id, GAP);
+    await drainPushes();
+    expect(fires()).toHaveLength(6);
   });
 
   it("holds a routine to its daily cap, going on to the push URL and noting it once a day", async () => {

@@ -253,6 +253,20 @@ export function claudeFireScenarios(): void {
         ]);
       }, 300_000);
 
+      // L1c: two of cy's fires went unanswered, so the gap before its next
+      // is twice the plain one. Something new arriving just past one gap
+      // waits (unit tests cover the rest of the doubling and the cap).
+      it("backs off a routine nobody answers: past one gap, the next arrival still waits", async () => {
+        await message(bob, cy);
+        await pause(125_000);
+        const until = Date.now() + 15_000;
+        while (Date.now() < until) {
+          await request("GET", "/v1/clock");
+          await pause(5_000);
+        }
+        expect(firesFor(cyRoutine)).toHaveLength(2);
+      }, 240_000);
+
       // A fire whose request went out but whose answer never came may have
       // started a run: kept as maybe, waited on, and not sent again at the
       // gap; the bot's read answers it.

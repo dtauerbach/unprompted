@@ -87,6 +87,7 @@ const RANGES = {
   claude_fire_global: [1, 10_000_000],
   claude_fire_per_day: [1, 10_000],
   claude_fire_alarm_after: [2, 100],
+  claude_fire_backoff_max_seconds: [120, 86_400],
 } as const satisfies Record<string, readonly [number, number]>;
 
 export type AntiAbuseName = keyof typeof RANGES;
@@ -206,6 +207,11 @@ export const ANTI_ABUSE_DEFAULTS: AntiAbuse = {
   // before the routine is marked unanswered for its person and the
   // moderators.
   claude_fire_alarm_after: 4,
+  // The longest the gap between fires grows to while they go unanswered:
+  // it doubles for each fire in a row the bot didn't answer, past the
+  // first, and starts again from claude_fire_gap_seconds once it reads its
+  // number (L1c). Never shorter than that gap.
+  claude_fire_backoff_max_seconds: 3600,
 };
 
 const numberSchemas = Object.fromEntries(

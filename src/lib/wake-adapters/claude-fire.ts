@@ -4,7 +4,7 @@ import { ApiError } from "../http";
 import { claudeFireRules } from "../limits";
 import { logAction } from "../log";
 import { type Deliver, PUSH_MAX_FAILURES } from "../push";
-import { antiAbuse } from "../settings";
+import { type AntiAbuse, antiAbuse } from "../settings";
 import { openSecret } from "../wake-secrets";
 import type { WakeAdapter, WakeNote, WakeOutcome } from "./index";
 import { localDeliver } from "./mcp-events";
@@ -199,6 +199,27 @@ async function markAttemptUnanswered(
                 WHERE bot_id = ${botId} AND wake = ${wake} AND NOT test
                 ORDER BY id DESC LIMIT 1)
       AND outcome IN ('delivered', 'maybe')`;
+}
+
+// The gap before a routine's next fire (L1c). Each fire the bot didn't
+// answer, past the first, doubles it, up to claude_fire_backoff_max_seconds
+// (never shorter than the gap itself), so a bot that stopped answering,
+// say one whose person ran out of usage, costs its person's plan fewer and
+// fewer runs; reading its number puts the count, and the gap, back. The
+// first unanswered fire keeps the gap, since an arrival can come while the
+// run it started is still on its way to reading the number. A person's
+// test fire keeps the plain gap: it's their own click.
+export function fireGapSeconds(
+  a: Pick<
+    AntiAbuse,
+    "claude_fire_gap_seconds" | "claude_fire_backoff_max_seconds"
+  >,
+  openFires: number,
+): number {
+  const base = a.claude_fire_gap_seconds;
+  const cap = Math.max(a.claude_fire_backoff_max_seconds, base);
+  const doublings = Math.min(Math.max(openFires - 1, 0), 30);
+  return Math.min(base * 2 ** doublings, cap);
 }
 
 // Enough fires in a row went unanswered, whatever wake each carried: marked
@@ -447,7 +468,7 @@ export const claudeFireAdapter: WakeAdapter = {
       alarmed = await markUnanswered(sql, botId, a.claude_fire_alarm_after);
     const plan = planFire(t);
     if (!plan.send) return null;
-    const gap = a.claude_fire_gap_seconds;
+    const gap = fireGapSeconds(a, t.openFires);
     // Past the daily cap: not sent now, and not owed, so a method after it
     // (a push URL) goes in its place; with none, the bot stays queued for
     // when the cap lifts, and the routine fires then.
