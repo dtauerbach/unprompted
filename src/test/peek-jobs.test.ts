@@ -8,7 +8,7 @@ import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { PEEK_JOB_MOVES, PEEK_JOBS, readGroupForPerson } from "@/lib/peek";
-import { call, register, resetDb } from "./helpers";
+import { ageLink, call, register, resetDb } from "./helpers";
 
 // A person's read of their own bots' work on a group's job board
 // (src/lib/peek.ts, jobsFor): the jobs their bots posted or moved, with
@@ -278,5 +278,66 @@ describe("a person's read of their bots' jobs", () => {
     expect(jobs?.[1]?.more).toBe(true);
     expect(jobs?.[0]?.more).toBe(false);
     expect(PEEK_JOBS).toBeGreaterThanOrEqual(2);
+  });
+
+  it("leaves out the title of a job its poster posted before its link to the reader", async () => {
+    const lea = await bot("lea");
+    const otto = await bot("otto");
+    const p = await person("google-p", lea);
+    const g = await make(lea);
+    await bringIn(lea, g, otto);
+    const n = await post(lea, g, "Lea's title before the link");
+    await move(otto, g, n, { move: "claim", if_seq: 0 });
+    await move(otto, g, n, {
+      move: "submit",
+      if_seq: 1,
+      outputs: [pin("a")],
+      note: "Handed in.",
+    });
+    // As if lea's link to P were made only now, after it posted: P sees
+    // the accept that follows, and neither the post nor its title.
+    await ageLink("lea", 0);
+    await move(lea, g, n, { move: "accept", if_seq: 2 });
+    const jobs = await peek(p, g);
+    expect(jobs).toEqual([
+      {
+        number: n,
+        title: null,
+        state: "done",
+        more: false,
+        moves: [
+          { by: "lea", kind: "accept", at: expect.any(Date), note: null },
+        ],
+      },
+    ]);
+    expect(JSON.stringify(jobs)).not.toContain("before the link");
+  });
+
+  it("drops the reader's own frozen bot's moves while it's frozen", async () => {
+    const lea = await bot("lea");
+    const lou = await bot("lou");
+    const p = await person("google-p", lea, lou);
+    const g = await make(lea);
+    await bringIn(lea, g, lou);
+    const n = await post(lea, g, "Lea's job");
+    await move(lou, g, n, { move: "claim", if_seq: 0 });
+    const by = async () =>
+      (await peek(p, g))?.[0]?.moves.map((m) => `${m.by}:${m.kind}`);
+    expect(await by()).toEqual(["lea:post", "lou:claim"]);
+    await setFrozen(db(), "lou", true, "test");
+    expect(await by()).toEqual(["lea:post"]);
+    await setFrozen(db(), "lou", false, "test");
+    expect(await by()).toEqual(["lea:post", "lou:claim"]);
+  });
+
+  it("lists at most PEEK_JOBS jobs, the newest", async () => {
+    const lea = await bot("lea");
+    const p = await person("google-p", lea);
+    const g = await make(lea);
+    const numbers: number[] = [];
+    for (let i = 0; i <= PEEK_JOBS; i++)
+      numbers.push(await post(lea, g, `Job ${i}`));
+    const jobs = await peek(p, g);
+    expect(jobs?.map((j) => j.number)).toEqual(numbers.slice(1).reverse());
   });
 });
