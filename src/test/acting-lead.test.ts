@@ -14,7 +14,7 @@ import {
   LEAD_QUIET_AFTER_HOURS,
   LEAD_QUIET_WAITING,
 } from "@/lib/acting-lead";
-import { setFrozen } from "@/lib/admin";
+import { banBot, setFrozen, unbanBot } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { postAsPerson } from "@/lib/person-messages";
 import { myGroups, setOwnBots, startChannel } from "@/lib/private-channels";
@@ -419,6 +419,76 @@ describe("an acting lead", () => {
     await say(cyd, channel);
     await age(LEAD_QUIET_AFTER_HOURS + 1);
     expect(await acting(id)).toBe("cyd");
+  });
+
+  it("isn't moved by a senior member that left and came back junior", async () => {
+    // Fable's fifth review of #221: with no named leader, lea leaves, ben
+    // leads by seniority and cyd acts; lea comes back behind ben, and its
+    // freeze, unfreeze and taking out are a junior's, moving nothing.
+    await bot("lea");
+    const ben = await bot("ben");
+    const cyd = await bot("cyd");
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-j') RETURNING id`;
+    await db()`UPDATE bots SET owner_id = ${Number(h?.id)}`;
+    for (const x of ["lea", "ben", "cyd"]) await ageLink(x);
+    const { channel } = await startChannel(
+      db(),
+      "google-j",
+      ["lea", "ben", "cyd"],
+      undefined,
+      null,
+    );
+    const id = channel.replace("private:", "");
+    await setOwnBots(db(), "google-j", channel, [], ["lea"], null);
+    await say(cyd, channel);
+    await say(cyd, channel);
+    await say(cyd, channel);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    expect((await read(ben, id)).channel.leader).toBe("ben");
+    expect(await acting(id)).toBe("cyd");
+    await setOwnBots(db(), "google-j", channel, ["lea"], [], null);
+    expect((await read(ben, id)).channel.leader).toBe("ben");
+    expect(await acting(id)).toBe("cyd");
+    await setFrozen(db(), "lea", true, "test");
+    expect(await acting(id)).toBe("cyd");
+    await setFrozen(db(), "lea", false, "test");
+    expect(await acting(id)).toBe("cyd");
+    await setOwnBots(db(), "google-j", channel, [], ["lea"], null);
+    expect(await acting(id)).toBe("cyd");
+  });
+
+  it("counts a ban and an unban of the leader as a freeze and an unfreeze", async () => {
+    const c = await three();
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    expect(await acting(c.id)).toBe("cyd");
+    await banBot(db(), "lea", "test");
+    expect((await read(c.ben, c.id)).channel.leader).toBe("ben");
+    expect(await acting(c.id)).toBeNull();
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    expect(await acting(c.id)).toBe("cyd");
+    await unbanBot(db(), "lea", "test");
+    expect((await read(c.ben, c.id)).channel.leader).toBe("lea");
+    expect(await acting(c.id)).toBeNull();
+    // A bot frozen before its ban stays frozen when it's unbanned, and
+    // writes no second record.
+    await setFrozen(db(), "ben", true, "test");
+    await banBot(db(), "ben", "test");
+    await unbanBot(db(), "ben", "test");
+    const rows = await db()<{ handle: string; frozen: boolean }[]>`
+      SELECT b.handle, f.frozen FROM bot_freeze_changes f JOIN bots b ON b.id = f.bot_id
+      ORDER BY f.id`;
+    expect(rows).toEqual([
+      { handle: "lea", frozen: true },
+      { handle: "lea", frozen: false },
+      { handle: "ben", frozen: true },
+    ]);
   });
 
   it("records every freeze and unfreeze, and keeps the record", async () => {
