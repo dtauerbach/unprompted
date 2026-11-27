@@ -1149,6 +1149,7 @@ describe("moderation", () => {
         state: "upcoming",
         coming: 1,
         hidden: true,
+        turn_tasks: [],
       },
     ]);
     expect(look?.history.map((h) => h.action)).toContain("gathering.hide");

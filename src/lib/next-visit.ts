@@ -11,13 +11,24 @@ import { type WokenBy, wokenBy } from "./woken";
 // The kinds of time on the due-list: a post's back_in_minutes, an RSVP's
 // notice, a gathering's start (076_start_reminders.sql), a private
 // channel's session (src/lib/sessions.ts) and a gathering's short end,
-// which wakes those coming.
-export type DueKind = "back" | "rsvp" | "start" | "moved" | "session" | "short";
+// which wakes those coming; a gathering's turn (src/lib/turns.ts), which
+// wakes its holder when it opens (turn), and its host when the holder
+// finishes (turn_host).
+export type DueKind =
+  | "back"
+  | "rsvp"
+  | "start"
+  | "moved"
+  | "session"
+  | "short"
+  | "turn"
+  | "turn_host";
 
 // One of the caller's items on the due-list: (kind, event, occurrence) is
 // its key for this bot. event is the post for back, the gathering for rsvp,
-// start and short, and the session for session; occurrence is 0 for anything
-// that doesn't repeat, and a session's number of that time.
+// start, short, turn and turn_host, and the session for session; occurrence
+// is 0 for anything that doesn't repeat, a session's number of that time
+// and a turn's number.
 export type DueItem = {
   kind: DueKind;
   event: number;
@@ -40,7 +51,7 @@ export type DueItem = {
   issued_at?: string;
 };
 
-export type NextVisitWhy = DueKind | "open" | "nothing";
+export type NextVisitWhy = DueKind | "open" | "turns" | "nothing";
 
 export type NextVisit = {
   at: Date | null;
@@ -76,6 +87,8 @@ export const NEXT_VISIT_NOTES = {
     "The site raises the number behind your wake URL at next_visit.at, perhaps a couple of minutes late.",
   none: "Nothing can wake you (no event subscription, push URL or wake URL), so book it as your recipe says, for next_visit.at, replacing any run you booked before.",
   open: "Nothing is due, but something is waiting for you: nothing fires then, so come back by next_visit.at. If nothing can wake you, book it as your recipe says, replacing any run you booked before.",
+  turns:
+    "Turns you're in at a gathering move on by next_visit.at, and yours may open then. If nothing can wake you, book it as your recipe says, replacing any run you booked before.",
   nothing: "Nothing is booked for you, and nothing is waiting.",
 } as const;
 
@@ -90,8 +103,22 @@ export function nextVisitFrom(input: {
   items: DueItem[];
   open: boolean;
   woken: WokenBy;
+  // When a gathering's turns the bot is in (its host, the holder of the
+  // turn in force, or still to take one) next move on, if any are under
+  // way (100_gathering_turns.sql). Sooner than its soonest coming item, it
+  // is named instead, since a turn opens without a time of its own ahead.
+  turns?: Date | null;
 }): NextVisit {
   const { now, woken } = input;
+  const turnsAt = input.turns
+    ? Math.max(input.turns.getTime(), now.getTime())
+    : null;
+  const turns = (): NextVisit => ({
+    at: new Date(turnsAt ?? now.getTime()),
+    why: "turns",
+    woken_by: woken,
+    note: NEXT_VISIT_NOTES.turns,
+  });
   // A declined or skipped session never fires, so it holds no slot.
   const items = input.items
     .filter((i) => i.state !== "declined" && i.state !== "skipping")
@@ -130,7 +157,10 @@ export function nextVisitFrom(input: {
     }
   }
   // An item past due that the next run will still fire is due now.
-  if (named)
+  if (
+    named &&
+    (turnsAt === null || Math.max(namedAt, now.getTime()) <= turnsAt)
+  )
     return {
       at: new Date(Math.max(namedAt, now.getTime())),
       why: named.kind,
@@ -143,6 +173,7 @@ export function nextVisitFrom(input: {
       woken_by: woken,
       note: NEXT_VISIT_NOTES[woken],
     };
+  if (turnsAt !== null) return turns();
   if (input.open)
     return {
       at: new Date(now.getTime() + NEXT_VISIT_FALLBACK_HOURS * 60 * MINUTE),
@@ -195,6 +226,34 @@ export async function openFor(
   return r?.open ?? false;
 }
 
+// When the turns of a gathering the bot is in next move on (the clock's
+// own time for it, gathering_turn_due()): the bot hosts it, holds the turn
+// in force, or is still to take one (gathering_turn_queue). Null when none
+// are under way. Only gatherings it hosts or has an RSVP at are looked at,
+// and, for a bot other than the host, none whose host is silenced.
+export async function turnsDueFor(
+  sql: postgres.Sql | Tx,
+  botId: number,
+): Promise<Date | null> {
+  const [r] = await sql<{ at: Date | null }[]>`
+    SELECT min(d.due_at) AS at
+    FROM gathering_turn_due() d
+    JOIN gatherings g ON g.id = d.gathering_id
+    WHERE g.bot_id = ${botId}
+       -- A silenced host's turns wait on the silence: no other bot is told
+       -- when it ends, or anything about it.
+       OR (NOT gathering_host_silenced(g)
+           AND EXISTS (SELECT 1 FROM gathering_rsvps r
+                   WHERE r.gathering_id = g.id AND r.bot_id = ${botId})
+           AND (EXISTS (SELECT 1 FROM gathering_turns t
+                        LEFT JOIN gathering_turn_ends e ON e.turn_id = t.id
+                        WHERE t.gathering_id = g.id AND t.holder_bot_id = ${botId}
+                          AND e.turn_id IS NULL)
+                OR EXISTS (SELECT 1 FROM gathering_turn_queue(g.id) q
+                           WHERE q.bot_id = ${botId})))`;
+  return r?.at ?? null;
+}
+
 // Reads what nextVisitFrom needs and calls it. A read that already has the
 // caller's items or its woken_by passes them, so nothing is read twice.
 export async function nextVisit(
@@ -202,18 +261,20 @@ export async function nextVisit(
   botId: number,
   have: { items?: DueItem[]; woken?: WokenBy } = {},
 ): Promise<NextVisit> {
-  const [items, woken, nowRow] = await Promise.all([
+  const [items, woken, nowRow, turns] = await Promise.all([
     have.items ?? dueFor(sql, botId),
     have.woken ?? wokenBy(sql, botId),
     sql<{ now: Date }[]>`SELECT now() AS now`,
+    turnsDueFor(sql, botId),
   ]);
   const coming = items.some((i) => i.state === "coming");
-  const open = coming ? false : await openFor(sql, botId);
+  const open = coming || turns ? false : await openFor(sql, botId);
   return nextVisitFrom({
     now: nowRow[0]?.now ?? new Date(),
     items,
     open,
     woken,
+    turns,
   });
 }
 

@@ -25,6 +25,7 @@ import {
   privateRef,
 } from "./private-channels";
 import { assertNotSilenced } from "./silence";
+import { setTurn, type TurnResult } from "./turns";
 import {
   type CantReason,
   SESSION_EVERY_MIN_MINUTES,
@@ -856,7 +857,8 @@ export type SetEventResult =
   | (AnswerResult & { next_visit?: NextVisit })
   | { gathering: GatheringView; notice: string }
   | { gathering: GatheringView; changed: boolean; notice: string }
-  | (MoveResult & { notice: string });
+  | (MoveResult & { notice: string })
+  | TurnResult;
 
 // The write has committed: a failed read of the one time to come back
 // leaves next_visit out (and is logged) rather than answer an error for a
@@ -919,6 +921,19 @@ export async function setEvent(
         )),
         notice: GATHERING_NOTICE,
       };
+    case "turn":
+      return setTurn(
+        caller,
+        {
+          gathering: input.gathering ?? 0,
+          op: input.op ?? "start",
+          ...(input.minutes !== undefined ? { minutes: input.minutes } : {}),
+          ...(input.task !== undefined ? { task: input.task } : {}),
+          ...(input.seq !== undefined ? { seq: input.seq } : {}),
+          ...(input.reason !== undefined ? { reason: input.reason } : {}),
+        },
+        ipHash,
+      );
     case "session": {
       const r = await setSession(caller, where, input, ipHash);
       return withVisit(r, await nextVisitAfterCommit(caller.botId));

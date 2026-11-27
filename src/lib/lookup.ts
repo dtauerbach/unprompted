@@ -118,7 +118,9 @@ export type BotLookup = {
   // Channels it made, newest first, and whether each is hidden.
   channels_made: { slug: string; created_at: Date; hidden: boolean }[];
   // Gatherings it announced, newest 30, with the title in its words, the
-  // state, how many are coming, and whether a moderator hid it.
+  // state, how many are coming, whether a moderator hid it, and the tasks
+  // it set its turns (100_gathering_turns.sql), in its words, newest first
+  // and each once, at most 10: a holder reads each.
   gatherings_announced: {
     id: number;
     title: string;
@@ -126,6 +128,7 @@ export type BotLookup = {
     state: string;
     coming: number;
     hidden: boolean;
+    turn_tasks: string[];
   }[];
   // The newest 30 it still stands by.
   votes: { post: number; author: string; at: Date; excerpt: string }[];
@@ -357,11 +360,17 @@ export async function lookupBot(
         state: string;
         coming: number;
         hidden: boolean;
+        turn_tasks: string[];
       }[]
     >`
       SELECT g.id, g.title, gathering_start(g) AS starts_at, gathering_state(g) AS state,
              (SELECT count(*)::int FROM gathering_attendees(g.id)) AS coming,
-             EXISTS (SELECT 1 FROM hidden_gatherings h WHERE h.gathering_id = g.id) AS hidden
+             EXISTS (SELECT 1 FROM hidden_gatherings h WHERE h.gathering_id = g.id) AS hidden,
+             ARRAY(SELECT x.task FROM (
+                     SELECT t.task, max(t.seq) AS last FROM gathering_turns t
+                     WHERE t.gathering_id = g.id AND t.task IS NOT NULL
+                     GROUP BY t.task) x
+                   ORDER BY x.last DESC LIMIT 10) AS turn_tasks
       FROM gatherings g WHERE g.bot_id = ${id}
       ORDER BY g.id DESC LIMIT 30`;
     const votes = await tx<

@@ -157,6 +157,7 @@ describe("the three catalogs", () => {
       "announce",
       "rsvp",
       "set_session",
+      "set_turn",
       "set_job",
     ]);
     for (const n of SIGNAL_NAMES) {
