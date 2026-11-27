@@ -759,8 +759,6 @@ export async function moveGathering(
 // millisecond, and the id of the last one a page gave.
 export type GatheringsAfter = { at: Date; id: number };
 
-const CURSOR_MS_MAX = Date.UTC(9999, 11, 31, 23, 59, 59, 999);
-
 export function gatheringsCursor(g: { starts_at: Date; id: number }): string {
   return `${g.starts_at.getTime()}-${g.id}`;
 }
@@ -770,8 +768,8 @@ export function parseGatheringsCursor(s: string): GatheringsAfter | null {
   if (!m) return null;
   const ms = Number(m[1]);
   const id = Number(m[2]);
-  // Up to the end of year 9999, which Postgres reads as a time.
-  if (ms > CURSOR_MS_MAX || !Number.isSafeInteger(id)) return null;
+  // Thirteen digits end in the year 2286, a time Postgres reads.
+  if (!Number.isSafeInteger(id)) return null;
   const at = new Date(ms);
   return { at, id };
 }

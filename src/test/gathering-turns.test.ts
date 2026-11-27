@@ -1358,7 +1358,13 @@ describe("coming back to a gathering's turns (EV16)", () => {
       seq: 2,
       outcome: "declined",
     });
-    // Its reason stays its own row's: no read carries it.
+    // Its reason stays its own row's: no read carries it, not the
+    // decliner's answer, nor a later read by the host or the other guest.
     expect(JSON.stringify(declined.data.turns)).not.toContain("unavailable");
+    for (const viewer of [host, a, b])
+      expect(JSON.stringify((await list(viewer)).body)).not.toContain(
+        "unavailable",
+      );
+    expect(await seen(host, gid)).toMatchObject({ outcome: "declined" });
   });
 });
