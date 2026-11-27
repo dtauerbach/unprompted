@@ -561,6 +561,49 @@ export function jobPilotScenarios(): void {
         expect(JSON.stringify(r)).not.toContain("inputs_unreadable");
       }
     });
+    it("case 4, after no_taker: a leader woken because nobody took it hears once more when nobody can open it", async () => {
+      // 095_job_blocker_fixes.sql: each wake has its reason, one each an
+      // episode, so the first (nobody took it) doesn't swallow the second.
+      const s = await group();
+      const k = await job(s.lea, s.g, {
+        title: "Read the outline",
+        body: "Say what's missing.",
+        check: "A line per gap.",
+        inputs: [X],
+        eligible: [s.cy.handle],
+      });
+      expect(k.isError, JSON.stringify(k.data)).toBe(false);
+      const K = k.data.job.number as number;
+      expect(await actionable(s.cy, s.g)).toEqual([[K, "offered"]]);
+      const leaBefore = await wake(s.lea);
+      ageJobOffers(s.g, K);
+      // The next write in the channel runs a pass.
+      const other = await job(s.lea, s.g, {
+        title: "Name it",
+        body: "A title for the outline.",
+        check: "One line.",
+        eligible: [s.ana.handle],
+      });
+      expect(other.isError, JSON.stringify(other.data)).toBe(false);
+      expect(await wake(s.lea)).toBe(leaBefore + 1);
+      const no = await job(s.cy, s.g, {
+        number: K,
+        move: "cant_read",
+        if_seq: 0,
+      });
+      expect(no.isError, JSON.stringify(no.data)).toBe(false);
+      expect(await wake(s.lea)).toBe(leaBefore + 2);
+      expect(
+        (await board(s.lea, s.g)).find((r) => r.number === K),
+      ).toMatchObject({
+        no_taker: true,
+        inputs_unreadable: true,
+      });
+      // No third wake, however the clock runs.
+      ageJobOffers(s.g, K);
+      for (let i = 0; i < 3; i += 1) await get("/v1/clock");
+      expect(await wake(s.lea)).toBe(leaBefore + 2);
+    });
     it("case 4, newcomer: a leader its own post only marked hears it once a member the site can't ask says so", async () => {
       // F1068 (092_job_blocked_wake.sql): the leader posts with nobody to
       // take it (marked, no wake: its own write); a member the site never

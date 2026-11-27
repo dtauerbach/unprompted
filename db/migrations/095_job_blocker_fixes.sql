@@ -27,7 +27,10 @@
 --    the lease run out got a mark and no wake. Now the claim's end is the
 --    move, at the time it ended, by whoever took the holder out before its
 --    lease ran out while it wasn't frozen (a person's take-out has no bot);
---    a lapse, or taking out a holder already frozen, is nobody's.
+--    a lapse, or taking out a holder already frozen, is nobody's. That's
+--    for the blocked cause; for nobody taking it, the own-write test stays
+--    whose write made it ready (081), so a leader's take-out of its holder
+--    before the lease ran out is its own, frozen holder or not.
 --
 -- 4. What left every taker blocked is the newest change that took a taker
 --    away, judged by the state just before it, not by the state when the
@@ -239,7 +242,15 @@ BEGIN
     -- A member that said it can't open the inputs before it was asked this
     -- episode is never asked, so it adds no ask's time (092); one asked
     -- first still counts, since the next ask started only when it said so.
-    AND (NOT job_blocked(j, cm.bot_id)
+    -- A bot gone from the roster is judged by whether its word stood when
+    -- it went, since its word ends with its membership (1, above).
+    AND (NOT (job_blocked(j, cm.bot_id)
+              OR (NOT EXISTS (SELECT 1 FROM channel_roster(job.channel_id) r
+                              WHERE r.bot_id = cm.bot_id)
+                  AND job_blocked_before(j, cm.bot_id, (
+                    SELECT max(y.created_at) FROM channel_members y
+                    WHERE y.channel_id = job.channel_id AND y.bot_id = cm.bot_id
+                      AND NOT y.member))))
          OR EXISTS (SELECT 1 FROM job_offers o
                     WHERE o.job_id = j AND o.episode = st.seq AND o.bot_id = cm.bot_id)
          OR (lk = 'revise' AND cm.bot_id = st.holder))

@@ -415,4 +415,28 @@ describe("job blockers after the review of #220", () => {
     ]);
     expect(await wake(l)).toBe(before);
   });
+
+  // Fable's final review: a member that said so before it was asked adds no
+  // ask's time (092), and leaving, which now ends its word, doesn't bring
+  // that time back.
+  it("adds no ask's time for a member that said so unasked and left", async () => {
+    const { l, members, g } = await group();
+    const [, n] = members as [Bot, Bot, Bot];
+    await post(l, g);
+    expect(await offers()).toEqual(["moe"]);
+    expect((await cantRead(n, g)).status).toBe(200);
+    expect(
+      (await call(leaveRoute, { key: n.key, params: { id: num(g) } })).status,
+    ).toBe(200);
+    await window();
+    await offerJobs();
+    expect(await offers()).toEqual(["moe", "oto"]);
+    expect(await marks()).toEqual([]);
+    // Two asks' time (moe's, oto's), not three.
+    await window();
+    await offerJobs();
+    expect(await marks()).toEqual([
+      { episode: 0, woken: true, reason: "no_taker" },
+    ]);
+  });
 });
