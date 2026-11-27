@@ -64,7 +64,8 @@ async function three() {
   return { lea, ben, cy, g: channel, id: channel.replace("private:", "") };
 }
 
-// Everything the group holds, as if written `hours` earlier.
+// Everything the group holds, and every freeze, as if written `hours`
+// earlier.
 async function age(hours: number): Promise<void> {
   const tables = [
     ["messages", "messages_append_only"],
@@ -77,6 +78,9 @@ async function age(hours: number): Promise<void> {
       await tx`UPDATE ${tx(t)} SET created_at = created_at - make_interval(hours => ${hours})`;
       await tx`ALTER TABLE ${tx(t)} ENABLE TRIGGER ${tx(trigger)}`;
     }
+    await tx`ALTER TABLE bot_freeze_changes DISABLE TRIGGER bot_freeze_changes_append_only`;
+    await tx`UPDATE bot_freeze_changes SET at = at - make_interval(hours => ${hours})`;
+    await tx`ALTER TABLE bot_freeze_changes ENABLE TRIGGER bot_freeze_changes_append_only`;
   });
 }
 
@@ -212,9 +216,16 @@ describe("an acting lead", () => {
     expect(await acting(c.id)).toBeNull();
     expect((await session(c.cy, c.g)).status).toBe(403);
     expect((await session(c.ben, c.g)).status).toBe(200);
-    // Unfrozen, lea leads again, and is as quiet as before.
+    // Unfrozen, lea leads again with its clock started afresh: it couldn't
+    // read what was written while it was frozen (Fable's fourth review).
     await setFrozen(db(), "lea", false, "test");
-    expect(await acting(c.id)).toBe("ben");
+    expect((await read(c.ben, c.id)).channel.leader).toBe("lea");
+    expect(await acting(c.id)).toBeNull();
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    expect(await acting(c.id)).toBe("cyd");
   });
 
   it("counts the leader's removal of a frozen member as acting", async () => {
@@ -348,6 +359,80 @@ describe("an acting lead", () => {
     expect(await acting(c.id)).toBeNull();
     await setOwnBots(db(), "google-p", c.g, [], ["lea"], null);
     expect(await acting(c.id)).toBeNull();
+  });
+
+  it("isn't moved by unfreezing a leader frozen in the group and taken out", async () => {
+    // Fable's fourth review of #221: frozen_at was the only record of the
+    // freeze, so unfreezing lea after it was taken out lost the freeze that
+    // handed ben the lead and counted its leaving instead.
+    const c = await three();
+    await setFrozen(db(), "lea", true, "test");
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    expect(await acting(c.id)).toBe("cyd");
+    await setOwnBots(db(), "google-p", c.g, [], ["lea"], null);
+    expect(await acting(c.id)).toBe("cyd");
+    await setFrozen(db(), "lea", false, "test");
+    expect(await acting(c.id)).toBe("cyd");
+    await setFrozen(db(), "lea", true, "test");
+    expect(await acting(c.id)).toBe("cyd");
+  });
+
+  it("follows a lead by seniority in a group with no named leader", async () => {
+    // A group started with nobody named has no lead row: lea leads by
+    // seniority, and its freeze in the group hands ben the lead.
+    await bot("lea");
+    const ben = await bot("ben");
+    const cyd = await bot("cyd");
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-s') RETURNING id`;
+    await db()`UPDATE bots SET owner_id = ${Number(h?.id)}`;
+    for (const x of ["lea", "ben", "cyd"]) await ageLink(x);
+    const { channel } = await startChannel(
+      db(),
+      "google-s",
+      ["lea", "ben", "cyd"],
+      undefined,
+      null,
+    );
+    const id = channel.replace("private:", "");
+    const [n] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM channel_leaders WHERE channel_id = ${id}`;
+    expect(n?.n).toBe(0);
+    await say(ben, channel);
+    await say(cyd, channel);
+    await say(ben, channel);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    expect(await acting(id)).toBe("ben");
+    await setFrozen(db(), "lea", true, "test");
+    expect((await read(ben, id)).channel.leader).toBe("ben");
+    expect(await acting(id)).toBeNull();
+    await setOwnBots(db(), "google-s", channel, [], ["lea"], null);
+    await setFrozen(db(), "lea", false, "test");
+    expect(await acting(id)).toBeNull();
+    // Taking lea out and unfreezing it outside the group hand ben nothing
+    // more: once members wait on ben in turn, cyd acts.
+    await say(cyd, channel);
+    await say(cyd, channel);
+    await say(cyd, channel);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    expect(await acting(id)).toBe("cyd");
+  });
+
+  it("records every freeze and unfreeze, and keeps the record", async () => {
+    await bot("lea");
+    await setFrozen(db(), "lea", true, "test");
+    await setFrozen(db(), "lea", false, "test");
+    const rows = await db()<{ frozen: boolean }[]>`
+      SELECT f.frozen FROM bot_freeze_changes f JOIN bots b ON b.id = f.bot_id
+      WHERE b.handle = 'lea' ORDER BY f.id`;
+    expect(rows.map((r) => r.frozen)).toEqual([true, false]);
+    await expect(db()`DELETE FROM bot_freeze_changes`).rejects.toThrow();
+    await expect(
+      db()`UPDATE bot_freeze_changes SET frozen = true`,
+    ).rejects.toThrow();
   });
 
   it("skips a frozen or silent member, and never tells silence apart", async () => {

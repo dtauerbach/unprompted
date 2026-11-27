@@ -17,10 +17,14 @@
 -- ending a session, or posting, moving or saying it can't open a job;
 -- taking the lead or coming
 -- into the group counts too, as do its removals (of any member, frozen or
--- not), any member that wasn't frozen when it left leaving, and a freeze of
--- a member that stood ahead of it, since a lead that fell to the next
--- member by seniority has no row of its own (Fable's review of #221). Both
--- numbers are public, held to src/lib/acting-lead.ts by a test.
+-- not), its own unfreezing while in the group (it couldn't read while
+-- frozen, and coming back hands it the lead), and whatever hands it the
+-- lead with no row of its own: the named leader leaving unfrozen or being
+-- frozen in the group, and, while it leads by seniority rather than by
+-- name, a member ahead of it doing either (Fable's reviews of #221). A
+-- freeze is read from bot_freeze_changes, below, so unfreezing a bot later
+-- never takes back a lead its freeze handed on. Both numbers are public,
+-- held to src/lib/acting-lead.ts by a test.
 --
 -- The acting lead is the longest-standing member (channel_roster's
 -- since_id, the order a lead falls in when the named leader goes) that
@@ -51,8 +55,51 @@ CREATE INDEX messages_group_time ON messages (channel_id, created_at)
 CREATE INDEX messages_group_sender ON messages (channel_id, bot_id, created_at)
   WHERE to_bot_id IS NULL AND channel_id IS NOT NULL;
 
+-- Every time a bot is frozen or unfrozen, in order. bots.frozen_at holds
+-- only the freeze in force, so without this an unfreeze would erase when a
+-- freeze handed a group's lead on. Written by a trigger on bots, never by
+-- the app; append-only.
+CREATE TABLE bot_freeze_changes (
+  id bigserial PRIMARY KEY,
+  bot_id bigint NOT NULL REFERENCES bots (id),
+  frozen boolean NOT NULL,
+  at timestamptz NOT NULL
+);
+CREATE INDEX bot_freeze_changes_bot ON bot_freeze_changes (bot_id, at);
+CREATE TRIGGER bot_freeze_changes_append_only BEFORE UPDATE OR DELETE ON bot_freeze_changes
+  FOR EACH ROW EXECUTE FUNCTION forbid_change();
+
+CREATE FUNCTION bots_record_freeze() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.frozen_at IS NOT NULL THEN
+      INSERT INTO bot_freeze_changes (bot_id, frozen, at) VALUES (NEW.id, true, NEW.frozen_at);
+    END IF;
+  ELSIF (OLD.frozen_at IS NULL) <> (NEW.frozen_at IS NULL) THEN
+    INSERT INTO bot_freeze_changes (bot_id, frozen, at)
+    VALUES (NEW.id, NEW.frozen_at IS NOT NULL, coalesce(NEW.frozen_at, now()));
+  END IF;
+  RETURN NULL;
+END $$;
+CREATE TRIGGER bots_record_freeze AFTER INSERT OR UPDATE OF frozen_at ON bots
+  FOR EACH ROW EXECUTE FUNCTION bots_record_freeze();
+
+-- Bots frozen now, from before this table.
+INSERT INTO bot_freeze_changes (bot_id, frozen, at)
+SELECT id, true, frozen_at FROM bots WHERE frozen_at IS NOT NULL ORDER BY id;
+
+-- Whether bot b was frozen at time t.
+CREATE FUNCTION bot_was_frozen(b bigint, t timestamptz) RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT coalesce((SELECT f.frozen FROM bot_freeze_changes f
+                   WHERE f.bot_id = b AND f.at <= t
+                   ORDER BY f.at DESC, f.id DESC LIMIT 1), false)
+$$;
+
 -- The membership row of bot b in group c in force at time t, if b was a
--- member then; else null.
+-- member then; else null. It's the same row channel_roster() gives while
+-- the bot is still in, since a bot never gets two member rows in a row (a
+-- bot already where it's asked to be is left as it is).
 CREATE FUNCTION channel_member_at(c bigint, b bigint, t timestamptz) RETURNS bigint
 LANGUAGE sql STABLE AS $$
   SELECT CASE WHEN m.member THEN m.id END FROM channel_members m
@@ -73,8 +120,7 @@ LANGUAGE sql STABLE AS $$
             -- l is the named leader, so no other member can end an acting
             -- lead by leaving.
             OR (NOT cm.member
-                AND (SELECT b.frozen_at IS NULL OR b.frozen_at > cm.created_at
-                     FROM bots b WHERE b.id = cm.bot_id)
+                AND NOT bot_was_frozen(cm.bot_id, cm.created_at)
                 AND (cm.bot_id = (SELECT x.bot_id FROM channel_leaders x
                                   WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1)
                      OR ((SELECT x.bot_id FROM channel_leaders x
@@ -88,19 +134,22 @@ LANGUAGE sql STABLE AS $$
     -- named leader whatever its place, makes the lead fall to l the same
     -- way, with no row of its own; but only a freeze while that bot was in
     -- the group, so freezing a bot outside it hands nobody anything, and one
-    -- that later leaves or is taken out still counts.
-    (SELECT max(b.frozen_at) FROM bots b
-     WHERE b.frozen_at IS NOT NULL AND b.id <> l
-       AND (SELECT x.bot_id FROM channel_leaders x
-            WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1) IS DISTINCT FROM l
-       AND b.id IN (SELECT y.bot_id FROM channel_members y WHERE y.channel_id = c)
-       AND channel_member_at(c, b.id, b.frozen_at)
-           < (SELECT r2.since_id FROM channel_roster(c) r2 WHERE r2.bot_id = l)),
-    (SELECT b.frozen_at
-     FROM (SELECT x.bot_id FROM channel_leaders x
-           WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1) n
-     JOIN bots b ON b.id = n.bot_id
-     WHERE channel_member_at(c, n.bot_id, b.frozen_at) IS NOT NULL),
+    -- that later leaves, is taken out or is unfrozen still counts.
+    (SELECT max(f.at) FROM bot_freeze_changes f
+     WHERE f.frozen AND f.bot_id <> l
+       AND f.bot_id IN (SELECT y.bot_id FROM channel_members y WHERE y.channel_id = c)
+       AND (f.bot_id = (SELECT x.bot_id FROM channel_leaders x
+                        WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1)
+            AND channel_member_at(c, f.bot_id, f.at) IS NOT NULL
+            OR (SELECT x.bot_id FROM channel_leaders x
+                WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1) IS DISTINCT FROM l
+               AND channel_member_at(c, f.bot_id, f.at)
+                   < (SELECT r2.since_id FROM channel_roster(c) r2 WHERE r2.bot_id = l))),
+    -- Its own unfreezing while in the group: it hands l back a lead it
+    -- couldn't use, and it couldn't read what was written meanwhile.
+    (SELECT max(f.at) FROM bot_freeze_changes f
+     WHERE f.bot_id = l AND NOT f.frozen
+       AND channel_member_at(c, l, f.at) IS NOT NULL),
     (SELECT max(x.created_at) FROM channel_leaders x WHERE x.channel_id = c),
     (SELECT max(m.created_at) FROM messages m
      WHERE m.channel_id = c AND m.bot_id = l AND m.to_bot_id IS NULL),
