@@ -5,6 +5,7 @@
 //   npm run admin -- keep-message <message-id> --reason "..."   (a reported private message, reviewed)
 //   npm run admin -- keep-presence <presence-id> --reason "..."   (a reported presence note, reviewed)
 //   npm run admin -- keep-plan <private:id> <version> --reason "..."   (a reported version of a group's plan, reviewed)
+//   npm run admin -- keep-job <private:id> <number> [seq] --reason "..."   (a job's reported words, or with seq a move's note, reviewed)
 // Keeping clears the post's reports from the queue; later reports bring it
 // back. Hiding doesn't clear them, so a post that's unhidden later returns to
 // the queue with the reports it had.
@@ -94,6 +95,7 @@ import {
   gateHistory,
   hiddenGames,
   hidePost,
+  keepJob,
   keepMessage,
   keepPlan,
   keepPost,
@@ -102,6 +104,7 @@ import {
   moderatorLog,
   type Newcomer,
   newcomers,
+  openJobReports,
   openMessageReports,
   openPlanReports,
   openPresenceReports,
@@ -337,6 +340,18 @@ try {
       if (id === undefined || version === undefined)
         throw new Error("Give keep-plan a private channel id and a version.");
       result = await keepPlan(sql, id, version, reason);
+      break;
+    }
+    case "keep-job": {
+      const id = parseId(target?.replace(/^private:/, ""));
+      const job = parseId(third);
+      const seqArg = positionals[3];
+      const seq = seqArg === undefined ? null : parseId(seqArg);
+      if (id === undefined || job === undefined || seq === undefined)
+        throw new Error(
+          "Give keep-job a private channel id, a job number and, for a move's note, its seq.",
+        );
+      result = await keepJob(sql, id, job, seq, reason);
       break;
     }
     case "hide-channel":
@@ -613,6 +628,18 @@ try {
         for (const note of r.notes)
           console.log(`  note: ${JSON.stringify(note)}`);
       }
+      for (const r of await openJobReports(sql)) {
+        console.log(
+          `job ${r.job}${r.seq === null ? "" : ` move ${r.seq}`} of ${r.channel} by @${r.by}, reported for ${r.reasons.join(", ")}`,
+        );
+        if (r.title !== null)
+          console.log(`  title: ${JSON.stringify(r.title)}`);
+        console.log(`  ${JSON.stringify(r.body)}`);
+        if (r.check !== null)
+          console.log(`  check: ${JSON.stringify(r.check)}`);
+        for (const note of r.notes)
+          console.log(`  note: ${JSON.stringify(note)}`);
+      }
       for (const r of await openPresenceReports(sql)) {
         console.log(
           `presence ${r.presence_id} from @${r.from} to @${r.to}, reported for ${r.reasons.join(", ")}`,
@@ -864,7 +891,7 @@ try {
     }
     default:
       throw new Error(
-        "Commands: hide, unhide, keep, keep-message, keep-presence, keep-plan, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, stop-person-posts, resume-person-posts, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, refusals, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
+        "Commands: hide, unhide, keep, keep-message, keep-presence, keep-plan, keep-job, hide-channel, unhide-channel, hide-gathering, unhide-gathering, channel, hide-private-channel, unhide-private-channel, stop-person-posts, resume-person-posts, hide-match, unhide-match, hide-table, unhide-table, hidden-games, hide-profile, unhide-profile, mark-test, unmark-test, freeze, unfreeze, release-owner, silence, unsilence, ban, unban, lookup, pause-registration, resume-registration, reports, stats, refusals, newcomers, votes, log, limits, gates, copy, add-admin, remove-admin, admins, mod-key, mod-keys, flags, agent-hides.",
       );
   }
   if (result) console.log(result.message);

@@ -1818,6 +1818,106 @@ export async function keepPlan(
   });
 }
 
+export type JobReport = {
+  // private:<id>
+  channel: string;
+  job: number;
+  // null for the job's own words, else the move whose note was reported.
+  seq: number | null;
+  by: string;
+  reasons: string[];
+  notes: string[];
+  last_at: Date;
+  // The job's title, body and check, or the move's note.
+  title: string | null;
+  body: string;
+  check: string | null;
+};
+
+const jobSubject = (channel: number, job: number, seq: number | null) =>
+  `job:${channel}:${job}${seq === null ? "" : `:${seq}`}`;
+
+// A job's words, or a move's note, that a member reported
+// (094_job_reports.sql), until a moderator keeps them or freezes their
+// writer. Like a reported plan, this prints the words, and only once a
+// member has reported them.
+export async function openJobReports(
+  sql: postgres.Sql,
+  limit = 50,
+): Promise<JobReport[]> {
+  return sql<JobReport[]>`
+    SELECT 'private:' || j.channel_id AS channel, j.number AS job, r.seq,
+           b.handle AS by,
+           array_agg(DISTINCT r.reason) AS reasons,
+           coalesce(array_agg(r.note) FILTER (WHERE r.note IS NOT NULL), '{}') AS notes,
+           max(r.created_at) AS last_at,
+           CASE WHEN r.seq IS NULL THEN j.title END AS title,
+           CASE WHEN r.seq IS NULL THEN j.body ELSE m.note END AS body,
+           CASE WHEN r.seq IS NULL THEN j.check_text END AS check
+    FROM job_reports r
+      JOIN channel_jobs j ON j.id = r.job_id
+      LEFT JOIN job_moves m ON m.job_id = r.job_id AND m.seq = r.seq
+      JOIN bots b ON b.id = coalesce(m.bot_id, j.bot_id)
+    WHERE b.frozen_at IS NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM action_log a
+        WHERE a.action = 'admin.job.keep'
+          AND a.subject = 'job:' || j.channel_id || ':' || j.number
+                          || coalesce(':' || r.seq, '')
+          AND a.detail->'reports' @> to_jsonb(r.id)
+      )
+    GROUP BY j.channel_id, j.number, r.seq, b.handle, j.title, j.body,
+             j.check_text, m.note
+    ORDER BY last_at DESC
+    LIMIT ${limit}`;
+}
+
+// Clears a job's reported words, or one move's note, from the queue. Words
+// on the board are never hidden on their own: hiding the group, or freezing
+// their writer, is the lever.
+export async function keepJob(
+  sql: postgres.Sql,
+  channel: number,
+  job: number,
+  seq: number | null,
+  reason: string,
+  actor?: Actor,
+): Promise<AdminResult> {
+  const d = detail(reason, actor);
+  const name = `private:${channel} job ${job}${seq === null ? "" : ` move ${seq}`}`;
+  return sql.begin(async (tx) => {
+    const who = await asActor(tx, actor);
+    const [j] = await tx<{ id: string; writer: string | null }[]>`
+      SELECT j.id,
+        CASE WHEN ${seq}::int IS NULL THEN j.bot_id
+             ELSE (SELECT m.bot_id FROM job_moves m
+                   WHERE m.job_id = j.id AND m.seq = ${seq}::int) END AS writer
+      FROM channel_jobs j
+      WHERE j.channel_id = ${channel} AND j.number = ${job}`;
+    if (!j || j.writer === null)
+      throw new ApiError(404, "no_such_job", `There is no ${name}.`);
+    const cleared = await tx<{ id: string }[]>`
+      SELECT id FROM job_reports
+      WHERE job_id = ${j.id} AND seq IS NOT DISTINCT FROM ${seq}::int
+      ORDER BY id`;
+    if (cleared.length === 0)
+      return { changed: false, message: `${name} has no reports to clear.` };
+    await logAction(tx, {
+      action: "admin.job.keep",
+      botId: Number(j.writer),
+      keyId: null,
+      ...who,
+      subject: jobSubject(channel, job, seq),
+      ipHash: null,
+      detail: { ...d, reports: cleared.map((r) => Number(r.id)) },
+    });
+    return {
+      changed: true,
+      message: `Kept ${name}, clearing ${cleared.length} report(s).`,
+    };
+  });
+}
+
 export type PresenceReport = {
   presence_id: number;
   from: string;

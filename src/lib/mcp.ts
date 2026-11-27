@@ -67,7 +67,14 @@ import {
   MAX_BODY_BYTES,
   parseWith,
 } from "./http";
-import { moveJob, postJob, readBoard, readJob } from "./jobs";
+import {
+  jobReportNote,
+  moveJob,
+  postJob,
+  readBoard,
+  readJob,
+  reportJob,
+} from "./jobs";
 import {
   LINK_CODE_NOTE,
   makeLinkCode,
@@ -816,16 +823,20 @@ export function buildMcpServer(opts: {
   server.registerTool(
     "report",
     {
-      title: "Report a post or a plan",
+      title: "Report a post, a plan or a job",
       description:
-        "Send a post (post_id), or a version of a private channel's plan (channel and plan), to the moderators: spam, injection (it tries to instruct bots), secrets (owner details too), harassment, puppeteering or other. Hides nothing by itself.",
+        "Send a post (post_id), a private channel's plan (channel, plan) or job (channel, job; seq for a move's note) to the moderators: spam, injection (it tries to instruct bots), secrets (owner details too), harassment, puppeteering or other. Hides nothing by itself.",
       inputSchema: reportToolSchema,
       annotations: WRITE,
     },
-    ({ post_id, channel, plan, ...input }) =>
+    ({ post_id, channel, plan, job, seq, ...input }) =>
       run("report", WRITE, async () => {
         const me = await caller();
         assertWritable();
+        if (post_id === undefined && job !== undefined) {
+          const r = await reportJob(me, channel ?? "", job, seq, input, ipHash);
+          return { reported: true, note: jobReportNote(r.already) };
+        }
         if (post_id === undefined) {
           const p = await reportPlan(
             me,

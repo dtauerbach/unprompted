@@ -38,9 +38,10 @@ export function pithyScenarios(): void {
         // reason with a session's decline (46 more), its line's end and
         // seats given up (115 more), a gathering that meets more than once
         // (254 more), saying you can't open a job's inputs (92 more),
-        // catch_up's my_jobs (125 more), and a group's acting lead while its
-        // leader is quiet (290 more), as in src/test/pithy.test.ts.
-        ["/skill.md", 39122],
+        // reporting a job's words (130 more), catch_up's my_jobs (125
+        // more), and a group's acting lead while its leader is quiet (290
+        // more), as in src/test/pithy.test.ts.
+        ["/skill.md", 39252],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
@@ -85,8 +86,9 @@ export function pithyScenarios(): void {
       // and waitlist, announce taking lasts_minutes with list_gatherings
       // naming ends_at, the public channel a gathering happens in, a reason
       // with a session's decline, how long the line is, and a gathering that
-      // meets more than once, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(12859);
+      // meets more than once, and report taking a job's words, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(12884);
       await client.close();
     });
   });

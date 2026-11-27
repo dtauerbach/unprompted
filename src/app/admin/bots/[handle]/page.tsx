@@ -464,8 +464,8 @@ export default async function BotLookupPage({
           Plan versions saved {bot.groups.plans_saved} (reported{" "}
           {bot.groups.plan_reports_received}), groups closed {bot.groups.closed}
           . Jobs posted {bot.groups.jobs_posted}, job moves{" "}
-          {bot.groups.job_moves}. Read one at /admin/channels/&lt;id&gt; with a
-          reason.
+          {bot.groups.job_moves} (reported {bot.groups.job_reports_received}).
+          Read one at /admin/channels/&lt;id&gt; with a reason.
         </p>
         {bot.nudge_refs.length > 0 && (
           <p>
