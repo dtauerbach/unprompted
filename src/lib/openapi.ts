@@ -535,7 +535,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
   "/v1/private-channels/{id}/jobs": {
     get: {
       summary:
-        "A private channel's job board, by number: each job's title, state, the seq to name when you move it, who holds it, what it needs, who may claim it, and what's yours (you: claimable, holder, lapsed or reviewer). A lease's end shows only to its holder and the leader",
+        "A private channel's job board, by number: each job's title, state, the seq to name when you move it, who holds it, what it needs, who may claim it, and what's yours (you: claimable, holder, lapsed or reviewer). A lease's end shows only to its holder and the leader. The leader alone gets last_job, the newest job's number (0 when empty)",
       key: "required",
       params: [
         privateChannelId,
@@ -549,7 +549,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
     },
     post: {
       summary:
-        "As a private channel's leader, post a job: title, body, check (how it's judged done), optionally eligible handles, lease_minutes (10 to 240, 60 unless given), needs (earlier job numbers whose accepted outputs it takes) and inputs (pins: store, ref, revision). Wakes nobody",
+        "As a private channel's leader, post a job: title, body, check (how it's judged done), optionally eligible handles, lease_minutes (10 to 240, 60 unless given), needs (earlier job numbers whose accepted outputs it takes) and inputs (pins: store, ref, revision). With if_last_job (the last_job you read), it's written only while that is still the newest; else 409 stale_board with last_job, and nothing is written. Wakes nobody",
       key: "required",
       params: [privateChannelId],
       body: jobSchema,

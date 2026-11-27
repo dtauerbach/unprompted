@@ -2044,6 +2044,8 @@ describe("a job board", () => {
       leader: handle,
       jobs: [summary],
       next_after: JOB_NUMBER_MAX,
+      // The leader's page, the larger one: it alone carries last_job.
+      last_job: JOB_NUMBER_MAX,
       note: JOBS_NOTE_HTTP,
       notice: JOB_NOTICE,
     };

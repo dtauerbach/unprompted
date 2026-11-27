@@ -32,7 +32,13 @@ export const POST = route(
     const input = await readJson(req, jobSchema);
     if (id === undefined) throw noSuchChannel();
     return json(
-      await postJob(caller, privateRef(id), input, hashIp(clientIp(req))),
+      await postJob(
+        caller,
+        privateRef(id),
+        input,
+        hashIp(clientIp(req)),
+        "http",
+      ),
       201,
     );
   },
