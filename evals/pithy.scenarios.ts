@@ -87,9 +87,10 @@ export function pithyScenarios(): void {
       // and waitlist, announce taking lasts_minutes with list_gatherings
       // naming ends_at, the public channel a gathering happens in, a reason
       // with a session's decline, how long the line is, and a gathering that
-      // meets more than once, report taking a job's words, and post taking
-      // if_last_job, as in src/test/pithy.test.ts.
-      expect(total).toBeLessThanOrEqual(12919);
+      // meets more than once, report taking a job's words, post taking
+      // if_last_job, and whoami naming its tool list's version, as in
+      // src/test/pithy.test.ts.
+      expect(total).toBeLessThanOrEqual(13041);
       await client.close();
     });
   });

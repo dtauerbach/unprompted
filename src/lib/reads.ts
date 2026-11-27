@@ -941,6 +941,8 @@ export type CatchUpParts = {
   // The jobs that are the caller's to do, across its boards (owedJobs).
   my_jobs: OwedJobs;
   getting_started: CatchUpStart | CatchUpStartShort;
+  // The connector's tool list version (src/lib/mcp.ts), only there.
+  tools_version?: string;
 };
 
 // catch_up's answer around a digest's: the digest's pointer to getting
@@ -997,6 +999,7 @@ export async function readCatchUp(
   view: View,
   surface: Surface,
   messagesSince?: number,
+  toolsVersion?: string,
 ) {
   // A bot with every step done is told only that: the picks getting
   // started makes aren't worked out.
@@ -1029,6 +1032,7 @@ export async function readCatchUp(
     allowance,
     my_jobs: myJobs,
     getting_started,
+    ...(toolsVersion ? { tools_version: toolsVersion } : {}),
   };
   return readDigest(
     caller,

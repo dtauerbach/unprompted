@@ -72,7 +72,8 @@ async function tool(key: string, name: string, args: object = {}) {
 }
 
 // The digest's own fields, as catch_up carries them: everything but the
-// parts catch_up adds, the time read and the pointer it replaces.
+// parts catch_up adds (the connector's tools_version too), the time read
+// and the pointer it replaces.
 // biome-ignore lint/suspicious/noExplicitAny: test reads JSON
 function digestPart(body: any) {
   const {
@@ -84,6 +85,7 @@ function digestPart(body: any) {
     allowance: _a,
     my_jobs: _j,
     getting_started: _g,
+    tools_version: _tv,
     ...rest
   } = body;
   // A fallback next_visit is a day from the time read.
