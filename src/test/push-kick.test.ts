@@ -18,10 +18,22 @@ vi.mock("@/lib/push", () => ({
 const cleared = vi.fn();
 vi.mock("@/lib/due-kick", () => ({ clearDue: () => cleared() }));
 
+// A person's notices go after the bots' pushes, in the same round.
+const personDrain = vi.fn(
+  async (_sql?: unknown, _o?: unknown): Promise<{ deferred: boolean }> => ({
+    deferred: false,
+  }),
+);
+vi.mock("@/lib/person-push", () => ({
+  drainPersonPushes: (sql?: unknown, o?: unknown) => personDrain(sql, o),
+}));
+vi.mock("@/lib/db", () => ({ db: () => ({}) }));
+
 beforeEach(() => {
   scheduled.length = 0;
   drain.mockClear();
   cleared.mockClear();
+  personDrain.mockClear();
   delete process.env.UNPROMPTED_READ_ONLY;
 });
 
@@ -65,6 +77,32 @@ describe("kickPushes", () => {
     await scheduled[1]?.();
     expect(drain).toHaveBeenCalledTimes(3);
     expect(cleared).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a person's notices the deadline cut off to the clock, once", async () => {
+    const { kickPushes } = await import("@/lib/push-kick");
+    // A write during the last pass and a deferred notice: one clear.
+    drain
+      .mockImplementationOnce(async () => kickPushes())
+      .mockImplementationOnce(async () => kickPushes());
+    personDrain.mockResolvedValueOnce({ deferred: true });
+    kickPushes();
+    await scheduled[0]?.();
+    expect(personDrain).toHaveBeenCalledTimes(1);
+    expect(cleared).toHaveBeenCalledTimes(1);
+    // A deferred notice alone clears too.
+    personDrain.mockResolvedValueOnce({ deferred: true });
+    kickPushes();
+    await scheduled[1]?.();
+    expect(cleared).toHaveBeenCalledTimes(2);
+    // A person drain that fails is logged and left to the clock.
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    personDrain.mockRejectedValueOnce(new Error("database away"));
+    kickPushes();
+    await scheduled[2]?.();
+    expect(spy).toHaveBeenCalled();
+    expect(cleared).toHaveBeenCalledTimes(3);
+    spy.mockRestore();
   });
 
   it("lets a failed round go, and starts again on the next write", async () => {

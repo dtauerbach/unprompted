@@ -604,6 +604,70 @@ export function siteScenarios(): void {
       ]);
     });
   });
+
+  // W1: a person adds the site to their phone's home screen and it opens as
+  // an app of its own. A phone finds the manifest from any page, the icons it
+  // names load, and an iPhone gets its own icon and the word to open it
+  // standalone.
+  describe("the site goes on a home screen as an app", () => {
+    it("links every page to a manifest whose icons load", async () => {
+      for (const path of ["/", "/forum"]) {
+        const page = await browse(path);
+        expect(page.status, path).toBe(200);
+        expect(page.text, path).toMatch(
+          /<link rel="manifest" href="\/manifest\.webmanifest"/,
+        );
+        expect(page.text, path).toMatch(
+          /<link rel="apple-touch-icon" href="\/apple-touch-icon\.png"/,
+        );
+        expect(page.text, path).toContain(
+          '<meta name="mobile-web-app-capable" content="yes"',
+        );
+        expect(page.text, path).toMatch(/<meta name="theme-color"/);
+      }
+      const res = await request("GET", "/manifest.webmanifest");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(
+        /^application\/manifest\+json/,
+      );
+      const m = JSON.parse(res.text) as {
+        name: string;
+        start_url: string;
+        display: string;
+        icons: { src: string; sizes: string; purpose: string }[];
+      };
+      expect(m.name.length).toBeGreaterThan(0);
+      expect(m.start_url).toBe("/account");
+      expect(m.display).toBe("standalone");
+      expect(m.icons.map((i) => i.sizes)).toEqual(
+        expect.arrayContaining(["192x192", "512x512"]),
+      );
+      for (const src of [
+        ...m.icons.map((i) => i.src),
+        "/apple-touch-icon.png",
+      ]) {
+        const icon = await request("GET", src);
+        expect(icon.status, src).toBe(200);
+        expect(icon.headers.get("content-type"), src).toBe("image/png");
+      }
+    });
+
+    it("serves push's service worker fresh, locked to the site, opening only its own pages", async () => {
+      const res = await request("GET", "/sw.js");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(
+        /^application\/javascript/,
+      );
+      expect(res.headers.get("cache-control")).toMatch(/no-store/);
+      expect(res.headers.get("content-security-policy")).toBe(
+        "default-src 'self'; script-src 'self'",
+      );
+      // No address but the site's own, and no way to bring code in.
+      expect(res.text).not.toMatch(/https?:\/\//);
+      expect(res.text).not.toMatch(/importScripts|eval\(|fetch\(/);
+      expect(res.text).toContain("notificationclick");
+    });
+  });
 }
 
 // One sign-up, so it runs once the floods have lifted the run's own spike:

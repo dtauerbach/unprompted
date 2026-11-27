@@ -5,8 +5,9 @@ ALTER TABLE channel_jobs ADD COLUMN ask boolean NOT NULL DEFAULT false;
 ALTER TABLE channel_jobs ADD CHECK (NOT ask OR eligible IS NOT NULL);
 
 CREATE FUNCTION job_reviewer(j bigint) RETURNS bigint LANGUAGE sql STABLE AS $$
-  SELECT CASE WHEN cj.ask THEN cj.bot_id ELSE channel_leader(cj.channel_id) END
-  FROM channel_jobs cj WHERE cj.id = j
+  SELECT CASE WHEN cj.ask AND p.frozen_at IS NULL AND channel_has(cj.channel_id, cj.bot_id)
+              THEN cj.bot_id ELSE channel_leader(cj.channel_id) END
+  FROM channel_jobs cj JOIN bots p ON p.id = cj.bot_id WHERE cj.id = j
 $$;
 
 CREATE OR REPLACE FUNCTION channel_jobs_check_insert() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -18,7 +19,7 @@ BEGIN
   IF NOT job_channel_writable(NEW.channel_id, NEW.bot_id, NEW.key_id)
      OR lead IS NULL
      OR NEW.ask IS DISTINCT FROM (lead <> NEW.bot_id)
-     OR (NEW.ask AND NEW.eligible IS NULL)
+     OR (NEW.ask AND (NEW.eligible IS NULL OR NEW.bot_id = ANY (NEW.eligible)))
      OR NOT comms_takes_private(NEW.bot_id) THEN
     RAISE EXCEPTION 'only a leader posts a job; a member''s ask names eligible takers' USING ERRCODE = 'UPR01';
   END IF;
@@ -26,12 +27,41 @@ BEGIN
     RAISE EXCEPTION 'channel %''s jobs are past %', NEW.channel_id, NEW.number - 1 USING ERRCODE = 'UPR01';
   END IF;
   IF NEW.eligible IS NOT NULL AND EXISTS (
-       SELECT 1 FROM unnest(NEW.eligible) e WHERE NOT channel_has(NEW.channel_id, e)) THEN
-    RAISE EXCEPTION 'a job''s takers are members' USING ERRCODE = 'UPR01';
+       SELECT 1 FROM unnest(NEW.eligible) e
+       WHERE NOT channel_has(NEW.channel_id, e) OR (NEW.ask AND EXISTS (
+         SELECT 1 FROM bots b WHERE b.id = e AND b.frozen_at IS NOT NULL))) THEN
+    RAISE EXCEPTION 'a job''s takers are members; asks name unfrozen members' USING ERRCODE = 'UPR01';
   END IF;
   NEW.created_at := clock_timestamp();
   RETURN NEW;
 END;
+$$;
+
+CREATE OR REPLACE FUNCTION job_deps_check_insert() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM channel_jobs WHERE id = NEW.job_id AND ask) THEN
+    RAISE EXCEPTION 'a member ask cannot depend on another job' USING ERRCODE = 'UPR01';
+  END IF;
+  -- At most 6: a job read carries each needed job's outputs (JOB_NEEDS_MAX).
+  IF (SELECT channel_id FROM channel_jobs WHERE id = NEW.job_id)
+     IS DISTINCT FROM (SELECT channel_id FROM channel_jobs WHERE id = NEW.needs_job_id)
+     OR EXISTS (SELECT 1 FROM job_moves m WHERE m.job_id = NEW.job_id)
+     OR (SELECT count(*) FROM job_deps d WHERE d.job_id = NEW.job_id) >= 6 THEN
+    RAISE EXCEPTION 'a job needs only earlier jobs of its channel, set when it''s posted' USING ERRCODE = 'UPR01';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION job_owes(j bigint, as_of timestamptz)
+RETURNS bigint LANGUAGE sql STABLE AS $$
+  SELECT CASE s.state
+           WHEN 'claimed' THEN s.holder
+           WHEN 'review' THEN job_reviewer(j)
+           WHEN 'ready' THEN channel_leader(c.channel_id)
+         END
+  FROM channel_jobs c CROSS JOIN LATERAL job_state(j, as_of) s
+  WHERE c.id = j
 $$;
 
 CREATE OR REPLACE FUNCTION job_moves_check_insert() RETURNS trigger LANGUAGE plpgsql AS $$

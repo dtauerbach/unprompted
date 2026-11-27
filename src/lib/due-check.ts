@@ -3,6 +3,7 @@ import { db } from "./db";
 import { soonestDue, workDue } from "./due";
 import { clearDue, DUE_TAG, minuteStamp } from "./due-kick";
 import { offerJobs } from "./job-offers";
+import { drainPersonPushes, nextPersonDue } from "./person-push";
 import { drainForAWhile, nextDue } from "./push";
 import { isReadOnly } from "./read-only";
 import { buildKey, timeBucket } from "./shared-cache";
@@ -57,20 +58,24 @@ export const DUE_ROUND_MS = 40_000;
 
 // next: the soonest item on the due-list; push: the soonest push held back
 // past a drain's round (src/lib/push.ts clears the tag when it leaves one).
+// person: the oldest notice to a person a round left waiting (W1b).
 type Soonest = {
   next: string | null;
   start: string | null;
   push: string | null;
+  person: string | null;
 };
 
 const cachedSoonest = unstable_cache(
   async (_build: string, _span: number, _bucket: number): Promise<Soonest> => {
     const s = await soonestDue(db());
     const push = await nextDue();
+    const person = await nextPersonDue(db());
     return {
       next: s.next ? s.next.toISOString() : null,
       start: s.start ? s.start.toISOString() : null,
       push: push ? push.toISOString() : null,
+      person: person ? person.toISOString() : null,
     };
   },
   ["due-soonest"],
@@ -83,13 +88,15 @@ function read(span: number): Promise<Soonest> {
 
 // The soonest time an item comes due, and a held push may go, as the cache
 // has them: by the hour, or by five minutes near a gathering's start.
-export async function soonestCached(
-  now: number = Date.now(),
-): Promise<{ next: string | null; push: string | null }> {
+export async function soonestCached(now: number = Date.now()): Promise<{
+  next: string | null;
+  push: string | null;
+  person: string | null;
+}> {
   let s = await read(HOUR);
   if (s.start !== null && Date.parse(s.start) - now <= DUE_NEAR_MS)
     s = await read(NEAR);
-  return { next: s.next, push: s.push };
+  return { next: s.next, push: s.push, person: s.person ?? null };
 }
 
 const reached = (at: string | null, now: number) =>
@@ -131,7 +138,8 @@ export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   const soonest = await soonestCached(now);
   const due = reached(soonest.next, now);
   const held = reached(soonest.push, now);
-  if (!due && !held) return "not_due";
+  const person = reached(soonest.person, now);
+  if (!due && !held && !person) return "not_due";
   const fired = due ? (await workDue(new Date(now))).fired : 0;
   // Job offers that came due: an offer nobody answered, a lease that ran
   // out (src/lib/job-offers.ts). They raise wake numbers as fires do.
@@ -153,6 +161,12 @@ export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   const left = until - Date.now();
   if ((fired > 0 || offered > 0 || held) && left > 0)
     await drainForAWhile(undefined, left);
+  // A person's notices a round left waiting (W1b), within what's left of
+  // the deadline; one that fails is logged and waits for the next round.
+  if (person && until - Date.now() > 0)
+    await drainPersonPushes(db(), { until }).catch((e: unknown) => {
+      console.error(e);
+    });
   // Then the next times, read while the database is awake.
   clearDue();
   await soonestCached(now);

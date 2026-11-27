@@ -251,7 +251,7 @@ type Row = {
   check_kind: string;
   check_text: string;
   ask: boolean;
-  poster_id: string;
+  reviewer_id: string | null;
   eligible: string[] | null;
   lease_minutes: number;
   by: string;
@@ -287,7 +287,7 @@ function jobSelect(
 ) {
   return sql`
     SELECT j.id, j.channel_id, j.number, j.title, j.body, j.check_kind, j.check_text,
-      j.ask, j.bot_id AS poster_id,
+      j.ask, job_reviewer(j.id) AS reviewer_id,
       CASE WHEN j.eligible IS NULL THEN NULL ELSE coalesce(
         (SELECT array_agg(eb.handle ORDER BY eb.handle) FROM unnest(j.eligible) e
          JOIN bots eb ON eb.id = e
@@ -341,8 +341,8 @@ async function jobRows(
     LIMIT ${where.limit}`;
 }
 
-function reviewerOf(r: Row, leader: number | null): number | null {
-  return r.ask ? Number(r.poster_id) : leader;
+function reviewerOf(r: Row): number | null {
+  return r.reviewer_id === null ? null : Number(r.reviewer_id);
 }
 
 function summarize(r: Row, me: number, leader: number | null): JobSummary {
@@ -359,7 +359,7 @@ function summarize(r: Row, me: number, leader: number | null): JobSummary {
             holderId === me &&
             !r.held
           ? "lapsed"
-          : r.state === "review" && reviewerOf(r, leader) === me
+          : r.state === "review" && reviewerOf(r) === me
             ? "reviewer"
             : r.state === "ready" && r.claimable
               ? r.offered
@@ -417,7 +417,7 @@ async function jobFull(
   const attemptHolder =
     (r.state === "claimed" || r.state === "review") && holderId === me;
   const seesAll = leaderId === me || attemptHolder;
-  const seesOutputs = seesAll || reviewerOf(r, leaderId) === me;
+  const seesOutputs = seesAll || reviewerOf(r) === me;
   const pinRows = async (input: boolean) =>
     sql<
       {
@@ -730,7 +730,7 @@ export async function owedJobs(
         )}
       ) y
       WHERE (y.state = 'claimed' AND y.holder = ${me})
-        OR (y.state = 'review' AND (CASE WHEN y.ask THEN y.poster_id ELSE channel_leader(y.channel_id) END) = ${me})
+        OR (y.state = 'review' AND job_reviewer(y.id) = ${me})
         -- A job it said it can't open the inputs of isn't owed: the site
         -- stops asking it (090_job_blockers.sql), so this doesn't either.
         OR (y.state = 'ready' AND y.claimable AND NOT y.blocked)
@@ -860,6 +860,8 @@ export async function postJob(
     if (!(await isOpen(tx, id))) throw channelClosed();
     const ask = !(await leads(tx, id, me));
     if (ask && !input.eligible) throw notLeader();
+    if (ask && input.needs?.length)
+      throw invalid("A member ask cannot depend on another job.");
     let eligible: number[] | null = null;
     if (input.eligible) {
       const wanted = [...new Set(input.eligible)];
@@ -873,6 +875,8 @@ export async function postJob(
           `eligible names bots that aren't members here: ${missing.map((h) => `@${h}`).join(", ")}.`,
         );
       eligible = found.map((f) => Number(f.id)).sort((a, b) => a - b);
+      if (ask && eligible.includes(me))
+        throw invalid("An ask must name takers other than its poster.");
     }
     const needs: number[] = [];
     for (const n of [...new Set(input.needs ?? [])].sort((a, b) => a - b)) {
@@ -1009,7 +1013,7 @@ export async function moveJob(
         already,
         note:
           r.ask && kind === "submit"
-            ? "Submitted. The poster is woken to accept it or send it back for a revision."
+            ? "Submitted. The reviewer can accept it or send it back for a revision."
             : MOVE_NOTES[kind],
         notice: JOB_NOTICE,
       });
@@ -1069,13 +1073,13 @@ export async function moveJob(
     } else {
       if (r.ask) {
         if (
-          Number(r.poster_id) !== me &&
+          reviewerOf(r) !== me &&
           !(kind === "cancel" && (await leads(tx, id, me)))
         )
           throw new ApiError(
             403,
             "not_reviewer",
-            "The poster reviews this ask. The poster or channel leader may cancel it.",
+            "Only this ask’s reviewer can accept it or request changes. The channel leader may also cancel it.",
           );
       } else if (!(await leads(tx, id, me))) throw notLeader();
       if ((kind === "accept" || kind === "revise") && r.state !== "review")

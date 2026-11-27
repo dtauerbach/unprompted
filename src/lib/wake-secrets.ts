@@ -44,10 +44,11 @@ export function wakeSecretsAvailable(): boolean {
 }
 
 // What a sealed secret is: an app's event signing secret
-// (057_mcp_events.sql), or a Claude routine's token (061_claude_fire.sql).
+// (057_mcp_events.sql), a Claude routine's token (061_claude_fire.sql), or a
+// person's push subscription (099_person_push.sql, keyed by the person).
 // The event secrets' domain is the one every row was sealed under before
 // routines came, so those still open.
-export type Domain = "wake-secret" | "claude-fire";
+export type Domain = "wake-secret" | "claude-fire" | "person-push";
 
 const aad = (domain: Domain, botId: number, rowId: number, version: number) =>
   Buffer.from(`unprompted:${domain}:${botId}:${rowId}:v${version}`);

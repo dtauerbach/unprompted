@@ -6,6 +6,8 @@ import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/rou
 import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/moves/route";
 import { GET as jobRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/route";
 import { POST as postRoute } from "@/app/v1/private-channels/[id]/jobs/route";
+import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
+import { setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { owedJobs } from "@/lib/jobs";
 import { call, register, resetDb } from "./helpers";
@@ -62,6 +64,18 @@ const move = (who: Bot, g: string, body: Record<string, unknown>) =>
   call(moveRoute, { key: who.key, params: { id: num(g), number: "1" }, body });
 const read = (who: Bot, g: string) =>
   call(jobRoute, { key: who.key, params: { id: num(g), number: "1" } });
+const botId = async (who: Bot) =>
+  (
+    await db()<
+      { id: string }[]
+    >`SELECT id FROM bots WHERE handle = ${who.handle}`
+  )[0]?.id;
+const insertJob = (poster: Bot, eligible: Bot, g: string, ask: boolean) => db()`
+  INSERT INTO channel_jobs
+    (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, eligible, ask)
+  SELECT ${num(g)}, 1, 'Ask', 'One line', 'One line', 120, b.id, k.id, ARRAY[e.id], ${ask}
+  FROM bots b JOIN api_keys k ON k.bot_id = b.id CROSS JOIN bots e
+  WHERE b.handle = ${poster.handle} AND e.handle = ${eligible.handle} AND k.revoked_at IS NULL`;
 const wake = async (who: Bot) =>
   Number(
     (
@@ -141,17 +155,150 @@ describe("member job asks", () => {
     ).toBe(200);
   });
 
-  it("does not wake a named recipient who blocked the poster", async () => {
+  it.each([
+    false,
+    true,
+  ])("dispatches an ask only to a recipient who has not blocked the poster (blocked=%s)", async (blocked) => {
     const { l, m, n, g } = await group();
-    expect(
-      (await call(blockRoute, { key: n.key, params: { handle: m.handle } }))
-        .status,
-    ).toBe(200);
+    if (blocked) {
+      expect(
+        (await call(blockRoute, { key: n.key, params: { handle: m.handle } }))
+          .status,
+      ).toBe(200);
+    }
+    // Seed a valid job without postJob's automatic dispatch.
+    await insertJob(m, n, g, true);
     const before = await Promise.all([wake(l), wake(m), wake(n)]);
+    const [offer] =
+      await db()`SELECT job_offer_make(id) AS recipient FROM channel_jobs WHERE channel_id = ${num(g)}`;
+    const after = await Promise.all([wake(l), wake(m), wake(n)]);
+    expect(offer?.recipient).toBe(blocked ? null : await botId(n));
+    expect(after).toEqual(
+      before.map((count, i) => count + (!blocked && i === 2 ? 1 : 0)),
+    );
+  });
+
+  it("refuses dependencies on member asks at both write boundaries", async () => {
+    const { l, m, n, g } = await group();
+    expect((await post(l, g)).status).toBe(201);
+    expect(
+      (await post(m, g, { ...job, eligible: [n.handle], needs: [1] })).status,
+    ).toBe(400);
     expect((await post(m, g, { ...job, eligible: [n.handle] })).status).toBe(
       201,
     );
-    expect(await Promise.all([wake(l), wake(m), wake(n)])).toEqual(before);
+    await expect(db()`
+      INSERT INTO job_deps (job_id, needs_job_id)
+      SELECT a.id, d.id FROM channel_jobs a JOIN channel_jobs d ON d.channel_id = a.channel_id
+      WHERE a.channel_id = ${num(g)} AND a.number = 2 AND d.number = 1
+    `).rejects.toMatchObject({ code: "UPR01" });
+  });
+
+  it.each([
+    "poster",
+    "outsider",
+    "frozen",
+  ] as const)("refuses an ask naming a %s in app and DB", async (kind) => {
+    const { m, n, g } = await group();
+    const taker =
+      kind === "poster" ? m : kind === "outsider" ? await bot("outside") : n;
+    if (kind === "frozen") await setFrozen(db(), n.handle, true, "test");
+    expect(
+      (await post(m, g, { ...job, eligible: [taker.handle] })).status,
+    ).toBe(400);
+    await expect(insertJob(m, taker, g, true)).rejects.toMatchObject({
+      code: "UPR01",
+    });
+  });
+
+  it("keeps ask classification limited to member posters", async () => {
+    const { l, m, n, g } = await group();
+    await expect(insertJob(l, n, g, true)).rejects.toMatchObject({
+      code: "UPR01",
+    });
+    await expect(insertJob(m, n, g, false)).rejects.toMatchObject({
+      code: "UPR01",
+    });
+  });
+
+  it("lets the leader review when the asker departs", async () => {
+    const { l, m, n, g } = await group();
+    expect((await post(m, g, { ...job, eligible: [n.handle] })).status).toBe(
+      201,
+    );
+    expect((await move(n, g, { move: "claim", if_seq: 0 })).status).toBe(200);
+    expect((await submit(n, g, 1)).status).toBe(200);
+    expect(
+      (await call(leaveRoute, { key: m.key, params: { id: num(g) } })).status,
+    ).toBe(200);
+    expect((await read(l, g)).body.job.you).toBe("reviewer");
+    expect(await owedJobs(Number(await botId(l)), "http")).toMatchObject({
+      complete: true,
+      jobs: [expect.objectContaining({ number: 1, you: "reviewer" })],
+    });
+    expect((await move(l, g, { move: "accept", if_seq: 2 })).status).toBe(200);
+  });
+
+  it("assigns a frozen asker's pending review to the leader at the database boundary", async () => {
+    const { l, m, n, g } = await group();
+    expect((await post(m, g, { ...job, eligible: [n.handle] })).status).toBe(
+      201,
+    );
+    expect((await move(n, g, { move: "claim", if_seq: 0 })).status).toBe(200);
+    expect((await submit(n, g, 1)).status).toBe(200);
+    await setFrozen(db(), m.handle, true, "test");
+    const [reviewer] =
+      await db()`SELECT job_reviewer(id) AS bot FROM channel_jobs WHERE channel_id = ${num(g)}`;
+    expect(reviewer?.bot).toBe(await botId(l));
+    expect((await read(n, g)).status).toBe(404);
+  });
+
+  it("lets the asker read its own inputs but doesn't confer access to other jobs' input refs", async () => {
+    const { l, m, n, g } = await group();
+    const inputs = [
+      { store: "github", ref: "fixture/member-provided", revision: "abc" },
+    ];
+    expect(
+      (await post(m, g, { ...job, eligible: [n.handle], inputs })).status,
+    ).toBe(201);
+    expect((await read(m, g)).body.job.inputs).toEqual([
+      expect.objectContaining({ ref: inputs[0]?.ref }),
+    ]);
+    expect(
+      (
+        await post(l, g, {
+          ...job,
+          inputs: [
+            {
+              store: "github",
+              ref: "fixture/leader-provided",
+              revision: "abc",
+            },
+          ],
+        })
+      ).status,
+    ).toBe(201);
+    expect(
+      (
+        await call(jobRoute, {
+          key: m.key,
+          params: { id: num(g), number: "2" },
+        })
+      ).body.job.inputs,
+    ).toEqual([expect.objectContaining({ ref: null })]);
+  });
+
+  it("refuses a cancel by a member who is neither lead nor poster at the database boundary", async () => {
+    const { m, n, g } = await group();
+    expect((await post(m, g, { ...job, eligible: [n.handle] })).status).toBe(
+      201,
+    );
+    await expect(db()`
+      INSERT INTO job_moves (job_id, seq, kind, attempt, bot_id, key_id)
+      SELECT j.id, 1, 'cancel', 0, b.id, k.id
+      FROM channel_jobs j, bots b JOIN api_keys k ON k.bot_id = b.id
+      WHERE j.channel_id = ${num(g)} AND b.handle = ${n.handle} AND k.revoked_at IS NULL
+    `).rejects.toMatchObject({ code: "UPR01" });
   });
 
   it("enforces reviewer permissions in the database as well as the app", async () => {
