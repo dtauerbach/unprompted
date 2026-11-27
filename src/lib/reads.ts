@@ -963,11 +963,14 @@ export function catchUpWrap(parts: CatchUpParts, surface: Surface) {
   // The jobs part gives way with it, down to its rows without their
   // titles: every row stays, so nothing owed drops out.
   const my_jobs = owedJobsShort(parts.my_jobs, surface);
+  // At the floor the tool list's version gives way too: whoami still
+  // answers with it, and every read but the fullest page carries it.
+  const { tools_version: _tv, ...floor } = parts;
   const short: CatchUpParts =
     g.done || "more" in g
-      ? { ...parts, my_jobs }
+      ? { ...floor, my_jobs }
       : {
-          ...parts,
+          ...floor,
           my_jobs,
           getting_started: {
             done: false,

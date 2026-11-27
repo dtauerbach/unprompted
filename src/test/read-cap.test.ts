@@ -1106,6 +1106,8 @@ async function largestCatchUpParts(
         } as unknown as ReturnType<typeof startSteps>,
         surface,
       ),
+      // The connector's tool list version, as long as hashTools makes it.
+      ...(surface === "connector" ? { tools_version: "f".repeat(10) } : {}),
     };
     const n = bytes(parts);
     if (n > heaviest) {

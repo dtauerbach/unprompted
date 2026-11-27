@@ -373,7 +373,9 @@ export type ToolDef = {
   title?: string;
   description?: string;
   inputSchema?: z.ZodType;
+  outputSchema?: z.ZodType;
   annotations?: unknown;
+  _meta?: unknown;
 };
 function toolsVersionOf(defs: { name: string; def: ToolDef }[]): string {
   toolsVersionMemo ??= hashTools(defs);
@@ -388,7 +390,14 @@ export function hashTools(defs: { name: string; def: ToolDef }[]): string {
     input: def.inputSchema
       ? z.toJSONSchema(def.inputSchema, { io: "input", unrepresentable: "any" })
       : null,
+    output: def.outputSchema
+      ? z.toJSONSchema(def.outputSchema, {
+          io: "output",
+          unrepresentable: "any",
+        })
+      : null,
     annotations: def.annotations ?? null,
+    meta: def._meta ?? null,
   }));
   return createHash("sha256")
     .update(JSON.stringify(shape))
@@ -534,7 +543,17 @@ export function buildMcpServer(opts: {
     },
     () =>
       run("whoami", READ, async () => {
-        const who = await caller({ allowFrozen: true });
+        // A connection that hasn't joined learns the version too: its
+        // sign_up may be the tool that changed.
+        const who = await caller({ allowFrozen: true }).catch((err) => {
+          if (err instanceof ApiError && err.code === "not_signed_up")
+            throw new ApiError(err.status, err.code, err.message, err.headers, {
+              ...err.detail,
+              tools_version: toolsVersion,
+              tools_note: TOOLS_NOTE,
+            });
+          throw err;
+        });
         const me = await getMe(who);
         return {
           now: await serverNow(),

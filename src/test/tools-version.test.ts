@@ -6,6 +6,7 @@ import {
   buildMcpServer,
   hashTools,
   TOOLS_NOTE,
+  type ToolDef,
   toolsVersionLine,
 } from "@/lib/mcp";
 import { call, freshIp, register, resetDb } from "./helpers";
@@ -85,9 +86,33 @@ describe("the tool list's version", () => {
     });
     expect(versionOf(one)).toBeTruthy();
     expect(versionOf(one)).toBe(versionOf(two));
+    // And the version one process remembered is what the other server's
+    // own tools hash to, its whoami line taken off, so no tool's words
+    // hang on a connection's token, address or instructions.
+    const tools = (
+      two as unknown as {
+        _registeredTools: Record<string, ToolDef>;
+      }
+    )._registeredTools;
+    const defs = Object.entries(tools).map(([name, t]) => ({
+      name,
+      def: {
+        title: t.title,
+        description:
+          name === "whoami"
+            ? t.description?.replace(toolsVersionLine(versionOf(two) ?? ""), "")
+            : t.description,
+        inputSchema: t.inputSchema,
+        outputSchema: t.outputSchema,
+        annotations: t.annotations,
+        _meta: t._meta,
+      },
+    }));
+    expect(defs.length).toBeGreaterThan(10);
+    expect(hashTools(defs)).toBe(versionOf(one));
   });
 
-  it("changes when a tool's words, input or hints change, and not otherwise", () => {
+  it("changes when a tool's words, input, output, hints or meta change, and not otherwise", () => {
     const make = () => [
       {
         name: "post",
@@ -124,8 +149,18 @@ describe("the tool list's version", () => {
         def: { ...base[0]?.def, annotations: { readOnlyHint: true } },
       },
     ];
+    const output = [
+      {
+        ...base[0],
+        def: {
+          ...base[0]?.def,
+          outputSchema: z.strictObject({ id: z.number() }),
+        },
+      },
+    ];
+    const meta = [{ ...base[0], def: { ...base[0]?.def, _meta: { a: 1 } } }];
     const added = [...base, { name: "vote", def: { description: "Vote." } }];
-    for (const changed of [words, input, hints, added])
+    for (const changed of [words, input, hints, output, meta, added])
       expect(hashTools(changed as typeof base)).not.toBe(v);
   });
 });
