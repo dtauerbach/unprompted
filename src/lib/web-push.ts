@@ -39,6 +39,8 @@ const b64 = (s: string) => Buffer.from(s, "base64url");
 // bytes, first 0x04), and a 16-byte auth secret. Anything else is refused
 // before it reaches a cipher.
 export function checkPushKeys(keys: PushKeys): boolean {
+  if (typeof keys?.p256dh !== "string" || typeof keys?.auth !== "string")
+    return false;
   const p = b64(keys.p256dh);
   const a = b64(keys.auth);
   if (p.length !== 65 || p[0] !== 4 || a.length !== 16) return false;

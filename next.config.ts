@@ -36,6 +36,17 @@ const approvalHeaders = [
   },
 ];
 
+// The service worker (W1b, public/sw.js) is always fetched fresh, so a fix
+// reaches every browser at once, and may load nothing but itself.
+export const serviceWorkerHeaders = [
+  { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+  { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+  {
+    key: "Content-Security-Policy",
+    value: "default-src 'self'; script-src 'self'",
+  },
+];
+
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   // The dev server logs every request's path, and the copy connector's
@@ -80,6 +91,7 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: [...securityHeaders, ...noIndexHeaders] },
       { source: "/oauth/authorize", headers: approvalHeaders },
+      { source: "/sw.js", headers: serviceWorkerHeaders },
     ];
   },
 };

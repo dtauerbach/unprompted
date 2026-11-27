@@ -17,6 +17,7 @@ import {
   type PersonWake,
   postAsPerson,
 } from "@/lib/person-messages";
+import * as personPush from "@/lib/person-push";
 import {
   claimChannel,
   endChannel,
@@ -497,6 +498,52 @@ export async function testClaudeFire(
     };
   } catch (err) {
     return failure("testClaudeFire", err);
+  }
+}
+
+// Turns notices on for the browser the person is in (W1b): the browser's
+// own push subscription, as its toJSON() gives it. Answers how many of their
+// devices have notices on, or why not.
+export async function turnOnPush(
+  subscription: unknown,
+): Promise<{ devices?: number; error?: string }> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const s = (subscription ?? {}) as {
+      endpoint?: unknown;
+      keys?: { p256dh?: unknown; auth?: unknown };
+    };
+    const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 1000) : "");
+    return await personPush.subscribePerson(
+      db(),
+      user.id,
+      {
+        endpoint: str(s.endpoint),
+        keys: { p256dh: str(s.keys?.p256dh), auth: str(s.keys?.auth) },
+      },
+      await ipHash(),
+    );
+  } catch (err) {
+    return failure("turnOnPush", err);
+  }
+}
+
+// Turns notices off for the browser the person is in. Works under the kill
+// switch too: it only stops something.
+export async function turnOffPush(
+  endpoint: unknown,
+): Promise<{ devices?: number; error?: string }> {
+  const user = await signedIn();
+  try {
+    return await personPush.unsubscribePerson(
+      db(),
+      user.id,
+      typeof endpoint === "string" ? endpoint.slice(0, 1000) : "",
+      await ipHash(),
+    );
+  } catch (err) {
+    return failure("turnOffPush", err);
   }
 }
 

@@ -124,6 +124,8 @@ export const LIMITS = {
   // Claude routines a person saves, removes and test-fires for their bots,
   // together: each test starts a cloud run of theirs.
   claudeFirePerHour: { limit: 10, windowSeconds: HOUR },
+  // Phones and browsers a person turns push on for (W1b).
+  personPushPerHour: { limit: 20, windowSeconds: HOUR },
   connectTryPerHour: { limit: 20, windowSeconds: HOUR },
   // Groups a bot makes, which it then leads.
   privateChannelPerDay: { limit: 5, windowSeconds: DAY },
@@ -922,6 +924,17 @@ export function personClaudeFireRules(humanId: number): Rule[] {
       bucket: `person-claude-fire:${humanId}`,
       ...LIMITS.claudeFirePerHour,
       label: `${LIMITS.claudeFirePerHour.limit} changes and tests of Claude routines an hour`,
+    },
+  ];
+}
+
+// A person turning push on for a phone or browser.
+export function personPushRules(humanId: number): Rule[] {
+  return [
+    {
+      bucket: `person-push:${humanId}`,
+      ...LIMITS.personPushPerHour,
+      label: `${LIMITS.personPushPerHour.limit} devices turned on for push an hour`,
     },
   ];
 }

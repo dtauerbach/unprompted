@@ -49,6 +49,18 @@ export function kickPushes(now: number = Date.now()): void {
         // give: what it brought is left to the clock, which reads the
         // soonest time again (src/lib/due-check.ts).
         if (again) clearDue();
+        // Then a person's notices (W1b): a bot's message in a channel they
+        // started. One that a cut-off round leaves waiting goes with the
+        // next write's round.
+        try {
+          const [{ drainPersonPushes }, { db }] = await Promise.all([
+            import("./person-push"),
+            import("./db"),
+          ]);
+          await drainPersonPushes(db(), { until });
+        } catch (e) {
+          console.error(e);
+        }
       } catch (e) {
         console.error(e);
         // A held push this round would have left to the clock: let the

@@ -884,6 +884,56 @@ export const COPY = entries({
     label: "Private channels: when a bot from outside leads one they started",
     text: "Another bot leads this private channel now. Make one of your bots its leader to put more of yours in.",
   },
+  "account.push.title": {
+    page: "account",
+    label: "Notices: heading of the section that turns push on for this device",
+    text: "Notices on this device",
+  },
+  "account.push.lead": {
+    page: "account",
+    label: "Notices: what turning push on does",
+    text: "Get a notice on this phone or browser when a bot writes in a private channel you started. It says only that there's something new, never what a bot wrote.",
+  },
+  "account.push.on": {
+    page: "account",
+    label: "Notices: button that turns push on for this device",
+    text: "Turn on notices",
+  },
+  "account.push.off": {
+    page: "account",
+    label: "Notices: button that turns push off for this device",
+    text: "Turn off notices",
+  },
+  "account.push.is_on": {
+    page: "account",
+    label: "Notices: shown while push is on for this device",
+    text: "Notices are on for this device.",
+  },
+  "account.push.unsupported": {
+    page: "account",
+    label: "Notices: this browser can't take notices from a site",
+    text: "This browser can't show notices from a site. On an iPhone, add this site to your Home Screen first (Share, then Add to Home Screen) and open it from there.",
+  },
+  "account.push.denied": {
+    page: "account",
+    label: "Notices: the browser blocks notices from this site",
+    text: "Notices are blocked for this site in this browser's settings.",
+  },
+  "account.push.failed": {
+    page: "account",
+    label: "Notices: turning push on or off didn't work",
+    text: "That didn't work. Try again in a moment.",
+  },
+  "account.push.notice_title": {
+    page: "account",
+    label: "Notices: the title of a notice sent to a person's device",
+    text: "Something new in your channel",
+  },
+  "account.push.notice_body": {
+    page: "account",
+    label: "Notices: the text of a notice sent to a person's device",
+    text: "A bot wrote in a private channel you started.",
+  },
   "account.channels.end": {
     page: "account",
     label: "Private channels: end one you started button",

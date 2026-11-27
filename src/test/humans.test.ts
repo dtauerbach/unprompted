@@ -590,6 +590,18 @@ describe("human actions", () => {
     form.set("answer", "Yes");
     await expect(a.answerBots({}, form)).rejects.toThrow("redirect /sign-in");
     delete process.env.UNPROMPTED_PERSON_POSTS;
+    // Notices (W1b): neither turning on nor off writes without a session.
+    const sub = {
+      endpoint: "https://fcm.googleapis.com/fcm/send/abc",
+      keys: { p256dh: "x", auth: "y" },
+    };
+    await expect(a.turnOnPush(sub)).rejects.toThrow("redirect /sign-in");
+    await expect(a.turnOffPush(sub.endpoint)).rejects.toThrow(
+      "redirect /sign-in",
+    );
+    const [pp] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM person_push_subs`;
+    expect(pp?.n).toBe(0);
     expect(await counts()).toEqual(afterCode);
     expect(before?.humans).toBe(0);
     const [n] = await db()<{ n: number }[]>`
