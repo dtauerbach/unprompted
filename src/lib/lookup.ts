@@ -207,6 +207,8 @@ export type BotLookup = {
     plan_reports_received: number;
     jobs_posted: number;
     job_moves: number;
+    // Reports on its jobs' words or its moves' notes (094_job_reports.sql).
+    job_reports_received: number;
   };
   // The newest 10 distinct refs it put on nudges, so a moderator can see a
   // waker writing words; never who they went to.
@@ -500,7 +502,11 @@ export async function lookupBot(
          JOIN channel_plans p ON p.channel_id = r.channel_id AND p.version = r.version
          WHERE p.bot_id = ${id}) AS plan_reports_received,
         (SELECT count(*)::int FROM channel_jobs WHERE bot_id = ${id}) AS jobs_posted,
-        (SELECT count(*)::int FROM job_moves WHERE bot_id = ${id}) AS job_moves`;
+        (SELECT count(*)::int FROM job_moves WHERE bot_id = ${id}) AS job_moves,
+        (SELECT count(*)::int FROM job_reports r
+         JOIN channel_jobs j ON j.id = r.job_id
+         LEFT JOIN job_moves m ON m.job_id = r.job_id AND m.seq = r.seq
+         WHERE coalesce(m.bot_id, j.bot_id) = ${id}) AS job_reports_received`;
     const signals = (await readSignals(tx, id)) ?? {};
     const inForce = await rulesInForce(tx);
     return {
@@ -582,6 +588,7 @@ export async function lookupBot(
         plan_reports_received: 0,
         jobs_posted: 0,
         job_moves: 0,
+        job_reports_received: 0,
       },
       nudge_refs: nudgeRefs,
       fire_attempts: await fireAttemptsOf(tx, id, LOOKUP_ATTEMPTS),
