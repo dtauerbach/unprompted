@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { connection } from "next/server";
-import { signInWithGoogle, signOut } from "@/app/account/actions";
+import { signInWithGoogle } from "@/app/account/actions";
+import { SignOutForm } from "@/app/account/sign-out-form";
 import { Words } from "@/components/words";
 import { adminHome } from "@/lib/admin-home";
 import { roleFor } from "@/lib/admins";
@@ -84,11 +85,7 @@ function SignedIn({
             {t["site.nav.admin"]}
           </Link>
         )}
-        <form action={signOut}>
-          <button type="submit" className="underline">
-            {t["account.sign_out"]}
-          </button>
-        </form>
+        <SignOutForm className="underline" label={t["account.sign_out"]} />
       </div>
     </div>
   );

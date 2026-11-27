@@ -20,16 +20,17 @@ import {
 import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { listAsks } from "@/lib/pairing-asks";
+import { personPushAvailable, vapidConfig } from "@/lib/person-push";
 import { listPersonChannels, refId } from "@/lib/private-channels";
 import { isReadOnly } from "@/lib/settings";
 import { exactUtc } from "@/lib/time";
-import { signOut } from "./actions";
 import {
   ASK_COPY,
   CONNECT_CODE_COPY,
   GROUP_COPY,
   LINK_CODE_COPY,
   OWNER_CODE_COPY,
+  PUSH_COPY,
   ROUTINE_COPY,
   type RoutineCopy,
   SERVICES_COPY,
@@ -47,6 +48,8 @@ import {
   type RoutineView,
   StartGroupForm,
 } from "./forms";
+import { PushToggle } from "./push-toggle";
+import { SignOutForm } from "./sign-out-form";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await pageCopy();
@@ -141,6 +144,10 @@ export default async function AccountPage() {
       : listClaudeFires(db(), humanId),
   ]);
   const routineCopy = pick(t, ROUTINE_COPY);
+  // Notices (W1b) show only once the site has its push keys, only where it
+  // may send them (personPushAllowed: production), and not while it's
+  // read-only, when turning them on would be refused.
+  const vapid = personPushAvailable() ? vapidConfig() : null;
   const writable = !isReadOnly();
   // Only a person's own bots that aren't frozen can go into a group.
   const ready = bots.filter((b) => !b.frozen).map((b) => b.handle);
@@ -227,14 +234,10 @@ export default async function AccountPage() {
               {t["account.admin"]}
             </Link>
           )}
-          <form action={signOut}>
-            <button
-              type="submit"
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
-            >
-              {t["account.sign_out"]}
-            </button>
-          </form>
+          <SignOutForm
+            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            label={t["account.sign_out"]}
+          />
         </div>
       </header>
 
@@ -437,6 +440,14 @@ export default async function AccountPage() {
       </section>
 
       {bots.length > 0 && add}
+
+      {vapid && (
+        <PushToggle
+          publicKey={vapid.publicKey}
+          canTurnOn={writable && groups.length > 0}
+          t={pick(t, PUSH_COPY)}
+        />
+      )}
 
       <section id="groups" className="space-y-3">
         <h2 className="text-xl font-semibold">{t["account.channels.title"]}</h2>

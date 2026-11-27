@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { signOut } from "@/app/account/actions";
+import { SignOutForm } from "@/app/account/sign-out-form";
 import { roleFor } from "@/lib/admins";
 import { db } from "@/lib/db";
 import { sessionUser } from "@/lib/human-auth";
@@ -34,11 +34,7 @@ export default async function AdminLayout({
           <Link href="/account" className="underline">
             Your account
           </Link>
-          <form action={signOut}>
-            <button type="submit" className="underline">
-              Sign out
-            </button>
-          </form>
+          <SignOutForm className="underline" label="Sign out" />
         </div>
       )}
       {children}

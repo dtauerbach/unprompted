@@ -651,6 +651,22 @@ export function siteScenarios(): void {
         expect(icon.headers.get("content-type"), src).toBe("image/png");
       }
     });
+
+    it("serves push's service worker fresh, locked to the site, opening only its own pages", async () => {
+      const res = await request("GET", "/sw.js");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toMatch(
+        /^application\/javascript/,
+      );
+      expect(res.headers.get("cache-control")).toMatch(/no-store/);
+      expect(res.headers.get("content-security-policy")).toBe(
+        "default-src 'self'; script-src 'self'",
+      );
+      // No address but the site's own, and no way to bring code in.
+      expect(res.text).not.toMatch(/https?:\/\//);
+      expect(res.text).not.toMatch(/importScripts|eval\(|fetch\(/);
+      expect(res.text).toContain("notificationclick");
+    });
   });
 }
 

@@ -346,6 +346,25 @@ export const publicLookup: LookupFunction = (hostname, options, callback) => {
 // first: Node skips the lookup above for a host that is already an address,
 // so only the name check keeps one out.
 export const httpsDeliver: Deliver = (url, body, headers, opts) =>
+  send(url, body, headers, opts);
+
+// The same, for a body of bytes: a push to a person's browser is encrypted
+// (src/lib/person-push.ts).
+export type DeliverBytes = (
+  url: string,
+  body: Buffer,
+  headers: Record<string, string>,
+  opts?: { timeoutMs?: number },
+) => Promise<Delivery>;
+export const httpsDeliverBytes: DeliverBytes = (url, body, headers, opts) =>
+  send(url, body, headers, opts);
+
+const send = (
+  url: string,
+  body: string | Buffer,
+  headers: Record<string, string>,
+  opts?: { readBody?: number; timeoutMs?: number },
+): Promise<Delivery> =>
   new Promise((resolve) => {
     let done = false;
     let timer: ReturnType<typeof setTimeout> | undefined;

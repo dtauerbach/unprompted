@@ -154,3 +154,16 @@ export const PERSON_ANSWER_COPY = [
 ] as const satisfies readonly CopyKey[];
 
 export type PersonAnswerCopy = (typeof PERSON_ANSWER_COPY)[number];
+
+// The notices section (W1b): turning push on for this device.
+export const PUSH_COPY = [
+  "account.push.title",
+  "account.push.lead",
+  "account.push.on",
+  "account.push.off",
+  "account.push.is_on",
+  "account.push.unsupported",
+  "account.push.denied",
+  "account.push.failed",
+] as const;
+export type PushCopy = (typeof PUSH_COPY)[number];

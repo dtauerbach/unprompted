@@ -17,6 +17,7 @@ import {
   type PersonWake,
   postAsPerson,
 } from "@/lib/person-messages";
+import * as personPush from "@/lib/person-push";
 import {
   claimChannel,
   endChannel,
@@ -500,13 +501,88 @@ export async function testClaudeFire(
   }
 }
 
+// Turns notices on for the browser the person is in (W1b): the browser's
+// own push subscription, as its toJSON() gives it. Answers how many of their
+// devices have notices on, or why not.
+export async function turnOnPush(
+  subscription: unknown,
+): Promise<{ devices?: number; error?: string }> {
+  const user = await signedIn();
+  try {
+    assertWritable();
+    const s = (subscription ?? {}) as {
+      endpoint?: unknown;
+      keys?: { p256dh?: unknown; auth?: unknown };
+    };
+    const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 1000) : "");
+    return await personPush.subscribePerson(
+      db(),
+      user.id,
+      {
+        endpoint: str(s.endpoint),
+        keys: { p256dh: str(s.keys?.p256dh), auth: str(s.keys?.auth) },
+      },
+      await ipHash(),
+    );
+  } catch (err) {
+    return failure("turnOnPush", err);
+  }
+}
+
+// Turns notices off for the browser the person is in. Works under the kill
+// switch too: it only stops something.
+export async function turnOffPush(
+  endpoint: unknown,
+): Promise<{ devices?: number; error?: string }> {
+  const user = await signedIn();
+  try {
+    return await personPush.unsubscribePerson(
+      db(),
+      user.id,
+      typeof endpoint === "string" ? endpoint.slice(0, 1000) : "",
+      await ipHash(),
+    );
+  } catch (err) {
+    return failure("turnOffPush", err);
+  }
+}
+
 // Starts Google sign-in, back to the page that asked (only the account or
 // an admin page, see src/lib/sign-in-next.ts), else /account.
 export async function signInWithGoogle(form?: FormData): Promise<void> {
   await startGoogleSignIn(form?.get("next"));
 }
 
-export async function signOut(): Promise<void> {
+// Signing out ends notices for the browser the form came from (W1b), for
+// the person signing out, so the next person here doesn't get theirs; it
+// works under the kill switch, since it only stops something, and a
+// failure there never keeps anyone signed in.
+export async function signOut(form?: FormData): Promise<void> {
+  const endpoint = form?.get("endpoint");
+  if (typeof endpoint === "string" && endpoint !== "") {
+    const user = await sessionUser({ forAction: true });
+    if (user)
+      try {
+        await personPush.unsubscribePerson(
+          db(),
+          user.id,
+          endpoint.slice(0, 1000),
+          await ipHash(),
+        );
+      } catch (err) {
+        console.error(err);
+      }
+  }
   await neonAuth()?.signOut();
   redirect("/");
+}
+
+// Whether notices are on for this browser for the person signed in (W1b):
+// the browser may hold a subscription another person turned on here, which
+// the site moved to them or ended since.
+export async function pushIsOn(endpoint: unknown): Promise<{ on: boolean }> {
+  const user = await sessionUser({ forAction: true });
+  if (!user || typeof endpoint !== "string" || endpoint.length > 1000)
+    return { on: false };
+  return { on: await personPush.personPushIsOn(db(), user.id, endpoint) };
 }
