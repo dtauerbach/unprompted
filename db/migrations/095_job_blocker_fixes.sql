@@ -43,15 +43,15 @@
 -- 091's freeze record is backfilled only for bots frozen when it ran, so a
 -- bot frozen, taken out and unfrozen before then left no record: its
 -- leaving reads as an unfrozen one, for that old data only. A freeze moved
--- from one time to another (only tests do it) writes no row, so the record
--- keeps when the freeze began.
+-- from one time to another writes no row, so the record keeps when the
+-- freeze began; the tests that move time shift the record with it.
 
 -- 1. A blocker stands under the membership it was said under.
 CREATE OR REPLACE FUNCTION job_blockers_live(j bigint)
 RETURNS TABLE (bot_id bigint, created_at timestamptz)
 LANGUAGE sql STABLE AS $$
   SELECT x.bot_id, x.created_at FROM (
-    SELECT DISTINCT ON (b.bot_id) b.bot_id, b.created_at, b.inputs, b.key_id
+    SELECT DISTINCT ON (b.bot_id) b.bot_id, b.created_at, b.inputs
     FROM job_blockers b WHERE b.job_id = j
     ORDER BY b.bot_id, b.id DESC
   ) x
@@ -130,7 +130,7 @@ BEGIN
     -- Whose write ended the claim: whoever took the holder out, only if it
     -- was before the lease ran out and the holder wasn't frozen then, since
     -- taking out a frozen holder takes no one away (Fable's review of 095).
-    IF gone IS NOT NULL AND gone <= st.lease_until
+    IF gone IS NOT NULL AND gone < st.lease_until
        AND NOT bot_was_frozen(lby, gone) THEN
       endby := gby;
     END IF;
@@ -162,7 +162,7 @@ BEGIN
     -- before it: a member's own cant_read (the leader's own, when it could
     -- take the job itself), the episode's move (a revision, a release, or
     -- a claim's end: whoever took the holder out, or nobody when its lease
-    -- ran out), a leaving or take-out of a member that could take it then
+    -- ran out first or the holder was already frozen), a leaving or take-out of a member that could take it then
     -- (unfrozen, and hadn't said so; a person's take-out has no bot), or a
     -- freeze of one, which is never the leader's write. Judged by order
     -- alone, never by how long ago, so a later pass reads the same. When it
@@ -255,10 +255,11 @@ BEGIN
         JOIN job_moves m ON m.job_id = d.needs_job_id AND m.kind = 'accept'
         WHERE d.job_id = j AND m.created_at > job.created_at
         ORDER BY m.created_at DESC LIMIT 1), job.bot_id) = lead
-      -- A leader that took out the last bot that could take it, before its
-      -- lease ran out and while it wasn't frozen: its own write. A person's
+      -- A leader that took out the holder before its lease ran out made it
+      -- ready, frozen holder or not (081): its own write. A person's
       -- take-out has no bot, and a lapse is nobody's: never the leader's.
-      WHEN lk = 'claim' THEN coalesce(endby = lead, false)
+      -- (Taking no one away, endby, is the test for the blocked cause only.)
+      WHEN lk = 'claim' THEN gone < st.lease_until AND coalesce(gby = lead, false)
       ELSE lby = lead
     END),
     'no_taker'::text;

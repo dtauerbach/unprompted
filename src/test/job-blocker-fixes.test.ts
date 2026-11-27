@@ -16,7 +16,8 @@ import { JOB_OFFER_MINUTES, offerJobs } from "@/lib/job-offers";
 import { call, register, resetDb } from "./helpers";
 
 // Fable's review of 090_job_blockers.sql (#220) after it merged, re-checked
-// on top of 092: each case fails on 092 and passes with 095.
+// on top of 092, and the reviews of 095 itself: each finding's case fails
+// on the code before its fix and passes with 095.
 
 beforeEach(resetDb);
 afterEach(() => {
@@ -311,9 +312,9 @@ describe("job blockers after the review of #220", () => {
     expect(await wake(l)).toBe(before + 1);
   });
 
-  // The same review: a lease that ran out before the leader took its holder
-  // out ended by itself, so the take-out isn't the claim's end.
-  it("wakes a leader that takes out a holder after its lease ran out", async () => {
+  // The same review: a lease that ran out before the leader took its frozen
+  // holder out ended by itself, so the take-out isn't the claim's end.
+  it("wakes a leader that takes out a frozen holder after its lease ran out", async () => {
     const { l, members, g } = await group(["moe", "nia"]);
     const [m, n] = members as [Bot, Bot];
     await post(l, g);
@@ -389,5 +390,29 @@ describe("job blockers after the review of #220", () => {
       { episode: 0, woken: true, reason: "inputs_unreadable" },
     ]);
     expect(await wake(l)).toBe(before + 1);
+  });
+
+  // For nobody taking it, the own-write test is whose write made the job
+  // ready with nobody to offer (081): the leader's take-out of its frozen
+  // holder did, so it's a mark, not a wake.
+  it("only marks a leader whose take-out of a frozen holder left nobody", async () => {
+    const { l, members, g } = await group(["nia"]);
+    const [n] = members as [Bot];
+    await post(l, g);
+    const c = await move(n, g, 1, { move: "claim", if_seq: 0 });
+    expect(c.status, JSON.stringify(c.body)).toBe(200);
+    await db()`UPDATE bots SET frozen_at = now() WHERE handle = 'nia'`;
+    const before = await wake(l);
+    const r = await call(removeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "nia" },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    await offerJobs();
+    expect(await marks()).toEqual([
+      { episode: 1, woken: false, reason: "no_taker" },
+    ]);
+    expect(await wake(l)).toBe(before);
   });
 });
