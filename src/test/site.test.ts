@@ -610,6 +610,11 @@ describe("the menu", () => {
       width: "device-width",
       initialScale: 1,
       interactiveWidget: "resizes-content",
+      // The bar's color once it's on a home screen (W1a), light and dark.
+      themeColor: [
+        { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+        { media: "(prefers-color-scheme: dark)", color: "#171717" },
+      ],
     });
     // Never stops people zooming in.
     expect(viewport).not.toHaveProperty("maximumScale");
