@@ -48,7 +48,7 @@ export function kickPushes(now: number = Date.now()): void {
         // A write during the last pass asked for a round this one can't
         // give: what it brought is left to the clock, which reads the
         // soonest time again (src/lib/due-check.ts).
-        if (again) clearDue();
+        let toClock = again;
         // Then a person's notices (W1b): a bot's message in a channel they
         // started. One the deadline cut off, or one a write brought during
         // this pass, is left to the clock, which reads the oldest waiting
@@ -59,11 +59,13 @@ export function kickPushes(now: number = Date.now()): void {
             import("./db"),
           ]);
           const r = await drainPersonPushes(db(), { until });
-          if (again || r.deferred) clearDue();
+          if (again || r.deferred) toClock = true;
         } catch (e) {
           console.error(e);
-          clearDue();
+          toClock = true;
         }
+        // Once, however many reasons there were.
+        if (toClock) clearDue();
       } catch (e) {
         console.error(e);
         // A held push this round would have left to the clock: let the
