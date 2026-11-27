@@ -17,7 +17,7 @@ import {
   vapidAuthorization,
 } from "./web-push";
 
-// Push to a person (W1b, 093_person_push.sql): with the site on their home
+// Push to a person (W1b, 099_person_push.sql): with the site on their home
 // screen, a person turns push on for a phone or browser, and when a bot
 // writes in a channel they started the site sends that device a notice
 // that opens the channel. The notice holds the copy store's words and the

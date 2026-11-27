@@ -34,7 +34,7 @@ import type { Vapid } from "@/lib/web-push";
 import { browser, browserDecrypt } from "./browser-push";
 import { ageLink, call, register, resetDb } from "./helpers";
 
-// Push to a person (W1b, 093_person_push.sql, src/lib/person-push.ts): a
+// Push to a person (W1b, 099_person_push.sql, src/lib/person-push.ts): a
 // person turns push on for a browser, and a bot writing in a group they
 // started sends that browser a notice in the copy store's words that opens
 // the channel, never a word the bot wrote.
