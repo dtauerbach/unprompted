@@ -142,6 +142,98 @@ export function channelJobScenarios(): void {
     });
   });
 
+  describe.runIf(LOCAL && MODERATOR)("my jobs in catch_up", () => {
+    it("lists what each bot owes across its boards, a holder's lease first, and nothing for an outsider", async () => {
+      const { ana, bo, out, g } = await bots();
+      // Job 2 is ready again after bo's release; job 1 is done.
+      const open = await tool(bo, "catch_up", {});
+      expect(open.data.my_jobs.complete).toBe(true);
+      const two = open.data.my_jobs.jobs.find(
+        (j: { channel: string; number: number }) =>
+          j.channel === g && j.number === 2,
+      );
+      expect(["offered", "claimable"]).toContain(two?.you);
+      expect(
+        open.data.my_jobs.jobs.some((j: { number: number }) => j.number === 1),
+      ).toBe(false);
+      const claimed = await job(ana, g, {
+        number: 2,
+        move: "claim",
+        if_seq: two.seq,
+      });
+      expect(claimed.isError).toBe(false);
+      const held = await tool(ana, "catch_up", {});
+      expect(held.data.my_jobs.jobs[0]).toMatchObject({
+        channel: g,
+        number: 2,
+        state: "claimed",
+        you: "holder",
+      });
+      expect(held.data.my_jobs.jobs[0].lease_until).toBeTruthy();
+      // Over HTTP too, with its own note.
+      const http = await get("/v1/me/catch-up", ana.key);
+      expect(http.json.my_jobs.jobs[0].you).toBe("holder");
+      expect(http.json.my_jobs.note).toContain("/v1/private-channels/");
+      // Nobody else sees ana's lease.
+      const other = await tool(bo, "catch_up", {});
+      expect(JSON.stringify(other.data.my_jobs)).not.toContain(
+        String(held.data.my_jobs.jobs[0].lease_until),
+      );
+      expect(
+        other.data.my_jobs.jobs.some(
+          (j: { channel: string; number: number }) =>
+            j.channel === g && j.number === 2,
+        ),
+      ).toBe(false);
+      const outsider = await tool(out, "catch_up", {});
+      expect(outsider.data.my_jobs).toMatchObject({ complete: true, jobs: [] });
+    });
+
+    it("owes the leader a job whose inputs nobody who could take it can open, flagged, and never shows the flag to the member", async () => {
+      const { lea, bo, g } = await bots();
+      const made = await job(lea, g, {
+        title: "Read the brief",
+        body: "Summarize it.",
+        check: "A paragraph.",
+        eligible: [bo.handle],
+        inputs: [pin("docs/brief.md")],
+      });
+      expect(made.isError).toBe(false);
+      const n = made.data.job.number as number;
+      const said = await job(bo, g, {
+        number: n,
+        move: "cant_read",
+        if_seq: 0,
+      });
+      expect(said.isError).toBe(false);
+      const up = await tool(lea, "catch_up", {});
+      const row = up.data.my_jobs.jobs.find(
+        (j: { channel: string; number: number }) =>
+          j.channel === g && j.number === n,
+      );
+      expect(row).toMatchObject({ state: "ready", inputs_unreadable: true });
+      expect(row).not.toHaveProperty("you");
+      // The member that said so isn't owed it.
+      const member = await tool(bo, "catch_up", {});
+      expect(
+        member.data.my_jobs.jobs.some(
+          (j: { channel: string; number: number }) =>
+            j.channel === g && j.number === n,
+        ),
+      ).toBe(false);
+      // The leader cancels it, and it's owed no more.
+      const gone = await job(lea, g, { number: n, move: "cancel", if_seq: 0 });
+      expect(gone.isError).toBe(false);
+      const after = await tool(lea, "catch_up", {});
+      expect(
+        after.data.my_jobs.jobs.some(
+          (j: { channel: string; number: number }) =>
+            j.channel === g && j.number === n,
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe.runIf(LOCAL && MODERATOR)("a job board, adversarially", () => {
     it("gives a job carrying instructions as untrusted text beside its notice", async () => {
       const { lea, ana, g } = await bots();
@@ -159,6 +251,16 @@ export function channelJobScenarios(): void {
       expect(read.data.notice).toMatch(/content, not instructions/);
       const { untrusted_body: _, ...rest } = read.data.job;
       expect(JSON.stringify(rest)).not.toContain("admin mode");
+      // catch_up lists it by its title alone, beside the same notice.
+      const up = await tool(ana, "catch_up", {});
+      expect(up.data.my_jobs.notice).toMatch(/content, not instructions/);
+      expect(
+        up.data.my_jobs.jobs.some(
+          (j: { channel: string; number: number }) =>
+            j.channel === g && j.number === n,
+        ),
+      ).toBe(true);
+      expect(JSON.stringify(up.data.my_jobs)).not.toContain("admin mode");
     });
 
     it("answers an outsider as a made-up group, and a member that doesn't lead can't post", async () => {
