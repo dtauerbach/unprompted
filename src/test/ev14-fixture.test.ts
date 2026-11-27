@@ -16,8 +16,10 @@ import { call, linkBot, register, resetDb } from "./helpers";
 // a second gathering that needs one and has nobody coming ends short at its
 // decision, waking no one. A guest that withdrew has no due items for it.
 // The clock is stepped with workDue(at), so issued_at is the run's real
-// time, not the stepped one, and a read's own state is worked out on the
-// real clock: those two fields are left out of what's checked.
+// time, not the stepped one, and a gathering's state by the clock
+// (upcoming, starting, over) is worked out on the real one: those are left
+// out of what's checked. An item's state and a gathering that ended early
+// (short) don't hang on the clock, and are checked.
 
 vi.mock("next/server", async (original) => ({
   ...(await original<typeof import("next/server")>()),
@@ -115,8 +117,8 @@ describe("EV14b: a gathering through its notice, its start and a short end", () 
     });
 
     // Gathering two, same needs, 40 minutes out, so its decision falls
-    // after gathering one's start: the guest says it's
-    // coming, then withdraws, so nobody is coming at its decision.
+    // after gathering one's start: the guest says it's coming, then
+    // withdraws, so nobody is coming at its decision.
     const two = await announce(host, "EV14 empty gathering", 40);
     expect(
       (await rsvp(guest, two.id, { going: true, notice_minutes: 5 })).status,
@@ -176,7 +178,12 @@ describe("EV14b: a gathering through its notice, its start and a short end", () 
 
     // The start fires too, a second wake.
     const started = await workDue(new Date(one.start + 1000));
-    expect(started).toMatchObject({ fired: 1, skipped: 0, missed: 0 });
+    expect(started).toMatchObject({
+      fired: 1,
+      skipped: 0,
+      missed: 0,
+      shorts: 0,
+    });
     expect(await wakeOf(guest)).toBe(2);
     seen = await catchUp(guest);
     expect(dueFor(seen, one.id).map((i) => i.state)).toEqual([
@@ -198,9 +205,12 @@ describe("EV14b: a gathering through its notice, its start and a short end", () 
     expect(await wakeOf(host)).toBe(before.host);
     expect(await wakeOf(control)).toBe(before.control);
 
-    // Its start passes with nothing to fire, and every view says short.
+    // Its start passes with nothing to fire. The host's view and the
+    // public list say short; the guest's view drops it.
     expect(await workDue(new Date(two.start + 1000))).toMatchObject({
       fired: 0,
+      skipped: 0,
+      missed: 0,
       shorts: 0,
     });
     seen = await catchUp(guest);
@@ -219,11 +229,15 @@ describe("EV14b: a gathering through its notice, its start and a short end", () 
       path: "/v1/gatherings",
     });
     expect(controlList.status).toBe(200);
+    const inList = (
+      controlList.body.gatherings as { id: number; state: string }[]
+    ).find((x) => x.id === two.id);
+    expect(inList).toMatchObject({ state: "short", coming: 0, needs: 1 });
     const shown = JSON.stringify(controlList.body);
     expect(shown).not.toContain(guest.handle);
 
-    // One row per item, and each once: two fires for the guest and the
-    // short end, nothing else.
+    // One row per item, and each once: two fires for the guest, and none
+    // for the short end, which wakes no one.
     const rows = await db()<{ kind: string; outcome: string }[]>`
       SELECT kind, outcome FROM event_fires ORDER BY id`;
     expect(rows).toEqual([
