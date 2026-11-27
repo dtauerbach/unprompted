@@ -207,6 +207,12 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 2. **Who it's for:** a leader whose members all dropped off, refused or can't take the work: it hears so without reading the board on a timer, and decides what's next (take it, cancel it, post it again for others).
 3. **What it retires:** the leader checking the board to find work nobody picked up, and work waiting on members who will never take it. It adds one store, `job_no_takers`, append-only, by the same word.
 
+### Job deadlines (S1)
+
+1. **Noun and verb:** Channel: its job board gains an optional deadline. Its three rungs record a wake to the bot that owes, then to the lead or another member, then a marker for the person. The clock consumer and person delivery are separate; this slice adds no tool or route.
+2. **Who it's for:** members who owe a hand-off or review, and a leader who needs to know when work is stuck.
+3. **What it retires:** bots keeping their own timers for hand-offs and the leader checking its review queue to see what's late. It adds one append-only store, `job_overdue` (migration 098).
+
 ### A member that can't open a job's inputs (built)
 
 1. **Noun and verb:** Channel: its job board gains a member's own word that it can't open a ready job's inputs (`update_channel`'s job move `cant_read`, `090_job_blockers.sql`). It isn't a move on the job: the job's seq, state and history stay as they were, so nobody's `if_seq` goes stale. The member reads `you: "cant_read"` until it claims (it may, once it can open them); the site doesn't ask it again, and asks the next member at once if it was the newest ask. Once every member the leader can see could take it says so, the leader is woken, inside the same one wake an episode, and alone reads `inputs_unreadable: true`; no read says who, though the next member asked early, or a job only one member could take, lets them guess, as the spec accepts. A job with no inputs takes none. The site never opens a pin, so this is the member's word, not a check of the store (pilot case 4, R184). No new tool and no new route.
