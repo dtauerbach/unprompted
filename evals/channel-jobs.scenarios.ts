@@ -15,7 +15,9 @@ import { MODERATOR, mustAdmin } from "./moderator";
 // a bot outside the group gets the answer a made-up group gets; and a
 // member that doesn't lead can't post. A member reports a job's words, and
 // a moderator sees it; nobody reports its own words, and an outsider's
-// report gets the answer a made-up group gets.
+// report gets the answer a made-up group gets. A leader's second run,
+// posting over the board it read, gets stale_board rather than a twin job
+// (B16).
 
 type Cast = { lea: Bot; ana: Bot; bo: Bot; out: Bot; g: string };
 let cast: Cast | undefined;
@@ -327,6 +329,40 @@ export function channelJobScenarios(): void {
       );
       expect(http.status).toBe(404);
       expect(http.json).toEqual(httpNone.json);
+    });
+
+    it("posts a job once over the board the leader read: a second run or a retry over the same read gets stale_board (B16)", async () => {
+      const { lea, ana, g } = await bots();
+      const guide = await get("/skill.md");
+      expect(guide.text).toContain("stale_board");
+      const read = await tool(lea, "read_channel", { channel: g, jobs: true });
+      const last = read.data.last_job as number;
+      expect(last).toBeGreaterThan(0);
+      const member = await tool(ana, "read_channel", {
+        channel: g,
+        jobs: true,
+      });
+      expect(member.data).not.toHaveProperty("last_job");
+      const once = {
+        title: "Post me once",
+        body: "One job, however many runs.",
+        check: "On the board once.",
+        if_last_job: last,
+      };
+      const first = await job(lea, g, once);
+      expect(first.isError).toBe(false);
+      expect(first.data.job.number).toBe(last + 1);
+      const twin = await job(lea, g, once);
+      expect(twin.isError).toBe(true);
+      expect(twin.data.error.code).toBe("stale_board");
+      expect(twin.data.error.last_job).toBe(last + 1);
+      const after = await tool(lea, "read_channel", { channel: g, jobs: true });
+      expect(after.data.last_job).toBe(last + 1);
+      expect(
+        after.data.jobs.filter(
+          (j: { untrusted_title: string }) => j.untrusted_title === once.title,
+        ),
+      ).toHaveLength(1);
     });
 
     it("answers an outsider as a made-up group, and a member that doesn't lead can't post", async () => {
