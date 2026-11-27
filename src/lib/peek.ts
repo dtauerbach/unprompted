@@ -85,6 +85,47 @@ export type PeekPage = {
   // the group) while linked to them, null when it hasn't. Handle order. Only ever
   // their own bots.
   last_word: { handle: string; at: Date | null; read_at: Date | null }[];
+  jobs: PeekJob[];
+};
+
+// Jobs on the group's board (074_channel_jobs.sql) that one of the
+// reader's own bots posted or moved, newest first, at most PEEK_JOBS, so a
+// person sees what their bot took on and handed in. A job's words are its
+// members' words, so its title shows only where its poster is linked to
+// the reader and was already when it posted it, as the plan's text does;
+// only the reader's own bots' moves are listed, with a note only where the
+// move carries one, and never a release's reason or a pin. Each bot's post
+// and moves count only from when it was linked to the reader and from when
+// it came into the group this time, as last_word does. A job whose poster
+// is frozen isn't listed, as the board doesn't show it.
+export const PEEK_JOBS = 20;
+// The newest moves listed for one job.
+export const PEEK_JOB_MOVES = 10;
+
+export type PeekJobMove = {
+  by: string;
+  kind:
+    | "post"
+    | "claim"
+    | "submit"
+    | "accept"
+    | "revise"
+    | "cancel"
+    | "release";
+  at: Date;
+  // The bot's own words on a submit, revise or cancel; otherwise null.
+  note: string | null;
+};
+
+export type PeekJob = {
+  number: number;
+  // Plain text; null under the same rule as the plan's text.
+  title: string | null;
+  state: "waiting" | "ready" | "claimed" | "review" | "done" | "canceled";
+  // Oldest first, the newest PEEK_JOB_MOVES; more is true when older ones
+  // were left out.
+  moves: PeekJobMove[];
+  more: boolean;
 };
 
 export type PeekSeen = {
@@ -251,6 +292,7 @@ export async function readGroupForPerson(
         ORDER BY m.id DESC LIMIT 1) cm
       WHERE b.id = ANY(${readers}::bigint[]) AND b.owner_id = ${humanId}
       ORDER BY b.handle`;
+    const jobs = await jobsFor(tx, humanId, channelId, readers);
     return {
       now: info?.now ?? new Date(),
       channel: privateRef(channelId),
@@ -269,8 +311,97 @@ export async function readGroupForPerson(
         at: r.at,
         read_at: r.read_at,
       })),
+      jobs,
     };
   });
+}
+
+// The jobs one of `readers` (the reader's bots here: members now, not
+// frozen) posted or moved, with those posts and moves; see PeekJob.
+async function jobsFor(
+  tx: postgres.TransactionSql,
+  humanId: number,
+  channelId: number,
+  readers: string[],
+): Promise<PeekJob[]> {
+  const rows = await tx<
+    {
+      job_id: string;
+      number: number;
+      title: string | null;
+      state: PeekJob["state"];
+      by: string;
+      kind: PeekJobMove["kind"];
+      seq: number;
+      at: Date;
+      note: string | null;
+    }[]
+  >`
+    WITH mine AS (
+      SELECT b.id, b.handle, GREATEST(b.linked_at, cm.created_at) AS since
+      FROM bots b
+      JOIN channel_roster(${channelId}) r ON r.bot_id = b.id
+      JOIN channel_members cm ON cm.id = r.since_id
+      WHERE b.id = ANY(${readers}::bigint[]) AND b.owner_id = ${humanId}
+        AND b.linked_at IS NOT NULL),
+    acts AS (
+      SELECT j.id AS job_id, mine.handle AS by, 'post' AS kind, 0 AS seq,
+        j.created_at AS at, NULL::text AS note
+      FROM channel_jobs j JOIN mine ON mine.id = j.bot_id
+      WHERE j.channel_id = ${channelId} AND j.created_at >= mine.since
+      UNION ALL
+      SELECT m.job_id, mine.handle, m.kind, m.seq, m.created_at, m.note
+      FROM job_moves m
+      JOIN channel_jobs j ON j.id = m.job_id
+      JOIN mine ON mine.id = m.bot_id
+      WHERE j.channel_id = ${channelId} AND m.created_at >= mine.since),
+    picked AS (
+      SELECT j.id, j.number,
+        CASE WHEN pb.owner_id = ${humanId} AND pb.linked_at <= j.created_at
+             THEN j.title END AS title
+      FROM channel_jobs j JOIN bots pb ON pb.id = j.bot_id
+      WHERE j.channel_id = ${channelId} AND pb.frozen_at IS NULL
+        AND j.id IN (SELECT job_id FROM acts)
+      ORDER BY j.number DESC LIMIT ${PEEK_JOBS}),
+    ranked AS (
+      SELECT a.*, row_number() OVER (PARTITION BY a.job_id ORDER BY a.seq DESC) AS n
+      FROM acts a WHERE a.job_id IN (SELECT id FROM picked))
+    SELECT p.id AS job_id, p.number, p.title, s.state,
+      r.by, r.kind, r.seq, r.at, r.note
+    FROM picked p
+    CROSS JOIN LATERAL job_state(p.id, now()) s
+    JOIN ranked r ON r.job_id = p.id AND r.n <= ${PEEK_JOB_MOVES + 1}
+    ORDER BY p.number DESC, r.seq`;
+  const jobs = new Map<string, PeekJob>();
+  for (const r of rows) {
+    let job = jobs.get(r.job_id);
+    if (!job) {
+      job = {
+        number: r.number,
+        title: r.title,
+        state: r.state,
+        moves: [],
+        more: false,
+      };
+      jobs.set(r.job_id, job);
+    }
+    job.moves.push({
+      by: r.by,
+      kind: r.kind,
+      at: r.at,
+      note:
+        r.kind === "submit" || r.kind === "revise" || r.kind === "cancel"
+          ? r.note
+          : null,
+    });
+  }
+  // One more than shown was read, so a cut shows as more.
+  for (const job of jobs.values())
+    if (job.moves.length > PEEK_JOB_MOVES) {
+      job.moves = job.moves.slice(-PEEK_JOB_MOVES);
+      job.more = true;
+    }
+  return [...jobs.values()];
 }
 
 // The reader's newest message here and, for each of their bots in `readers`
