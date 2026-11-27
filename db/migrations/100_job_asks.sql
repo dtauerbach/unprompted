@@ -19,7 +19,8 @@ BEGIN
   IF NOT job_channel_writable(NEW.channel_id, NEW.bot_id, NEW.key_id)
      OR lead IS NULL
      OR NEW.ask IS DISTINCT FROM (lead <> NEW.bot_id)
-     OR (NEW.ask AND (NEW.eligible IS NULL OR NEW.bot_id = ANY (NEW.eligible)))
+     OR (NEW.ask AND (coalesce(cardinality(NEW.eligible), 0) = 0
+                      OR NEW.bot_id = ANY (NEW.eligible)))
      OR NOT comms_takes_private(NEW.bot_id) THEN
     RAISE EXCEPTION 'only a leader posts a job; a member''s ask names eligible takers' USING ERRCODE = 'UPR01';
   END IF;
@@ -58,7 +59,7 @@ RETURNS bigint LANGUAGE sql STABLE AS $$
   SELECT CASE s.state
            WHEN 'claimed' THEN s.holder
            WHEN 'review' THEN job_reviewer(j)
-           WHEN 'ready' THEN channel_leader(c.channel_id)
+           WHEN 'ready' THEN CASE WHEN c.ask THEN job_reviewer(j) ELSE channel_leader(c.channel_id) END
          END
   FROM channel_jobs c CROSS JOIN LATERAL job_state(j, as_of) s
   WHERE c.id = j

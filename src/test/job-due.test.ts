@@ -74,6 +74,18 @@ async function fixture(due: number | null = 10) {
   return { id, job, leader, holder, other, move, claim, submit, insertJob };
 }
 
+async function timedAsk(f: Awaited<ReturnType<typeof fixture>>) {
+  const [ask] = await db()<{ id: string }[]>`
+    INSERT INTO channel_jobs
+      (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, eligible, ask, due_minutes)
+    SELECT ${f.id}, 2, 'Review fixture', 'One line', 'One line', 120, b.id, k.id, ARRAY[e.id], true, 10
+    FROM bots b JOIN api_keys k ON k.bot_id = b.id CROSS JOIN bots e
+    WHERE b.handle = ${f.other.handle} AND e.handle = ${f.holder.handle} AND k.revoked_at IS NULL
+    RETURNING id`;
+  if (!ask) throw new Error("missing ask");
+  return ask.id;
+}
+
 const botId = async (who: Bot) =>
   (
     await db()<
@@ -362,16 +374,20 @@ describe("job overdue ladder", () => {
     expect(clock?.matches).toBe(true);
   });
 
-  it("wakes the asker first when a member ask is awaiting review", async () => {
+  it("wakes the asker first when a member ask is still ready", async () => {
     const f = await fixture(null);
-    const [ask] = await db()<{ id: string }[]>`
-      INSERT INTO channel_jobs
-        (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, eligible, ask, due_minutes)
-      SELECT ${f.id}, 2, 'Review fixture', 'One line', 'One line', 120, b.id, k.id, ARRAY[e.id], true, 10
-      FROM bots b JOIN api_keys k ON k.bot_id = b.id CROSS JOIN bots e
-      WHERE b.handle = ${f.other.handle} AND e.handle = ${f.holder.handle} AND k.revoked_at IS NULL
-      RETURNING id`;
-    if (!ask) throw new Error("missing ask");
+    const ask = await timedAsk(f);
+    await age(ask, 11);
+    const before = await wake(f.other);
+    expect(await make(ask, 1)).toEqual([
+      { rung: 1, bot_id: await botId(f.other), woken: true },
+    ]);
+    expect(await wake(f.other)).toBe(before + 1);
+  });
+
+  it("wakes the asker first and then the lead when an ask is awaiting review", async () => {
+    const f = await fixture(null);
+    const ask = await timedAsk(f);
     const params = { id: f.id, number: "2" };
     expect(
       (
@@ -397,12 +413,22 @@ describe("job overdue ladder", () => {
         })
       ).status,
     ).toBe(200);
-    await age(ask.id, 11);
+    await age(ask, 26);
     const before = await wake(f.other);
-    expect(await make(ask.id, 1)).toEqual([
+    expect(await make(ask, 1)).toEqual([
       { rung: 1, bot_id: await botId(f.other), woken: true },
     ]);
     expect(await wake(f.other)).toBe(before + 1);
+    // Compatible with migration 105 if it lands first. This changes only
+    // the fixture's clock, so the assertion covers target selection.
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE job_overdue DISABLE TRIGGER job_overdue_append_only`;
+      await tx`UPDATE job_overdue SET at = clock_timestamp() - interval '15 minutes' WHERE job_id = ${ask} AND rung = 1`;
+      await tx`ALTER TABLE job_overdue ENABLE TRIGGER job_overdue_append_only`;
+    });
+    expect(await make(ask, 2)).toEqual([
+      { rung: 2, bot_id: await botId(f.leader), woken: true },
+    ]);
   });
 
   it("leaves an existing job with no due time out of the dispatch scan", async () => {
