@@ -144,9 +144,13 @@ BEGIN
     AND (x.frozen_at IS NULL OR x.frozen_at >= began) AND NOT x.is_house
     AND cm.bot_id <> job.bot_id
     AND (job.eligible IS NULL OR cm.bot_id = ANY (job.eligible))
-    -- A member that said it can't open the inputs is never asked, so it
-    -- adds no ask's time (092).
-    AND NOT job_blocked(j, cm.bot_id)
+    -- A member that said it can't open the inputs before it was asked this
+    -- episode is never asked, so it adds no ask's time (092); one asked
+    -- first still counts, since the next ask started only when it said so.
+    AND (NOT job_blocked(j, cm.bot_id)
+         OR EXISTS (SELECT 1 FROM job_offers o
+                    WHERE o.job_id = j AND o.episode = st.seq AND o.bot_id = cm.bot_id)
+         OR (lk = 'revise' AND cm.bot_id = st.holder))
     AND (lk IS NULL OR lk NOT IN ('claim', 'release') OR cm.bot_id IS DISTINCT FROM st.holder);
   RETURN QUERY SELECT st.seq, lead,
     began + make_interval(mins => job_offer_minutes() * seen),

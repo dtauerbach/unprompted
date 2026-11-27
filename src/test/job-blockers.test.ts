@@ -204,9 +204,8 @@ describe("a member that can't open a job's inputs", () => {
       "channel.job.cant_read",
       "channel.job.offer",
       "channel.job.offer",
-      // moe's ask ended when it said so, so two asks' time is all there is
-      // before lea hears nobody took it (092).
-      "channel.job.no_taker",
+      // moe was asked before it said so, so its ask counts and lea hears
+      // nobody took it only after oto's (092).
     ]);
     expect(log[2]?.detail).toEqual({ number: 1, seq: 0 });
   });
@@ -643,6 +642,26 @@ describe("a member that can't open a job's inputs", () => {
     await window();
     await offerJobs();
     expect(await offers()).toEqual(["moe"]);
+    expect(await leaderWakes()).toEqual([{ number: 1, episode: 0, to: "lea" }]);
+  });
+
+  it("still counts the ask of a member that said so once asked", async () => {
+    // Fable's re-review of #221: moe is asked and says it can't open the
+    // inputs 14 minutes in, so nia's ask starts then; lea mustn't hear that
+    // nobody took it 2 minutes into nia's ask.
+    const { l, members, g } = await group(["moe", "nia"]);
+    const [m] = members as [Bot, Bot];
+    await post(l, g);
+    expect(await offers()).toEqual(["moe"]);
+    await age(14);
+    expect((await cantRead(m, g)).status).toBe(200);
+    await offerJobs();
+    expect(await offers()).toEqual(["moe", "nia"]);
+    await age(2);
+    await offerJobs();
+    expect(await leaderWakes()).toEqual([]);
+    await window();
+    await offerJobs();
     expect(await leaderWakes()).toEqual([{ number: 1, episode: 0, to: "lea" }]);
   });
 

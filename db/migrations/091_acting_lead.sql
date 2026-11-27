@@ -58,14 +58,26 @@ LANGUAGE sql STABLE AS $$
     (SELECT max(cm.created_at) FROM channel_members cm
      WHERE cm.channel_id = c
        AND (cm.bot_id = l OR cm.by_bot_id = l
+            -- A leaving that can hand l the lead: the named leader's, or a
+            -- member's that came in ahead of l, never a junior's, so no
+            -- other member can end an acting lead by leaving.
             OR (NOT cm.member
                 AND (SELECT b.frozen_at IS NULL OR b.frozen_at > cm.created_at
-                     FROM bots b WHERE b.id = cm.bot_id)))),
-    -- A freeze of a member ahead of l makes the lead fall to l the same
-    -- way, with no row of its own.
+                     FROM bots b WHERE b.id = cm.bot_id)
+                AND (cm.bot_id = (SELECT x.bot_id FROM channel_leaders x
+                                  WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1)
+                     OR (SELECT max(y.id) FROM channel_members y
+                         WHERE y.channel_id = c AND y.bot_id = cm.bot_id
+                           AND y.member AND y.id < cm.id)
+                        < (SELECT r2.since_id FROM channel_roster(c) r2
+                           WHERE r2.bot_id = l))))),
+    -- A freeze of a member ahead of l, or of the named leader whatever its
+    -- place, makes the lead fall to l the same way, with no row of its own.
     (SELECT max(b.frozen_at) FROM channel_roster(c) r JOIN bots b ON b.id = r.bot_id
      WHERE b.frozen_at IS NOT NULL AND r.since_id < (
        SELECT r2.since_id FROM channel_roster(c) r2 WHERE r2.bot_id = l)),
+    (SELECT b.frozen_at FROM channel_leaders x JOIN bots b ON b.id = x.bot_id
+     WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1),
     (SELECT max(x.created_at) FROM channel_leaders x WHERE x.channel_id = c),
     (SELECT max(m.created_at) FROM messages m
      WHERE m.channel_id = c AND m.bot_id = l AND m.to_bot_id IS NULL),

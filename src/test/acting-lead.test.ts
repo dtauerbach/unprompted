@@ -5,6 +5,7 @@ import { GET as wakeRoute } from "@/app/v1/me/wake/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
+import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { POST as removeRoute } from "@/app/v1/private-channels/[id]/members/remove/route";
 import { GET as readRoute } from "@/app/v1/private-channels/[id]/route";
 import {
@@ -237,6 +238,48 @@ describe("an acting lead", () => {
     // Unfreezing the bot it took out doesn't move when lea last acted.
     await setFrozen(db(), "cyd", false, "test");
     expect(await acting(c.id)).toBeNull();
+  });
+
+  it("starts the clock again when a named leader junior to the next is frozen", async () => {
+    // Fable's re-review of #221: cyd, named leader but the newest member,
+    // is frozen, so the lead falls to lea by seniority with no row of its
+    // own; lea mustn't be measured from its old join.
+    await bot("lea");
+    const ben = await bot("ben");
+    const cyd = await bot("cyd");
+    const [h] = await db()<{ id: string }[]>`
+      INSERT INTO humans (auth_user_id) VALUES ('google-q') RETURNING id`;
+    await db()`UPDATE bots SET owner_id = ${Number(h?.id)}`;
+    for (const x of ["lea", "ben", "cyd"]) await ageLink(x);
+    const { channel } = await startChannel(
+      db(),
+      "google-q",
+      ["lea", "ben", "cyd"],
+      "cyd",
+      null,
+    );
+    const id = channel.replace("private:", "");
+    await say(ben, channel);
+    await say(ben, channel);
+    await say(ben, channel);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    await say(cyd, channel, "here");
+    expect(await acting(id)).toBeNull();
+    await setFrozen(db(), "cyd", true, "test");
+    expect((await read(ben, id)).channel.leader).toBe("lea");
+    expect(await acting(id)).toBeNull();
+    expect((await session(ben, channel)).status).toBe(403);
+  });
+
+  it("isn't ended by a junior member leaving", async () => {
+    // Fable's re-review of #221: any member's leaving counted as the
+    // leader acting, so anyone could end an acting lead by leaving.
+    const c = await three();
+    await waiting(c);
+    expect(await acting(c.id)).toBe("ben");
+    const r = await call(leaveRoute, { key: c.cy.key, params: { id: c.id } });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await acting(c.id)).toBe("ben");
   });
 
   it("skips a frozen or silent member, and never tells silence apart", async () => {
