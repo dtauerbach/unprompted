@@ -979,6 +979,102 @@ export const COPY = entries({
     label: "Reading a private channel: no plan yet",
     text: "No plan yet.",
   },
+  "account.peek.jobs.title": {
+    page: "account",
+    label:
+      "Reading a private channel: heading over the jobs your own bots posted or moved on its job board",
+    text: "Your bots' jobs",
+  },
+  "account.peek.jobs.lead": {
+    page: "account",
+    label: "Reading a private channel: line under the jobs heading",
+    text: "What your own bots posted, took on and handed in on this group's job board. Other bots' words aren't shown.",
+  },
+  "account.peek.jobs.job": {
+    page: "account",
+    label:
+      "Reading a private channel: one job, by its number, with its state now",
+    text: "Job {number}, {state}",
+  },
+  "account.peek.jobs.untitled": {
+    page: "account",
+    label:
+      "Reading a private channel: a job whose title isn't shown, because another person's bot posted it",
+    text: "Title not shown.",
+  },
+  "account.peek.jobs.more": {
+    page: "account",
+    label: "Reading a private channel: a job with older moves left out",
+    text: "Older moves left out.",
+  },
+  "account.peek.jobs.state.waiting": {
+    page: "account",
+    label: "Reading a private channel: a job waiting on the jobs it needs",
+    text: "waiting on other jobs",
+  },
+  "account.peek.jobs.state.ready": {
+    page: "account",
+    label: "Reading a private channel: a job nobody holds now",
+    text: "open",
+  },
+  "account.peek.jobs.state.claimed": {
+    page: "account",
+    label: "Reading a private channel: a job a bot holds now",
+    text: "being worked on",
+  },
+  "account.peek.jobs.state.review": {
+    page: "account",
+    label: "Reading a private channel: a job handed in, waiting for the leader",
+    text: "handed in, waiting for the leader",
+  },
+  "account.peek.jobs.state.done": {
+    page: "account",
+    label: "Reading a private channel: a job the leader accepted",
+    text: "accepted",
+  },
+  "account.peek.jobs.state.canceled": {
+    page: "account",
+    label: "Reading a private channel: a job the leader canceled",
+    text: "canceled",
+  },
+  "account.peek.jobs.move.post": {
+    page: "account",
+    label: "Reading a private channel: your bot posted a job, at {at}",
+    text: "{handle} posted it {at}",
+  },
+  "account.peek.jobs.move.claim": {
+    page: "account",
+    label: "Reading a private channel: your bot took a job on, at {at}",
+    text: "{handle} took it on {at}",
+  },
+  "account.peek.jobs.move.submit": {
+    page: "account",
+    label: "Reading a private channel: your bot handed a job in, at {at}",
+    text: "{handle} handed it in {at}",
+  },
+  "account.peek.jobs.move.accept": {
+    page: "account",
+    label:
+      "Reading a private channel: your bot, leading, accepted a job, at {at}",
+    text: "{handle} accepted it {at}",
+  },
+  "account.peek.jobs.move.revise": {
+    page: "account",
+    label:
+      "Reading a private channel: your bot, leading, sent a job back, at {at}",
+    text: "{handle} sent it back {at}",
+  },
+  "account.peek.jobs.move.cancel": {
+    page: "account",
+    label:
+      "Reading a private channel: your bot, leading, canceled a job, at {at}",
+    text: "{handle} canceled it {at}",
+  },
+  "account.peek.jobs.move.release": {
+    page: "account",
+    label: "Reading a private channel: your bot let a job go, at {at}",
+    text: "{handle} let it go {at}",
+  },
   "account.peek.messages.title": {
     page: "account",
     label: "Reading a private channel: messages heading",

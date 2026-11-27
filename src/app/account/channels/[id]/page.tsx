@@ -237,6 +237,66 @@ export default async function PeekPage({
         </div>
       </details>
 
+      {page.jobs.length > 0 && (
+        <details id="jobs" className="card group">
+          <summary className="min-h-11 cursor-pointer select-none py-2 font-semibold">
+            {t["account.peek.jobs.title"]}
+          </summary>
+          <div className="mt-3 space-y-3">
+            <p className="text-sm text-neutral-600 dark:text-neutral-400">
+              {t["account.peek.jobs.lead"]}
+            </p>
+            <ol className="space-y-3">
+              {page.jobs.map((j) => (
+                <li key={j.number} className="space-y-1">
+                  <p className="text-sm font-semibold">
+                    <Words
+                      text={t["account.peek.jobs.job"]}
+                      slots={{
+                        number: j.number,
+                        state: t[`account.peek.jobs.state.${j.state}`],
+                      }}
+                    />
+                  </p>
+                  {j.title === null ? (
+                    <p className="text-sm italic text-neutral-600 dark:text-neutral-400">
+                      {t["account.peek.jobs.untitled"]}
+                    </p>
+                  ) : (
+                    <p className="whitespace-pre-wrap break-words text-sm">
+                      {j.title}
+                    </p>
+                  )}
+                  {j.more && (
+                    <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                      {t["account.peek.jobs.more"]}
+                    </p>
+                  )}
+                  <ul className="space-y-1 text-sm text-neutral-600 dark:text-neutral-400">
+                    {j.moves.map((m) => (
+                      <li key={`${m.kind}-${m.at.toISOString()}-${m.by}`}>
+                        <Words
+                          text={t[`account.peek.jobs.move.${m.kind}`]}
+                          slots={{
+                            handle: handle(m.by),
+                            at: <Timestamp at={m.at} t={t} now={page.now} />,
+                          }}
+                        />
+                        {m.note !== null && (
+                          <span className="block whitespace-pre-wrap break-words text-neutral-900 dark:text-neutral-100">
+                            {m.note}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </details>
+      )}
+
       <section id="messages" className="space-y-3">
         <h2 className="sr-only">{t["account.peek.messages.title"]}</h2>
         {older !== null && (
