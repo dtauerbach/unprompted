@@ -6,16 +6,20 @@ import { POST as sendRoute } from "@/app/v1/messages/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { builtInCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
+import { checkDue, forgetDueMinute } from "@/lib/due-check";
 import { LIMITS } from "@/lib/limits";
 import { postAsPerson } from "@/lib/person-messages";
 import {
   checkEndpoint,
   drainPersonPushes,
+  nextPersonDue,
   PERSON_PUSH_DEVICES,
   PERSON_PUSH_GAP_SECONDS,
   personPushDevices,
+  personPushIsOn,
   subscribePerson,
   unsubscribePerson,
+  usePersonDeliver,
   vapidConfig,
 } from "@/lib/person-push";
 import { startChannel } from "@/lib/private-channels";
@@ -125,6 +129,7 @@ async function pending(human: number): Promise<number> {
 
 beforeEach(async () => {
   await resetDb();
+  forgetDueMinute();
   sent = [];
   answer = () => ({ status: 201 });
   process.env.WEB_PUSH_PUBLIC_KEY = VAPID.publicKey;
@@ -132,6 +137,7 @@ beforeEach(async () => {
   process.env.WEB_PUSH_SUBJECT = VAPID.subject;
 });
 afterEach(() => {
+  usePersonDeliver(null);
   delete process.env.UNPROMPTED_READ_ONLY;
   delete process.env.WEB_PUSH_PUBLIC_KEY;
   delete process.env.WEB_PUSH_PRIVATE_KEY;
@@ -242,6 +248,18 @@ describe("turning push on and off", () => {
         null,
       ),
     ).rejects.toMatchObject({ code: "invalid_subscription" });
+    // Keys in their exact shape only: unpadded base64url of a P-256 point
+    // and a 16-byte secret (Fable's review of W1).
+    for (const keys of [
+      { p256dh: `${good.keys.p256dh}=`, auth: good.keys.auth },
+      { p256dh: good.keys.p256dh.slice(1), auth: good.keys.auth },
+      { p256dh: good.keys.p256dh.replace(/^./, "+"), auth: good.keys.auth },
+      { p256dh: good.keys.p256dh, auth: `${good.keys.auth}AA` },
+      { p256dh: good.keys.p256dh, auth: good.keys.auth.replace(/^./, "/") },
+    ])
+      await expect(
+        subscribePerson(db(), "google-p", { ...good, keys }, null),
+      ).rejects.toMatchObject({ code: "invalid_subscription" });
     const [n] = await db()<{ n: number }[]>`
       SELECT count(*)::int AS n FROM person_push_subs`;
     expect(n?.n).toBe(0);
@@ -504,6 +522,87 @@ describe("a notice when a bot writes", () => {
     expect(await pending(human)).toBe(1);
     expect(await drain()).toEqual({ sent: 1, dropped: 0, failed: 0 });
     expect(sent).toHaveLength(2);
+  });
+
+  it("never starts the gap on a send that reached no browser", async () => {
+    // Fable's review of W1: a failed send marked the channel sent, so the
+    // next message inside the gap was dropped and the person never heard.
+    const { lea, ben, channel } = await own();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    answer = () => ({ status: 500 });
+    await say(lea, channel, "one");
+    expect(await drain()).toEqual({ sent: 0, dropped: 0, failed: 1 });
+    answer = () => ({ status: 201 });
+    await say(ben, channel, "two");
+    expect(await drain()).toEqual({ sent: 1, dropped: 0, failed: 0 });
+    // And a sent one still starts it.
+    await say(lea, channel, "three");
+    expect(await drain()).toEqual({ sent: 0, dropped: 1, failed: 0 });
+  });
+
+  it("is sent by the clock when a round left one waiting", async () => {
+    // Fable's review of W1: a notice a round left (cut off by its deadline,
+    // or brought by a write during it) waited for the next write.
+    const { lea, human, channel } = await own();
+    expect(await nextPersonDue(db())).toBeNull();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await say(lea, channel, "one");
+    const due = await nextPersonDue(db());
+    expect(due).not.toBeNull();
+    // Nothing a drain would take: no keys, or the kill switch.
+    delete process.env.WEB_PUSH_PRIVATE_KEY;
+    expect(await nextPersonDue(db())).toBeNull();
+    process.env.WEB_PUSH_PRIVATE_KEY = VAPID.privateKey;
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    expect(await nextPersonDue(db())).toBeNull();
+    delete process.env.UNPROMPTED_READ_ONLY;
+    usePersonDeliver(deliver);
+    expect(await checkDue(Date.now() + 60_000)).toBe("worked");
+    expect(sent).toHaveLength(1);
+    expect(await pending(human)).toBe(0);
+    expect(await nextPersonDue(db())).toBeNull();
+  });
+
+  it("goes to one person per browser: turning it on moves it", async () => {
+    // Fable's review of W1: in a browser two people share, the first
+    // person's notices kept coming after the second turned them on.
+    const { lea, human, channel } = await own();
+    const shared = device();
+    await subscribePerson(db(), "google-p", shared.sub, null);
+    expect(await personPushIsOn(db(), "google-p", shared.sub.endpoint)).toBe(
+      true,
+    );
+    expect(await subscribePerson(db(), "google-q", shared.sub, null)).toEqual({
+      devices: 1,
+    });
+    expect(await personPushIsOn(db(), "google-p", shared.sub.endpoint)).toBe(
+      false,
+    );
+    expect(await personPushIsOn(db(), "google-q", shared.sub.endpoint)).toBe(
+      true,
+    );
+    expect(await personPushDevices(db(), human)).toBe(0);
+    const ends = await db()<{ ended: string }[]>`
+      SELECT ended FROM person_push_subs WHERE ended IS NOT NULL`;
+    expect(ends).toEqual([{ ended: "moved" }]);
+    await say(lea, channel, "one");
+    expect(await pending(human)).toBe(0);
+    expect(await drain()).toEqual({ sent: 0, dropped: 0, failed: 0 });
+    // Moving it back to P is the same.
+    await subscribePerson(db(), "google-p", shared.sub, null);
+    expect(await personPushIsOn(db(), "google-q", shared.sub.endpoint)).toBe(
+      false,
+    );
+    await say(lea, channel, "two");
+    expect(await drain()).toEqual({ sent: 1, dropped: 0, failed: 0 });
+    // Never on for someone who isn't signed in to it, or for a stranger's
+    // address.
+    expect(await personPushIsOn(db(), "google-z", shared.sub.endpoint)).toBe(
+      false,
+    );
+    expect(await personPushIsOn(db(), "google-p", device().sub.endpoint)).toBe(
+      false,
+    );
   });
 
   it("table rows can't be changed or taken back", async () => {

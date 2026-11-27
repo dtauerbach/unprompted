@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { turnOffPush, turnOnPush } from "./actions";
+import { pushIsOn, turnOffPush, turnOnPush } from "./actions";
 import type { PushCopy } from "./copy-keys";
 
 // Turns notices on or off for the browser the person is in (W1b). The site's
 // service worker (public/sw.js) shows a notice when one arrives; nothing is
 // cached. The VAPID public key comes from the page, never the bundle.
+// Whether notices are on is the site's word, not the browser's: a browser
+// keeps a subscription another person turned on here, which the site moved
+// or ended since. Turning off always shows while they're on, so the kill
+// switch or a last group gone never leaves a person unable to stop them;
+// turning on shows only where it can work (canTurnOn).
 
 type State = "checking" | "unsupported" | "denied" | "off" | "on";
 
@@ -27,9 +32,11 @@ async function registration(): Promise<ServiceWorkerRegistration> {
 
 export function PushToggle({
   publicKey,
+  canTurnOn,
   t,
 }: {
   publicKey: string;
+  canTurnOn: boolean;
   t: Record<PushCopy, string>;
 }) {
   const [state, setState] = useState<State>("checking");
@@ -51,7 +58,9 @@ export function PushToggle({
     }
     registration()
       .then((r) => r.pushManager.getSubscription())
-      .then((sub) => setState(sub ? "on" : "off"))
+      .then(async (sub) =>
+        setState(sub && (await pushIsOn(sub.endpoint)).on ? "on" : "off"),
+      )
       .catch(() => setState("unsupported"));
   }, []);
 
@@ -102,6 +111,7 @@ export function PushToggle({
     }
   }
 
+  if (!canTurnOn && state !== "on") return null;
   const button =
     "rounded-md border border-neutral-300 px-3 py-1 text-sm hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:hover:bg-neutral-800";
   return (

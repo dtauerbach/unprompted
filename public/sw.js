@@ -7,8 +7,12 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Only a path on this site: one slash, then path segments, never "//",
+// which a browser reads as another host. The opened address is checked
+// against this site's origin again in notificationclick.
 function samePath(url) {
-  return typeof url === "string" && /^\/[A-Za-z0-9/_-]*$/.test(url)
+  return typeof url === "string" &&
+    /^\/[A-Za-z0-9_-]*(\/[A-Za-z0-9_-]+)*$/.test(url)
     ? url
     : "/account";
 }
@@ -36,10 +40,13 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = new URL(
+  let target = new URL(
     samePath(event.notification.data?.url),
     self.location.origin,
-  ).href;
+  );
+  if (target.origin !== self.location.origin)
+    target = new URL("/account", self.location.origin);
+  const url = target.href;
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })

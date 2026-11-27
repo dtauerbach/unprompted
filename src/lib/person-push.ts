@@ -55,6 +55,9 @@ export function checkEndpoint(endpoint: string): URL | null {
   if (url.protocol !== "https:" || url.port !== "" || url.username) return null;
   if (url.password) return null;
   if (!PUSH_HOSTS.some((h) => h.test(url.hostname))) return null;
+  // What's kept is the parsed address, which escapes what the input didn't:
+  // held to the same length, so the sealed secret always fits.
+  if (url.href.length > MAX_ENDPOINT) return null;
   return url;
 }
 
@@ -100,11 +103,35 @@ function refuseUnless(ok: boolean) {
     );
 }
 
+// A sealed secret is kept only for a device's newest row with no end, so the
+// devices in force are read from the secrets, never every row ever written.
 async function liveDevices(tx: Tx | postgres.Sql, humanId: number) {
   return tx<{ id: string; device: string; host: string }[]>`
-    SELECT p.id, p.device, p.host FROM person_push_subs p
-     WHERE p.human_id = ${humanId} AND person_push_live(p.id)
+    SELECT p.id, p.device, p.host
+      FROM person_push_secrets x JOIN person_push_subs p ON p.id = x.sub_id
+     WHERE x.human_id = ${humanId} AND p.ended IS NULL
      ORDER BY p.id`;
+}
+
+// Whether notices are on for this person in the browser with this address,
+// so the account page shows what the site will do, not what the browser
+// remembers (another person may have taken the browser over, the push
+// service may have ended it).
+export async function personPushIsOn(
+  sql: postgres.Sql,
+  authUserId: string,
+  endpoint: string,
+): Promise<boolean> {
+  const url = checkEndpoint(endpoint);
+  if (!url) return false;
+  const [r] = await sql<{ on: boolean }[]>`
+    SELECT EXISTS (
+      SELECT 1 FROM person_push_secrets x
+        JOIN person_push_subs p ON p.id = x.sub_id
+        JOIN humans h ON h.id = x.human_id
+       WHERE h.auth_user_id = ${authUserId} AND x.device = ${deviceOf(url.href)}
+         AND p.ended IS NULL) AS on`;
+  return r?.on === true;
 }
 
 // Turns push on for the browser that subscribed. Saving the same device
@@ -136,8 +163,10 @@ export async function subscribePerson(
   );
   return sql.begin(async (tx) => {
     const humanId = await ensureHuman(tx, authUserId);
-    // One person's changes queue behind each other, so two at once can't
-    // pass the device cap.
+    // The device first, then the person, always: two people turning it on
+    // in one browser at once queue on the device, and one person's changes
+    // queue behind each other, so two at once can't pass the device cap.
+    await tx`SELECT pg_advisory_xact_lock(hashtext('person-push-device'), hashtext(${device}))`;
     await tx`SELECT pg_advisory_xact_lock(hashtext('person-push'), ${humanId}::int)`;
     await consume(tx, personPushRules(humanId));
     const live = await liveDevices(tx, humanId);
@@ -160,6 +189,22 @@ export async function subscribePerson(
       INSERT INTO person_push_secrets (sub_id, human_id, device, key_version, iv, sealed)
       VALUES (${row.id}, ${humanId}, ${device}, ${sealed.key_version},
               ${sealed.iv}, ${sealed.sealed})`;
+    // A browser is live for one person at most: anyone else who had it on
+    // here (a shared browser, signed out without turning it off) stops
+    // getting notices on it, and this person never gets theirs.
+    const others = await tx<{ human_id: string }[]>`
+      SELECT x.human_id FROM person_push_secrets x
+        JOIN person_push_subs p ON p.id = x.sub_id
+       WHERE x.device = ${device} AND x.human_id <> ${humanId} AND p.ended IS NULL
+       ORDER BY x.human_id`;
+    for (const o of others)
+      await endDevice(
+        tx,
+        Number(o.human_id),
+        device,
+        (url as URL).hostname,
+        "moved",
+      );
     await logAction(tx, {
       action: "human.push.subscribe",
       botId: null,
@@ -211,7 +256,7 @@ async function endDevice(
   humanId: number,
   device: string,
   host: string,
-  why: "removed" | "gone",
+  why: "removed" | "gone" | "moved",
 ) {
   await tx`
     INSERT INTO person_push_subs (human_id, device, host, ended)
@@ -226,7 +271,46 @@ export async function personPushDevices(
   return (await liveDevices(sql, humanId)).length;
 }
 
-type Claimed = { human_id: string; channel_id: string; sent: boolean };
+// When a person's notice that waits may go: the oldest waiting mark, or
+// null when none waits or notices can't be sent (no VAPID keys, or the kill
+// switch), so the clock never wakes for a mark no drain would take. The
+// clock reads it with the pushes' soonest time (src/lib/due-check.ts), so a
+// notice a round left waiting goes out on a quiet site too.
+export async function nextPersonDue(sql: postgres.Sql): Promise<Date | null> {
+  if (isReadOnly() || !vapidConfig()) return null;
+  const [r] = await sql<{ due: Date | null }[]>`
+    SELECT min(pending_since) AS due FROM person_push_state
+     WHERE pending_since IS NOT NULL`;
+  return r?.due ?? null;
+}
+
+// The sender in use: the network's, or a stand-in a test puts in, so the
+// clock's own drain (src/lib/due-check.ts) can be driven without one.
+let personDeliverer: DeliverBytes = httpsDeliverBytes;
+export function usePersonDeliver(d: DeliverBytes | null): void {
+  personDeliverer = d ?? httpsDeliverBytes;
+}
+
+type Claimed = {
+  human_id: string;
+  channel_id: string;
+  // As text, to the microsecond, and sent back as text: a Date (which the
+  // driver makes of any value it sends as a time) would cut them, and
+  // unmark() compares the mark exactly.
+  prev: string | null;
+  sent: boolean;
+  mark: string | null;
+};
+
+// Puts back when a notice last went for a channel whose send reached no
+// device, unless another drain has marked it since.
+async function unmark(sql: postgres.Sql, c: Claimed) {
+  await sql`
+    UPDATE person_push_state
+       SET last_sent_at = ${c.prev}::text::timestamptz
+     WHERE human_id = ${c.human_id} AND channel_id = ${c.channel_id}
+       AND last_sent_at IS NOT DISTINCT FROM ${c.mark}::text::timestamptz`;
+}
 
 // Sends what's waiting: one notice per channel a bot wrote in, to each of
 // its person's devices, unless one went for that channel in the last
@@ -259,27 +343,30 @@ export async function drainPersonPushes(
   if (isReadOnly()) return out;
   const vapid = deps.vapid === undefined ? vapidConfig() : deps.vapid;
   if (!vapid) return out;
-  const deliver = deps.deliver ?? httpsDeliverBytes;
+  const deliver = deps.deliver ?? personDeliverer;
   const now = deps.now ?? Date.now;
   if (deps.until !== undefined && now() >= deps.until) return out;
-  const claimed = await sql.begin(async (tx) => {
-    const rows = await tx<Claimed[]>`
-      SELECT s.human_id, s.channel_id,
+  // One statement, so no row stays locked across round trips: a row whose
+  // notice went inside the gap is only cleared; any other is marked sent now
+  // and keeps when the last one went (prev), so a send that reaches no
+  // device can put it back and the gap never starts on a failure.
+  const claimed = await sql<Claimed[]>`
+    WITH c AS (
+      SELECT s.human_id, s.channel_id, s.last_sent_at AS prev,
              (s.last_sent_at IS NOT NULL AND s.last_sent_at >
                 now() - make_interval(secs => ${PERSON_PUSH_GAP_SECONDS})) AS sent
         FROM person_push_state s
        WHERE s.pending_since IS NOT NULL
        ORDER BY s.pending_since
        LIMIT ${deps.limit ?? 20}
-       FOR UPDATE SKIP LOCKED`;
-    for (const r of rows)
-      await tx`
-        UPDATE person_push_state
-           SET pending_since = NULL,
-               last_sent_at = CASE WHEN ${r.sent} THEN last_sent_at ELSE now() END
-         WHERE human_id = ${r.human_id} AND channel_id = ${r.channel_id}`;
-    return rows;
-  });
+       FOR UPDATE SKIP LOCKED)
+    UPDATE person_push_state s
+       SET pending_since = NULL,
+           last_sent_at = CASE WHEN c.sent THEN s.last_sent_at ELSE now() END
+      FROM c
+     WHERE s.human_id = c.human_id AND s.channel_id = c.channel_id
+    RETURNING c.human_id, c.channel_id, c.prev::text AS prev, c.sent,
+              s.last_sent_at::text AS mark`;
   if (claimed.length === 0) return out;
   const copy = await copyInForce(sql);
   for (const [i, c] of claimed.entries()) {
@@ -287,7 +374,8 @@ export async function drainPersonPushes(
       for (const r of claimed.slice(i).filter((r) => !r.sent))
         await sql`
           UPDATE person_push_state
-             SET pending_since = coalesce(pending_since, now()), last_sent_at = NULL
+             SET pending_since = coalesce(pending_since, now()),
+                 last_sent_at = ${r.prev}::text::timestamptz
            WHERE human_id = ${r.human_id} AND channel_id = ${r.channel_id}`;
       out.deferred = claimed.length - i;
       break;
@@ -306,6 +394,7 @@ export async function drainPersonPushes(
          WHERE b.owner_id = ${c.human_id} AND b.frozen_at IS NULL) AS ok`;
     if (!visible?.ok) {
       out.dropped++;
+      await unmark(sql, c);
       continue;
     }
     const payload = Buffer.from(
@@ -326,10 +415,11 @@ export async function drainPersonPushes(
       }[]
     >`
       SELECT p.id, p.device, p.host, x.key_version, x.iv, x.sealed
-        FROM person_push_subs p JOIN person_push_secrets x ON x.sub_id = p.id
-       WHERE p.human_id = ${c.human_id} AND person_push_live(p.id)
+        FROM person_push_secrets x JOIN person_push_subs p ON p.id = x.sub_id
+       WHERE x.human_id = ${c.human_id} AND p.ended IS NULL
        ORDER BY p.id`;
     const humanId = Number(c.human_id);
+    let delivered = false;
     for (const s of subs) {
       const opened = openSecret(humanId, Number(s.id), s, "person-push");
       const parsed = opened ? parseSecret(opened) : null;
@@ -356,8 +446,10 @@ export async function drainPersonPushes(
       );
       const ok = d.status !== null && d.status >= 200 && d.status < 300;
       const gone = d.status === 404 || d.status === 410;
-      if (ok) out.sent++;
-      else out.failed++;
+      if (ok) {
+        out.sent++;
+        delivered = true;
+      } else out.failed++;
       // A push service that says the subscription is gone ends it; any
       // other failure is tried again with the next notice, which the gap
       // already spaces out.
@@ -381,6 +473,7 @@ export async function drainPersonPushes(
           });
       });
     }
+    if (!delivered) await unmark(sql, c);
   }
   return out;
 }

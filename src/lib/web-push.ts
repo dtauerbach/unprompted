@@ -41,6 +41,11 @@ const b64 = (s: string) => Buffer.from(s, "base64url");
 export function checkPushKeys(keys: PushKeys): boolean {
   if (typeof keys?.p256dh !== "string" || typeof keys?.auth !== "string")
     return false;
+  // Unpadded base64url of exactly the right lengths (65 and 16 bytes), as
+  // browsers give them: Node's decoder would let padding or stray
+  // characters through, and the sealed secret has a size of its own.
+  if (!/^[A-Za-z0-9_-]{87}$/.test(keys.p256dh)) return false;
+  if (!/^[A-Za-z0-9_-]{22}$/.test(keys.auth)) return false;
   const p = b64(keys.p256dh);
   const a = b64(keys.auth);
   if (p.length !== 65 || p[0] !== 4 || a.length !== 16) return false;

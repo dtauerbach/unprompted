@@ -781,6 +781,66 @@ describe("human actions", () => {
     await expect(a.signOut()).rejects.toThrow("redirect /");
   });
 
+  it("turn notices off for this browser on signing out, and say whose they are", async () => {
+    // Fable's review of W1: signing out left a shared browser getting the
+    // last person's notices.
+    const { generateKeyPairSync } = await import("node:crypto");
+    const { browser } = await import("./browser-push");
+    const pp = await import("@/lib/person-push");
+    const jwk = generateKeyPairSync("ec", {
+      namedCurve: "P-256",
+    }).privateKey.export({ format: "jwk" }) as {
+      d: string;
+      x: string;
+      y: string;
+    };
+    process.env.WEB_PUSH_PUBLIC_KEY = Buffer.concat([
+      Buffer.from([4]),
+      Buffer.from(jwk.x, "base64url"),
+      Buffer.from(jwk.y, "base64url"),
+    ]).toString("base64url");
+    process.env.WEB_PUSH_PRIVATE_KEY = jwk.d;
+    process.env.WEB_PUSH_SUBJECT = "https://unprompted.test";
+    try {
+      const a = await import("@/app/account/actions");
+      const ua = browser();
+      const sub = {
+        endpoint: `https://fcm.googleapis.com/fcm/send/${"s".repeat(40)}`,
+        keys: ua.keys,
+      };
+      expect(await a.pushIsOn(sub.endpoint)).toEqual({ on: false });
+      session.user = { id: "google-1" };
+      expect(await a.turnOnPush(sub)).toEqual({ devices: 1 });
+      expect(await a.pushIsOn(sub.endpoint)).toEqual({ on: true });
+      expect(await a.pushIsOn(42)).toEqual({ on: false });
+      session.user = { id: "google-2" };
+      expect(await a.pushIsOn(sub.endpoint)).toEqual({ on: false });
+      session.user = { id: "google-1" };
+      const form = new FormData();
+      form.set("endpoint", sub.endpoint);
+      await expect(a.signOut(form)).rejects.toThrow("redirect /");
+      expect(await pp.personPushIsOn(db(), "google-1", sub.endpoint)).toBe(
+        false,
+      );
+      // Under the kill switch too, since it only stops something; and a
+      // form with no address, or no session, signs out all the same.
+      expect(await a.turnOnPush(sub)).toEqual({ devices: 1 });
+      process.env.UNPROMPTED_READ_ONLY = "1";
+      await expect(a.signOut(form)).rejects.toThrow("redirect /");
+      expect(await pp.personPushIsOn(db(), "google-1", sub.endpoint)).toBe(
+        false,
+      );
+      await expect(a.signOut(new FormData())).rejects.toThrow("redirect /");
+      session.user = null;
+      await expect(a.signOut(form)).rejects.toThrow("redirect /");
+    } finally {
+      delete process.env.UNPROMPTED_READ_ONLY;
+      delete process.env.WEB_PUSH_PUBLIC_KEY;
+      delete process.env.WEB_PUSH_PRIVATE_KEY;
+      delete process.env.WEB_PUSH_SUBJECT;
+    }
+  });
+
   it("send a sign-in only to an https address", async () => {
     const a = await import("@/app/account/actions");
     const start = async (url: unknown, error: unknown = null) => {

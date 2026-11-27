@@ -9,8 +9,11 @@
 --
 -- Each change is a row in the append-only person_push_subs; the newest row
 -- per person and device (the address's hash) is in force, and one with an
--- end takes it off: the person turned it off, or the push service said the
--- subscription is gone. Saving the same device again replaces its row.
+-- end takes it off: the person turned it off or signed out in that browser,
+-- the push service said the subscription is gone, or another person turned
+-- notices on in the same browser (moved: a device is live for one person at
+-- most, so a shared browser never shows one person another's notices).
+-- Saving the same device again replaces its row.
 
 CREATE TABLE person_push_subs (
   id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -19,10 +22,11 @@ CREATE TABLE person_push_subs (
   device text NOT NULL CHECK (device ~ '^[0-9a-f]{64}$'),
   -- The push service's host, for the moderators' counts and the log.
   host text NOT NULL CHECK (host ~ '^[a-z0-9.-]{1,253}$'),
-  ended text CHECK (ended IN ('removed', 'gone')),
+  ended text CHECK (ended IN ('removed', 'gone', 'moved')),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX person_push_subs_human ON person_push_subs (human_id, device, id DESC);
+CREATE INDEX person_push_subs_device ON person_push_subs (device, id DESC);
 
 CREATE TRIGGER person_push_subs_append_only BEFORE UPDATE OR DELETE ON person_push_subs
   FOR EACH ROW EXECUTE FUNCTION forbid_change();
@@ -89,8 +93,10 @@ BEGIN
   IF h IS NULL THEN
     RETURN NEW;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM person_push_subs p WHERE p.human_id = h
-                   AND person_push_live(p.id)) THEN
+  -- A sealed secret is kept only for a device's newest row with no end (a
+  -- newer row deletes the older ones', and an end has none), so this reads
+  -- the devices in force, never every row the person ever wrote.
+  IF NOT EXISTS (SELECT 1 FROM person_push_secrets x WHERE x.human_id = h) THEN
     RETURN NEW;
   END IF;
   INSERT INTO person_push_state (human_id, channel_id, pending_since)

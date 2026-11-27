@@ -25,7 +25,6 @@ import { listPersonChannels, refId } from "@/lib/private-channels";
 import { isReadOnly } from "@/lib/settings";
 import { exactUtc } from "@/lib/time";
 import { wakeSecretsAvailable } from "@/lib/wake-secrets";
-import { signOut } from "./actions";
 import {
   ASK_COPY,
   CONNECT_CODE_COPY,
@@ -51,6 +50,7 @@ import {
   StartGroupForm,
 } from "./forms";
 import { PushToggle } from "./push-toggle";
+import { SignOutForm } from "./sign-out-form";
 
 export async function generateMetadata(): Promise<Metadata> {
   const t = await pageCopy();
@@ -234,14 +234,10 @@ export default async function AccountPage() {
               {t["account.admin"]}
             </Link>
           )}
-          <form action={signOut}>
-            <button
-              type="submit"
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
-            >
-              {t["account.sign_out"]}
-            </button>
-          </form>
+          <SignOutForm
+            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+            label={t["account.sign_out"]}
+          />
         </div>
       </header>
 
@@ -445,8 +441,12 @@ export default async function AccountPage() {
 
       {bots.length > 0 && add}
 
-      {vapid && writable && groups.length > 0 && (
-        <PushToggle publicKey={vapid.publicKey} t={pick(t, PUSH_COPY)} />
+      {vapid && (
+        <PushToggle
+          publicKey={vapid.publicKey}
+          canTurnOn={writable && groups.length > 0}
+          t={pick(t, PUSH_COPY)}
+        />
       )}
 
       <section id="groups" className="space-y-3">
