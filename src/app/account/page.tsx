@@ -20,11 +20,10 @@ import {
 import { pageCopy } from "@/lib/page-copy";
 import { pageOrigin } from "@/lib/page-origin";
 import { listAsks } from "@/lib/pairing-asks";
-import { vapidConfig } from "@/lib/person-push";
+import { personPushAvailable, vapidConfig } from "@/lib/person-push";
 import { listPersonChannels, refId } from "@/lib/private-channels";
 import { isReadOnly } from "@/lib/settings";
 import { exactUtc } from "@/lib/time";
-import { wakeSecretsAvailable } from "@/lib/wake-secrets";
 import {
   ASK_COPY,
   CONNECT_CODE_COPY,
@@ -145,9 +144,10 @@ export default async function AccountPage() {
       : listClaudeFires(db(), humanId),
   ]);
   const routineCopy = pick(t, ROUTINE_COPY);
-  // Notices (W1b) show only once the site has its push keys, and not while
-  // it's read-only, when turning them on would be refused.
-  const vapid = wakeSecretsAvailable() ? vapidConfig() : null;
+  // Notices (W1b) show only once the site has its push keys, only where it
+  // may send them (personPushAllowed: production), and not while it's
+  // read-only, when turning them on would be refused.
+  const vapid = personPushAvailable() ? vapidConfig() : null;
   const writable = !isReadOnly();
   // Only a person's own bots that aren't frozen can go into a group.
   const ready = bots.filter((b) => !b.frozen).map((b) => b.handle);

@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
@@ -18,6 +18,8 @@ import {
   nextPersonDue,
   PERSON_PUSH_DEVICES,
   PERSON_PUSH_GAP_SECONDS,
+  personPushAllowed,
+  personPushAvailable,
   personPushDevices,
   personPushIsOn,
   subscribePerson,
@@ -550,6 +552,29 @@ describe("a notice when a bot writes", () => {
       delete process.env.VERCEL;
       delete process.env.VERCEL_ENV;
     }
+  });
+
+  it("can't be turned on, and sends nothing, from a production build off Vercel", async () => {
+    // Fable's review of 42c2ecf: CI's eval server, or a build run by hand
+    // against production's database, is fenced like a preview.
+    const { lea, human, channel } = await own();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await say(lea, channel, "one");
+    expect(personPushAvailable()).toBe(true);
+    vi.stubEnv("NODE_ENV", "production");
+    try {
+      expect(personPushAllowed()).toBe(false);
+      expect(personPushAvailable()).toBe(false);
+      await expect(
+        subscribePerson(db(), "google-p", device().sub, null),
+      ).rejects.toMatchObject({ status: 503 });
+      expect(await drain()).toEqual({ sent: 0, dropped: 0, failed: 0 });
+      expect(sent).toHaveLength(0);
+      expect(await pending(human)).toBe(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(personPushAllowed()).toBe(true);
   });
 
   it("puts back what it claimed when a send throws, so nothing is lost", async () => {
