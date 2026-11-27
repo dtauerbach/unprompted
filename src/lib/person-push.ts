@@ -276,8 +276,17 @@ export async function personPushDevices(
 // switch), so the clock never wakes for a mark no drain would take. The
 // clock reads it with the pushes' soonest time (src/lib/due-check.ts), so a
 // notice a round left waiting goes out on a quiet site too.
+// Only the production site sends people notices: any other Vercel deploy's
+// database is a branch of production's, sealed addresses and all, so a
+// preview given the same keys would otherwise reach real people's phones.
+// Off Vercel (a local run, a test, CI), the deliverer is a stand-in.
+export function personPushAllowed(): boolean {
+  if (process.env.VERCEL_ENV === "production") return true;
+  return !process.env.VERCEL;
+}
+
 export async function nextPersonDue(sql: postgres.Sql): Promise<Date | null> {
-  if (isReadOnly() || !vapidConfig()) return null;
+  if (isReadOnly() || !personPushAllowed() || !vapidConfig()) return null;
   const [r] = await sql<{ due: Date | null }[]>`
     SELECT min(pending_since) AS due FROM person_push_state
      WHERE pending_since IS NOT NULL`;
@@ -304,6 +313,25 @@ type Claimed = {
 
 // Puts back when a notice last went for a channel whose send reached no
 // device, unless another drain has marked it since.
+// Puts a claimed mark back as it was before the claim, waiting again, so the
+// next round (or the clock) sends it: for a channel a round ran out of time
+// for, or one whose send threw before it reached a device. Only while the
+// row still carries this claim's mark, so a notice another drain sent since
+// isn't undone.
+async function putBack(sql: postgres.Sql, c: Claimed) {
+  await sql`
+    UPDATE person_push_state
+       SET pending_since = coalesce(pending_since, now()),
+           last_sent_at = ${c.prev}::text::timestamptz
+     WHERE human_id = ${c.human_id} AND channel_id = ${c.channel_id}
+       AND last_sent_at IS NOT DISTINCT FROM ${c.mark}::text::timestamptz`;
+}
+
+// What sw.js shows of a notice: longer words from the copy store are cut
+// here, so the payload always fits a push (MAX_PLAINTEXT in web-push.ts).
+export const NOTICE_TITLE_MAX = 120;
+export const NOTICE_BODY_MAX = 300;
+
 async function unmark(sql: postgres.Sql, c: Claimed) {
   await sql`
     UPDATE person_push_state
@@ -340,12 +368,21 @@ export async function drainPersonPushes(
     failed: number;
     deferred?: number;
   } = { sent: 0, dropped: 0, failed: 0 };
-  if (isReadOnly()) return out;
+  if (isReadOnly() || !personPushAllowed()) return out;
   const vapid = deps.vapid === undefined ? vapidConfig() : deps.vapid;
   if (!vapid) return out;
+  const signer: Vapid = vapid;
   const deliver = deps.deliver ?? personDeliverer;
   const now = deps.now ?? Date.now;
-  if (deps.until !== undefined && now() >= deps.until) return out;
+  // Out of time already: nothing is claimed, but say what waits, so the
+  // round leaves it to the clock.
+  if (deps.until !== undefined && now() >= deps.until) {
+    const [w] = await sql<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM person_push_state
+       WHERE pending_since IS NOT NULL`;
+    if (w && w.n > 0) out.deferred = w.n;
+    return out;
+  }
   // One statement, so no row stays locked across round trips: a row whose
   // notice went inside the gap is only cleared; any other is marked sent now
   // and keeps when the last one went (prev), so a send that reaches no
@@ -368,22 +405,50 @@ export async function drainPersonPushes(
     RETURNING c.human_id, c.channel_id, c.prev::text AS prev, c.sent,
               s.last_sent_at::text AS mark`;
   if (claimed.length === 0) return out;
-  const copy = await copyInForce(sql);
+  // Nothing past the claim may lose what it claimed: a throw (a dropped
+  // connection, a copy read that fails) puts the marks back, waiting.
+  let copy: Awaited<ReturnType<typeof copyInForce>>;
+  try {
+    copy = await copyInForce(sql);
+  } catch (e) {
+    console.error(e);
+    const back = claimed.filter((r) => !r.sent);
+    for (const r of back) await putBack(sql, r);
+    if (back.length > 0) out.deferred = back.length;
+    return out;
+  }
+  let reached = false;
   for (const [i, c] of claimed.entries()) {
     if (deps.until !== undefined && now() >= deps.until) {
-      for (const r of claimed.slice(i).filter((r) => !r.sent))
-        await sql`
-          UPDATE person_push_state
-             SET pending_since = coalesce(pending_since, now()),
-                 last_sent_at = ${r.prev}::text::timestamptz
-           WHERE human_id = ${r.human_id} AND channel_id = ${r.channel_id}`;
-      out.deferred = claimed.length - i;
+      const back = claimed.slice(i).filter((r) => !r.sent);
+      for (const r of back) await putBack(sql, r);
+      if (back.length > 0) out.deferred = back.length;
       break;
     }
     if (c.sent) {
       out.dropped++;
       continue;
     }
+    reached = false;
+    try {
+      await sendChannel(c);
+    } catch (e) {
+      // A device that already took it keeps the gap; otherwise it waits.
+      console.error(e);
+      out.failed++;
+      if (!reached) {
+        await putBack(sql, c);
+        out.deferred = (out.deferred ?? 0) + 1;
+      }
+      continue;
+    }
+    if (!reached) await unmark(sql, c);
+  }
+  return out;
+
+  // One channel's notice to each of its person's devices, setting reached
+  // once one takes it. Its marks are left to the caller.
+  async function sendChannel(c: Claimed): Promise<void> {
     // Only while the person could open what the notice points at: a group
     // a moderator hasn't hidden, with one of their bots in it now and not
     // frozen (src/lib/peek.ts), so a notice never leads to a refusal.
@@ -394,13 +459,12 @@ export async function drainPersonPushes(
          WHERE b.owner_id = ${c.human_id} AND b.frozen_at IS NULL) AS ok`;
     if (!visible?.ok) {
       out.dropped++;
-      await unmark(sql, c);
-      continue;
+      return;
     }
     const payload = Buffer.from(
       JSON.stringify({
-        title: copy["account.push.notice_title"],
-        body: copy["account.push.notice_body"],
+        title: copy["account.push.notice_title"].slice(0, NOTICE_TITLE_MAX),
+        body: copy["account.push.notice_body"].slice(0, NOTICE_BODY_MAX),
         url: `/account/channels/${c.channel_id}`,
       }),
     );
@@ -419,7 +483,6 @@ export async function drainPersonPushes(
        WHERE x.human_id = ${c.human_id} AND p.ended IS NULL
        ORDER BY p.id`;
     const humanId = Number(c.human_id);
-    let delivered = false;
     for (const s of subs) {
       const opened = openSecret(humanId, Number(s.id), s, "person-push");
       const parsed = opened ? parseSecret(opened) : null;
@@ -434,7 +497,7 @@ export async function drainPersonPushes(
         {
           authorization: vapidAuthorization(
             parsed.endpoint,
-            vapid,
+            signer,
             Math.floor(now() / 1000),
           ),
           "content-encoding": "aes128gcm",
@@ -448,7 +511,7 @@ export async function drainPersonPushes(
       const gone = d.status === 404 || d.status === 410;
       if (ok) {
         out.sent++;
-        delivered = true;
+        reached = true;
       } else out.failed++;
       // A push service that says the subscription is gone ends it; any
       // other failure is tried again with the next notice, which the gap
@@ -473,9 +536,7 @@ export async function drainPersonPushes(
           });
       });
     }
-    if (!delivered) await unmark(sql, c);
   }
-  return out;
 }
 
 function parseSecret(raw: Buffer): { endpoint: string; keys: PushKeys } | null {

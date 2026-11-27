@@ -4,7 +4,8 @@ import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
-import { builtInCopy } from "@/lib/copy";
+import { addAdmin } from "@/lib/admins";
+import { builtInCopy, saveCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { checkDue, forgetDueMinute } from "@/lib/due-check";
 import { LIMITS } from "@/lib/limits";
@@ -12,6 +13,8 @@ import { postAsPerson } from "@/lib/person-messages";
 import {
   checkEndpoint,
   drainPersonPushes,
+  NOTICE_BODY_MAX,
+  NOTICE_TITLE_MAX,
   nextPersonDue,
   PERSON_PUSH_DEVICES,
   PERSON_PUSH_GAP_SECONDS,
@@ -495,13 +498,15 @@ describe("a notice when a bot writes", () => {
     await say(lea, channel, "one");
     await say(ben, second, "two");
     expect(await pending(human)).toBe(2);
-    // Past its deadline already: claims nothing.
+    // Past its deadline already: claims nothing, and says what waits, so
+    // the round leaves it to the clock (Fable's second review of W1).
     let t = 1_000;
     const late = { deliver, vapid: VAPID, now: () => t, until: 1_000 };
     expect(await drainPersonPushes(db(), late)).toEqual({
       sent: 0,
       dropped: 0,
       failed: 0,
+      deferred: 2,
     });
     expect(await pending(human)).toBe(2);
     // The first send runs the clock out: the second channel waits again.
@@ -522,6 +527,99 @@ describe("a notice when a bot writes", () => {
     expect(await pending(human)).toBe(1);
     expect(await drain()).toEqual({ sent: 1, dropped: 0, failed: 0 });
     expect(sent).toHaveLength(2);
+  });
+
+  it("sends nothing from a Vercel deploy but production's", async () => {
+    // Fable's second review of W1: a preview's database is a branch of
+    // production's, its sealed addresses included.
+    const { lea, human, channel } = await own();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await say(lea, channel, "one");
+    process.env.VERCEL = "1";
+    try {
+      for (const env of ["preview", "development"]) {
+        process.env.VERCEL_ENV = env;
+        expect(await drain()).toEqual({ sent: 0, dropped: 0, failed: 0 });
+        expect(await nextPersonDue(db())).toBeNull();
+      }
+      expect(sent).toHaveLength(0);
+      expect(await pending(human)).toBe(1);
+      process.env.VERCEL_ENV = "production";
+      expect(await drain()).toEqual({ sent: 1, dropped: 0, failed: 0 });
+    } finally {
+      delete process.env.VERCEL;
+      delete process.env.VERCEL_ENV;
+    }
+  });
+
+  it("puts back what it claimed when a send throws, so nothing is lost", async () => {
+    // Fable's second review of W1: a throw after the claim (a dropped
+    // connection, say) left every claimed channel marked sent, so its
+    // notice was lost and the next message inside the gap dropped.
+    const { lea, ben, human, channel } = await own();
+    const cy = await bot("cyd");
+    await link("google-p", cy);
+    const { channel: second } = await startChannel(
+      db(),
+      "google-p",
+      ["ben", "cyd"],
+      "ben",
+      null,
+    );
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await say(lea, channel, "one");
+    await say(ben, second, "two");
+    const throws = async () => {
+      throw new Error("connection dropped");
+    };
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      expect(
+        await drainPersonPushes(db(), { deliver: throws, vapid: VAPID }),
+      ).toEqual({ sent: 0, dropped: 0, failed: 2, deferred: 2 });
+    } finally {
+      console.error = quiet;
+    }
+    expect(await pending(human)).toBe(2);
+    // Nor did the gap start: both go on the next round.
+    expect(await drain()).toEqual({ sent: 2, dropped: 0, failed: 0 });
+  });
+
+  it("cuts long words from the copy store to what a browser shows", async () => {
+    // Fable's second review of W1: words past a push's size made every
+    // notice throw.
+    const { lea, channel } = await own();
+    const a = device();
+    await subscribePerson(db(), "google-p", a.sub, null);
+    const { humanId } = await addAdmin(
+      db(),
+      { authUserId: "google-admin" },
+      "Setup.",
+      "x",
+    );
+    for (const key of [
+      "account.push.notice_title",
+      "account.push.notice_body",
+    ] as const)
+      await saveCopy(db(), {
+        key,
+        body: "w".repeat(2000),
+        after: 0,
+        editor: { humanId, role: "admin", keyId: null },
+        ipHash: null,
+      });
+    await say(lea, channel, "one");
+    expect(await drain()).toEqual({ sent: 1, dropped: 0, failed: 0 });
+    const plain = JSON.parse(
+      browserDecrypt(
+        sent[0]?.body ?? Buffer.alloc(0),
+        a.ua.priv,
+        a.ua.auth,
+      ).toString("utf8"),
+    );
+    expect(plain.title).toBe("w".repeat(NOTICE_TITLE_MAX));
+    expect(plain.body).toBe("w".repeat(NOTICE_BODY_MAX));
   });
 
   it("never starts the gap on a send that reached no browser", async () => {
