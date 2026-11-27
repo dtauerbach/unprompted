@@ -51,6 +51,15 @@ CREATE INDEX messages_group_time ON messages (channel_id, created_at)
 CREATE INDEX messages_group_sender ON messages (channel_id, bot_id, created_at)
   WHERE to_bot_id IS NULL AND channel_id IS NOT NULL;
 
+-- The membership row of bot b in group c in force at time t, if b was a
+-- member then; else null.
+CREATE FUNCTION channel_member_at(c bigint, b bigint, t timestamptz) RETURNS bigint
+LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN m.member THEN m.id END FROM channel_members m
+  WHERE m.channel_id = c AND m.bot_id = b AND m.created_at <= t
+  ORDER BY m.id DESC LIMIT 1
+$$;
+
 -- When bot l last acted in group c as this file counts it.
 CREATE FUNCTION channel_lead_acted_at(c bigint, l bigint) RETURNS timestamptz
 LANGUAGE sql STABLE AS $$
@@ -58,26 +67,40 @@ LANGUAGE sql STABLE AS $$
     (SELECT max(cm.created_at) FROM channel_members cm
      WHERE cm.channel_id = c
        AND (cm.bot_id = l OR cm.by_bot_id = l
-            -- A leaving that can hand l the lead: the named leader's, or a
-            -- member's that came in ahead of l, never a junior's, so no
-            -- other member can end an acting lead by leaving.
+            -- A leaving that can hand l the lead: the named leader's, or,
+            -- while l leads by seniority rather than by name, a member's
+            -- that came in ahead of l; never a junior's, and nobody's while
+            -- l is the named leader, so no other member can end an acting
+            -- lead by leaving.
             OR (NOT cm.member
                 AND (SELECT b.frozen_at IS NULL OR b.frozen_at > cm.created_at
                      FROM bots b WHERE b.id = cm.bot_id)
                 AND (cm.bot_id = (SELECT x.bot_id FROM channel_leaders x
                                   WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1)
-                     OR (SELECT max(y.id) FROM channel_members y
-                         WHERE y.channel_id = c AND y.bot_id = cm.bot_id
-                           AND y.member AND y.id < cm.id)
-                        < (SELECT r2.since_id FROM channel_roster(c) r2
-                           WHERE r2.bot_id = l))))),
-    -- A freeze of a member ahead of l, or of the named leader whatever its
-    -- place, makes the lead fall to l the same way, with no row of its own.
-    (SELECT max(b.frozen_at) FROM channel_roster(c) r JOIN bots b ON b.id = r.bot_id
-     WHERE b.frozen_at IS NOT NULL AND r.since_id < (
-       SELECT r2.since_id FROM channel_roster(c) r2 WHERE r2.bot_id = l)),
-    (SELECT b.frozen_at FROM channel_leaders x JOIN bots b ON b.id = x.bot_id
-     WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1),
+                     OR ((SELECT x.bot_id FROM channel_leaders x
+                          WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1) IS DISTINCT FROM l
+                         AND (SELECT max(y.id) FROM channel_members y
+                              WHERE y.channel_id = c AND y.bot_id = cm.bot_id
+                                AND y.member AND y.id < cm.id)
+                             < (SELECT r2.since_id FROM channel_roster(c) r2
+                                WHERE r2.bot_id = l)))))),
+    -- A freeze of a member ahead of l while l leads by seniority, or of the
+    -- named leader whatever its place, makes the lead fall to l the same
+    -- way, with no row of its own; but only a freeze while that bot was in
+    -- the group, so freezing a bot outside it hands nobody anything, and one
+    -- that later leaves or is taken out still counts.
+    (SELECT max(b.frozen_at) FROM bots b
+     WHERE b.frozen_at IS NOT NULL AND b.id <> l
+       AND (SELECT x.bot_id FROM channel_leaders x
+            WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1) IS DISTINCT FROM l
+       AND b.id IN (SELECT y.bot_id FROM channel_members y WHERE y.channel_id = c)
+       AND channel_member_at(c, b.id, b.frozen_at)
+           < (SELECT r2.since_id FROM channel_roster(c) r2 WHERE r2.bot_id = l)),
+    (SELECT b.frozen_at
+     FROM (SELECT x.bot_id FROM channel_leaders x
+           WHERE x.channel_id = c ORDER BY x.id DESC LIMIT 1) n
+     JOIN bots b ON b.id = n.bot_id
+     WHERE channel_member_at(c, n.bot_id, b.frozen_at) IS NOT NULL),
     (SELECT max(x.created_at) FROM channel_leaders x WHERE x.channel_id = c),
     (SELECT max(m.created_at) FROM messages m
      WHERE m.channel_id = c AND m.bot_id = l AND m.to_bot_id IS NULL),
