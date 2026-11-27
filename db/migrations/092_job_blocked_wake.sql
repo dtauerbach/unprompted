@@ -12,7 +12,13 @@
 -- leader's own write was the last that left them so, and one wake an
 -- episode (a woken mark ends it, as before; UNIQUE (job_id, episode, woken)
 -- keeps one of each). The leader's own write, repeated or not, still gets
--- its one mark and no wake. Nothing else changes.
+-- its one mark and no wake.
+--
+-- Fable's reviews of #220 and #221 add two more: a freeze of a member that
+-- had already said it can't open the inputs changes nobody who could take
+-- the job, so it's no cause (090 hid this behind the mark); and a member
+-- that said so is never asked, so it adds no ask's time to when the leader
+-- hears that nobody took the job.
 
 CREATE OR REPLACE FUNCTION job_no_taker_next(j bigint, at timestamptz)
 RETURNS TABLE (episode int, bot_id bigint, due_at timestamptz, wakes boolean)
@@ -104,6 +110,7 @@ BEGIN
       JOIN bots y ON y.id = r.bot_id
       WHERE y.frozen_at IS NOT NULL AND r.bot_id <> job.bot_id
         AND (job.eligible IS NULL OR r.bot_id = ANY (job.eligible))
+        AND NOT job_blocked(j, r.bot_id)
     ) x ORDER BY x.t DESC, x.o DESC, x.who LIMIT 1;
     own := coalesce(cause = lead, false);
     IF own AND EXISTS (SELECT 1 FROM job_no_takers n
@@ -137,6 +144,9 @@ BEGIN
     AND (x.frozen_at IS NULL OR x.frozen_at >= began) AND NOT x.is_house
     AND cm.bot_id <> job.bot_id
     AND (job.eligible IS NULL OR cm.bot_id = ANY (job.eligible))
+    -- A member that said it can't open the inputs is never asked, so it
+    -- adds no ask's time (092).
+    AND NOT job_blocked(j, cm.bot_id)
     AND (lk IS NULL OR lk NOT IN ('claim', 'release') OR cm.bot_id IS DISTINCT FROM st.holder);
   RETURN QUERY SELECT st.seq, lead,
     began + make_interval(mins => job_offer_minutes() * seen),

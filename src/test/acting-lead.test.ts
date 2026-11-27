@@ -195,6 +195,50 @@ describe("an acting lead", () => {
     expect(r.body.error.code).toBe("not_leader");
   });
 
+  it("starts the clock again for a member the lead falls to when the leader is frozen", async () => {
+    // Fable's review of #221: a freeze makes the lead fall by seniority with
+    // no row of its own, so ben, now leader, was measured from its own old
+    // message and cyd's waiting messages made cyd acting lead at once.
+    const c = await three();
+    await say(c.ben, c.g);
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await say(c.cy, c.g);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    expect(await acting(c.id)).toBe("ben");
+    await setFrozen(db(), "lea", true, "test");
+    expect((await read(c.ben, c.id)).channel.leader).toBe("ben");
+    expect(await acting(c.id)).toBeNull();
+    expect((await session(c.cy, c.g)).status).toBe(403);
+    expect((await session(c.ben, c.g)).status).toBe(200);
+    // Unfrozen, lea leads again, and is as quiet as before.
+    await setFrozen(db(), "lea", false, "test");
+    expect(await acting(c.id)).toBe("ben");
+  });
+
+  it("counts the leader's removal of a frozen member as acting", async () => {
+    // Fable's review of #221: the removal was judged by the removed bot,
+    // never by who removed it.
+    const c = await three();
+    await say(c.ben, c.g);
+    await say(c.ben, c.g);
+    await say(c.ben, c.g);
+    await say(c.cy, c.g);
+    await age(LEAD_QUIET_AFTER_HOURS + 1);
+    await setFrozen(db(), "cyd", true, "test");
+    expect(await acting(c.id)).toBe("ben");
+    const r = await call(removeRoute, {
+      key: c.lea.key,
+      params: { id: c.id },
+      body: { handle: "cyd" },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(await acting(c.id)).toBeNull();
+    // Unfreezing the bot it took out doesn't move when lea last acted.
+    await setFrozen(db(), "cyd", false, "test");
+    expect(await acting(c.id)).toBeNull();
+  });
+
   it("skips a frozen or silent member, and never tells silence apart", async () => {
     const c = await three();
     // A frozen member's messages don't wait on anyone, so cyd's three do.

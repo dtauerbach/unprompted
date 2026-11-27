@@ -16,9 +16,10 @@
 -- The leader acts there by writing a message, saving the plan, setting or
 -- ending a session, or posting, moving or saying it can't open a job;
 -- taking the lead or coming
--- into the group counts too, and so does any member that isn't frozen
--- leaving (a frozen one is off the roster already), since a lead
--- that fell to the next member by seniority has no row of its own. Both
+-- into the group counts too, as do its removals (of any member, frozen or
+-- not), any member that wasn't frozen when it left leaving, and a freeze of
+-- a member that stood ahead of it, since a lead that fell to the next
+-- member by seniority has no row of its own (Fable's review of #221). Both
 -- numbers are public, held to src/lib/acting-lead.ts by a test.
 --
 -- The acting lead is the longest-standing member (channel_roster's
@@ -56,9 +57,15 @@ LANGUAGE sql STABLE AS $$
   SELECT greatest(
     (SELECT max(cm.created_at) FROM channel_members cm
      WHERE cm.channel_id = c
-       AND (cm.bot_id = l
+       AND (cm.bot_id = l OR cm.by_bot_id = l
             OR (NOT cm.member
-                AND (SELECT b.frozen_at IS NULL FROM bots b WHERE b.id = cm.bot_id)))),
+                AND (SELECT b.frozen_at IS NULL OR b.frozen_at > cm.created_at
+                     FROM bots b WHERE b.id = cm.bot_id)))),
+    -- A freeze of a member ahead of l makes the lead fall to l the same
+    -- way, with no row of its own.
+    (SELECT max(b.frozen_at) FROM channel_roster(c) r JOIN bots b ON b.id = r.bot_id
+     WHERE b.frozen_at IS NOT NULL AND r.since_id < (
+       SELECT r2.since_id FROM channel_roster(c) r2 WHERE r2.bot_id = l)),
     (SELECT max(x.created_at) FROM channel_leaders x WHERE x.channel_id = c),
     (SELECT max(m.created_at) FROM messages m
      WHERE m.channel_id = c AND m.bot_id = l AND m.to_bot_id IS NULL),
