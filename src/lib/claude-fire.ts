@@ -124,7 +124,7 @@ export async function setClaudeFire(
       VALUES (${row.id}, ${bot.id}, ${sealed.key_version}, ${sealed.iv},
               ${sealed.sealed})`;
     await tx`
-      UPDATE push_state SET pending_since = NULL, fire_check = false
+      UPDATE push_state SET pending_since = NULL, fire_check = false, owed_wait = false
       WHERE bot_id = ${bot.id} AND fire_check`;
     await tx`
       INSERT INTO fire_state (bot_id) VALUES (${bot.id})
@@ -175,7 +175,7 @@ export async function removeClaudeFire(
       INSERT INTO fire_triggers (bot_id, human_id, ended)
       VALUES (${id}, ${humanId}, 'removed')`;
     await tx`
-      UPDATE push_state SET pending_since = NULL, fire_check = false
+      UPDATE push_state SET pending_since = NULL, fire_check = false, owed_wait = false
       WHERE bot_id = ${id} AND NOT wake_method_live(${id})`;
     await logAction(tx, {
       action: "human.bot.claude_fire_remove",

@@ -262,7 +262,7 @@ export async function removePushUrl(
     await tx`
       INSERT INTO push_urls (bot_id, key_id) VALUES (${caller.botId}, ${caller.keyId})`;
     await tx`
-      UPDATE push_state SET pending_since = NULL
+      UPDATE push_state SET pending_since = NULL, owed_wait = false
       WHERE bot_id = ${caller.botId} AND NOT event_sub_live(${caller.botId})
         AND NOT fire_trigger_live(${caller.botId})`;
     await logAction(tx, {
@@ -658,7 +658,7 @@ async function drainBatch(
         await tx`
           UPDATE push_state
           SET pending_since = now() + make_interval(secs => ${PUSH_GAP_SECONDS}),
-              fire_check = false
+              fire_check = false, owed_wait = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
@@ -666,7 +666,7 @@ async function drainBatch(
       // Nothing to wake it by any more: nothing waits.
       if (!any) {
         await tx`
-          UPDATE push_state SET pending_since = NULL, fire_check = false
+          UPDATE push_state SET pending_since = NULL, fire_check = false, owed_wait = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
@@ -674,7 +674,7 @@ async function drainBatch(
       // pending until then, so arrivals in between go out as one.
       if (!usable[0] && due) {
         await tx`
-          UPDATE push_state SET pending_since = ${due}, fire_check = false
+          UPDATE push_state SET pending_since = ${due}, fire_check = false, owed_wait = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
@@ -685,7 +685,7 @@ async function drainBatch(
         await tx`
           UPDATE push_state
           SET pending_since = now() + make_interval(secs => ${PUSH_GAP_SECONDS}),
-              fire_check = false
+              fire_check = false, owed_wait = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
@@ -703,7 +703,7 @@ async function drainBatch(
         await tx`
           UPDATE push_state
           SET pending_since = now() + make_interval(secs => ${wait}),
-              fire_check = false
+              fire_check = false, owed_wait = false
           WHERE bot_id = ${r.bot_id}`;
         continue;
       }
@@ -713,7 +713,8 @@ async function drainBatch(
       // it (src/lib/fire-ack.ts).
       await tx`
         UPDATE push_state
-        SET pending_since = ${owed}, last_sent_at = now(), fire_check = false
+        SET pending_since = ${owed}, last_sent_at = now(), fire_check = false,
+            owed_wait = ${owed !== null}
         WHERE bot_id = ${r.bot_id}`;
       // Each method it may try marks its send in flight, in this
       // transaction (a routine's fire, which can outlast the push gap).
@@ -769,7 +770,8 @@ async function drainBatch(
           await sql`
             UPDATE push_state
             SET pending_since = LEAST(COALESCE(pending_since, ${retry}), ${retry}),
-                fire_check = false
+                fire_check = false,
+                owed_wait = owed_wait AND COALESCE(pending_since <= ${retry}, false)
             WHERE bot_id = ${botId}
               AND (pending_since IS NULL OR NOT fire_check)`;
       } catch (e) {

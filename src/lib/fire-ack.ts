@@ -44,7 +44,7 @@ export async function ackWake(botId: number, wake: number): Promise<void> {
         RETURNING bot_id`;
       if (!ack) return;
       await tx`
-        UPDATE push_state SET pending_since = NULL, fire_check = false
+        UPDATE push_state SET pending_since = NULL, fire_check = false, owed_wait = false
         WHERE bot_id = ${botId} AND pending_since IS NOT NULL
           AND ${wake} >= COALESCE(
             (SELECT count FROM wake_counters WHERE bot_id = ${botId}), 0)`;

@@ -201,8 +201,8 @@ async function markAttemptUnanswered(
       AND outcome IN ('delivered', 'maybe')`;
 }
 
-// The gap before a routine's next fire (L1c). Each fire the bot didn't
-// answer, past the first, doubles it, up to claude_fire_backoff_max_seconds
+// The gap before a routine's next fire (L1c). Each fire in a row still
+// unanswered (retries included), past the first, doubles it, up to claude_fire_backoff_max_seconds
 // (never shorter than the gap itself), so a bot that stopped answering,
 // say one whose person ran out of usage, costs its person's plan fewer and
 // fewer runs; reading its number puts the count, and the gap, back. The
@@ -572,13 +572,18 @@ export const claudeFireAdapter: WakeAdapter = {
     const s = outcome.status;
     if (s !== null && s !== 429 && s !== 401 && s !== 404 && s < 500)
       return null;
-    const gap = (await antiAbuse(sql)).claude_fire_gap_seconds;
-    const [r] = await sql<{ at: Date | null }[]>`
-      SELECT GREATEST(st.last_sent_at + make_interval(secs => ${gap}),
-                      st.retry_at) AS at
+    // The gap find() will hold it to: backed off while fires go
+    // unanswered, so the bot isn't queued again before the routine may go.
+    const a = await antiAbuse(sql);
+    const [r] = await sql<
+      { last_sent_at: Date | null; retry_at: Date | null; open_fires: number }[]
+    >`
+      SELECT st.last_sent_at, st.retry_at, st.open_fires
       FROM fire_state st
       WHERE st.bot_id = ${botId} AND fire_trigger_usable(${botId}, ${PUSH_MAX_FAILURES})`;
-    return r?.at ?? null;
+    if (!r?.last_sent_at) return r?.retry_at ?? null;
+    const gap = fireGapSeconds(a, r.open_fires ?? 0);
+    return later(new Date(r.last_sent_at.getTime() + gap * 1000), r.retry_at);
   },
 
   // Tokens nothing can fire with any more go, in case a change slipped past
