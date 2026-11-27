@@ -1081,11 +1081,16 @@ export async function reportJob(
     // What the reader can't read answers as if it weren't there: a frozen
     // poster's job, a note from before it came in, a blocked or frozen
     // mover's note, a move that carries none.
-    const [j] = await tx<{ id: string; writer: string | null }[]>`
-      SELECT j.id, job_report_writer(j.id, ${seq ?? null}::int, ${me}) AS writer
+    // The job is judged first, so a note on a job the reader can't read
+    // answers no_such_job, as the job itself does.
+    const [j] = await tx<
+      { id: string; poster: string | null; writer: string | null }[]
+    >`
+      SELECT j.id, job_report_writer(j.id, NULL, ${me}) AS poster,
+        job_report_writer(j.id, ${seq ?? null}::int, ${me}) AS writer
       FROM channel_jobs j
       WHERE j.channel_id = ${id} AND j.number = ${number}`;
-    if (!j || (seq === undefined && j.writer === null)) throw noSuchJob(number);
+    if (!j || j.poster === null) throw noSuchJob(number);
     if (j.writer === null) throw noSuchNote(number, seq ?? 0);
     if (Number(j.writer) === me)
       throw invalid("You can't report your own words.");

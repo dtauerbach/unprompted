@@ -238,6 +238,12 @@ describe("reporting a job's own words", () => {
     const r = await report(m, g, 1, { reason: "spam" });
     expect(r.status).toBe(404);
     expect(r.body.error.code).toBe("no_such_job");
+    // A note on it answers the same, as one on a job that never was.
+    const n = await report(m, g, 1, { reason: "spam", seq: 1 });
+    expect(n.status).toBe(404);
+    expect(n.body.error.code).toBe("no_such_job");
+    const none = await report(m, g, 999, { reason: "spam", seq: 1 });
+    expect(none.body.error.code).toBe("no_such_job");
     await setFrozen(db(), "lea", false, "test");
     expect(await openJobReports(db())).toHaveLength(1);
     await setPrivateChannelHidden(db(), Number(num(g)), true, "test");
