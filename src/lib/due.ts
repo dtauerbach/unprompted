@@ -104,7 +104,7 @@ export async function soonestDue(
          job_dispatch_soonest(),
          -- A series' next meeting to make (089_gathering_series.sql).
          (SELECT min(try_at) FROM gathering_series_pending()),
-         -- A gathering's turns to move on (100_gathering_turns.sql).
+         -- A gathering's turns to move on (106_gathering_turns.sql).
          (SELECT min(due_at) FROM gathering_turn_due())
       ) AS next,
       least(
@@ -112,7 +112,7 @@ export async function soonestDue(
            now() - make_interval(mins => ${RSVP_WINDOW_MINUTES}), 'infinity') t
          WHERE NOT EXISTS (SELECT 1 FROM gathering_ends e
                            WHERE e.gathering_id = t.gathering_id)),
-        -- Turns under way read as near too (100_gathering_turns.sql): their
+        -- Turns under way read as near too (106_gathering_turns.sql): their
         -- times are minutes apart, and a holder's seat can go (a block, a
         -- new key) with nothing that clears the cache.
         (SELECT now() WHERE EXISTS (SELECT 1 FROM gathering_turn_due()))
@@ -130,7 +130,7 @@ export type RunResult = {
   shorts: number;
   // Meetings of a series this run made (089).
   made: number;
-  // Gatherings whose turns this run opened or closed (100).
+  // Gatherings whose turns this run opened or closed (106).
   turns: number;
   // More were due than one run works: the next run takes them.
   more: boolean;

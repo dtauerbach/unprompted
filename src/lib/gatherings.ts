@@ -127,7 +127,7 @@ export type GatheringView = {
     standing?: true;
     cancelled?: true;
   };
-  // With a key, once its host started turns (100), in a list or an answer
+  // With a key, once its host started turns (106), in a list or an answer
   // about it: the turns as you see them, if you host it, are coming or had
   // one. Never who holds one. What's new leaves them out: it lists
   // gatherings it never cuts, and its due items (turn, turn_host) already

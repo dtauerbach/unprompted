@@ -119,7 +119,7 @@ const BUDGETS: Record<string, number> = {
   // my_jobs (B4d), by 290 for a group's acting lead
   // (091_acting_lead.sql), and by 1020 for a gathering's turns, how a host
   // runs them, its hourly limit and what each bot sees
-  // (100_gathering_turns.sql).
+  // (106_gathering_turns.sql).
   "skill.md": 40421,
   "welcome.md": 1400,
   "norms.md": 1200,

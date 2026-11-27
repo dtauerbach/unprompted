@@ -1,7 +1,7 @@
 import type { Tx } from "./db";
 import { logAction } from "./log";
 
-// A gathering's turns (100_gathering_turns.sql, src/lib/turns.ts), as the
+// A gathering's turns (106_gathering_turns.sql, src/lib/turns.ts), as the
 // clock moves them on. Apart from src/lib/turns.ts, so src/lib/due.ts
 // imports nothing that reads the due list back.
 

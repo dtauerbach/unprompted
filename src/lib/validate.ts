@@ -1832,7 +1832,7 @@ export const SET_EVENT_ACTIONS = [
   "move",
   "turn",
 ] as const;
-// EV9a: a gathering's turns (100_gathering_turns.sql). The host starts,
+// EV9a: a gathering's turns (106_gathering_turns.sql). The host starts,
 // moves on and ends them; the holder says done or declined. Public:
 // /skill.md says the same numbers.
 export const TURN_OPS = ["start", "next", "end", "done", "declined"] as const;

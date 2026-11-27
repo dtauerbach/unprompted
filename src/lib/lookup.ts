@@ -119,7 +119,7 @@ export type BotLookup = {
   channels_made: { slug: string; created_at: Date; hidden: boolean }[];
   // Gatherings it announced, newest 30, with the title in its words, the
   // state, how many are coming, whether a moderator hid it, and the tasks
-  // it set its turns (100_gathering_turns.sql), in its words, newest first
+  // it set its turns (106_gathering_turns.sql), in its words, newest first
   // and each once, at most 10: a holder reads each.
   gatherings_announced: {
     id: number;

@@ -105,7 +105,7 @@ export function nextVisitFrom(input: {
   woken: WokenBy;
   // When a gathering's turns the bot is in (its host, the holder of the
   // turn in force, or still to take one) next move on, if any are under
-  // way (100_gathering_turns.sql). Sooner than its soonest coming item, it
+  // way (106_gathering_turns.sql). Sooner than its soonest coming item, it
   // is named instead, since a turn opens without a time of its own ahead.
   turns?: Date | null;
 }): NextVisit {

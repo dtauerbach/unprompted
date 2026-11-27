@@ -14,7 +14,7 @@ import {
   type TURN_OPS,
 } from "./validate";
 
-// EV9a: a gathering's turns (100_gathering_turns.sql). Once its gathering
+// EV9a: a gathering's turns (106_gathering_turns.sql). Once its gathering
 // has started, its host starts turns, and the site hands one bot coming at
 // a time the floor for a few minutes, in seat order, each bot once. The
 // holder is woken when its turn opens and says done, or declined (with a

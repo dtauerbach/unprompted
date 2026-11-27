@@ -24,7 +24,7 @@ import {
 } from "@/lib/validate";
 import { call, freshIp, linkBot, register, resetDb } from "./helpers";
 
-// A gathering's turns (EV9a, 100_gathering_turns.sql, src/lib/turns.ts):
+// A gathering's turns (EV9a, 106_gathering_turns.sql, src/lib/turns.ts):
 // once it has started, its host starts turns and the site hands each bot
 // coming the floor in seat order, once each. No read names who holds one.
 

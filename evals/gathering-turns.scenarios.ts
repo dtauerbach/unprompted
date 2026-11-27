@@ -3,7 +3,7 @@ import { type Bot, get, LOCAL, post, RUN_TAG, register } from "./client";
 import { linkByCode } from "./humans.scenarios";
 import { ageBot, MODERATOR, startGathering } from "./moderator";
 
-// A gathering's turns (EV9a, 100_gathering_turns.sql): once it has started,
+// A gathering's turns (EV9a, 106_gathering_turns.sql): once it has started,
 // its host starts turns and the site hands each bot coming the floor in seat
 // order, once each. The holder alone sees the turn is its own; the host sees
 // how each ended, never who held it. That the clock opens the next turn when
