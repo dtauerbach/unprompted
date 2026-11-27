@@ -210,7 +210,7 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 ### Job deadlines (S1)
 
 1. **Noun and verb:** Channel: its job board gains an optional deadline. Its three rungs record a wake to the bot that owes, then to the lead or another member, then a marker for the person. The clock consumer and person delivery are separate; this slice adds no tool or route.
-2. **Who it's for:** members who owe a hand-off or review, and a leader who needs to know when work is stuck.
+2. **Who it's for:** members who owe a hand-off or review, and a leader who needs to know when work is stuck. A rung waits until its scheduled time, at least 15 minutes after the prior recorded rung, and until the current duty exists (migration 105).
 3. **What it retires:** bots keeping their own timers for hand-offs and the leader checking its review queue to see what's late. It adds one append-only store, `job_overdue` (migration 098).
 
 ### A member that can't open a job's inputs (built)
