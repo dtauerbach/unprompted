@@ -44,13 +44,17 @@ async function fixture(due: number | null = 10) {
     ).toBe(200);
   }
   // D1 adds the SQL field only. The posting interface is a separate job.
-  const [job] = await db()<{ id: string }[]>`
+  const insertJob = async (minutes: number | null, number = 1) => {
+    const [job] = await db()<{ id: string }[]>`
     INSERT INTO channel_jobs
       (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, due_minutes)
-    SELECT ${id}, 1, 'Write a brief', 'One page', 'One page', 120, b.id, k.id, ${due}
+    SELECT ${id}, ${number}, 'Write a brief', 'One page', 'One page', 120, b.id, k.id, ${minutes}
     FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
     WHERE b.handle = 'lea' RETURNING id`;
-  if (!job) throw new Error("job not inserted");
+    if (!job) throw new Error("job not inserted");
+    return job.id;
+  };
+  const job = await insertJob(due);
   const move = async (who: Bot, body: Record<string, unknown>) => {
     const response = await call(moveRoute, {
       key: who.key,
@@ -66,7 +70,7 @@ async function fixture(due: number | null = 10) {
       if_seq: 1,
       outputs: [{ store: "github", ref: "brief.md", revision: "abc" }],
     });
-  return { id, job: job.id, leader, holder, other, move, claim, submit };
+  return { id, job, leader, holder, other, move, claim, submit, insertJob };
 }
 
 const botId = async (who: Bot) =>
@@ -131,16 +135,16 @@ describe("job overdue ladder", () => {
     await f.claim();
     await f.submit();
     const leadWake = await wake(f.leader);
-    const otherWake = await wake(f.holder);
+    const otherWake = await wake(f.other);
     await age(f.job, 26);
     await make(f.job, 1);
     await make(f.job, 2);
     expect(await rows(f.job)).toEqual([
       { rung: 1, bot_id: await botId(f.leader), woken: true },
-      { rung: 2, bot_id: await botId(f.holder), woken: true },
+      { rung: 2, bot_id: await botId(f.other), woken: true },
     ]);
     expect(await wake(f.leader)).toBe(leadWake + 1);
-    expect(await wake(f.holder)).toBe(otherWake + 1);
+    expect(await wake(f.other)).toBe(otherWake + 1);
   });
 
   it("marks the person's rung without a bot wake and refuses a premature or forged write", async () => {
@@ -175,25 +179,120 @@ describe("job overdue ladder", () => {
     expect(await rows(f.job)).toEqual([]);
   });
 
-  it("does not wake a frozen holder", async () => {
+  it("notifies the leader when a claimed holder freezes, without waking the former holder", async () => {
     const f = await fixture();
     await f.claim();
+    expect(
+      (await db()`SELECT state FROM job_state(${f.job}, clock_timestamp())`)[0]
+        ?.state,
+    ).toBe("claimed");
     await setFrozen(db(), f.holder.handle, true, "test");
     await age(f.job, 11);
     const before = await wake(f.holder);
-    await make(f.job, 1);
+    expect(await make(f.job, 1)).toEqual([
+      { rung: 1, bot_id: await botId(f.leader), woken: true },
+    ]);
     expect(await wake(f.holder)).toBe(before);
   });
 
-  it("records the poster's own move without waking the poster", async () => {
+  it("wakes the leader when the leader's own claim is overdue", async () => {
     const f = await fixture();
     await f.claim(f.leader);
     await age(f.job, 11);
     const before = await wake(f.leader);
     expect(await make(f.job, 1)).toEqual([
+      { rung: 1, bot_id: await botId(f.leader), woken: true },
+    ]);
+    expect(await wake(f.leader)).toBe(before + 1);
+  });
+
+  it.each([
+    "ready",
+    "lapsed",
+  ] as const)("wakes the leader for %s work", async (state) => {
+    const f = await fixture();
+    if (state === "lapsed") {
+      await f.claim();
+      await db().begin(async (tx) => {
+        await tx`ALTER TABLE job_moves DISABLE TRIGGER job_moves_append_only`;
+        await tx`UPDATE job_moves SET lease_until = now() - interval '1 second' WHERE job_id = ${f.job}`;
+        await tx`ALTER TABLE job_moves ENABLE TRIGGER job_moves_append_only`;
+      });
+    }
+    await age(f.job, 26);
+    expect(await make(f.job, 1)).toEqual([
+      { rung: 1, bot_id: await botId(f.leader), woken: true },
+    ]);
+    expect(await make(f.job, 2)).toEqual([
+      {
+        rung: 2,
+        bot_id: await botId(state === "lapsed" ? f.other : f.holder),
+        woken: true,
+      },
+    ]);
+  });
+
+  it("doesn't consume a rung for a job waiting on a dependency", async () => {
+    const f = await fixture();
+    const waiting = await f.insertJob(10, 2);
+    await db()`INSERT INTO job_deps (job_id, needs_job_id) VALUES (${waiting}, ${f.job})`;
+    await age(waiting, 41);
+    expect(await make(waiting, 1)).toEqual([]);
+    expect(await rows(waiting)).toEqual([]);
+  });
+
+  it("enforces both bounds of the optional deadline", async () => {
+    const f = await fixture();
+    await expect(f.insertJob(9, 2)).rejects.toMatchObject({ code: "23514" });
+    await expect(f.insertJob(1441, 2)).rejects.toMatchObject({ code: "23514" });
+    await expect(f.insertJob(1440, 2)).resolves.toBeTruthy();
+  });
+
+  it("checks the bot at due time and keeps the durable record append-only", async () => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 11);
+    const other = await botId(f.other);
+    if (!other) throw new Error("missing other member");
+    await expect(db()`
+      INSERT INTO job_overdue (job_id, rung, bot_id, woken)
+      VALUES (${f.job}, 1, ${other}, true)`).rejects.toMatchObject({
+      code: "UPR01",
+    });
+    await make(f.job, 1);
+    await expect(
+      db()`DELETE FROM job_overdue WHERE job_id = ${f.job}`,
+    ).rejects.toThrow();
+    expect(await rows(f.job)).toHaveLength(1);
+  });
+
+  it("skips a live claimed holder who blocked the poster", async () => {
+    const f = await fixture();
+    await f.claim();
+    const b = await call(blockRoute, {
+      key: f.holder.key,
+      params: { handle: f.leader.handle },
+    });
+    expect(b.status).toBe(200);
+    await age(f.job, 11);
+    expect(
+      (await db()`SELECT state FROM job_state(${f.job}, clock_timestamp())`)[0]
+        ?.state,
+    ).toBe("claimed");
+    const before = await wake(f.holder);
+    expect(await make(f.job, 1)).toEqual([
       { rung: 1, bot_id: null, woken: false },
     ]);
-    expect(await wake(f.leader)).toBe(before);
+    expect(await wake(f.holder)).toBe(before);
+  });
+
+  it("never starts a ladder for a frozen poster", async () => {
+    const f = await fixture();
+    await f.claim();
+    await setFrozen(db(), f.leader.handle, true, "test");
+    await age(f.job, 41);
+    expect(await make(f.job, 1)).toEqual([]);
+    expect(await rows(f.job)).toEqual([]);
   });
 
   it("skips a fallback member who blocked the poster", async () => {
@@ -201,7 +300,7 @@ describe("job overdue ladder", () => {
     await f.claim();
     await f.submit();
     const b = await call(blockRoute, {
-      key: f.holder.key,
+      key: f.other.key,
       params: { handle: f.leader.handle },
     });
     expect(b.status).toBe(200);
@@ -210,8 +309,8 @@ describe("job overdue ladder", () => {
     await make(f.job, 2);
     expect((await rows(f.job)).at(-1)).toEqual({
       rung: 2,
-      bot_id: await botId(f.other),
-      woken: true,
+      bot_id: null,
+      woken: false,
     });
   });
 
