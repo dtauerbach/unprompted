@@ -12,12 +12,14 @@ import {
 import { POST as leaderRoute } from "@/app/v1/private-channels/[id]/leader/route";
 import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { POST as removeRoute } from "@/app/v1/private-channels/[id]/members/remove/route";
-import { setSilenced } from "@/lib/admin";
+import { setFrozen, setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { DUE_TAG } from "@/lib/due-kick";
 import { JOB_OFFER_MINUTES, offerJobs } from "@/lib/job-offers";
 import { JOBS_NOTE, JOBS_NOTE_HTTP, MOVE_NOTES } from "@/lib/jobs";
 import { jobMoveSchema } from "@/lib/validate";
 import { call, register, resetDb } from "./helpers";
+import { cacheCalls } from "./next-cache";
 
 // A member that can't open a ready job's inputs says so (cant_read,
 // 090_job_blockers.sql): no move, no lease, the site stops asking it and
@@ -202,6 +204,8 @@ describe("a member that can't open a job's inputs", () => {
       "channel.job.cant_read",
       "channel.job.offer",
       "channel.job.offer",
+      // moe was asked before it said so, so its ask counts and lea hears
+      // nobody took it only after oto's (092).
     ]);
     expect(log[2]?.detail).toEqual({ number: 1, seq: 0 });
   });
@@ -529,6 +533,136 @@ describe("a member that can't open a job's inputs", () => {
     expect(
       await db()`SELECT 1 FROM action_log WHERE action LIKE 'alert.%'`,
     ).toHaveLength(0);
+  });
+
+  it("wakes a leader its own post only marked, once a newcomer the site can't ask says so", async () => {
+    // F1068 (Dot's 1068): lea posts with nobody to take it, which marks lea
+    // without a wake (its own write). A member comes in that the site can't
+    // ask (silenced), so no ask comes between the mark and its word, and it
+    // says it can't open the inputs: that, not lea, left every taker
+    // blocked, so lea is woken, once.
+    const { l, g } = await group([]);
+    await post(l, g);
+    await offerJobs();
+    const marks = () =>
+      db()<{ woken: boolean }[]>`SELECT woken FROM job_no_takers ORDER BY id`;
+    expect(await marks()).toEqual([{ woken: false }]);
+    const pia = await bot("pia");
+    await setSilenced(db(), "pia", 2, "test");
+    await join(pia, l, g);
+    await offerJobs();
+    expect(await offers()).toEqual([]);
+    expect((await read(pia, g)).you).toBe("claimable");
+    const before = await wake(l);
+    expect((await cantRead(pia, g)).status).toBe(200);
+    await offerJobs();
+    expect(await offers()).toEqual([]);
+    expect(await marks()).toEqual([{ woken: false }, { woken: true }]);
+    expect(await wake(l)).toBe(before + 1);
+    expect((await read(l, g)).inputs_unreadable).toBe(true);
+    // Once an episode: nothing more is due, now or later.
+    await window();
+    expect(await offerJobs()).toMatchObject({ leaders: 0 });
+    expect(
+      await db()`SELECT 1 FROM job_no_takers_due(clock_timestamp(), NULL)`,
+    ).toHaveLength(0);
+    expect(await marks()).toEqual([{ woken: false }, { woken: true }]);
+  });
+
+  it("keeps a leader's own mark when nothing but its own write left every taker blocked", async () => {
+    // The mark lea's own take-out got stands for it: a pass after that,
+    // with every taker still blocked by the same write, wakes nobody.
+    const { l, members, g } = await group(["moe", "nia"]);
+    const [m] = members as [Bot, Bot];
+    await post(l, g);
+    await cantRead(m, g);
+    const before = await wake(l);
+    const r = await call(removeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "nia" },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    await offerJobs();
+    await window();
+    await offerJobs();
+    const marks = await db()<{ woken: boolean }[]>`
+      SELECT woken FROM job_no_takers`;
+    expect(marks).toEqual([{ woken: false }]);
+    expect(await wake(l)).toBe(before);
+  });
+
+  it("never counts a freeze of a member that had already said so as a cause", async () => {
+    // Fable's review of #221: lea's own take-out left every taker blocked
+    // (a mark, no wake). Freezing nia, who had already said it can't open
+    // the inputs, changes nobody who could take the job, so it wakes
+    // nobody and tells lea nothing of a moderator's act.
+    const { l, members, g } = await group();
+    const [m, n] = members as [Bot, Bot, Bot];
+    await post(l, g);
+    await cantRead(m, g);
+    await cantRead(n, g);
+    const r = await call(removeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "oto" },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    await offerJobs();
+    const marks = () =>
+      db()<{ woken: boolean }[]>`SELECT woken FROM job_no_takers ORDER BY id`;
+    expect(await marks()).toEqual([{ woken: false }]);
+    const before = await wake(l);
+    const dueClears = () =>
+      cacheCalls.revalidateTag.filter((c) => c.tag === DUE_TAG).length;
+    const cleared = dueClears();
+    await setFrozen(db(), "nia", true, "test");
+    // A freeze can make a leader's wake due, so the clock looks again.
+    expect(dueClears()).toBeGreaterThan(cleared);
+    await offerJobs();
+    await window();
+    await offerJobs();
+    expect(await marks()).toEqual([{ woken: false }]);
+    expect(await wake(l)).toBe(before);
+  });
+
+  it("adds no ask's time for members that said so, since none of them is asked", async () => {
+    // Fable's review of #220: moe is asked and lets it pass; the other three
+    // say they can't open the inputs, so nobody is asked after moe. lea
+    // hears that nobody took it once moe's ask is over, not three asks on.
+    const { l, members, g } = await group(["moe", "nia", "oto", "pia"]);
+    const [, n, o, p] = members as [Bot, Bot, Bot, Bot];
+    await post(l, g);
+    expect(await offers()).toEqual(["moe"]);
+    await age(5);
+    for (const b of [n, o, p]) expect((await cantRead(b, g)).status).toBe(200);
+    await offerJobs();
+    expect(await offers()).toEqual(["moe"]);
+    expect(await leaderWakes()).toEqual([]);
+    await window();
+    await offerJobs();
+    expect(await offers()).toEqual(["moe"]);
+    expect(await leaderWakes()).toEqual([{ number: 1, episode: 0, to: "lea" }]);
+  });
+
+  it("still counts the ask of a member that said so once asked", async () => {
+    // Fable's re-review of #221: moe is asked and says it can't open the
+    // inputs 14 minutes in, so nia's ask starts then; lea mustn't hear that
+    // nobody took it 2 minutes into nia's ask.
+    const { l, members, g } = await group(["moe", "nia"]);
+    const [m] = members as [Bot, Bot];
+    await post(l, g);
+    expect(await offers()).toEqual(["moe"]);
+    await age(14);
+    expect((await cantRead(m, g)).status).toBe(200);
+    await offerJobs();
+    expect(await offers()).toEqual(["moe", "nia"]);
+    await age(2);
+    await offerJobs();
+    expect(await leaderWakes()).toEqual([]);
+    await window();
+    await offerJobs();
+    expect(await leaderWakes()).toEqual([{ number: 1, episode: 0, to: "lea" }]);
   });
 
   it("wakes the leader once when every member says so at the same time", async () => {

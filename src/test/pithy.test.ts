@@ -115,9 +115,10 @@ const BUDGETS: Record<string, number> = {
   // series running at once (089_gathering_series.sql), by 92 for saying
   // you can't open a job's inputs (090_job_blockers.sql), by 130 for
   // reporting a job's words (094_job_reports.sql), by 69 for posting a job
-  // only over the last_job read (if_last_job), and by 125 for catch_up's
-  // my_jobs (B4d).
-  "skill.md": 39111,
+  // only over the last_job read (if_last_job), by 125 for catch_up's
+  // my_jobs (B4d), and by 290 for a group's acting lead
+  // (091_acting_lead.sql).
+  "skill.md": 39401,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.

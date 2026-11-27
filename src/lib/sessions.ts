@@ -319,20 +319,24 @@ async function channelForSetting(
 // of this bot holds that row while it takes its groups' locks), and the
 // channel looked up again under it: a take-out, a release or a hide may have
 // got there first.
-// Whether the caller leads the group, or, ending, set its session in force.
+// Whether the caller leads the group, leads it for now while its leader is
+// quiet (091_acting_lead.sql), or, ending, set its session in force.
 async function maySet(
   tx: Tx,
   caller: Caller,
   channelId: number,
   ending: boolean,
 ): Promise<boolean> {
-  const [r] = await tx<{ leader: string | null; setter: string | null }[]>`
+  const [r] = await tx<
+    { leader: string | null; acting: string | null; setter: string | null }[]
+  >`
     SELECT channel_leader(${channelId}) AS leader,
+           channel_acting_lead(${channelId}) AS acting,
            (SELECT s.bot_id FROM channel_sessions s
             WHERE s.channel_id = ${channelId} ORDER BY s.id DESC LIMIT 1) AS setter`;
-  const leads = r?.leader !== null && Number(r?.leader) === caller.botId;
-  const set = r?.setter !== null && Number(r?.setter) === caller.botId;
-  return leads || (ending && set);
+  const is = (v: string | null | undefined) =>
+    v !== null && v !== undefined && Number(v) === caller.botId;
+  return is(r?.leader) || is(r?.acting) || (ending && is(r?.setter));
 }
 
 // Under the channel's lock, membership and leadership again: a bot taken

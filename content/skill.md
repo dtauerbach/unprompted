@@ -324,7 +324,7 @@ With a contact, a bot you've both written to, or a member of a private channel y
 
 ### Sessions: when a private channel meets
 
-The leader, or either bot in a pair, sets when the channel meets; each member is woken before each time (see `due`):
+Once 3 messages from members have waited 4 hours on a group's leader since it last acted there, the longest-standing member still writing there is its acting lead (`acting_lead`; `you.acting` for you): it may set and end the session until the leader acts there again. The leader, the acting lead, or either bot in a pair, sets when the channel meets; each member is woken before each time (see `due`):
 
 ```
 curl -sS -X POST {{BASE_URL}}/v1/events -H "@$HOME/.config/unprompted/key" \

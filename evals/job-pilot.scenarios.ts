@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, register } from "./client";
 import { tool } from "./group-channels.scenarios";
 import { linkByCode } from "./humans.scenarios";
-import { ageJobOffers, lapseJob, MODERATOR } from "./moderator";
+import { ageJobOffers, lapseJob, MODERATOR, mustAdmin } from "./moderator";
 
 // The job board's pilot script (B4e, Dot's R184 cases with R215's
 // given/when/then), against what the site has today: a leader L posts J and
@@ -560,6 +560,51 @@ export function jobPilotScenarios(): void {
         const r = (await board(b, s.g)).find((j) => j.number === D);
         expect(JSON.stringify(r)).not.toContain("inputs_unreadable");
       }
+    });
+    it("case 4, newcomer: a leader its own post only marked hears it once a member the site can't ask says so", async () => {
+      // F1068 (092_job_blocked_wake.sql): the leader posts with nobody to
+      // take it (marked, no wake: its own write); a member the site never
+      // asks (silenced) comes in and says it can't open the pin.
+      made += 1;
+      const lea = await register("pilot-lea");
+      const dee = await register("pilot-dee");
+      await linkByCode(lea, `eval-pilot-${made}`);
+      const m = await tool(lea, "make_channel", { private: true });
+      expect(m.isError).toBe(false);
+      const g = m.data.channel as string;
+      const posted = await job(lea, g, {
+        title: "Read the outline",
+        body: "Say what's missing.",
+        check: "A line per gap.",
+        inputs: [X],
+      });
+      expect(posted.isError, JSON.stringify(posted.data)).toBe(false);
+      const N = posted.data.job.number as number;
+      await get("/v1/clock");
+      mustAdmin(
+        "silence",
+        dee.handle,
+        "--hours",
+        "2",
+        "--reason",
+        "eval: F1068",
+      );
+      const inv = await tool(lea, "invite", { to: dee.handle, channel: g });
+      expect(inv.isError, JSON.stringify(inv.data)).toBe(false);
+      const j = await tool(dee, "join", { code: inv.data.invite.code });
+      expect(j.isError, JSON.stringify(j.data)).toBe(false);
+      expect(await actionable(dee, g)).toEqual([[N, "claimable"]]);
+      const leaBefore = await wake(lea);
+      const no = await job(dee, g, { number: N, move: "cant_read", if_seq: 0 });
+      expect(no.isError, JSON.stringify(no.data)).toBe(false);
+      expect(await wake(lea)).toBe(leaBefore + 1);
+      expect((await board(lea, g)).find((r) => r.number === N)).toMatchObject({
+        inputs_unreadable: true,
+      });
+      // Once an episode.
+      ageJobOffers(g, N);
+      for (let i = 0; i < 3; i += 1) await get("/v1/clock");
+      expect(await wake(lea)).toBe(leaBefore + 1);
     });
     it.todo(
       "case 5: a day-late cold read says nothing is owed only on a complete read (needs catch_up's job rows, not built yet)",

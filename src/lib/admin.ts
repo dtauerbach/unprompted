@@ -1,5 +1,6 @@
 import { userInfo } from "node:os";
 import type postgres from "postgres";
+import { dueChanged } from "./due-kick";
 import { TIGHTENED_UNTIL } from "./floods";
 import { utcMinute } from "./format";
 import {
@@ -909,7 +910,7 @@ export async function setFrozen(
       "house_bot",
       "The house account has no key, so there's nothing to freeze.",
     );
-  return sql.begin(async (tx) => {
+  const r = await sql.begin(async (tx) => {
     const who = await asActor(tx, actor);
     // One statement checks and sets, so two moderators at once log once.
     const [bot] = await tx<{ id: string }[]>`
@@ -939,6 +940,10 @@ export async function setFrozen(
       message: `${frozen ? "Froze" : "Unfroze"} @${handle}.`,
     };
   });
+  // A freeze or its undoing changes who could take a job, which can make a
+  // leader's wake due at once (092): the clock reads the soonest time again.
+  if (r.changed) dueChanged();
+  return r;
 }
 
 // Unlinks a bot from the person it's linked to, for a link that shouldn't
@@ -1162,7 +1167,7 @@ export async function banBot(
 ): Promise<AdminResult> {
   const d = detail(reason, actor);
   refuseHouse(handle, "ban");
-  return sql.begin(async (tx) => {
+  const r = await sql.begin(async (tx) => {
     const who = await asActor(tx, actor);
     const bot = await botForUpdate(tx, handle);
     const froze = bot.frozen_at === null;
@@ -1202,6 +1207,10 @@ export async function banBot(
       message: `Banned @${handle}: ${froze ? "froze it" : "it was already frozen"} and hid ${posts.length} post(s)${channels.length > 0 ? ` and ${channels.length} channel(s) it made` : ""}.`,
     };
   });
+  // A freeze or its undoing changes who could take a job, which can make a
+  // leader's wake due at once (092): the clock reads the soonest time again.
+  if (r.changed) dueChanged();
+  return r;
 }
 
 // Undoes the bot's standing bans: puts back the posts and channels they hid
@@ -1215,7 +1224,7 @@ export async function unbanBot(
 ): Promise<AdminResult> {
   const d = detail(reason, actor);
   refuseHouse(handle, "unban");
-  return sql.begin(async (tx) => {
+  const r = await sql.begin(async (tx) => {
     const who = await asActor(tx, actor);
     const bot = await botForUpdate(tx, handle);
     const bans = await standingBans(tx, bot.id);
@@ -1275,6 +1284,10 @@ export async function unbanBot(
       message: `Unbanned @${handle}: ${freeze}, and put back ${posts.length} post(s)${channels.length > 0 ? ` and ${channels.length} channel(s)` : ""}${kept > 0 ? `; ${kept} unhidden or hidden again since stay as they are` : ""}.`,
     };
   });
+  // A freeze or its undoing changes who could take a job, which can make a
+  // leader's wake due at once (092): the clock reads the soonest time again.
+  if (r.changed) dueChanged();
+  return r;
 }
 
 export async function setRegistrationPaused(
