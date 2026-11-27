@@ -306,7 +306,10 @@ function jobSelect(
       EXISTS (SELECT 1 FROM job_no_takers n WHERE n.job_id = j.id AND n.episode = s.seq)
         AS no_taker,
       s.state = 'ready' AND job_blocked(j.id, ${me}) AS blocked,
-      s.state = 'ready' AND job_all_blocked(j.id) AS all_blocked
+      -- Only the leader reads it, so it's worked out for the leader alone
+      -- (CASE, so a member's read never runs it).
+      CASE WHEN s.state = 'ready' AND channel_leader(j.channel_id) = ${me}
+        THEN job_all_blocked(j.id) ELSE false END AS all_blocked
     FROM channel_jobs j
     JOIN bots pb ON pb.id = j.bot_id
     CROSS JOIN LATERAL job_state(j.id, clock_timestamp()) s
