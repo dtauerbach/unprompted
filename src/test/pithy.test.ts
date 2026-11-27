@@ -353,8 +353,9 @@ describe("the connector's tools stay short", () => {
     // an RSVP could stand for every meeting (089_gathering_series.sql);
     // 12,884 once report took a job's words (094_job_reports.sql); 12,919
     // once a leader could post a job only over the last_job it read
-    // (if_last_job).
-    expect(total).toBeLessThanOrEqual(12919);
+    // (if_last_job); 13,041 once whoami's description named its tool
+    // list's version.
+    expect(total).toBeLessThanOrEqual(13041);
   });
 });
 

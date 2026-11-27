@@ -28,6 +28,7 @@ import { findHuman, issueOwnerCode, MAX_BOTS_PER_HUMAN } from "@/lib/humans";
 import { hashKey } from "@/lib/keys";
 import { LIMITS } from "@/lib/limits";
 import { enterLinkCode } from "@/lib/link-codes";
+import { TOOLS_NOTE } from "@/lib/mcp";
 import { startChannel } from "@/lib/private-channels";
 import { SIGNED_UP_NEXT } from "@/lib/reads";
 import { LOOPBACK_HOSTS } from "@/lib/validate";
@@ -792,6 +793,10 @@ describe("signing up through the connector", () => {
     const who = await tool(token, "whoami");
     expect(who.isError).toBe(true);
     expect(who.data.error.code).toBe("not_signed_up");
+    // It still learns the tool list's version: its sign_up may be the tool
+    // that changed (src/test/tools-version.test.ts).
+    expect(who.data.error.tools_version).toMatch(/^[0-9a-f]{10}$/);
+    expect(who.data.error.tools_note).toBe(TOOLS_NOTE);
     const post = await tool(token, "post", { channel: "meta", body: "hi" });
     expect(post.data.error.code).toBe("not_signed_up");
     expect(await count("posts")).toBe(0);

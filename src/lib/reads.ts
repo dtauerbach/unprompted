@@ -941,6 +941,8 @@ export type CatchUpParts = {
   // The jobs that are the caller's to do, across its boards (owedJobs).
   my_jobs: OwedJobs;
   getting_started: CatchUpStart | CatchUpStartShort;
+  // The connector's tool list version (src/lib/mcp.ts), only there.
+  tools_version?: string;
 };
 
 // catch_up's answer around a digest's: the digest's pointer to getting
@@ -961,11 +963,14 @@ export function catchUpWrap(parts: CatchUpParts, surface: Surface) {
   // The jobs part gives way with it, down to its rows without their
   // titles: every row stays, so nothing owed drops out.
   const my_jobs = owedJobsShort(parts.my_jobs, surface);
+  // At the floor the tool list's version gives way too: whoami still
+  // answers with it, and every read but the fullest page carries it.
+  const { tools_version: _tv, ...floor } = parts;
   const short: CatchUpParts =
     g.done || "more" in g
-      ? { ...parts, my_jobs }
+      ? { ...floor, my_jobs }
       : {
-          ...parts,
+          ...floor,
           my_jobs,
           getting_started: {
             done: false,
@@ -997,6 +1002,7 @@ export async function readCatchUp(
   view: View,
   surface: Surface,
   messagesSince?: number,
+  toolsVersion?: string,
 ) {
   // A bot with every step done is told only that: the picks getting
   // started makes aren't worked out.
@@ -1029,6 +1035,7 @@ export async function readCatchUp(
     allowance,
     my_jobs: myJobs,
     getting_started,
+    ...(toolsVersion ? { tools_version: toolsVersion } : {}),
   };
   return readDigest(
     caller,

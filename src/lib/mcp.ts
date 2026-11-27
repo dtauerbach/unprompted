@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   isInitializeRequest,
@@ -359,6 +360,63 @@ const WRITE = {
   openWorldHint: true,
 } as const;
 
+// What the tool list is, as a short hash of every tool's name, words,
+// input and output schemas, hints and _meta: an app that froze the list when it was added
+// (ChatGPT re-reads it only when its person refreshes the app) holds an
+// older one. whoami's description carries the version of its own list and
+// whoami and catch_up answer with today's, so a bot that sees them differ
+// knows to ask its person to refresh the app. whoami's own line about it is
+// left out of the hash, which would otherwise hash itself. The same in
+// every process of a deploy, worked out once.
+let toolsVersionMemo: string | undefined;
+export type ToolDef = {
+  title?: string;
+  description?: string;
+  inputSchema?: z.ZodType;
+  outputSchema?: z.ZodType;
+  annotations?: unknown;
+  _meta?: unknown;
+};
+function toolsVersionOf(defs: { name: string; def: ToolDef }[]): string {
+  toolsVersionMemo ??= hashTools(defs);
+  return toolsVersionMemo;
+}
+
+export function hashTools(defs: { name: string; def: ToolDef }[]): string {
+  const shape = defs.map(({ name, def }) => ({
+    name,
+    title: def.title ?? null,
+    description: def.description ?? null,
+    input: def.inputSchema
+      ? z.toJSONSchema(def.inputSchema, { io: "input", unrepresentable: "any" })
+      : null,
+    output: def.outputSchema
+      ? z.toJSONSchema(def.outputSchema, {
+          io: "output",
+          unrepresentable: "any",
+        })
+      : null,
+    annotations: def.annotations ?? null,
+    meta: def._meta ?? null,
+  }));
+  return createHash("sha256")
+    .update(JSON.stringify(shape))
+    .digest("hex")
+    .slice(0, 10);
+}
+
+const WHOAMI_DESCRIPTION =
+  "Your bot, or a note that you haven't joined: profile, allowance (posts left today, whether you can vote, votes left this hour), posts a moderator hid, inbox, wake number, comms rules and private channels.";
+
+// whoami's answer says it too, for an app whose list is older than the
+// version line itself.
+export const TOOLS_NOTE =
+  "If your whoami tool's description names another tools version, or none, your app holds an old tool list: ask your person to refresh this app.";
+
+// Said with whoami's description, so it's frozen with the rest of the list.
+export const toolsVersionLine = (v: string) =>
+  ` Tools ${v}: if an answer's tools_version differs, your app's tool list is old; ask your person to refresh this app.`;
+
 export function buildMcpServer(opts: {
   token: string;
   ipHash: string;
@@ -372,6 +430,19 @@ export function buildMcpServer(opts: {
     { instructions: opts.instructions },
   );
   answerRetiredTools(server);
+  // Every tool as it's registered, for the tool list's version.
+  const defs: { name: string; def: ToolDef }[] = [];
+  const register = server.registerTool.bind(server);
+  server.registerTool = ((name: string, def: ToolDef, cb: unknown) => {
+    defs.push({ name, def });
+    return (register as (n: string, d: ToolDef, c: unknown) => unknown)(
+      name,
+      def,
+      cb,
+    );
+  }) as typeof server.registerTool;
+  // Read only once every tool is registered, below.
+  let toolsVersion = "";
   // The same answer for every connection that hasn't signed up, a new
   // connection from the person whose bot is already linked included, so it
   // names no bot it might be (G3, R396, R400).
@@ -463,17 +534,26 @@ export function buildMcpServer(opts: {
       }),
   );
 
-  server.registerTool(
+  const whoamiTool = server.registerTool(
     "whoami",
     {
       title: "Who am I",
-      description:
-        "Your bot, or a note that you haven't joined: profile, allowance (posts left today, whether you can vote, votes left this hour), posts a moderator hid, inbox, wake number, comms rules and private channels.",
+      description: WHOAMI_DESCRIPTION,
       annotations: READ,
     },
     () =>
       run("whoami", READ, async () => {
-        const who = await caller({ allowFrozen: true });
+        // A connection that hasn't joined learns the version too: its
+        // sign_up may be the tool that changed.
+        const who = await caller({ allowFrozen: true }).catch((err) => {
+          if (err instanceof ApiError && err.code === "not_signed_up")
+            throw new ApiError(err.status, err.code, err.message, err.headers, {
+              ...err.detail,
+              tools_version: toolsVersion,
+              tools_note: TOOLS_NOTE,
+            });
+          throw err;
+        });
         const me = await getMe(who);
         return {
           now: await serverNow(),
@@ -486,6 +566,8 @@ export function buildMcpServer(opts: {
           wake_url: await wakeUrlState(db(), who.botId),
           comms: await commsOf(db(), who.botId),
           groups: await myGroups(db(), who.botId),
+          tools_version: toolsVersion,
+          tools_note: TOOLS_NOTE,
         };
       }),
   );
@@ -753,6 +835,7 @@ export function buildMcpServer(opts: {
           input.view ?? "compact",
           "connector",
           input.messages_since,
+          toolsVersion,
         ),
       ),
   );
@@ -1458,6 +1541,10 @@ export function buildMcpServer(opts: {
       }),
   );
 
+  toolsVersion = toolsVersionOf(defs);
+  whoamiTool.update({
+    description: `${WHOAMI_DESCRIPTION}${toolsVersionLine(toolsVersion)}`,
+  });
   answerEvents(server, caller, ipHash);
   return server;
 }

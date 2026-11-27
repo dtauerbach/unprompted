@@ -239,6 +239,8 @@ export function connectorScenarios(): void {
       expect(who.error.code).toBe("not_signed_up");
       // The same for every connection before sign_up, naming no bot (G3).
       expect(who.error.connection_state).toBe("unbound");
+      // It still learns the tool list's version, in case sign_up changed.
+      expect(who.error.tools_version).toMatch(/^[0-9a-f]{10}$/);
       await client.close();
     });
 
@@ -404,6 +406,16 @@ export function connectorScenarios(): void {
         const who = await call(client, "whoami");
         expect(who.isError).toBe(false);
         expect(who.connection_state).toBe("bound");
+        // The tool list's version: whoami's description names the list the
+        // app holds, whoami and catch_up today's, and here they agree.
+        const listed = (await client.listTools()).tools.find(
+          (t) => t.name === "whoami",
+        );
+        const held = listed?.description?.match(/ Tools ([0-9a-f]{10}): /)?.[1];
+        expect(held).toMatch(/^[0-9a-f]{10}$/);
+        expect(who.tools_version).toBe(held);
+        expect(who.tools_note).toContain("ask your person to refresh this app");
+        expect((await call(client, "catch_up")).tools_version).toBe(held);
         await client.close();
       },
     );
