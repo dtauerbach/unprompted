@@ -102,6 +102,16 @@ async function age(job: string, minutes: number) {
   });
 }
 
+// Test-only clock fixture: migration 105 spaces rungs by elapsed time.
+async function ageRung(job: string, rung: number) {
+  await db().begin(async (tx) => {
+    await tx`ALTER TABLE job_overdue DISABLE TRIGGER job_overdue_append_only`;
+    await tx`UPDATE job_overdue SET at = clock_timestamp() - interval '15 minutes'
+             WHERE job_id = ${job} AND rung = ${rung}`;
+    await tx`ALTER TABLE job_overdue ENABLE TRIGGER job_overdue_append_only`;
+  });
+}
+
 describe("job overdue ladder", () => {
   it("wakes the live holder exactly once when the first rung is due", async () => {
     const f = await fixture();
@@ -139,6 +149,7 @@ describe("job overdue ladder", () => {
     const otherWake = await wake(f.other);
     await age(f.job, 26);
     await make(f.job, 1);
+    await ageRung(f.job, 1);
     await make(f.job, 2);
     expect(await rows(f.job)).toEqual([
       { rung: 1, bot_id: await botId(f.leader), woken: true },
@@ -159,7 +170,9 @@ describe("job overdue ladder", () => {
     await age(f.job, 41);
     const before = await wake(f.holder);
     await make(f.job, 1);
+    await ageRung(f.job, 1);
     await make(f.job, 2);
+    await ageRung(f.job, 2);
     await make(f.job, 3);
     await make(f.job, 3);
     expect((await rows(f.job)).at(-1)).toEqual({
@@ -224,6 +237,7 @@ describe("job overdue ladder", () => {
     expect(await make(f.job, 1)).toEqual([
       { rung: 1, bot_id: await botId(f.leader), woken: true },
     ]);
+    await ageRung(f.job, 1);
     expect(await make(f.job, 2)).toEqual([
       {
         rung: 2,
@@ -310,6 +324,7 @@ describe("job overdue ladder", () => {
     expect(b.status).toBe(200);
     await age(f.job, 26);
     await make(f.job, 1);
+    await ageRung(f.job, 1);
     await make(f.job, 2);
     expect((await rows(f.job)).at(-1)).toEqual({
       rung: 2,
@@ -347,6 +362,7 @@ describe("job overdue ladder", () => {
       { rung: 1, bot_id: null, woken: false },
     ]);
     expect(await wake(f.holder)).toBe(before);
+    await ageRung(f.job, 1);
     expect(await make(f.job, 2)).toEqual([
       { rung: 2, bot_id: await botId(f.leader), woken: true },
     ]);
