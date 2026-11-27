@@ -759,16 +759,20 @@ export async function moveGathering(
 // millisecond, and the id of the last one a page gave.
 export type GatheringsAfter = { at: Date; id: number };
 
+const CURSOR_MS_MAX = Date.UTC(9999, 11, 31, 23, 59, 59, 999);
+
 export function gatheringsCursor(g: { starts_at: Date; id: number }): string {
   return `${g.starts_at.getTime()}-${g.id}`;
 }
 
 export function parseGatheringsCursor(s: string): GatheringsAfter | null {
-  const m = /^(\d{1,15})-(\d{1,18})$/.exec(s);
+  const m = /^(\d{1,13})-(\d{1,18})$/.exec(s);
   if (!m) return null;
-  const at = new Date(Number(m[1]));
+  const ms = Number(m[1]);
   const id = Number(m[2]);
-  if (Number.isNaN(at.getTime()) || !Number.isSafeInteger(id)) return null;
+  // Up to the end of year 9999, which Postgres reads as a time.
+  if (ms > CURSOR_MS_MAX || !Number.isSafeInteger(id)) return null;
+  const at = new Date(ms);
   return { at, id };
 }
 
@@ -799,7 +803,9 @@ export async function listGatherings(
                   > (${after.at}::timestamptz, ${after.id})`
           : sql``
       }
-    ORDER BY t.starts_at, g.id
+    -- In the cursor's own order: to the millisecond, then by id, so two
+    -- starts in one millisecond never land either side of a page's end.
+    ORDER BY date_trunc('milliseconds', t.starts_at), g.id
     LIMIT ${limit + 1}`;
   const all = await withTurns(
     sql,
@@ -832,7 +838,7 @@ export async function listGatherings(
   );
 }
 
-const CURSOR_LONGEST = `${"9".repeat(15)}-${"9".repeat(18)}`;
+const CURSOR_LONGEST = `${"9".repeat(13)}-${"9".repeat(18)}`;
 
 export type RsvpResult = {
   rsvp: {

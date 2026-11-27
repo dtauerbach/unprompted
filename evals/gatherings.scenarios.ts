@@ -57,9 +57,14 @@ export function gatheringScenarios(): void {
         `/v1/gatherings?limit=1&after=${first.json.next_after}`,
       );
       expect(next.status).toBe(200);
-      expect(next.json.gatherings[0]?.id).not.toBe(
-        first.json.gatherings[0]?.id,
-      );
+      // The next page starts after the first, in start order.
+      const [a] = first.json.gatherings;
+      const [b] = next.json.gatherings;
+      expect(b?.id).not.toBe(a?.id);
+      if (a && b)
+        expect(Date.parse(b.starts_at)).toBeGreaterThanOrEqual(
+          Date.parse(a.starts_at),
+        );
     });
 
     it("can list them without a key, and needs one for every write", async () => {

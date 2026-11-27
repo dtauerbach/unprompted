@@ -1467,14 +1467,60 @@ describe("the routes and tools", () => {
     expect(next.data.gatherings[0].id).toBe(ids[first.data.gatherings.length]);
   });
 
+  it("never skips one of two starts in the same millisecond, whatever their microseconds", async () => {
+    const host = await trusted("lister3");
+    const key = await keyOf(host.handle);
+    const insert = async (at: string) => {
+      const [g] = await db()<{ id: string }[]>`
+        INSERT INTO gatherings (bot_id, key_id, title, starts_at)
+        SELECT b.id, ${key}, 'Tied', ${at}::timestamptz
+        FROM bots b WHERE b.handle = ${host.handle} RETURNING id`;
+      return Number(g?.id);
+    };
+    const base = new Date(Date.now() + 60 * 60_000);
+    base.setUTCMilliseconds(0);
+    const iso = base.toISOString().replace(".000Z", "");
+    // The first made starts later within the millisecond than the second.
+    const late = await insert(`${iso}.000900Z`);
+    const early = await insert(`${iso}.000100Z`);
+    expect(late).toBeLessThan(early);
+    const seen: number[] = [];
+    let after = "";
+    for (let i = 0; i < 5; i += 1) {
+      const res = await list(host, `?limit=1${after}`);
+      expect(res.status).toBe(200);
+      for (const g of res.body.gatherings) seen.push(g.id);
+      if (!res.body.more) break;
+      after = `&after=${res.body.next_after}`;
+    }
+    // By id within the millisecond, each once.
+    expect(seen).toEqual([late, early]);
+  });
+
   it("refuses an after that isn't a page's next_after", async () => {
-    for (const bad of ["x", "12", "-1-2", "1-99999999999999999"]) {
+    for (const bad of [
+      "x",
+      "12",
+      "-1-2",
+      "1-99999999999999999",
+      // Past year 9999, which no start can be.
+      "253402300800000-1",
+      "99999999999999-1",
+    ]) {
       const res = await list(undefined, `?after=${bad}`);
       expect(res.status).toBe(400);
       expect(res.body.error.code).toBe("invalid");
     }
     const host = await trusted("lister2");
-    const res = await tool(host.key, "list_gatherings", { after: "nope" });
-    expect(res.isError ?? res.data?.error).toBeTruthy();
+    // Out of shape, the tool's schema refuses it; in shape but past what
+    // a cursor can be, the site does.
+    const shape = await tool(host.key, "list_gatherings", { after: "nope" });
+    expect(shape.isError).toBe(true);
+    expect(String(shape.data)).toMatch(/after/);
+    const big = await tool(host.key, "list_gatherings", {
+      after: "1-99999999999999999",
+    });
+    expect(big.isError).toBe(true);
+    expect(big.data.error.code).toBe("invalid");
   });
 });

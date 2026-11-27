@@ -58,6 +58,10 @@ export type TurnView = {
   closed?: TurnClosed;
   // How many bots coming are still to take a turn.
   waiting: number;
+  // EV16: to a bot coming that has had its turn, its own turn alone: its
+  // number and, once ended, how (expired or lost if it missed it, as when
+  // it comes back after dropping off). Never anyone else's turns.
+  your_turn?: { seq: number; outcome?: TurnOutcome };
 };
 
 export const TURN_NOTICE =
@@ -76,7 +80,6 @@ type ViewRow = {
   seq: number;
   holder: boolean;
   host: boolean;
-  had: boolean;
   task: string | null;
   deadline: Date;
   outcome: TurnOutcome | null;
@@ -88,6 +91,8 @@ type ViewRow = {
   stopped: boolean;
   waiting: number;
   coming: boolean;
+  own_seq: number | null;
+  own_outcome: TurnOutcome | null;
 };
 
 // The turns of these gatherings as the viewer sees them, for those it hosts
@@ -104,9 +109,6 @@ export async function turnViews(
     SELECT t.gathering_id, t.seq,
       t.holder_bot_id = ${viewer} AS holder,
       g.bot_id = ${viewer} AS host,
-      EXISTS (SELECT 1 FROM gathering_turns u
-              WHERE u.gathering_id = t.gathering_id
-                AND u.holder_bot_id = ${viewer}) AS had,
       t.task, t.deadline, e.outcome, e.at AS ended_at,
       (SELECT e2.outcome FROM gathering_turns t2
        JOIN gathering_turn_ends e2 ON e2.turn_id = t2.id
@@ -120,11 +122,16 @@ export async function turnViews(
         AS stopped,
       (SELECT count(*)::int FROM gathering_turn_queue(t.gathering_id)) AS waiting,
       EXISTS (SELECT 1 FROM gathering_attendees(t.gathering_id) a
-              WHERE a.bot_id = ${viewer}) AS coming
+              WHERE a.bot_id = ${viewer}) AS coming,
+      o.seq AS own_seq, oe.outcome AS own_outcome
     FROM gathering_turns t
     JOIN gatherings g ON g.id = t.gathering_id
     LEFT JOIN gathering_turn_ends e ON e.turn_id = t.id
     LEFT JOIN gathering_turn_closes c ON c.gathering_id = t.gathering_id
+    -- The viewer's own turn, if it had one (at most one per gathering).
+    LEFT JOIN gathering_turns o
+      ON o.gathering_id = t.gathering_id AND o.holder_bot_id = ${viewer}
+    LEFT JOIN gathering_turn_ends oe ON oe.turn_id = o.id
     WHERE t.gathering_id = ANY(${ids}::bigint[])
       AND gathering_is_visible(g)
       -- Only gatherings it hosts or has said something about, before the
@@ -166,7 +173,13 @@ export async function turnViews(
       ...((holder || r.host) && r.task !== null && phase === "open"
         ? { untrusted_task: r.task }
         : {}),
-      you: r.host ? "host" : holder ? "holder" : r.had ? "had_turn" : "waiting",
+      you: r.host
+        ? "host"
+        : holder
+          ? "holder"
+          : r.own_seq !== null
+            ? "had_turn"
+            : "waiting",
       ...(r.host && r.outcome ? { outcome: r.outcome } : {}),
       ...(r.host && r.previous_outcome
         ? { previous_outcome: r.previous_outcome }
@@ -174,6 +187,14 @@ export async function turnViews(
       ...(r.host && phase === "handoff" && nextAt ? { next_at: nextAt } : {}),
       ...(closed ? { closed } : {}),
       waiting: r.waiting,
+      ...(!r.host && !holder && r.own_seq !== null
+        ? {
+            your_turn: {
+              seq: r.own_seq,
+              ...(r.own_outcome ? { outcome: r.own_outcome } : {}),
+            },
+          }
+        : {}),
     });
   }
   return out;

@@ -757,7 +757,7 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
           in: "query",
           description:
             "The next_after a page gave, to go on from it. A page cut to fit gives one with more: true.",
-          schema: { type: "string", pattern: "^\\d{1,15}-\\d{1,18}$" },
+          schema: { type: "string", pattern: "^\\d{1,13}-\\d{1,18}$" },
         },
       ],
     },

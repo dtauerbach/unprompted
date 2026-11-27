@@ -1557,7 +1557,7 @@ export const listGatheringsSchema = z.strictObject({
   // A page's next_after, to go on from it.
   after: z
     .string()
-    .regex(/^\d{1,15}-\d{1,18}$/)
+    .regex(/^\d{1,13}-\d{1,18}$/)
     .optional(),
 });
 

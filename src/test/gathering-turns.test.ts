@@ -1274,3 +1274,91 @@ describe("a gathering's turns, around their edges", () => {
     expect(await dueAt(gid)).toBeUndefined();
   });
 });
+
+describe("coming back to a gathering's turns (EV16)", () => {
+  it("shows a bot that dropped off or missed its turn its own turn, and no one else's", async () => {
+    const { host, gid, bots } = await room();
+    const [a, b, c] = bots as [Bot, Bot, Bot];
+    await turn(host, { gathering: gid, op: "start", task: "Demo", minutes: 2 });
+    await workDue();
+    // a drops off mid-turn, so it loses it; b's opens.
+    expect((await rsvp(a, gid, { going: false })).status).toBe(200);
+    await workDue();
+    expect(await holderOf(gid, 2)).toBe(b.handle);
+    // a comes back: where things stand now, and only its own turn.
+    expect((await rsvp(a, gid)).status).toBe(200);
+    const back = await seen(a, gid);
+    expect(back).toMatchObject({
+      phase: "open",
+      seq: 2,
+      you: "had_turn",
+      your_turn: { seq: 1, outcome: "lost" },
+    });
+    expect(back).not.toHaveProperty("untrusted_task");
+    expect(back).not.toHaveProperty("outcome");
+    expect(back).not.toHaveProperty("previous_outcome");
+    // Waiting, holding or hosting, there is no turn of one's own to show.
+    expect(await seen(c, gid)).not.toHaveProperty("your_turn");
+    expect(await seen(b, gid)).toMatchObject({ you: "holder" });
+    expect(await seen(b, gid)).not.toHaveProperty("your_turn");
+    expect(await seen(host, gid)).not.toHaveProperty("your_turn");
+
+    // b misses its turn: once its time is up it's had it, and once the
+    // clock ends it, b reads how.
+    await age(gid, 3);
+    expect(await seen(b, gid)).toMatchObject({
+      you: "had_turn",
+      your_turn: { seq: 2 },
+    });
+    expect((await seen(b, gid))?.your_turn).not.toHaveProperty("outcome");
+    await workDue();
+    expect(await holderOf(gid, 3)).toBe(c.handle);
+    expect(await seen(b, gid)).toMatchObject({
+      seq: 3,
+      you: "had_turn",
+      your_turn: { seq: 2, outcome: "expired" },
+    });
+    // Nothing a bot reads names who held any turn.
+    for (const viewer of [a, b]) {
+      const text = JSON.stringify((await list(viewer)).body);
+      for (const other of bots)
+        if (other !== viewer) expect(text).not.toContain(other.handle);
+    }
+
+    // Coming back doesn't give a bot a second turn: when c is done, nobody
+    // is left.
+    await turn(c, { gathering: gid, op: "done", seq: 3 });
+    expect(
+      (await turn(host, { gathering: gid, op: "next", seq: 3 })).status,
+    ).toBe(200);
+    expect(await closeOf(gid)).toBe("exhausted");
+    expect(await holderOf(gid, 4)).toBeUndefined();
+    expect(await seen(a, gid)).toMatchObject({
+      phase: "closed",
+      closed: "exhausted",
+      your_turn: { seq: 1, outcome: "lost" },
+    });
+  });
+
+  it("shows the holder its own finished turn, done or declined, through the connector too", async () => {
+    const { host, gid, bots } = await room(2);
+    const [a, b] = bots as [Bot, Bot];
+    await turn(host, { gathering: gid, op: "start" });
+    const done = await turn(a, { gathering: gid, op: "done", seq: 1 });
+    expect(done.body.turns.your_turn).toEqual({ seq: 1, outcome: "done" });
+    await turn(host, { gathering: gid, op: "next", seq: 1 });
+    const declined = await tool(b.key, "set_event", {
+      action: "turn",
+      gathering: gid,
+      op: "declined",
+      seq: 2,
+      reason: "unavailable",
+    });
+    expect(declined.data.turns.your_turn).toEqual({
+      seq: 2,
+      outcome: "declined",
+    });
+    // Its reason stays its own row's: no read carries it.
+    expect(JSON.stringify(declined.data.turns)).not.toContain("unavailable");
+  });
+});

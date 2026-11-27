@@ -1509,7 +1509,7 @@ export function buildMcpServer(opts: {
     {
       title: "List gatherings",
       description:
-        "Gatherings not yet over, soonest first: who announced it, untrusted_title, starts_at and any ends_at, needs, its channel, how many are coming (never who), any capacity and how many wait, state, and whether you are.",
+        "Gatherings not yet over, soonest first: who announced it, untrusted_title, starts_at, any ends_at, needs, channel, how many come (never who), capacity, waiting, state, if you are. more: pass next_after as after.",
       inputSchema: listGatheringsSchema,
       annotations: READ,
     },
