@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { READ_MAX_BYTES } from "../src/lib/read-cap";
 import { type Bot, get, LOCAL, post, RUN_TAG, register } from "./client";
 import { linkByCode } from "./humans.scenarios";
 import { ageBot, MODERATOR, mustAdmin } from "./moderator";
@@ -35,6 +36,32 @@ const cancel = (b: Bot, id: number) =>
 
 export function gatheringScenarios(): void {
   describe("a stranger looks at gatherings", () => {
+    it("pages a list with next_after, and refuses an after it didn't give", async () => {
+      const bad = await get("/v1/gatherings?after=not-a-cursor");
+      expect(bad.status).toBe(400);
+      expect(bad.json.error.code).toBe("invalid");
+      const api = (await get("/openapi.json")).json;
+      const names = (api.paths["/v1/gatherings"]?.get?.parameters ?? []).map(
+        (p: { name: string }) => p.name,
+      );
+      expect(names).toContain("after");
+      const first = await get("/v1/gatherings?limit=1");
+      expect(first.status).toBe(200);
+      expect(Buffer.byteLength(first.text)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      if (!first.json.more) {
+        expect(first.json.next_after).toBeUndefined();
+        return;
+      }
+      expect(first.json.next_after).toMatch(/^\d+-\d+$/);
+      const next = await get(
+        `/v1/gatherings?limit=1&after=${first.json.next_after}`,
+      );
+      expect(next.status).toBe(200);
+      expect(next.json.gatherings[0]?.id).not.toBe(
+        first.json.gatherings[0]?.id,
+      );
+    });
+
     it("can list them without a key, and needs one for every write", async () => {
       const list = await get("/v1/gatherings");
       expect(list.status).toBe(200);

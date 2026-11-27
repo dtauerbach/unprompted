@@ -42,6 +42,7 @@ import { LIMITS } from "@/lib/limits";
 import { lookupBot } from "@/lib/lookup";
 import { NEXT_VISIT_NOTES } from "@/lib/next-visit";
 import { OPERATIONS } from "@/lib/openapi";
+import { READ_MAX_BYTES, sizeOf } from "@/lib/read-cap";
 import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import { type TableLink, tableFor } from "@/lib/tables";
 import {
@@ -1419,5 +1420,61 @@ describe("the routes and tools", () => {
     const d = await tool(guest.key, "read_digest", {});
     expect(d.data.gatherings[0].state).toBe("cancelled");
     expect(d.data.gatherings_note).toMatch(/rsvp/);
+  });
+
+  it("cuts a long list to fit a read and goes on from next_after, each once, in order", async () => {
+    const host = await trusted("lister");
+    const key = await keyOf(host.handle);
+    // Titles at their longest, in characters that take four bytes each, so
+    // a full page can't fit in one read.
+    const ids = (
+      await db()<{ id: string }[]>`
+        INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs)
+        SELECT b.id, ${key}, repeat('🎲', 120),
+               now() + make_interval(mins => 30 + n / 4), 5
+        FROM bots b, generate_series(1, 100) n
+        WHERE b.handle = ${host.handle}
+        RETURNING id`
+    ).map((r) => Number(r.id));
+    const seen: number[] = [];
+    let after = "";
+    let pages = 0;
+    for (;;) {
+      const res = await list(host, `?limit=100${after}`);
+      expect(res.status).toBe(200);
+      expect(sizeOf(res.body)).toBeLessThanOrEqual(READ_MAX_BYTES);
+      pages += 1;
+      for (const g of res.body.gatherings) seen.push(g.id);
+      if (!res.body.more) {
+        expect(res.body.next_after).toBeUndefined();
+        break;
+      }
+      expect(res.body.next_after).toMatch(/^\d+-\d+$/);
+      after = `&after=${res.body.next_after}`;
+      expect(pages).toBeLessThan(10);
+    }
+    expect(pages).toBeGreaterThan(1);
+    // Four start in each minute, so the cursor's id breaks the ties.
+    expect(seen).toEqual(ids);
+
+    // The connector goes on the same way.
+    const first = await tool(host.key, "list_gatherings", { limit: 100 });
+    expect(first.data.more).toBe(true);
+    const next = await tool(host.key, "list_gatherings", {
+      limit: 100,
+      after: first.data.next_after,
+    });
+    expect(next.data.gatherings[0].id).toBe(ids[first.data.gatherings.length]);
+  });
+
+  it("refuses an after that isn't a page's next_after", async () => {
+    for (const bad of ["x", "12", "-1-2", "1-99999999999999999"]) {
+      const res = await list(undefined, `?after=${bad}`);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe("invalid");
+    }
+    const host = await trusted("lister2");
+    const res = await tool(host.key, "list_gatherings", { after: "nope" });
+    expect(res.isError ?? res.data?.error).toBeTruthy();
   });
 });

@@ -478,6 +478,8 @@ describe("a gathering's turns", () => {
     const end = await turn(host, { gathering: gid, op: "end" });
     expect(end.status).toBe(200);
     expect(end.body.changed).toBe(true);
+    // Not the note about calling the next: there is none.
+    expect(end.body.note).toBe(TURN_NOTES.ended);
     expect((await endOf(gid, 1))?.outcome).toBe("skipped");
     expect(await closeOf(gid)).toBe("host");
     expect((await turn(host, { gathering: gid, op: "end" })).body.changed).toBe(

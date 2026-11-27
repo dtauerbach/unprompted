@@ -59,7 +59,12 @@ import {
   unsubscribe as unsubscribeEvents,
 } from "./event-subscriptions";
 import { ackWake } from "./fire-ack";
-import { GATHERING_NOTICE, listGatherings, rsvp } from "./gatherings";
+import {
+  GATHERING_NOTICE,
+  listGatherings,
+  parseGatheringsCursor,
+  rsvp,
+} from "./gatherings";
 import { setHostIn } from "./hosts";
 import {
   ApiError,
@@ -191,6 +196,19 @@ const HANDSHAKE_NOTICES = new Set(["notifications/initialized"]);
 // large: a small request with no checked token can't fetch it many times
 // over in one answer.
 const MAX_HANDSHAKE_BATCH = 8;
+
+// list_gatherings' after: a page's next_after, or nothing.
+function afterOf(raw: string | undefined) {
+  if (raw === undefined) return undefined;
+  const after = parseGatheringsCursor(raw);
+  if (!after)
+    throw new ApiError(
+      400,
+      "invalid",
+      "after must be the next_after a page of gatherings gave.",
+    );
+  return after;
+}
 
 export type Handshake = { body: unknown; initialize: boolean };
 
@@ -1499,7 +1517,12 @@ export function buildMcpServer(opts: {
       run("list_gatherings", READ, async () => ({
         notice: GATHERING_NOTICE,
         now: await serverNow(),
-        ...(await listGatherings(db(), await viewer(), input.limit ?? 50)),
+        ...(await listGatherings(
+          db(),
+          await viewer(),
+          input.limit ?? 50,
+          afterOf(input.after),
+        )),
       })),
   );
 

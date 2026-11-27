@@ -15,6 +15,13 @@ import {
 } from "./limits";
 import { logAction } from "./log";
 import { type NextVisit, nextVisitAfterCommit } from "./next-visit";
+import {
+  cutToFit,
+  fittingSizes,
+  roomBeside,
+  sizeOf,
+  sizesOf,
+} from "./read-cap";
 import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
@@ -748,11 +755,37 @@ export async function moveGathering(
 // until its end. One that ended early (cancelled, or short) stays listed
 // until 30 minutes after its start, however long it was to last, so a bot
 // that said it's coming finds out, and no longer.
+// Where a list of gatherings goes on from: the starts_at, to the
+// millisecond, and the id of the last one a page gave.
+export type GatheringsAfter = { at: Date; id: number };
+
+export function gatheringsCursor(g: { starts_at: Date; id: number }): string {
+  return `${g.starts_at.getTime()}-${g.id}`;
+}
+
+export function parseGatheringsCursor(s: string): GatheringsAfter | null {
+  const m = /^(\d{1,15})-(\d{1,18})$/.exec(s);
+  if (!m) return null;
+  const at = new Date(Number(m[1]));
+  const id = Number(m[2]);
+  if (Number.isNaN(at.getTime()) || !Number.isSafeInteger(id)) return null;
+  return { at, id };
+}
+
+// Gatherings not yet over, soonest first, cut to fit READ_MAX_BYTES beside
+// the notice and the time the callers add (src/lib/read-cap.ts): a page
+// that was cut, or that has more after it, gives next_after, to pass back
+// as after.
 export async function listGatherings(
   sql: postgres.Sql | Tx,
   viewer: number | undefined,
   limit = 50,
-): Promise<{ gatherings: GatheringView[]; more: boolean }> {
+  after?: GatheringsAfter,
+): Promise<{
+  gatherings: GatheringView[];
+  more: boolean;
+  next_after?: string;
+}> {
   const rows = await sql<Row[]>`
     SELECT ${columns(sql, viewer ?? 0)}
     FROM ${startingFrom(sql, LASTS_MAX_MINUTES)}
@@ -760,17 +793,46 @@ export async function listGatherings(
       AND t.starts_at + make_interval(mins => CASE
         WHEN EXISTS (SELECT 1 FROM gathering_ends e WHERE e.gathering_id = g.id)
         THEN ${OVER_MINUTES} ELSE g.lasts_minutes END) > now()
+      ${
+        after
+          ? sql`AND (date_trunc('milliseconds', t.starts_at), g.id)
+                  > (${after.at}::timestamptz, ${after.id})`
+          : sql``
+      }
     ORDER BY t.starts_at, g.id
     LIMIT ${limit + 1}`;
-  return {
-    gatherings: await withTurns(
-      sql,
-      rows.slice(0, limit).map((r) => toView(r, viewer)),
-      viewer,
-    ),
-    more: rows.length > limit,
+  const all = await withTurns(
+    sql,
+    rows.slice(0, limit).map((r) => toView(r, viewer)),
+    viewer,
+  );
+  const rowsMore = rows.length > limit;
+  const build = (n: number) => {
+    const more = n < all.length || rowsMore;
+    const last = all[n - 1];
+    return {
+      gatherings: all.slice(0, n),
+      more,
+      ...(more && last ? { next_after: gatheringsCursor(last) } : {}),
+    };
   };
+  // What the callers send beside it, at its longest.
+  const sent = (page: ReturnType<typeof build>) => ({
+    notice: GATHERING_NOTICE,
+    now: new Date(),
+    ...page,
+    next_after: page.next_after ?? CURSOR_LONGEST,
+  });
+  const sizes = sizesOf(all);
+  return cutToFit(
+    sizes,
+    fittingSizes(sizes, roomBeside(sent(build(0)))),
+    build,
+    (page) => sizeOf(sent(page)),
+  );
 }
+
+const CURSOR_LONGEST = `${"9".repeat(15)}-${"9".repeat(18)}`;
 
 export type RsvpResult = {
   rsvp: {

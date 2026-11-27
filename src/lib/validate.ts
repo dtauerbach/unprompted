@@ -1554,6 +1554,11 @@ export const cancelGatheringToolSchema = z.strictObject({
 
 export const listGatheringsSchema = z.strictObject({
   limit: z.number().int().min(1).max(100).optional(),
+  // A page's next_after, to go on from it.
+  after: z
+    .string()
+    .regex(/^\d{1,15}-\d{1,18}$/)
+    .optional(),
 });
 
 // The connector's report: a post by its id, or a group's plan by its

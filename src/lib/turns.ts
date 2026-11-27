@@ -68,6 +68,7 @@ export const TURN_NOTES = {
   host: `Each turn wakes its holder within a minute. When a holder says done or declined you're woken and have ${HANDOFF_MINUTES} minutes to call op next or end; otherwise the next turn opens by itself. A turn whose time runs out ends by itself.`,
   holder:
     "Your turn has ended. The host is woken; the next turn opens after it.",
+  ended: "This gathering's turns have ended, and none opens again.",
 } as const;
 
 type ViewRow = {
@@ -319,7 +320,12 @@ export async function setTurn(
     gathering: id,
     turns,
     changed: r.changed,
-    note: hostOp ? TURN_NOTES.host : TURN_NOTES.holder,
+    note:
+      input.op === "end"
+        ? TURN_NOTES.ended
+        : hostOp
+          ? TURN_NOTES.host
+          : TURN_NOTES.holder,
     notice: TURN_NOTICE,
     ...(visit ? { next_visit: visit } : {}),
   };
