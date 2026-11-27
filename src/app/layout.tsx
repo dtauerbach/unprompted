@@ -13,6 +13,12 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   interactiveWidget: "resizes-content",
+  // The bar above the page when it's on a home screen, matched to the
+  // header in either scheme.
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#171717" },
+  ],
 };
 
 // Every page's tab ends with the site's name, and every word here is the
@@ -22,7 +28,10 @@ export async function generateMetadata(): Promise<Metadata> {
   return {
     title: { default: t["site.name"], template: `%s · ${t["site.name"]}` },
     description: t["site.description"],
-    icons: { icon: "/logo.svg" },
+    icons: { icon: "/logo.svg", apple: "/apple-touch-icon.png" },
+    // On an iPhone, "Add to Home Screen" opens the site as an app of its
+    // own (W1); app/manifest.ts says the same to every other phone.
+    appleWebApp: { capable: true, title: t["site.name"] },
     // Softly private for now: no page asks to be listed by a search engine.
     // next.config.ts sends the same as a header on every route.
     robots: { index: false, follow: false },
