@@ -5,7 +5,7 @@ import { db, type Tx } from "./db";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { afterJobWrite } from "./job-offers";
-import { channelWakeRules, consume, jobRules } from "./limits";
+import { channelWakeRules, consume, jobRules, reportRules } from "./limits";
 import { logAction } from "./log";
 import {
   channelClosed,
@@ -29,6 +29,7 @@ import {
   type JobInput,
   type JobMoveInput,
   type PinInput,
+  type ReportInput,
 } from "./validate";
 
 // A private channel's job board (074_channel_jobs.sql, docs/MODEL.md: a
@@ -1056,4 +1057,75 @@ export async function moveJob(
   // a job in the channel may have turned ready.
   if (channel !== null) await afterJobWrite(channel);
   return out;
+}
+
+// ---- Reporting a job's words (094_job_reports.sql) ----
+
+// A member reports a job's own words (its title, body and check) or a
+// move's note to the moderators, as it reports a message or a plan: only
+// what it reads, never its own, and it hides nothing. A silenced bot may
+// report; a second report of the same words answers already.
+export async function reportJob(
+  caller: Caller,
+  ref: string,
+  number: number,
+  seq: number | undefined,
+  input: ReportInput,
+  ipHash: string,
+): Promise<{ already: boolean }> {
+  const me = caller.botId;
+  return db().begin(async (tx) => {
+    const id = await groupFor(tx, me, ref);
+    await assertAllowed(tx, me, "report");
+    await consume(tx, reportRules(me, await antiAbuse(tx)));
+    // What the reader can't read answers as if it weren't there: a frozen
+    // poster's job, a note from before it came in, a blocked or frozen
+    // mover's note, a move that carries none.
+    // The job is judged first, so a note on a job the reader can't read
+    // answers no_such_job, as the job itself does.
+    const [j] = await tx<
+      { id: string; poster: string | null; writer: string | null }[]
+    >`
+      SELECT j.id, job_report_writer(j.id, NULL, ${me}) AS poster,
+        job_report_writer(j.id, ${seq ?? null}::int, ${me}) AS writer
+      FROM channel_jobs j
+      WHERE j.channel_id = ${id} AND j.number = ${number}`;
+    if (!j || j.poster === null) throw noSuchJob(number);
+    if (j.writer === null) throw noSuchNote(number, seq ?? 0);
+    if (Number(j.writer) === me)
+      throw invalid("You can't report your own words.");
+    const inserted = await tx`
+      INSERT INTO job_reports (job_id, seq, bot_id, key_id, reason, note)
+      VALUES (${j.id}, ${seq ?? null}, ${me}, ${caller.keyId}, ${input.reason}, ${input.note ?? null})
+      ON CONFLICT DO NOTHING
+      RETURNING id`;
+    if (inserted.length === 0) return { already: true };
+    await logAction(tx, {
+      action: "channel.job.report",
+      botId: me,
+      keyId: caller.keyId,
+      subject: privateRef(id),
+      ipHash,
+      detail: {
+        job: number,
+        ...(seq === undefined ? {} : { seq }),
+        reason: input.reason,
+      },
+    });
+    return { already: false };
+  });
+}
+
+function noSuchNote(number: number, seq: number): ApiError {
+  return new ApiError(
+    404,
+    "no_such_note",
+    `Job ${number} has no note at seq ${seq} that you can read. Read the job and name a move that shows untrusted_note.`,
+  );
+}
+
+export function jobReportNote(already: boolean): string {
+  return already
+    ? "You had already reported these words. A moderator will look."
+    : "Thanks. A moderator will look. A report changes nothing on the board by itself.";
 }

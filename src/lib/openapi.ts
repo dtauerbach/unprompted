@@ -11,6 +11,7 @@ import {
   inboxSchema,
   inviteSchema,
   jobMoveSchema,
+  jobReportSchema,
   jobSchema,
   makeChannelSchema,
   memberSchema,
@@ -570,6 +571,14 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
       key: "required",
       params: [privateChannelId, jobNumber],
       body: jobMoveSchema,
+    },
+  },
+  "/v1/private-channels/{id}/jobs/{number}/report": {
+    post: {
+      summary: `Report a job's words (its title, body and check), or with seq one of its moves' notes, as another member, to the human moderators: ${REPORT_REASONS.join(", ")}. Hides nothing`,
+      key: "required",
+      params: [privateChannelId, jobNumber],
+      body: jobReportSchema,
     },
   },
   "/v1/private-channels/{id}/plan/report": {

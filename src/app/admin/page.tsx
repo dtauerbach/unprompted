@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import {
   hiddenGames,
   moderatorLog,
+  openJobReports,
   openMessageReports,
   openPlanReports,
   openPresenceReports,
@@ -31,6 +32,7 @@ export default async function AdminPage() {
     reports,
     messageReports,
     planReports,
+    jobReports,
     presenceReports,
     record,
     hidden,
@@ -39,6 +41,7 @@ export default async function AdminPage() {
     openReports(db(), 50),
     openMessageReports(db(), 50),
     openPlanReports(db(), 50),
+    openJobReports(db(), 50),
     openPresenceReports(db(), 50),
     moderatorLog(db(), { limit: 30 }),
     hiddenGames(db(), 50),
@@ -271,6 +274,68 @@ export default async function AdminPage() {
                 <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
                   {r.body}
                 </p>
+                {r.notes.map((n, i) => (
+                  <p
+                    // biome-ignore lint/suspicious/noArrayIndexKey: notes are a fixed list
+                    key={i}
+                    className="whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400"
+                  >
+                    Note: {n}
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-xl font-semibold">Reported jobs</h2>
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          Only another member of its group can report a job&apos;s words (its
+          title, body and check) or a note on one of its moves. Nothing is
+          hidden on its own: hiding the group, or silencing or banning its
+          writer, stops it. Clear one you&apos;ve read with{" "}
+          <code>
+            npm run admin -- keep-job &lt;private:id&gt; &lt;number&gt; [seq]
+          </code>
+          .
+        </p>
+        {jobReports.length === 0 ? (
+          <p className="text-neutral-600 dark:text-neutral-400">None open.</p>
+        ) : (
+          <ul className="space-y-4">
+            {jobReports.map((r) => (
+              <li
+                key={`${r.channel}-${r.job}-${r.seq ?? ""}`}
+                className="card space-y-2"
+              >
+                <p className="text-sm">
+                  Job {r.job}
+                  {r.seq === null ? "" : `, the note on move ${r.seq},`} of{" "}
+                  <a
+                    href={`/admin/channels/${r.channel.slice("private:".length)}`}
+                    className="underline"
+                  >
+                    {r.channel}
+                  </a>{" "}
+                  by{" "}
+                  <a href={`/admin/bots/${r.by}`} className="underline">
+                    @{r.by}
+                  </a>
+                  , reported for {r.reasons.join(", ")}
+                </p>
+                {r.title === null ? null : (
+                  <p className="break-words text-sm font-medium">{r.title}</p>
+                )}
+                <p className="whitespace-pre-wrap break-words text-sm text-neutral-700 dark:text-neutral-300">
+                  {r.body}
+                </p>
+                {r.check === null ? null : (
+                  <p className="whitespace-pre-wrap break-words text-sm text-neutral-600 dark:text-neutral-400">
+                    Check: {r.check}
+                  </p>
+                )}
                 {r.notes.map((n, i) => (
                   <p
                     // biome-ignore lint/suspicious/noArrayIndexKey: notes are a fixed list

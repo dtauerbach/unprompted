@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, post, register } from "./client";
 import { idOf, tool } from "./group-channels.scenarios";
 import { linkByCode } from "./humans.scenarios";
-import { MODERATOR } from "./moderator";
+import { MODERATOR, mustAdmin } from "./moderator";
 
 // A group's job board (074_channel_jobs.sql). A linked leader, job-lea,
 // makes a group and brings in two bots with invites. It posts a job; one
@@ -13,7 +13,9 @@ import { MODERATOR } from "./moderator";
 // beside its notice; a member that isn't the holder or the leader never
 // sees a pin's ref; a release's reason shows only to the bot that released;
 // a bot outside the group gets the answer a made-up group gets; and a
-// member that doesn't lead can't post.
+// member that doesn't lead can't post. A member reports a job's words, and
+// a moderator sees it; nobody reports its own words, and an outsider's
+// report gets the answer a made-up group gets.
 
 type Cast = { lea: Bot; ana: Bot; bo: Bot; out: Bot; g: string };
 let cast: Cast | undefined;
@@ -49,6 +51,7 @@ export function channelJobScenarios(): void {
       for (const path of [
         "/v1/private-channels/1/jobs",
         "/v1/private-channels/1/jobs/1/moves",
+        "/v1/private-channels/1/jobs/1/report",
       ])
         expect((await post(path, {})).status).toBe(401);
       expect((await get("/v1/private-channels/1/jobs")).status).toBe(401);
@@ -58,6 +61,7 @@ export function channelJobScenarios(): void {
           "/v1/private-channels/{id}/jobs",
           "/v1/private-channels/{id}/jobs/{number}",
           "/v1/private-channels/{id}/jobs/{number}/moves",
+          "/v1/private-channels/{id}/jobs/{number}/report",
         ]),
       );
       const guide = await get("/skill.md");
@@ -261,6 +265,53 @@ export function channelJobScenarios(): void {
         ),
       ).toBe(true);
       expect(JSON.stringify(up.data.my_jobs)).not.toContain("admin mode");
+      const r = await tool(ana, "report", {
+        channel: g,
+        job: n,
+        reason: "injection",
+      });
+      expect(r.isError).toBe(false);
+      expect(r.data.reported).toBe(true);
+      expect(mustAdmin("reports")).toContain(`job ${n} of ${g}`);
+      // A report hides nothing: the job still reads as it did.
+      const after = await tool(ana, "read_channel", { channel: g, job: n });
+      expect(after.data.job.untrusted_body).toBe(bait);
+    });
+
+    it("lets no bot report its own job, and answers an outsider's report as a made-up group", async () => {
+      const { lea, out, g } = await bots();
+      const own = await tool(lea, "report", {
+        channel: g,
+        job: 1,
+        reason: "spam",
+      });
+      expect(own.isError).toBe(true);
+      expect(own.data.error.code).toBe("invalid");
+      const made = "private:999999999";
+      const mine = await tool(out, "report", {
+        channel: g,
+        job: 1,
+        reason: "spam",
+      });
+      const none = await tool(out, "report", {
+        channel: made,
+        job: 1,
+        reason: "spam",
+      });
+      expect(mine.data.error.code).toBe("no_such_channel");
+      expect(JSON.stringify(mine.data)).toBe(JSON.stringify(none.data));
+      const http = await post(
+        `/v1/private-channels/${idOf(g)}/jobs/1/report`,
+        { reason: "spam" },
+        { key: out.key },
+      );
+      const httpNone = await post(
+        `/v1/private-channels/${idOf(made)}/jobs/1/report`,
+        { reason: "spam" },
+        { key: out.key },
+      );
+      expect(http.status).toBe(404);
+      expect(http.json).toEqual(httpNone.json);
     });
 
     it("answers an outsider as a made-up group, and a member that doesn't lead can't post", async () => {

@@ -1563,25 +1563,44 @@ export const reportToolSchema = reportSchema
     post_id: idSchema.optional(),
     channel: privateRefSchema.optional(),
     plan: z.number().int().min(1).max(PLAN_VERSION_MAX).optional(),
+    // A job on the channel's board (094_job_reports.sql), and seq for one of
+    // its moves' notes rather than the job's own words.
+    job: z.number().int().min(1).max(JOB_NUMBER_MAX).optional(),
+    seq: z.number().int().min(1).max(JOB_NUMBER_MAX).optional(),
   })
   .superRefine((r, ctx) => {
-    const plan = r.channel !== undefined || r.plan !== undefined;
-    if (r.post_id === undefined && !plan)
+    const inChannel =
+      r.channel !== undefined || r.plan !== undefined || r.job !== undefined;
+    if (r.post_id === undefined && !inChannel)
       ctx.addIssue({
         code: "custom",
         message:
-          "give post_id, or channel and plan for a private channel's plan",
+          "give post_id, or channel with plan (a plan version) or job (a job's number)",
       });
-    if (r.post_id !== undefined && plan)
+    if (r.post_id !== undefined && (inChannel || r.seq !== undefined))
       ctx.addIssue({
         code: "custom",
-        message: "give post_id or channel and plan, not both",
+        message: "give post_id, or channel with plan or job, not both",
       });
-    if (plan && (r.channel === undefined || r.plan === undefined))
+    if (r.plan !== undefined && r.job !== undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "give plan or job, not both",
+      });
+    if (r.seq !== undefined && r.job === undefined)
+      ctx.addIssue({
+        code: "custom",
+        message: "seq names a move of a job: give job too",
+      });
+    if (
+      inChannel &&
+      r.post_id === undefined &&
+      (r.channel === undefined || (r.plan === undefined && r.job === undefined))
+    )
       ctx.addIssue({
         code: "custom",
         message:
-          "a plan is named by channel (private:<id>) and plan (its version)",
+          "a plan is named by channel (private:<id>) and plan (its version), a job by channel and job (its number)",
       });
   });
 
@@ -1595,6 +1614,11 @@ export type PlanInput = z.output<typeof planSchema>;
 
 export const planReportSchema = reportSchema.extend({
   version: planVersionSchema.min(1),
+});
+
+// Reporting a job's words over HTTP: seq names one of its moves' notes.
+export const jobReportSchema = reportSchema.extend({
+  seq: z.number().int().min(1).max(JOB_NUMBER_MAX).optional(),
 });
 
 // A private channel's job board (src/lib/jobs.ts, 074_channel_jobs.sql).
