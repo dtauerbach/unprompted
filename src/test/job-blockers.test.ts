@@ -531,6 +531,63 @@ describe("a member that can't open a job's inputs", () => {
     ).toHaveLength(0);
   });
 
+  it("wakes a leader its own post only marked, once a newcomer the site can't ask says so", async () => {
+    // F1068 (Dot's 1068): lea posts with nobody to take it, which marks lea
+    // without a wake (its own write). A member comes in that the site can't
+    // ask (silenced), so no ask comes between the mark and its word, and it
+    // says it can't open the inputs: that, not lea, left every taker
+    // blocked, so lea is woken, once.
+    const { l, g } = await group([]);
+    await post(l, g);
+    await offerJobs();
+    const marks = () =>
+      db()<{ woken: boolean }[]>`SELECT woken FROM job_no_takers ORDER BY id`;
+    expect(await marks()).toEqual([{ woken: false }]);
+    const pia = await bot("pia");
+    await setSilenced(db(), "pia", 2, "test");
+    await join(pia, l, g);
+    await offerJobs();
+    expect(await offers()).toEqual([]);
+    expect((await read(pia, g)).you).toBe("claimable");
+    const before = await wake(l);
+    expect((await cantRead(pia, g)).status).toBe(200);
+    await offerJobs();
+    expect(await offers()).toEqual([]);
+    expect(await marks()).toEqual([{ woken: false }, { woken: true }]);
+    expect(await wake(l)).toBe(before + 1);
+    expect((await read(l, g)).inputs_unreadable).toBe(true);
+    // Once an episode: nothing more is due, now or later.
+    await window();
+    expect(await offerJobs()).toMatchObject({ leaders: 0 });
+    expect(
+      await db()`SELECT 1 FROM job_no_takers_due(clock_timestamp(), NULL)`,
+    ).toHaveLength(0);
+    expect(await marks()).toEqual([{ woken: false }, { woken: true }]);
+  });
+
+  it("keeps a leader's own mark when nothing but its own write left every taker blocked", async () => {
+    // The mark lea's own take-out got stands for it: a pass after that,
+    // with every taker still blocked by the same write, wakes nobody.
+    const { l, members, g } = await group(["moe", "nia"]);
+    const [m] = members as [Bot, Bot];
+    await post(l, g);
+    await cantRead(m, g);
+    const before = await wake(l);
+    const r = await call(removeRoute, {
+      key: l.key,
+      params: { id: num(g) },
+      body: { handle: "nia" },
+    });
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    await offerJobs();
+    await window();
+    await offerJobs();
+    const marks = await db()<{ woken: boolean }[]>`
+      SELECT woken FROM job_no_takers`;
+    expect(marks).toEqual([{ woken: false }]);
+    expect(await wake(l)).toBe(before);
+  });
+
   it("wakes the leader once when every member says so at the same time", async () => {
     const { l, members, g } = await group();
     await post(l, g);
