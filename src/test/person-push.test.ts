@@ -586,6 +586,69 @@ describe("a notice when a bot writes", () => {
     expect(await drain()).toEqual({ sent: 2, dropped: 0, failed: 0 });
   });
 
+  it("puts every mark back when reading the words throws", async () => {
+    const { lea, ben, human, channel } = await own();
+    const cy = await bot("cyd");
+    await link("google-p", cy);
+    const { channel: second } = await startChannel(
+      db(),
+      "google-p",
+      ["ben", "cyd"],
+      "ben",
+      null,
+    );
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await say(lea, channel, "one");
+    await say(ben, second, "two");
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      expect(
+        await drainPersonPushes(db(), {
+          deliver,
+          vapid: VAPID,
+          copy: async () => {
+            throw new Error("copy store unreachable");
+          },
+        }),
+      ).toEqual({ sent: 0, dropped: 0, failed: 0, deferred: 2 });
+    } finally {
+      console.error = quiet;
+    }
+    expect(sent).toHaveLength(0);
+    expect(await pending(human)).toBe(2);
+    expect(await drain()).toEqual({ sent: 2, dropped: 0, failed: 0 });
+  });
+
+  it("keeps the gap when one browser took the notice before a throw", async () => {
+    const { lea, ben, human, channel } = await own();
+    const a = device();
+    const b = device("updates.push.services.mozilla.com");
+    await subscribePerson(db(), "google-p", a.sub, null);
+    await subscribePerson(db(), "google-p", b.sub, null);
+    await say(lea, channel, "one");
+    let n = 0;
+    const second = async (...args: Parameters<typeof deliver>) => {
+      n++;
+      if (n > 1) throw new Error("connection dropped");
+      return deliver(...args);
+    };
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      expect(
+        await drainPersonPushes(db(), { deliver: second, vapid: VAPID }),
+      ).toEqual({ sent: 1, dropped: 0, failed: 1 });
+    } finally {
+      console.error = quiet;
+    }
+    // Not waiting again: the person has a notice that opens the channel,
+    // so the next message inside the gap is dropped.
+    expect(await pending(human)).toBe(0);
+    await say(ben, channel, "two");
+    expect(await drain()).toEqual({ sent: 0, dropped: 1, failed: 0 });
+  });
+
   it("cuts long words from the copy store to what a browser shows", async () => {
     // Fable's second review of W1: words past a push's size made every
     // notice throw.

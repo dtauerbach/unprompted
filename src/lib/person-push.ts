@@ -88,7 +88,9 @@ export function vapidConfig(
 }
 
 export function personPushAvailable(): boolean {
-  return vapidConfig() !== null && wakeSecretsAvailable();
+  return (
+    personPushAllowed() && vapidConfig() !== null && wakeSecretsAvailable()
+  );
 }
 
 const deviceOf = (endpoint: string) =>
@@ -278,11 +280,14 @@ export async function personPushDevices(
 // notice a round left waiting goes out on a quiet site too.
 // Only the production site sends people notices: any other Vercel deploy's
 // database is a branch of production's, sealed addresses and all, so a
-// preview given the same keys would otherwise reach real people's phones.
-// Off Vercel (a local run, a test, CI), the deliverer is a stand-in.
+// preview given the same keys would otherwise reach real people's phones;
+// nor does a production build off Vercel (CI's eval server, or a build run
+// against production's database by hand). A dev server or a test may, at
+// a stand-in (usePersonDeliver) or the network.
 export function personPushAllowed(): boolean {
   if (process.env.VERCEL_ENV === "production") return true;
-  return !process.env.VERCEL;
+  if (process.env.VERCEL) return false;
+  return process.env.NODE_ENV !== "production";
 }
 
 export async function nextPersonDue(sql: postgres.Sql): Promise<Date | null> {
@@ -311,14 +316,19 @@ type Claimed = {
   mark: string | null;
 };
 
-// Puts back when a notice last went for a channel whose send reached no
-// device, unless another drain has marked it since.
 // Puts a claimed mark back as it was before the claim, waiting again, so the
 // next round (or the clock) sends it: for a channel a round ran out of time
 // for, or one whose send threw before it reached a device. Only while the
 // row still carries this claim's mark, so a notice another drain sent since
-// isn't undone.
-async function putBack(sql: postgres.Sql, c: Claimed) {
+// isn't undone. A put-back that fails is logged and the others still go:
+// one failed query doesn't abandon the rest of the batch.
+async function putBack(sql: postgres.Sql, c: Claimed): Promise<void> {
+  await putBackOne(sql, c).catch((e: unknown) => {
+    console.error(e);
+  });
+}
+
+async function putBackOne(sql: postgres.Sql, c: Claimed) {
   await sql`
     UPDATE person_push_state
        SET pending_since = coalesce(pending_since, now()),
@@ -332,6 +342,8 @@ async function putBack(sql: postgres.Sql, c: Claimed) {
 export const NOTICE_TITLE_MAX = 120;
 export const NOTICE_BODY_MAX = 300;
 
+// Puts back when a notice last went for a channel whose send reached no
+// device, unless another drain has marked it since.
 async function unmark(sql: postgres.Sql, c: Claimed) {
   await sql`
     UPDATE person_push_state
@@ -352,6 +364,8 @@ export async function drainPersonPushes(
     now?: () => number;
     vapid?: Vapid | null;
     limit?: number;
+    // The words in force: a test's stand-in, else the copy store's.
+    copy?: typeof copyInForce;
     // When to stop sending: channels not reached by then wait again for
     // the next round, so a round never outlives the request it runs after.
     until?: number;
@@ -409,12 +423,12 @@ export async function drainPersonPushes(
   // connection, a copy read that fails) puts the marks back, waiting.
   let copy: Awaited<ReturnType<typeof copyInForce>>;
   try {
-    copy = await copyInForce(sql);
+    copy = await (deps.copy ?? copyInForce)(sql);
   } catch (e) {
     console.error(e);
     const back = claimed.filter((r) => !r.sent);
     for (const r of back) await putBack(sql, r);
-    if (back.length > 0) out.deferred = back.length;
+    if (back.length > 0) out.deferred = (out.deferred ?? 0) + back.length;
     return out;
   }
   let reached = false;
@@ -422,7 +436,7 @@ export async function drainPersonPushes(
     if (deps.until !== undefined && now() >= deps.until) {
       const back = claimed.slice(i).filter((r) => !r.sent);
       for (const r of back) await putBack(sql, r);
-      if (back.length > 0) out.deferred = back.length;
+      if (back.length > 0) out.deferred = (out.deferred ?? 0) + back.length;
       break;
     }
     if (c.sent) {
