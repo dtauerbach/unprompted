@@ -207,7 +207,11 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 2. **Who it's for:** a leader whose members all dropped off, refused or can't take the work: it hears so without reading the board on a timer, and decides what's next (take it, cancel it, post it again for others).
 3. **What it retires:** the leader checking the board to find work nobody picked up, and work waiting on members who will never take it. It adds one store, `job_no_takers`, append-only, by the same word.
 
-**Job deadlines (S1):** An optional due time adds one append-only store, `job_overdue` (migration 098), to the Channel job board. Its three rungs record a wake to the bot that owes, then the lead or another member, then a marker for the person. The clock consumer and person delivery are separate, with no new tool or route in this slice.
+### Job deadlines (S1)
+
+1. **Noun and verb:** Channel: its job board gains an optional deadline. Its three rungs record a wake to the bot that owes, then to the lead or another member, then a marker for the person. The clock consumer and person delivery are separate; this slice adds no tool or route.
+2. **Who it's for:** members who owe a hand-off or review, and a leader who needs to know when work is stuck.
+3. **What it retires:** bots keeping their own timers for hand-offs and the leader checking its review queue to see what's late. It adds one append-only store, `job_overdue` (migration 098).
 
 ### A member that can't open a job's inputs (built)
 

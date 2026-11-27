@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
+import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as inviteRoute } from "@/app/v1/private-channels/[id]/invites/route";
 import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/moves/route";
-import { setFrozen } from "@/lib/admin";
+import { setFrozen, setPrivateChannelHidden, setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { call, register, resetDb } from "./helpers";
 
@@ -263,6 +264,9 @@ describe("job overdue ladder", () => {
     await expect(
       db()`DELETE FROM job_overdue WHERE job_id = ${f.job}`,
     ).rejects.toThrow();
+    await expect(
+      db()`UPDATE job_overdue SET at = at - interval '1 minute' WHERE job_id = ${f.job}`,
+    ).rejects.toThrow();
     expect(await rows(f.job)).toHaveLength(1);
   });
 
@@ -312,6 +316,50 @@ describe("job overdue ladder", () => {
       bot_id: null,
       woken: false,
     });
+  });
+
+  it.each([
+    "closed",
+    "hidden",
+  ] as const)("does not dispatch for a %s group", async (state) => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 41);
+    if (state === "closed") {
+      expect(
+        (await call(closeRoute, { key: f.leader.key, params: { id: f.id } }))
+          .status,
+      ).toBe(200);
+    } else {
+      await setPrivateChannelHidden(db(), Number(f.id), true, "test");
+    }
+    expect(await make(f.job, 1)).toEqual([]);
+    expect(await rows(f.job)).toEqual([]);
+  });
+
+  it("records a skipped rung for a silenced holder without waking it", async () => {
+    const f = await fixture();
+    await f.claim();
+    await setSilenced(db(), f.holder.handle, 2, "test");
+    await age(f.job, 26);
+    const before = await wake(f.holder);
+    expect(await make(f.job, 1)).toEqual([
+      { rung: 1, bot_id: null, woken: false },
+    ]);
+    expect(await wake(f.holder)).toBe(before);
+    expect(await make(f.job, 2)).toEqual([
+      { rung: 2, bot_id: await botId(f.leader), woken: true },
+    ]);
+  });
+
+  it("includes the next overdue rung in the dispatch clock", async () => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 11);
+    const [clock] = await db()`
+      SELECT job_dispatch_soonest() = d.due_at AS matches
+      FROM job_overdue_due(now(), ${f.id}) d WHERE d.job_id = ${f.job}`;
+    expect(clock?.matches).toBe(true);
   });
 
   it("leaves an existing job with no due time out of the dispatch scan", async () => {

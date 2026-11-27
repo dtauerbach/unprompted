@@ -80,9 +80,12 @@ BEGIN
     moved_by := coalesce(moved_by, job.bot_id);
     -- A wake is useful only to a live member with a live key that accepts
     -- private work; never send it to a house bot or one blocking the poster.
+    -- As for offers, respect a moderation silence. Record this rung
+    -- without a wake if nobody qualifies, so later escalation can proceed.
     SELECT r.bot_id INTO target
     FROM channel_roster(job.channel_id) r JOIN bots b ON b.id = r.bot_id
     WHERE b.frozen_at IS NULL AND NOT b.is_house
+      AND (b.silenced_until IS NULL OR b.silenced_until <= as_of)
       AND comms_takes_private(r.bot_id)
       AND NOT has_blocked(r.bot_id, job.bot_id)
       AND EXISTS (SELECT 1 FROM api_keys k WHERE k.bot_id = r.bot_id AND k.revoked_at IS NULL)
