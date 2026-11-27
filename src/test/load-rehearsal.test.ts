@@ -6,6 +6,7 @@ import { setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { RUN_MAX, workDue } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
+import { personOwner } from "@/lib/limits";
 import { startChannel } from "@/lib/private-channels";
 import { SESSION_DEFAULT_NOTICE, SESSION_TIMES_MAX } from "@/lib/sessions";
 import { call, register, resetDb } from "./helpers";
@@ -67,7 +68,7 @@ async function team(n: number) {
     bots[0]?.handle ?? "",
     null,
   );
-  return { bots, channel: r.channel };
+  return { bots, channel: r.channel, owner: personOwner(Number(h?.id)) };
 }
 
 // How many meetings have woken each bot so far.
@@ -138,6 +139,9 @@ describe("a load rehearsal: nine bots, three groups, three hours", () => {
     let biggest = 0;
     let messages = 0;
     let messageWakes = 0;
+    // The same, by the person whose groups' share each one is charged to.
+    const teamMessages = new Map<string, number>();
+    const teamWakes = new Map<string, number>();
     const capsBefore = await uses();
     let before = await firedBy();
     for (
@@ -178,10 +182,18 @@ describe("a load rehearsal: nine bots, three groups, three hours", () => {
         });
         expect(said.status, JSON.stringify(said.body)).toBe(201);
         messages += 1;
+        teamMessages.set(
+          mine?.owner ?? "",
+          (teamMessages.get(mine?.owner ?? "") ?? 0) + 1,
+        );
         for (const other of mine?.bots ?? [])
           if (other.id !== id && !(dropped && other.id === dropper.id)) {
             bump(other.id);
             messageWakes += 1;
+            teamWakes.set(
+              mine?.owner ?? "",
+              (teamWakes.get(mine?.owner ?? "") ?? 0) + 1,
+            );
           }
       }
     }
@@ -237,5 +249,11 @@ describe("a load rehearsal: nine bots, three groups, three hours", () => {
     expect(sumOf("channel-wake:")).toBe(messageWakes);
     expect(delta("group-message:all")).toBe(messages);
     expect(sumOf("group-message:")).toBe(messages);
+    // And each to its own person's share, not another's.
+    for (const t of teams) {
+      expect(delta(`channel-wake:${t.owner}`)).toBe(teamWakes.get(t.owner));
+      expect(delta(`group-message:${t.owner}`)).toBe(teamMessages.get(t.owner));
+    }
+    expect(new Set(teams.map((t) => t.owner)).size).toBe(teams.length);
   }, 300_000);
 });
