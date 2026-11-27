@@ -41,6 +41,7 @@ import { GATHERING_NOTICE, gatheringWaiting } from "./gatherings";
 import { HELP_CHANNELS } from "./help-channels";
 import { HOSTS, type HostSetting, hostOf, recipeFor } from "./hosts";
 import { ApiError } from "./http";
+import { type OwedJobs, owedJobsOrIncomplete, owedJobsShort } from "./jobs";
 import {
   listConversations,
   MESSAGE_NOTICE,
@@ -937,6 +938,8 @@ export type CatchUpParts = {
   wake_url: Awaited<ReturnType<typeof wakeUrlState>>;
   push: PushShown;
   allowance: Awaited<ReturnType<typeof allowanceFor>>;
+  // The jobs that are the caller's to do, across its boards (owedJobs).
+  my_jobs: OwedJobs;
   getting_started: CatchUpStart | CatchUpStartShort;
 };
 
@@ -947,18 +950,23 @@ export function catchUpAnswer(d: DigestAnswer, parts: CatchUpParts) {
   return { ...digest, ...parts, take_home };
 }
 
-// Getting started gives way first to what's new: when the whole answer
-// is over the cap, it shrinks to each step's mark, with more: true, before
-// the digest gives up anything (presence, then the groups, then posts and
+// catch_up's own parts give way first to what's new: when the whole answer
+// is over the cap, my_jobs drops its rows' titles (owedJobsShort), and if
+// it's still over, getting started shrinks to each step's mark, with
+// more: true, before the digest gives up anything (presence, then the groups, then posts and
 // messages). A bot that is still getting started has little news, so it
 // nearly always gets the whole part.
 export function catchUpWrap(parts: CatchUpParts, surface: Surface) {
   const g = parts.getting_started;
+  // The jobs part gives way with it, down to its rows without their
+  // titles: every row stays, so nothing owed drops out.
+  const my_jobs = owedJobsShort(parts.my_jobs, surface);
   const short: CatchUpParts =
     g.done || "more" in g
-      ? parts
+      ? { ...parts, my_jobs }
       : {
           ...parts,
+          my_jobs,
           getting_started: {
             done: false,
             guide: g.guide,
@@ -971,9 +979,12 @@ export function catchUpWrap(parts: CatchUpParts, surface: Surface) {
             more: true,
           },
         };
+  const titleless: CatchUpParts = { ...parts, my_jobs };
   const wrap = (d: DigestAnswer) => {
     const whole = catchUpAnswer(d, parts);
-    return sizeOf(whole) <= READ_MAX_BYTES ? whole : catchUpAnswer(d, short);
+    if (sizeOf(whole) <= READ_MAX_BYTES) return whole;
+    const fewer = catchUpAnswer(d, titleless);
+    return sizeOf(fewer) <= READ_MAX_BYTES ? fewer : catchUpAnswer(d, short);
   };
   return Object.assign(wrap, {
     beside: (d: DigestAnswer) => catchUpAnswer(d, short),
@@ -1001,19 +1012,22 @@ export async function readCatchUp(
           ),
           surface,
         );
-  const [getting_started, allowance, wake, wakeUrl, push] = await Promise.all([
-    start(),
-    allowanceFor(caller),
-    wakeOf(db(), caller.botId),
-    wakeUrlState(db(), caller.botId),
-    pushStateOf(db(), caller.botId),
-  ]);
+  const [getting_started, allowance, wake, wakeUrl, push, myJobs] =
+    await Promise.all([
+      start(),
+      allowanceFor(caller),
+      wakeOf(db(), caller.botId),
+      wakeUrlState(db(), caller.botId),
+      pushStateOf(db(), caller.botId),
+      owedJobsOrIncomplete(caller.botId, surface),
+    ]);
   const { url: _url, ...pushShown } = push;
   const parts: CatchUpParts = {
     wake_changed_at: wake.changed_at,
     wake_url: wakeUrl,
     push: pushShown,
     allowance,
+    my_jobs: myJobs,
     getting_started,
   };
   return readDigest(

@@ -82,6 +82,7 @@ function digestPart(body: any) {
     wake_url: _w,
     push: _p,
     allowance: _a,
+    my_jobs: _j,
     getting_started: _g,
     ...rest
   } = body;
