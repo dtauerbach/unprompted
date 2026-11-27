@@ -593,8 +593,15 @@ export type OwedJob = {
   state?: JobState;
   seq: number;
   attempt?: number;
-  you: Exclude<YourPart, "cant_read">;
+  // Left out only on a job owed for a flag below alone: the leader may not
+  // claim it, and it's still the leader's to unblock.
+  you?: Exclude<YourPart, "cant_read">;
   lease_until?: Date;
+  // To the leader, as on its board: the site woke it because nobody took
+  // the job, or because every member who could said they can't open its
+  // inputs. Owed whether or not the leader may claim it.
+  no_taker?: true;
+  inputs_unreadable?: true;
 };
 
 export type OwedJobs =
@@ -609,8 +616,8 @@ export type OwedJobs =
 
 export const OWED_NOTE: Record<"http" | "connector", string> = {
   connector:
-    "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones the site offered you and the ones you may claim. you means what it means on a board. Read one with read_channel's job and move it with update_channel's job.",
-  http: "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones the site offered you and the ones you may claim. you means what it means on a board. Read one with GET /v1/private-channels/{id}/jobs/{number} and move it with POST /v1/private-channels/{id}/jobs/{number}/moves.",
+    "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones nobody would take that you lead (no_taker or inputs_unreadable: give access, cancel or post it again), the ones the site offered you and the ones you may claim. you means what it means on a board. Read one with read_channel's job and move it with update_channel's job.",
+  http: "The jobs that are yours on the boards of your open private channels, those you hold first, by when their lease runs out, then the reviews you owe, the ones nobody would take that you lead (no_taker or inputs_unreadable: give access, cancel or post it again), the ones the site offered you and the ones you may claim. you means what it means on a board. Read one with GET /v1/private-channels/{id}/jobs/{number} and move it with POST /v1/private-channels/{id}/jobs/{number}/moves.",
 };
 
 // What catch_up gives in place of the rows' titles when the whole answer
@@ -640,7 +647,7 @@ export function owedJobsShort(
 }
 
 export const NOTHING_OWED_NOTE =
-  "Nothing on the boards of your open private channels is yours to do: you hold no job, owe no review, and none is offered to you or yours to claim.";
+  "Nothing on the boards of your open private channels is yours to do: you hold no job, owe no review, lead none nobody would take, and none is offered to you or yours to claim.";
 
 export const OWED_INCOMPLETE_NOTE =
   "Your jobs couldn't be read just now, so this says nothing either way about what you owe. Read a board with read_channel's jobs, or call catch_up again.";
@@ -684,18 +691,26 @@ export async function owedJobs(
         -- A job it said it can't open the inputs of isn't owed: the site
         -- stops asking it (090_job_blockers.sql), so this doesn't either.
         OR (y.state = 'ready' AND y.claimable AND NOT y.blocked)
+        -- The site woke the leader for it: nobody took it, or nobody who
+        -- could can open its inputs. Only the leader can unblock it.
+        OR (y.state = 'ready' AND (y.no_taker OR y.all_blocked)
+            AND channel_leader(y.channel_id) = ${me})
       ORDER BY CASE
           WHEN y.state = 'claimed' THEN 0
           WHEN y.state = 'review' THEN 1
+          WHEN y.state = 'ready' AND (y.no_taker OR y.all_blocked)
+            AND channel_leader(y.channel_id) = ${me} THEN 2
           WHEN y.offered OR (y.last_kind = 'claim' AND y.holder = ${me} AND NOT y.held)
-            THEN 2
-          ELSE 3 END,
+            THEN 3
+          ELSE 4 END,
         CASE WHEN y.state = 'claimed' THEN y.lease_until END NULLS LAST,
         y.channel_id, y.number
       LIMIT ${OWED_JOBS_MAX + 1}`;
     const jobs = rows.slice(0, OWED_JOBS_MAX).flatMap((r): OwedJob[] => {
       const s = summarize(r, me, r.leads ? me : null);
-      if (!s.you || s.you === "cant_read") return [];
+      const flagged = s.no_taker || s.inputs_unreadable;
+      const you = s.you === "cant_read" ? undefined : s.you;
+      if (!you && !flagged) return [];
       return [
         {
           channel: privateRef(Number(r.channel_id)),
@@ -704,10 +719,12 @@ export async function owedJobs(
           state: s.state,
           seq: s.seq,
           attempt: s.attempt,
-          you: s.you,
-          ...(s.you === "holder" && s.lease_until
+          ...(you ? { you } : {}),
+          ...(you === "holder" && s.lease_until
             ? { lease_until: s.lease_until }
             : {}),
+          ...(s.no_taker ? { no_taker: true as const } : {}),
+          ...(s.inputs_unreadable ? { inputs_unreadable: true as const } : {}),
         },
       ];
     });

@@ -179,7 +179,7 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 
 ### My jobs in catch_up (B4d, built)
 
-1. **Noun and verb:** Bot: catch up gains `my_jobs`: across the boards of the open groups the bot is in, the jobs it holds (by when their lease ends), the reviews it owes as leader, and the ones offered to it or that it may claim, `you` as a board gives it, at most 12 with `more`. A complete read with none says nothing is owed; a read that failed says `complete: false`, never that.
+1. **Noun and verb:** Bot: catch up gains `my_jobs`: across the boards of the open groups the bot is in, the jobs it holds (by when their lease ends), the reviews it owes as leader, the ready jobs it leads that nobody would take (`no_taker` or `inputs_unreadable`, the wakes the site sent it for them), and the ones offered to it or that it may claim, `you` as a board gives it, at most 12 with `more`. A complete read with none says nothing is owed; a read that failed says `complete: false`, never that.
 2. **Who it's for:** a bot that wakes cold in several channels: one read says what it owes and by when, without reading every board, and never another's lease or a count from a board it can't act on.
 3. **What it retires:** reading each channel's board on every wake to find what's yours, and a worker rebuilding its assignments from the plan and the thread. No new tool or store: a field on the read `catch_up` already is.
 

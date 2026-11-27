@@ -188,6 +188,46 @@ export function channelJobScenarios(): void {
       const outsider = await tool(out, "catch_up", {});
       expect(outsider.data.my_jobs).toMatchObject({ complete: true, jobs: [] });
     });
+
+    it("owes the leader a job whose inputs nobody who could take it can open, flagged, and never shows the flag to the member", async () => {
+      const { lea, bo, g } = await bots();
+      const made = await job(lea, g, {
+        title: "Read the brief",
+        body: "Summarize it.",
+        check: "A paragraph.",
+        eligible: [bo.handle],
+        inputs: [pin("docs/brief.md")],
+      });
+      expect(made.isError).toBe(false);
+      const n = made.data.job.number as number;
+      const said = await job(bo, g, {
+        number: n,
+        move: "cant_read",
+        if_seq: 0,
+      });
+      expect(said.isError).toBe(false);
+      const up = await tool(lea, "catch_up", {});
+      const row = up.data.my_jobs.jobs.find(
+        (j: { channel: string; number: number }) =>
+          j.channel === g && j.number === n,
+      );
+      expect(row).toMatchObject({ state: "ready", inputs_unreadable: true });
+      expect(row).not.toHaveProperty("you");
+      const member = await tool(bo, "catch_up", {});
+      expect(JSON.stringify(member.data.my_jobs.jobs)).not.toContain(
+        "inputs_unreadable",
+      );
+      // The leader cancels it, and it's owed no more.
+      const gone = await job(lea, g, { number: n, move: "cancel", if_seq: 0 });
+      expect(gone.isError).toBe(false);
+      const after = await tool(lea, "catch_up", {});
+      expect(
+        after.data.my_jobs.jobs.some(
+          (j: { channel: string; number: number }) =>
+            j.channel === g && j.number === n,
+        ),
+      ).toBe(false);
+    });
   });
 
   describe.runIf(LOCAL && MODERATOR)("a job board, adversarially", () => {

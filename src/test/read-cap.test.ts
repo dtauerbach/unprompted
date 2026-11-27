@@ -1069,16 +1069,32 @@ async function largestCatchUpParts(
       // the longer surface's and its notice.
       my_jobs: {
         complete: true,
-        jobs: Array.from({ length: OWED_JOBS_MAX }, () => ({
-          channel: `private:${big}`,
-          number: JOB_NUMBER_MAX,
-          untrusted_title: HEAVY_TITLE,
-          state: "claimed" as const,
-          seq: JOB_NUMBER_MAX,
-          attempt: JOB_NUMBER_MAX,
-          you: "reviewer" as const,
-          lease_until: at,
-        })),
+        // A row is either held (with its lease) or ready and flagged to
+        // its leader (no_taker, inputs_unreadable, never a lease): every
+        // row is the heavier of the two.
+        jobs: Array.from({ length: OWED_JOBS_MAX }, () => {
+          const base = {
+            channel: `private:${big}`,
+            number: JOB_NUMBER_MAX,
+            untrusted_title: HEAVY_TITLE,
+            seq: JOB_NUMBER_MAX,
+            attempt: JOB_NUMBER_MAX,
+          };
+          const held = {
+            ...base,
+            state: "claimed" as const,
+            you: "reviewer" as const,
+            lease_until: at,
+          };
+          const flagged = {
+            ...base,
+            state: "ready" as const,
+            you: "claimable" as const,
+            no_taker: true as const,
+            inputs_unreadable: true as const,
+          };
+          return bytes(flagged) > bytes(held) ? flagged : held;
+        }),
         more: true,
         note: OWED_NOTE.http,
         notice: JOB_NOTICE,

@@ -10,6 +10,7 @@ import { POST as postRoute } from "@/app/v1/private-channels/[id]/jobs/route";
 import { POST as removeRoute } from "@/app/v1/private-channels/[id]/members/remove/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { JOB_OFFER_MINUTES, offerJobs } from "@/lib/job-offers";
 import {
   JOB_NOTICE,
   NOTHING_OWED_NOTE,
@@ -472,6 +473,125 @@ describe("my_jobs and cant_read", () => {
       complete: true,
       jobs: [],
       note: NOTHING_OWED_NOTE,
+    });
+  });
+});
+
+// Time passes for the job stores: their times move back. They're
+// append-only, so the test steps around the triggers that say so.
+async function age(minutes: number) {
+  const tables = [
+    ["channel_jobs", "channel_jobs_append_only"],
+    ["job_moves", "job_moves_append_only"],
+    ["job_offers", "job_offers_append_only"],
+    ["job_no_takers", "job_no_takers_append_only"],
+    ["channel_members", "channel_members_append_only"],
+  ] as const;
+  await db().begin(async (tx) => {
+    for (const [t, trigger] of tables) {
+      await tx`ALTER TABLE ${tx(t)} DISABLE TRIGGER ${tx(trigger)}`;
+      await tx`UPDATE ${tx(t)} SET created_at = created_at - make_interval(mins => ${minutes})`;
+    }
+    for (const [t, trigger] of tables)
+      await tx`ALTER TABLE ${tx(t)} ENABLE TRIGGER ${tx(trigger)}`;
+  });
+}
+
+describe("my_jobs and the jobs nobody would take", () => {
+  it("owes the leader a job nobody took, though it may not claim it, flagged as on its board", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const g = await group(l, m);
+    await post(l, g, "Only for moe", { eligible: ["moe"] });
+    // Not the leader's before the site flags it: it may not claim it.
+    expect((await mine(l)).jobs).toEqual([]);
+    for (let i = 0; i < 2; i++) {
+      await age(JOB_OFFER_MINUTES + 1);
+      await offerJobs();
+    }
+    const [flag] = await db()<{ n: number }[]>`
+      SELECT count(*)::int AS n FROM job_no_takers`;
+    expect(flag?.n).toBe(1);
+    const lj = await mine(l);
+    expect(lj.note).toBe(OWED_NOTE.http);
+    expect(lj.jobs).toEqual([
+      {
+        channel: g,
+        number: 1,
+        untrusted_title: "Only for moe",
+        state: "ready",
+        seq: 0,
+        attempt: 0,
+        no_taker: true,
+      },
+    ]);
+    // The member still has it to claim, and never sees the flag.
+    const mj = await mine(m);
+    expect(mj.jobs).toHaveLength(1);
+    expect(JSON.stringify(mj.jobs)).not.toContain("no_taker");
+    // A claim ends it.
+    expect((await move(m, g, 1, { move: "claim", if_seq: 0 })).status).toBe(
+      200,
+    );
+    expect((await mine(l)).jobs).toEqual([]);
+  });
+
+  it("owes the leader a job whose inputs nobody who could take it can open, ahead of the ones it may claim", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const g = await group(l, m);
+    await post(l, g, "Plain one");
+    await post(l, g, "Read the brief", {
+      eligible: ["moe"],
+      inputs: [pin("docs/brief")],
+    });
+    expect(
+      (await mine(l)).jobs.map((j: { number: number }) => j.number),
+    ).toEqual([1]);
+    const r = await move(m, g, 2, { move: "cant_read", if_seq: 0 });
+    expect(r.status).toBe(200);
+    const lj = await mine(l);
+    expect(lj.jobs[0]).toMatchObject({
+      number: 2,
+      state: "ready",
+      inputs_unreadable: true,
+    });
+    expect(lj.jobs[0]).not.toHaveProperty("you");
+    expect(lj.jobs[1]).toMatchObject({ number: 1, you: "claimable" });
+    // The member that said so isn't owed it; it never reads the flag.
+    const mj = await mine(m);
+    expect(mj.jobs.map((j: { number: number }) => j.number)).toEqual([1]);
+    expect(JSON.stringify(mj.jobs)).not.toContain("inputs_unreadable");
+  });
+
+  it("carries the flag beside you when the leader may claim the job too, and keeps it when the answer is cut", async () => {
+    const l = await linked("lea");
+    const m = await bot("moe");
+    const g = await group(l, m);
+    await post(l, g, "Anyone's", { inputs: [pin("docs/brief")] });
+    const r = await move(m, g, 1, { move: "cant_read", if_seq: 0 });
+    expect(r.status).toBe(200);
+    for (let i = 0; i < 2; i++) {
+      await age(JOB_OFFER_MINUTES + 1);
+      await offerJobs();
+    }
+    const lj = await mine(l);
+    expect(lj.jobs).toEqual([
+      expect.objectContaining({
+        number: 1,
+        you: "claimable",
+        no_taker: true,
+        inputs_unreadable: true,
+      }),
+    ]);
+    const short = owedJobsShort(lj, "http");
+    expect(short.complete && short.jobs[0]).toEqual({
+      channel: g,
+      number: 1,
+      seq: 0,
+      you: "claimable",
+      no_taker: true,
+      inputs_unreadable: true,
     });
   });
 });
