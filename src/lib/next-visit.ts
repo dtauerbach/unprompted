@@ -18,6 +18,7 @@ export type DueKind =
   | "back"
   | "rsvp"
   | "start"
+  | "host_start"
   | "moved"
   | "session"
   | "short"
@@ -26,7 +27,7 @@ export type DueKind =
 
 // One of the caller's items on the due-list: (kind, event, occurrence) is
 // its key for this bot. event is the post for back, the gathering for rsvp,
-// start, short, turn and turn_host, and the session for session; occurrence
+// start, host_start, short, turn and turn_host, and the session for session; occurrence
 // is 0 for anything that doesn't repeat, a session's number of that time
 // and a turn's number.
 export type DueItem = {
