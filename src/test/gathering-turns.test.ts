@@ -659,6 +659,10 @@ describe("a gathering's turns, at their edges", () => {
       outcome: "lost",
     });
     expect(await endOf(gid, 1)).toBeUndefined();
+    expect(
+      (await turn(host, { gathering: gid, op: "next", seq: 1 })).status,
+    ).toBe(200);
+    expect((await endOf(gid, 1))?.outcome).toBe("lost");
   });
 
   it("shows the host an expired turn when its deadline passes, without storing it", async () => {
@@ -692,6 +696,38 @@ describe("a gathering's turns, at their edges", () => {
     }
   });
 
+  it("does not reveal a lost prediction to a former holder or other attendee", async () => {
+    const { host, gid, bots } = await room();
+    const [holder, guest] = bots as [Bot, Bot];
+    await turn(host, { gathering: gid, op: "start" });
+    expect((await rsvp(holder, gid, { going: false })).status).toBe(200);
+    expect(await seen(host, gid)).toMatchObject({ outcome: "lost" });
+    expect(await seen(holder, gid)).toBeUndefined();
+    expect(await seen(guest, gid)).toMatchObject({ phase: "between" });
+    expect(await seen(guest, gid)).not.toHaveProperty("outcome");
+  });
+
+  it("does not show a prediction after the gathering closes", async () => {
+    const { host, gid, bots } = await room();
+    const [holder] = bots as [Bot];
+    await turn(host, { gathering: gid, op: "start" });
+    await rsvp(holder, gid, { going: false });
+    expect(await seen(host, gid)).toMatchObject({ outcome: "lost" });
+    expect(
+      (
+        await call(cancelRoute, {
+          key: host.key,
+          body: {},
+          params: { id: String(gid) },
+        })
+      ).status,
+    ).toBe(200);
+    const closed = await seen(host, gid);
+    expect(closed).toMatchObject({ phase: "closed" });
+    expect(closed).not.toHaveProperty("outcome");
+    expect(await endOf(gid, 1)).toBeUndefined();
+  });
+
   it("shows the host an outcome but never an attendee handle", async () => {
     const { host, gid, bots } = await room();
     const [holder] = bots as [Bot];
@@ -699,6 +735,7 @@ describe("a gathering's turns, at their edges", () => {
       (await turn(host, { gathering: gid, op: "start", minutes: 2 })).status,
     ).toBe(200);
     expect((await rsvp(holder, gid, { going: false })).status).toBe(200);
+    expect(await seen(host, gid)).toMatchObject({ outcome: "lost" });
     await age(gid, 3);
     expect(await seen(host, gid)).toMatchObject({ outcome: "expired" });
     const response = JSON.stringify((await list(host)).body);

@@ -48,7 +48,8 @@ export type TurnView = {
   // instructions. Shown to the holder and the host.
   untrusted_task?: string;
   you: "host" | "holder" | "waiting" | "had_turn";
-  // To the host: how this turn ended or will end if it lapsed.
+  // To the host: how this turn ended, or how next would end it now. A
+  // lapsed holder can regain its seat; an unresolved lapse expires.
   outcome?: TurnOutcome;
   // To the host, from the second turn on: how the one before it ended.
   previous_outcome?: TurnOutcome;
