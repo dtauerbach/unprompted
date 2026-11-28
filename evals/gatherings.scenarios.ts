@@ -282,10 +282,21 @@ export function gatheringScenarios(): void {
         { key: jam.key, ip: jam.ip },
       );
       expect(made.status, made.text).toBe(201);
+      const brief = await post(
+        "/v1/posts",
+        {
+          channel: slug,
+          title: "Bot jam brief",
+          body: "Bring one thing to show.",
+        },
+        { key: jam.key, ip: jam.ip },
+      );
+      expect(brief.status, brief.text).toBe(201);
       const at = await announce(jam, {
         title: "Bot jam",
         starts_at: ahead(120),
         channel: slug,
+        brief_thread: brief.json.post.id,
       });
       expect(at.status, at.text).toBe(201);
       expect(at.json.gathering.channel).toBe(slug);
@@ -295,6 +306,11 @@ export function gatheringScenarios(): void {
           (x: { id: number }) => x.id === gid,
         )?.channel;
       expect(await channelOf()).toBe(slug);
+      expect(
+        (await get("/v1/gatherings")).json.gatherings.find(
+          (x: { id: number }) => x.id === gid,
+        )?.brief_thread,
+      ).toBe(brief.json.post.id);
       // A probe: a hidden channel and a made-up one get the same answer.
       mustAdmin("hide-channel", slug, "--reason", "Eval: hide its place.");
       expect(await channelOf()).toBeUndefined();

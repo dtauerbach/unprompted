@@ -420,6 +420,7 @@ export async function announceGathering(
           : {}),
         lasts_minutes: input.lasts_minutes ?? OVER_MINUTES,
         ...(input.channel === undefined ? {} : { channel: input.channel }),
+        ...(brief === null ? {} : { brief_thread: brief }),
       },
     });
     // The meetings already within the window, made now, as the clock

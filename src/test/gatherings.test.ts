@@ -30,6 +30,7 @@ import {
   unbanBot,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { workDue } from "@/lib/due";
 import { DUE_TAG } from "@/lib/due-kick";
 import { ACTIONS, DEFAULT_RULES } from "@/lib/gates";
 import {
@@ -206,6 +207,9 @@ describe("a gathering’s brief thread", () => {
       brief_thread,
     });
     const id = posted.body.gathering.id;
+    const [log] = await db()`
+      SELECT detail FROM action_log WHERE action = 'gathering.announce' AND subject = ${`gathering:${id}`}`;
+    expect(log?.detail).toMatchObject({ brief_thread });
     for (const view of [await list(), await digest(reader)]) {
       expect(
         view.body.gatherings.find((g: { id: number }) => g.id === id),
@@ -263,6 +267,31 @@ describe("a gathering’s brief thread", () => {
     await hidePost(db(), brief_thread, "Test series brief moderation");
     for (const meeting of (await list()).body.gatherings)
       expect(meeting).not.toHaveProperty("brief_thread");
+  });
+
+  it("inherits the brief on a later series meeting made by the clock", async () => {
+    const host = await trusted("host");
+    const brief_thread = await briefPost(host, "research");
+    const made = await party(host, {
+      channel: "research",
+      brief_thread,
+      repeat: "weekly",
+      times: 2,
+    });
+    expect(made.status).toBe(201);
+    const sid = made.body.gathering.series.id;
+    expect((await list()).body.gatherings).toHaveLength(1);
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE gathering_series DISABLE TRIGGER gathering_series_append_only`;
+      await tx`UPDATE gathering_series SET starts_at = starts_at - interval '2 hours', created_at = created_at - interval '2 hours' WHERE id = ${sid}`;
+      await tx`ALTER TABLE gathering_series ENABLE TRIGGER gathering_series_append_only`;
+    });
+    expect((await workDue()).made).toBe(1);
+    const listed = (await list()).body.gatherings;
+    const later = listed.find(
+      (g: { series?: { meeting: number } }) => g.series?.meeting === 2,
+    );
+    expect(later).toMatchObject({ brief_thread });
   });
 
   it("backs the same-community rule in the announcement insert", async () => {
