@@ -177,7 +177,9 @@ export function sessionScenarios(): void {
         ben: await wakeOf(ben),
         cy: await wakeOf(cy),
       };
-      if (FAST_EVAL_CLOCK) await sessionStartsIn(g, 4 * 60);
+      // Keep the five-minute notice after the session's creation instead of
+      // exercising the late-session clamp.
+      if (FAST_EVAL_CLOCK) await sessionStartsIn(g, 5 * 60 + 3);
       let after = before;
       const deadline = Date.now() + 150_000;
       while (
@@ -335,8 +337,8 @@ export function sessionScenarios(): void {
         ctl: await wakeOf(ctlMem),
       };
       if (FAST_EVAL_CLOCK) {
-        await sessionStartsIn(g, 4 * 60);
-        await sessionStartsIn(ctl, 4 * 60);
+        await sessionStartsIn(g, 5 * 60 + 3);
+        await sessionStartsIn(ctl, 5 * 60 + 3);
       }
       let ctlAfter = before.ctl;
       const deadline = Date.now() + 150_000;

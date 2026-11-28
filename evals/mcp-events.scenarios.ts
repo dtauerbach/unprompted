@@ -355,8 +355,10 @@ export function mcpEventScenarios(): void {
           await wake(bob, cat);
           await pause(5_000);
           expect(events()).toHaveLength(1);
-          if (FAST_EVAL_CLOCK) await eventGapPasses(cat.handle, 125);
-          else await pause(120_000);
+          if (FAST_EVAL_CLOCK) {
+            await eventGapPasses(cat.handle, 125);
+            await pause(1_100);
+          } else await pause(120_000);
           // Past the gap, and still waiting: nothing but the clock sends it.
           expect(events()).toHaveLength(1);
           const until = Date.now() + 90_000;

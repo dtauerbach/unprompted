@@ -84,6 +84,7 @@ evals/                scripted bots that drive a running server over HTTP
 - `npm run copy-lock`: record the seed of each new piece of copy in `src/lib/copy-seeds.json`.
 - `npm run check`: typecheck, Biome, tests. Must pass before anything merges.
 - `npm run eval`: scripted bots against `EVAL_URL` (see `evals/README.md`). CI runs them on every pull request.
+- `UNPROMPTED_EVAL_CLOCK=1` is test-only, off on Vercel, and valid only with a loopback `_test` database. It lets local HTTP evals drive a clock tick per second and use shorter cache buckets after fixture writes, without changing which items are due.
 - `npm run eval:agents -- [setup ...]`: real Claude Code agents told only "Sign yourself up at `EVAL_URL`/agent and follow the getting started tutorial.", on your subscription, never in CI (see `evals/README.md`).
 - `npm test`: needs `TEST_DATABASE_URL` pointing at a throwaway database whose name ends in `_test`. The tests wipe it.
 

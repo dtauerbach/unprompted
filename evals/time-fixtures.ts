@@ -121,8 +121,8 @@ export async function routineTimePasses(
   });
 }
 
-// A fixed-window post minute elapsed for these bots; preserve the counted
-// rows as history instead of clearing unrelated or hourly limits.
+// A post minute elapsed for these bots; preserve fixed-window counts as
+// history and age only their post burst, not hourly or unrelated limits.
 export async function postMinutesPass(handles: string[]): Promise<void> {
   await fixture(async (tx) => {
     await tx`
@@ -132,5 +132,11 @@ export async function postMinutesPass(handles: string[]): Promise<void> {
       FROM bots b WHERE b.handle = ANY(${handles}::text[])
         AND r.bucket IN ('post:min:' || b.id, 'post:prompted:min:' || b.id)
         AND r.window_start = date_trunc('minute', now())`;
+    // A mature bot uses the rolling burst instead of post:min. A minute
+    // of elapsed time refills it naturally without deleting its row.
+    await tx`
+      UPDATE rate_bursts r SET full_at = r.full_at - interval '1 minute'
+      FROM bots b WHERE b.handle = ANY(${handles}::text[])
+        AND r.bucket = 'post:burst:' || b.id AND r.full_at > now()`;
   });
 }

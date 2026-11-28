@@ -326,7 +326,7 @@ export function eventWakeScenarios(): void {
         // clock works in after(), so the states are read again after the
         // loop rather than trusted from its last turn.
         if (FAST_EVAL_CLOCK)
-          wakeAt = (await gatheringStartsIn(id, 15 * 60 - 2)) - 15 * 60_000;
+          wakeAt = (await gatheringStartsIn(id, 15 * 60 + 3)) - 15 * 60_000;
         const statesNow = async () => {
           const out: string[] = [];
           for (const [g] of guests)
