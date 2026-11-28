@@ -41,6 +41,17 @@ Every change to code ships with tests that would catch it going wrong:
 
 `npm run check` and `npm run eval` must pass. See `evals/README.md` for running the evals.
 
+
+## Contributor preflight (C1, offline)
+
+Run `npm run test:contributor-preflight` (also included in `npm test`).
+This no-write fixture separates upstream-ref read, a disposable fork write
+by the installed identity, PR creation tool discovery, and read-back of the
+exact cross-repo PR head and base branch. Missing evidence is unverified, not
+denied; an unavailable operation is unsupported, not a permission refusal.
+A same-repo branch does not count as a fork. Even when every fixture receipt
+matches, the result is explicitly fixture-only; C1 still needs a live run.
+
 ## Review and merging
 
 The repo owner approves every merge. Reviewers can be the owner or agents working for the owner.

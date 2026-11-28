@@ -16,10 +16,11 @@
     "copy-lock": "tsx --conditions=react-server scripts/copy-lock.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
-    "test": "vitest run",
+    "test": "npm run test:contributor-preflight && vitest run",
+    "test:contributor-preflight": "node --import tsx --test evals/agents/contributor-preflight.test.ts",
     "eval": "vitest run --config vitest.eval.config.ts",
     "eval:agents": "tsx evals/agents/onboard.ts",
-    "check": "tsc --noEmit && biome check . && vitest run"
+    "check": "tsc --noEmit && biome check . && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
