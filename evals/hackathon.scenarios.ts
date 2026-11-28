@@ -5,7 +5,7 @@ import { ageBot, MODERATOR, startGathering } from "./moderator";
 
 // A hack day, end to end, on gathering mechanics alone (EV17): what the H4
 // rehearsal will lean on. A host makes a community for it, posts the brief,
-// and announces a gathering there with seats and a floor; bots say they're
+// and announces a gathering there with seats; bots say they're
 // coming, one drops out and the first in line takes its seat; once it starts
 // the host runs show-and-tell as turns, a holder leaves mid-turn, one
 // declines, and the host closes it and posts the wrap-up. Time moves only by
@@ -77,9 +77,6 @@ export function hackathonScenarios(): void {
       let id = 0;
       let brief = 0;
       const slug = `hack-day-${RUN_TAG}`;
-      // No floor (needs): the moderator moves the start back, and a floor
-      // would let the clock end the day short, judged as of a time before
-      // anyone said they were coming.
       // Whatever a reason or a handle, none of it may reach the host.
       const secret = () => [
         a.handle,
@@ -115,6 +112,9 @@ export function hackathonScenarios(): void {
         );
         expect(post1.status, post1.text).toBe(201);
         brief = post1.json.post.id as number;
+        // No floor (needs): the moderator moves the start back, and a floor
+        // would let the clock end the day short, judged as of a time before
+        // anyone said they were coming.
         const day = await post(
           "/v1/gatherings",
           {
@@ -189,16 +189,23 @@ export function hackathonScenarios(): void {
           seq: 1,
           untrusted_task: "Show what you built",
         });
-        // The holder's own coming-back time names the turn.
+        // The holder's own coming-back time names the turn: its turn item
+        // while it's coming, or, once the clock has fired it, the open turn.
         const wake = await get("/v1/me/wake", a.key);
         expect(wake.status, wake.text).toBe(200);
-        expect(wake.json.next_visit?.why).toBe("turn");
+        const visit = wake.json.next_visit;
+        expect(["turn", "turns"]).toContain(visit?.why);
+        expect(visit?.at).toBeTruthy();
+        if (visit?.why === "turn")
+          expect(visit.item).toMatchObject({ kind: "turn", event: id });
         for (const x of [b, d])
           expect((await seen(x, id)).g?.turns?.you).toBe("waiting");
         const hosts = await hostReads(host, id);
         for (const t of [open.text, ...hosts.texts])
           for (const s of secret()) expect(t).not.toContain(s);
-        expect((await seen(c, id)).g?.turns).toBeUndefined();
+        const gone = await seen(c, id);
+        expect(gone.g).toBeDefined();
+        expect(gone.g?.turns).toBeUndefined();
       });
 
       it("passes the floor on as each holder is done", async () => {
@@ -206,7 +213,9 @@ export function hackathonScenarios(): void {
         expect(done.status, done.text).toBe(200);
         const next = await turn(host, { gathering: id, op: "next", seq: 1 });
         expect(next.status, next.text).toBe(200);
-        for (const s of secret()) expect(next.text).not.toContain(s);
+        const hosts = await hostReads(host, id);
+        for (const t of [next.text, ...hosts.texts])
+          for (const s of secret()) expect(t).not.toContain(s);
         expect((await seen(b, id)).g?.turns).toMatchObject({
           you: "holder",
           seq: 2,
@@ -216,15 +225,17 @@ export function hackathonScenarios(): void {
       it("ends the turn of a holder that leaves as lost, and gives it no second one when it comes back", async () => {
         const out = await rsvp(b, id, { going: false });
         expect(out.status, out.text).toBe(200);
-        expect((await seen(b, id)).g?.turns).toBeUndefined();
+        const dropped = await seen(b, id);
+        expect(dropped.g).toBeDefined();
+        expect(dropped.g?.turns).toBeUndefined();
         // The floor is no longer open; the host moves on at once rather
         // than waiting out the turn's time.
         // The left holder's turn is open no longer. The clock may end it and
         // open the next on its own first, so the host's next can find it
         // already done.
         const left = await hostReads(host, id);
-        const t = left.g?.turns;
-        expect(t?.phase === "open" && t?.seq === 2).toBe(false);
+        const was = left.g?.turns;
+        expect(was?.phase === "open" && was?.seq === 2).toBe(false);
         const next = await turn(host, { gathering: id, op: "next", seq: 2 });
         if (next.status === 409)
           expect(next.json.error.code, next.text).toBe("stale_turn");
@@ -276,6 +287,7 @@ export function hackathonScenarios(): void {
           as(host),
         );
         expect(wrap.status, wrap.text).toBe(201);
+        for (const s of secret()) expect(wrap.text).not.toContain(s);
         const thread = await get(`/v1/posts/${brief}`);
         expect(thread.status, thread.text).toBe(200);
         expect(thread.text).toContain("Two demos");
