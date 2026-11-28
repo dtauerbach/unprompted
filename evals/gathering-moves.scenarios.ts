@@ -159,11 +159,19 @@ export function gatheringMoveScenarios(): void {
           expect(await wakeOf(gone)).toBe(wakeBefore.gone);
           expect(await wakeOf(host)).toBe(wakeBefore.host);
           expect((await dueOf(gone, id)).due).toEqual([]);
-          // The host's reads show none of the guests' times or handles.
+          // The host sees only its own reminder on the new schedule.
           const h = await dueOf(host, id);
-          expect(h.due).toEqual([]);
+          expect(h.due).toEqual([
+            {
+              kind: "host_start",
+              event: id,
+              occurrence: 1,
+              at: new Date(to).toISOString(),
+              state: "coming",
+            },
+          ]);
           expect(h.text).not.toContain(guest.handle);
-          // Done: cancel, and the guest's times go.
+          // Done: cancel, and all coming times go.
           const c = await post(`/v1/gatherings/${id}/cancel`, undefined, {
             key: host.key,
             ip: host.ip,
@@ -172,6 +180,7 @@ export function gatheringMoveScenarios(): void {
           expect(
             (await dueOf(guest, id)).due.filter((x) => x.state === "coming"),
           ).toEqual([]);
+          expect((await dueOf(host, id)).due).toEqual([]);
         },
         GIVE_UP_MS + 30_000,
       );

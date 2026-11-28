@@ -176,10 +176,10 @@ describe("EV14b: a gathering through its notice, its start and a short end", () 
       item: { kind: "start", event: one.id },
     });
 
-    // The start fires too, a second wake.
+    // The start fires too: the guest’s second wake and the host’s own.
     const started = await workDue(new Date(one.start + 1000));
     expect(started).toMatchObject({
-      fired: 1,
+      fired: 2,
       skipped: 0,
       missed: 0,
       shorts: 0,
@@ -202,7 +202,7 @@ describe("EV14b: a gathering through its notice, its start and a short end", () 
       SELECT kind FROM gathering_ends WHERE gathering_id = ${two.id}`;
     expect(end?.kind).toBe("short");
     expect(await wakeOf(guest)).toBe(2);
-    expect(await wakeOf(host)).toBe(before.host);
+    expect(await wakeOf(host)).toBe(before.host + 1);
     expect(await wakeOf(control)).toBe(before.control);
 
     // Its start passes with nothing to fire. The host's view and the
@@ -236,13 +236,14 @@ describe("EV14b: a gathering through its notice, its start and a short end", () 
     const shown = JSON.stringify(controlList.body);
     expect(shown).not.toContain(guest.handle);
 
-    // One row per item, and each once: two fires for the guest, and none
-    // for the short end, which wakes no one.
+    // Each item fires once: two for the guest, one for the host, and none
+    // for the short end.
     const rows = await db()<{ kind: string; outcome: string }[]>`
       SELECT kind, outcome FROM event_fires ORDER BY id`;
     expect(rows).toEqual([
       { kind: "rsvp", outcome: "fired" },
       { kind: "start", outcome: "fired" },
+      { kind: "host_start", outcome: "fired" },
     ]);
   });
 });

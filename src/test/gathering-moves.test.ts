@@ -271,7 +271,7 @@ describe("moving a gathering", () => {
     expect(await workDue(new Date(to - 15 * MIN + 1000))).toMatchObject({
       fired: 1,
     });
-    expect(await workDue(new Date(to + 1000))).toMatchObject({ fired: 1 });
+    expect(await workDue(new Date(to + 1000))).toMatchObject({ fired: 2 });
     expect(
       (await fires(id)).map((f) => [f.kind, f.occurrence, f.outcome]),
     ).toEqual([

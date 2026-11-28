@@ -329,10 +329,12 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
           ${at}::timestamptz + interval '1 millisecond',
           ${hi}::timestamptz + interval '1 millisecond')
       ) d
-      ORDER BY due_at, bot_id, kind, event_id, occurrence
+      ORDER BY due_at, kind = 'host_start', bot_id, kind, event_id, occurrence
       LIMIT ${RUN_MAX + 1}`;
     const batch = latestOccurrences(rows.slice(0, RUN_MAX)).sort(
       (a, b) =>
+        // Existing attendee items get first use of a scarce fire cap.
+        Number(a.kind === "host_start") - Number(b.kind === "host_start") ||
         Number(a.bot_id) - Number(b.bot_id) ||
         a.kind.localeCompare(b.kind) ||
         Number(a.event_id) - Number(b.event_id) ||
@@ -397,7 +399,10 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       const group = isGroup(r);
       if (group && groupLeft <= 0) return capped(r, "channel_wake_global");
       const pair =
-        r.kind === "rsvp" || r.kind === "start" || r.kind === "moved"
+        r.kind === "rsvp" ||
+        r.kind === "start" ||
+        r.kind === "host_start" ||
+        r.kind === "moved"
           ? `${r.event_id}:${r.bot_id}`
           : null;
       if (pair === null || !charged.has(pair)) {

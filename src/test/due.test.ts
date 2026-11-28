@@ -378,8 +378,8 @@ describe("an RSVP item", () => {
     const run = await workDue(
       at((await startsAt(id)) + RSVP_WINDOW_MINUTES * MIN),
     );
-    // Its notice and its start, both missed.
-    expect(run).toMatchObject({ fired: 0, missed: 2 });
+    // Guest notice, guest start, and host start, all missed.
+    expect(run).toMatchObject({ fired: 0, missed: 3 });
   });
 
   it("never shows while its gathering is hidden or its announcer frozen", async () => {
@@ -390,8 +390,8 @@ describe("an RSVP item", () => {
     await rsvp(guest, shown, { going: true });
     await rsvp(guest, hidden, { going: true });
     const id = await botId(guest);
-    // Both fire while visible, each at its notice and at its start.
-    expect((await workDue(at((await startsAt(shown)) + 1000))).fired).toBe(4);
+    // Both fire while visible: guest notice and start, plus host start.
+    expect((await workDue(at((await startsAt(shown)) + 1000))).fired).toBe(6);
     const events = async () => [
       ...new Set((await dueFor(db(), id)).map((d) => d.event)),
     ];
@@ -1108,7 +1108,7 @@ describe("a late RSVP", () => {
     expect(again.body.note).toBe(RSVP_NOTES.push);
     expect(await workDue(at(start - MIN))).toMatchObject({ fired: 0 });
     expect(await wakeCount(guest)).toBe(before + 1);
-    expect(await workDue(at(start + 1000))).toMatchObject({ fired: 1 });
+    expect(await workDue(at(start + 1000))).toMatchObject({ fired: 2 });
     expect(await wakeCount(guest)).toBe(before + 2);
     // Both went: the answer says so, with no wake_at, rather than "At
     // wake_at your wake number rises".
@@ -1148,7 +1148,7 @@ describe("a late RSVP", () => {
     }
     expect(await workDue(at(start - 4 * MIN))).toMatchObject({ fired: 0 });
     expect(await wakeCount(guest)).toBe(before + 1);
-    expect(await workDue(at(start + 1000))).toMatchObject({ fired: 1 });
+    expect(await workDue(at(start + 1000))).toMatchObject({ fired: 2 });
     expect(await wakeCount(guest)).toBe(before + 2);
   });
 
@@ -1235,8 +1235,8 @@ describe("a late RSVP", () => {
     expect(again.body.note).not.toBe(RSVP_NOTES.started);
     expect(near(again.body.rsvp.wake_at, Date.now())).toBe(true);
     const before = await wakeCount(guest);
-    // Its notice and its start, both due now: two rows, one wake.
-    expect(await workDue(at(Date.now() + 1000))).toMatchObject({ fired: 2 });
+    // Guest notice and start are two rows but one wake, plus the host item.
+    expect(await workDue(at(Date.now() + 1000))).toMatchObject({ fired: 3 });
     expect(await wakeCount(guest)).toBe(before + 1);
     // Once they fired, saying it again says so.
     const after = await rsvp(guest, id, { going: true, notice_minutes: 5 });
@@ -1283,7 +1283,7 @@ describe("a late RSVP", () => {
     // without one.
     await setAntiAbuse(db(), { event_fire_global: 2 }, "Test cap.");
     const late = await workDue(at(start + 1000));
-    expect(late).toMatchObject({ fired: 1, skipped: 2, capped: 1 });
+    expect(late).toMatchObject({ fired: 1, skipped: 3, capped: 2 });
     const starts = (await fires()).filter((r) => r.kind === "start");
     const firedBot = starts.find((r) => r.outcome === "fired")?.bot_id;
     for (const bot of [a, b]) {

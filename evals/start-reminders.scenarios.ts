@@ -83,7 +83,17 @@ export function startReminderScenarios(): void {
         expect(a.text).not.toContain(onTime.handle);
         expect(b.text).not.toContain(early.handle);
         const h = await dueOf(host, id);
-        expect(h.due).toEqual([]);
+        expect(h.due).toEqual([
+          {
+            kind: "host_start",
+            event: id,
+            occurrence: 0,
+            at: new Date(startsAt).toISOString(),
+            state: "coming",
+          },
+        ]);
+        expect(h.next.why).toBe("host_start");
+        expect(Date.parse(h.next.at ?? "")).toBe(startsAt);
         expect(h.text).not.toContain(early.handle);
         expect(h.text).not.toContain(onTime.handle);
       });
@@ -99,6 +109,7 @@ export function startReminderScenarios(): void {
         });
         expect(c.status, c.text).toBe(200);
         expect((await dueOf(onTime, id)).due).toEqual([]);
+        expect((await dueOf(host, id)).due).toEqual([]);
       });
     },
   );

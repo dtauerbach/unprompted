@@ -2,12 +2,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as cancelRoute } from "@/app/v1/gatherings/[id]/cancel/route";
+import { POST as moveRoute } from "@/app/v1/gatherings/[id]/move/route";
 import { POST as rsvpRoute } from "@/app/v1/gatherings/[id]/rsvp/route";
 import { GET as digestRoute } from "@/app/v1/me/digest/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as pushRoute } from "@/app/v1/me/push/route";
 import { POST as postRoute } from "@/app/v1/posts/route";
-import { setAntiAbuse, setFrozen, setGatheringHidden } from "@/lib/admin";
+import {
+  setAntiAbuse,
+  setFrozen,
+  setGates,
+  setGatheringHidden,
+} from "@/lib/admin";
 import { db } from "@/lib/db";
 import { DUE_NOTE, dueFor, RSVP_WINDOW_MINUTES, workDue } from "@/lib/due";
 import { forgetDueMinute } from "@/lib/due-check";
@@ -102,6 +108,164 @@ async function withPush(b: Bot) {
   expect(res.status).toBe(201);
 }
 
+describe("a host's start reminder", () => {
+  it("wakes a host once at the start without adding a seat or RSVP", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const id = await gathering(host, 40);
+    const start = await startsAt(id);
+    expect(
+      (await rsvp(guest, id, { going: true, notice_minutes: 0 })).status,
+    ).toBe(200);
+    const before = await wakeCount(host);
+    expect(await db()`SELECT bot_id FROM gathering_attendees(${id})`).toEqual([
+      { bot_id: String(await botId(guest)) },
+    ]);
+    await workDue(at(start - 1000));
+    expect(await wakeCount(host)).toBe(before);
+    await workDue(at(start + 1000));
+    await workDue(at(start + 2000));
+    expect(await wakeCount(host)).toBe(before + 1);
+    const hostId = String(await botId(host));
+    expect((await fires()).filter((f) => f.bot_id === hostId)).toEqual([
+      expect.objectContaining({
+        kind: "host_start",
+        event_id: String(id),
+        outcome: "fired",
+      }),
+    ]);
+    expect(
+      await db()`SELECT bot_id FROM gathering_attendees(${id})`,
+    ).toHaveLength(1);
+  });
+
+  it("names host_start only on the host's upcoming due and next visit", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const outsider = await register("other");
+    const id = await gathering(host, 40);
+    await rsvp(guest, id, { going: true, notice_minutes: 0 });
+    expect((await digest(host)).body.due).toEqual([
+      expect.objectContaining({
+        kind: "host_start",
+        event: id,
+        state: "coming",
+      }),
+    ]);
+    expect(await nextVisit(db(), await botId(host))).toMatchObject({
+      why: "host_start",
+      item: { event: id },
+    });
+    for (const bot of [guest, outsider]) {
+      const res = await digest(bot);
+      expect(res.body.due).not.toContainEqual(
+        expect.objectContaining({ kind: "host_start" }),
+      );
+      expect(JSON.stringify(res.body.due)).not.toContain(host.handle);
+    }
+  });
+
+  it("doesn't invent a second start item for a host already coming", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const id = await gathering(host, 40);
+    for (const bot of [host, guest])
+      await rsvp(bot, id, { going: true, notice_minutes: 0 });
+    const before = await wakeCount(host);
+    expect((await dueFor(db(), await botId(host))).map((d) => d.kind)).toEqual([
+      "start",
+    ]);
+    await workDue(at((await startsAt(id)) + 1000));
+    expect(await wakeCount(host)).toBe(before + 1);
+    const hostId = String(await botId(host));
+    expect(
+      (await fires()).filter((f) => f.bot_id === hostId).map((f) => f.kind),
+    ).toEqual(["start"]);
+  });
+
+  it("has no host-only wake for an empty gathering", async () => {
+    const host = await register("host");
+    const id = await gathering(host, 40);
+    const before = await wakeCount(host);
+    expect(await dueFor(db(), await botId(host))).toEqual([]);
+    await workDue(at((await startsAt(id)) + 1000));
+    expect(await wakeCount(host)).toBe(before);
+  });
+
+  it("removes the host item when the only guest withdraws", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const id = await gathering(host, 40);
+    await rsvp(guest, id, { going: true, notice_minutes: 0 });
+    expect(await dueFor(db(), await botId(host))).toContainEqual(
+      expect.objectContaining({ kind: "host_start" }),
+    );
+    expect((await rsvp(guest, id, { going: false })).status).toBe(200);
+    const before = await wakeCount(host);
+    expect(await dueFor(db(), await botId(host))).toEqual([]);
+    await workDue(at((await startsAt(id)) + 1000));
+    expect(await wakeCount(host)).toBe(before);
+  });
+
+  it("does not wake for a hidden gathering", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const id = await gathering(host, 40);
+    await rsvp(guest, id, { going: true, notice_minutes: 0 });
+    await setGatheringHidden(db(), id, true, "Test host start");
+    const before = await wakeCount(host);
+    expect(await dueFor(db(), await botId(host))).toEqual([]);
+    await workDue(at((await startsAt(id)) + 1000));
+    expect(await wakeCount(host)).toBe(before);
+  });
+
+  it("does not wake the host for a canceled or short gathering", async () => {
+    const host = await register("host");
+    const guest = await register("guest");
+    const canceled = await gathering(host, 40);
+    const short = await gathering(host, 42, { needs: 3 });
+    for (const id of [canceled, short])
+      await rsvp(guest, id, { going: true, notice_minutes: 0 });
+    expect(
+      (
+        await call(cancelRoute, {
+          key: host.key,
+          body: {},
+          params: { id: String(canceled) },
+        })
+      ).status,
+    ).toBe(200);
+    const before = await wakeCount(host);
+    await workDue(at((await startsAt(short)) - 14 * MIN));
+    await workDue(at((await startsAt(short)) + 1000));
+    expect(await wakeCount(host)).toBe(before);
+  });
+
+  it("moves the host reminder with the start in force", async () => {
+    await setGates(db(), { announce: [] }, "Test host start");
+    const host = await register("host");
+    const guest = await register("guest");
+    const id = await gathering(host, 40);
+    const old = await startsAt(id);
+    const start = old + 30 * MIN;
+    await rsvp(guest, id, { going: true, notice_minutes: 0 });
+    const moved = await call(moveRoute, {
+      key: host.key,
+      body: { starts_at: new Date(start).toISOString() },
+      params: { id: String(id) },
+    });
+    expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    const before = await wakeCount(host);
+    expect(await dueFor(db(), await botId(host))).toContainEqual(
+      expect.objectContaining({ kind: "host_start", at: new Date(start) }),
+    );
+    await workDue(at(old + 1000));
+    expect(await wakeCount(host)).toBe(before);
+    await workDue(at(start + 1000));
+    expect(await wakeCount(host)).toBe(before + 1);
+  });
+});
+
 describe("a gathering's start", () => {
   it("wakes a bot coming at its notice and again at its start, once each", async () => {
     const host = await register("host");
@@ -133,8 +297,8 @@ describe("a gathering's start", () => {
     expect(next.at?.getTime()).toBe(start);
     // Nothing in between.
     expect((await workDue(at(start - MIN))).fired).toBe(0);
-    // At the start, the start item.
-    expect(await workDue(at(start + 1000))).toMatchObject({ fired: 1 });
+    // At the start, the guest and host items.
+    expect(await workDue(at(start + 1000))).toMatchObject({ fired: 2 });
     expect(await wakeCount(guest)).toBe(before + 2);
     // A run again, or later, writes nothing more.
     expect((await workDue(at(start + 5 * MIN))).fired).toBe(0);
@@ -143,6 +307,7 @@ describe("a gathering's start", () => {
       [
         ["rsvp", String(id), "fired"],
         ["start", String(id), "fired"],
+        ["host_start", String(id), "fired"],
       ],
     );
     expect((await dueFor(db(), me)).map((d) => [d.kind, d.state])).toEqual([
@@ -165,10 +330,11 @@ describe("a gathering's start", () => {
     expect((await dueFor(db(), me)).map((d) => d.kind)).toEqual(["start"]);
     const before = await wakeCount(guest);
     expect((await workDue(at(start - 1000))).fired).toBe(0);
-    expect(await workDue(at(start + 1000))).toMatchObject({ fired: 1 });
+    expect(await workDue(at(start + 1000))).toMatchObject({ fired: 2 });
     expect(await wakeCount(guest)).toBe(before + 1);
     expect(await fires()).toEqual([
       expect.objectContaining({ kind: "start", outcome: "fired" }),
+      expect.objectContaining({ kind: "host_start", outcome: "fired" }),
     ]);
   });
 
@@ -181,13 +347,14 @@ describe("a gathering's start", () => {
     const before = await wakeCount(guest);
     // The site was quiet until the start: one run finds both due.
     expect(await workDue(at(start + 1000))).toMatchObject({
-      fired: 2,
+      fired: 3,
       skipped: 0,
       missed: 0,
     });
     expect(await wakeCount(guest)).toBe(before + 1);
-    // Both rows went in and both show as fired.
+    // Both guest rows went in and show as fired, with a separate host item.
     expect((await fires()).map((f) => [f.kind, f.outcome]).sort()).toEqual([
+      ["host_start", "fired"],
       ["rsvp", "fired"],
       ["start", "fired"],
     ]);
@@ -227,13 +394,13 @@ describe("a gathering's start", () => {
     expect(post.status).toBe(201);
     const [wa, wb] = [await wakeCount(a), await wakeCount(b)];
     const run = await workDue(at(start + 1000));
-    // alice: back, two RSVPs, two starts; bob: one start.
-    expect(run).toMatchObject({ fired: 6 });
+    // Alice: back, two RSVPs, two starts; Bob: one start; host: two starts.
+    expect(run).toMatchObject({ fired: 8 });
     expect(await wakeCount(a)).toBe(wa + 1);
     expect(await wakeCount(b)).toBe(wb + 1);
     const logged = await db()<{ n: string }[]>`
       SELECT count(*) AS n FROM action_log WHERE action = 'event.fire'`;
-    expect(Number(logged[0]?.n)).toBe(6);
+    expect(Number(logged[0]?.n)).toBe(8);
   });
 
   it("is two wakes when the notice and the start come due in two runs", async () => {
@@ -244,7 +411,7 @@ describe("a gathering's start", () => {
     await rsvp(guest, id, { going: true, notice_minutes: 5 });
     const before = await wakeCount(guest);
     expect((await workDue(at(start - 5 * MIN + 1000))).fired).toBe(1);
-    expect((await workDue(at(start + 1000))).fired).toBe(1);
+    expect((await workDue(at(start + 1000))).fired).toBe(2);
     expect(await wakeCount(guest)).toBe(before + 2);
   });
 
@@ -319,7 +486,7 @@ describe("a gathering's start", () => {
       [frozen, rotated, blocker, watcher].map(wakeCount),
     );
     const run = await workDue(at((await startsAt(id)) + 1000));
-    expect(run).toMatchObject({ fired: 0, skipped: 4 });
+    expect(run).toMatchObject({ fired: 0, skipped: 5 });
     expect(
       await Promise.all([frozen, rotated, blocker, watcher].map(wakeCount)),
     ).toEqual(before);
@@ -327,6 +494,7 @@ describe("a gathering's start", () => {
       .map((f) => [f.kind, f.outcome, f.reason])
       .sort();
     expect(reasons).toEqual([
+      ["host_start", "skipped", "hidden"],
       ["start", "skipped", "blocked"],
       ["start", "skipped", "frozen"],
       ["start", "skipped", "hidden"],
@@ -343,7 +511,7 @@ describe("a gathering's start", () => {
     const run = await workDue(
       at((await startsAt(id)) + RSVP_WINDOW_MINUTES * MIN + 1000),
     );
-    expect(run).toMatchObject({ fired: 0, missed: 1 });
+    expect(run).toMatchObject({ fired: 0, missed: 2 });
     expect(await wakeCount(guest)).toBe(before);
     expect((await fires())[0]).toMatchObject({
       kind: "start",
@@ -466,9 +634,10 @@ describe("what review asked of the start's wake", () => {
     await setAntiAbuse(db(), { event_fire_global: 2 }, "Test cap.");
     const start = await startsAt(id);
     const r = await workDue(at(start + 1000));
-    expect(r).toMatchObject({ fired: 4, capped: 0 });
+    expect(r).toMatchObject({ fired: 4, capped: 1 });
     const rows = await fires();
     expect(rows.map((x) => [x.kind, x.outcome]).sort()).toEqual([
+      ["host_start", "skipped"],
       ["rsvp", "fired"],
       ["rsvp", "fired"],
       ["start", "fired"],
@@ -489,7 +658,7 @@ describe("what review asked of the start's wake", () => {
       await rsvp(bot, id, { going: true, notice_minutes: 15 });
     await setAntiAbuse(db(), { event_fire_global: 1 }, "Test cap.");
     const r = await workDue(at((await startsAt(id)) + 1000));
-    expect(r).toMatchObject({ fired: 2, capped: 2 });
+    expect(r).toMatchObject({ fired: 2, capped: 3 });
     const rows = await fires();
     const fired = new Set(
       rows.filter((x) => x.outcome === "fired").map((x) => x.bot_id),
