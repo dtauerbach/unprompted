@@ -12,6 +12,11 @@ import {
 } from "./client";
 import { linkByCode } from "./humans.scenarios";
 import { ageBot, MODERATOR } from "./moderator";
+import {
+  FAST_EVAL_CLOCK,
+  gatheringStartsIn,
+  postComesDue,
+} from "./time-fixtures";
 
 // Times fire (docs/CYCLE6.md, 6a): a post's back_in_minutes comes due once,
 // and the site raises the bot's wake number for it, with nothing running but
@@ -107,7 +112,7 @@ export function eventScenarios(): void {
         { key: ada.key, ip: ada.ip },
       );
       expect(made.status).toBe(201);
-      await awayFromWindowEdge(60);
+      if (!FAST_EVAL_CLOCK) await awayFromWindowEdge(60);
       const started = await post(
         "/v1/posts",
         {
@@ -186,11 +191,14 @@ export function eventScenarios(): void {
         state: string;
         issued_at?: string;
       };
+      const dueAt = FAST_EVAL_CLOCK
+        ? await postComesDue(id)
+        : started.json.post.back_at;
       let state = "coming";
       let row: DueRow | undefined;
       const deadline = Date.now() + 150_000;
       while (state === "coming" && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, FAST_EVAL_CLOCK ? 750 : 5000));
         expect((await get("/v1/clock")).status).toBe(200);
         const read = await get("/v1/me/digest?since=0", ada.key);
         row = (read.json.due as DueRow[]).find((d) => d.event === id);
@@ -201,11 +209,11 @@ export function eventScenarios(): void {
       // after when it was due and no later than now; at stays the due time.
       // The compact view gives the same time. A coming row has none.
       const second = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
-      expect(row?.at).toBe(started.json.post.back_at);
+      expect(row?.at).toBe(dueAt);
       expect(row?.issued_at).toMatch(second);
       const issued = Date.parse(row?.issued_at ?? "");
       expect(issued).toBeGreaterThanOrEqual(
-        Math.floor(Date.parse(started.json.post.back_at) / 1000) * 1000,
+        Math.floor(Date.parse(dueAt) / 1000) * 1000,
       );
       expect(issued).toBeLessThanOrEqual(Date.now());
       const compact = await get("/v1/me/digest?since=0&view=compact", ada.key);
@@ -258,7 +266,7 @@ export function eventScenarios(): void {
       const host = await register("host-late");
       await linkByCode(host, `eval-rsvp-late-${RUN_TAG}`);
       ageBot(host.handle);
-      const startsAt = Date.now() + 15 * 60_000 + 20_000;
+      let startsAt = Date.now() + 15 * 60_000 + 20_000;
       const made = await post(
         "/v1/gatherings",
         {
@@ -289,8 +297,11 @@ export function eventScenarios(): void {
       expect(Date.parse(early.json.rsvp.wake_at)).toBe(startsAt - 5 * 60_000);
 
       // Past the 15-minute mark: a notice of 15 is due already.
-      const wait = startsAt - 15 * 60_000 + 3000 - Date.now();
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      if (FAST_EVAL_CLOCK) startsAt = await gatheringStartsIn(id, 14 * 60);
+      else {
+        const wait = startsAt - 15 * 60_000 + 3000 - Date.now();
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      }
       const before = {
         cal: (await wakeOf(cal)).wake,
         dee: (await wakeOf(dee)).wake,
@@ -323,7 +334,7 @@ export function eventScenarios(): void {
       let states = ["coming", "coming"];
       const deadline = Date.now() + 150_000;
       while (states.some((x) => x !== "fired") && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, FAST_EVAL_CLOCK ? 750 : 5000));
         expect((await get("/v1/clock")).status).toBe(200);
         states = [await stateOf(cal), await stateOf(dee)];
       }

@@ -136,33 +136,82 @@ async function offerOne(d: Due): Promise<number | "capped" | null> {
 // record an eligible no-wake rung but leaves any actual wake pending.
 export async function sweepJobOverdue(until: number): Promise<number> {
   if (isReadOnly() || Date.now() >= until) return 0;
-  const due = await db()<{ job_id: string; rung: number }[]>`
-    SELECT d.job_id, d.rung
+  const sql = db();
+  const rules = channelWakeRules(await antiAbuse(sql));
+  // This is only a prefilter. Waking candidates recheck under the limit
+  // lock before they can write or raise a counter.
+  const hasRoom = (
+    await Promise.all(
+      rules.map(async (r) => {
+        const [row] = await sql<{ count: number }[]>`
+          SELECT count FROM rate_limits WHERE bucket = ${r.bucket}
+            AND window_start = to_timestamp(
+              floor(extract(epoch FROM now()) / ${r.windowSeconds}) * ${r.windowSeconds})`;
+        return (row?.count ?? 0) < r.limit;
+      }),
+    )
+  ).every(Boolean);
+  const due = await sql<
+    {
+      job_id: string;
+      channel_id: string;
+      rung: number;
+      number: number;
+      woken: boolean;
+    }[]
+  >`
+    SELECT d.job_id, d.channel_id, d.rung, j.number, d.woken
     FROM job_overdue_due(clock_timestamp()) d
+    JOIN channel_jobs j ON j.id = d.job_id
     WHERE d.rung IN (1, 2) AND d.due_at <= clock_timestamp()
-    ORDER BY d.due_at, d.job_id
+      AND (${hasRoom} OR NOT d.woken)
+    ORDER BY d.woken, d.due_at, d.job_id
     LIMIT ${OFFER_RUN_MAX}`;
   let wakes = 0;
+  let failed = 0;
   for (const d of due) {
     if (Date.now() >= until) break;
-    const woken = await db()
+    const result = await sql
       .begin(async (tx) => {
-        const rules = channelWakeRules(await antiAbuse(tx));
-        let allowed = true;
-        for (const rule of rules)
-          if ((await usesLeft(tx, rule)) < 1) allowed = false;
-        const [row] = await tx<{ woken: boolean }[]>`
-          SELECT woken FROM job_overdue_make(${d.job_id}, ${d.rung}, ${allowed})`;
-        if (!row?.woken) return false;
-        for (const rule of rules) await addUses(tx, rule, 1);
-        return true;
+        let allowed = d.woken;
+        if (d.woken)
+          for (const rule of rules)
+            if ((await usesLeft(tx, rule)) < 1) allowed = false;
+        // A candidate that looked like a no-wake must not wake if its
+        // recipient changes before the group lock. The next pass can retry.
+        const [row] = await tx<
+          { rung: number; bot_id: string | null; woken: boolean }[]
+        >`
+          SELECT rung, bot_id, woken
+          FROM job_overdue_make(${d.job_id}, ${d.rung}, ${allowed})`;
+        if (row) {
+          if (row.woken) for (const rule of rules) await addUses(tx, rule, 1);
+          await logAction(tx, {
+            action: "channel.job.overdue",
+            botId: row.bot_id === null ? null : Number(row.bot_id),
+            keyId: null,
+            subject: privateRef(Number(d.channel_id)),
+            ipHash: null,
+            detail: { number: d.number, rung: row.rung, woken: row.woken },
+          });
+        }
+        return { woken: row?.woken ?? false, capped: d.woken && !allowed };
       })
       .catch((e: unknown) => {
-        if ((e as { code?: string }).code !== "UPR01") console.error(e);
-        return false;
+        if ((e as { code?: string }).code !== "UPR01") {
+          failed += 1;
+          console.error(e);
+        }
+        return null;
       });
-    if (woken) wakes += 1;
+    if (result?.woken) wakes += 1;
+    // All queued no-wake rows were ordered before this waking candidate.
+    if (result?.capped) break;
   }
+  if (failed > 0)
+    await noticeJobOfferFailures(failed).catch((e: unknown) =>
+      console.error(e),
+    );
   return wakes;
 }
 

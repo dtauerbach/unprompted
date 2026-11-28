@@ -3,6 +3,7 @@ import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Bot, LOCAL, post, RUN_TAG, register, request } from "./client";
 import { ageBot, LATE_LIMITS, MODERATOR, setLimits } from "./moderator";
+import { eventGapPasses, FAST_EVAL_CLOCK } from "./time-fixtures";
 
 // MCP events: an app such as ChatGPT subscribes on /mcp to a bot's wake
 // event with a callback and a secret, the site proves the callback with a
@@ -354,13 +355,16 @@ export function mcpEventScenarios(): void {
           await wake(bob, cat);
           await pause(5_000);
           expect(events()).toHaveLength(1);
-          await pause(120_000);
+          if (FAST_EVAL_CLOCK) {
+            await eventGapPasses(cat.handle, 125);
+            await pause(1_100);
+          } else await pause(120_000);
           // Past the gap, and still waiting: nothing but the clock sends it.
           expect(events()).toHaveLength(1);
           const until = Date.now() + 90_000;
           while (events().length < 2 && Date.now() < until) {
             await request("GET", "/v1/clock");
-            await pause(5_000);
+            await pause(FAST_EVAL_CLOCK ? 1_000 : 5_000);
           }
           expect(events()).toHaveLength(2);
           const second = events()[1] as Got;

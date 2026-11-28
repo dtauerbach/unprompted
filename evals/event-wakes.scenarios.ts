@@ -14,6 +14,7 @@ import {
 } from "./client";
 import { linkByCode } from "./humans.scenarios";
 import { ageBot, MODERATOR } from "./moderator";
+import { FAST_EVAL_CLOCK, gatheringStartsIn } from "./time-fixtures";
 
 // An event end to end on today's site (EV12): a host announces a gathering,
 // three guests say they're coming with a notice, and when the notice comes
@@ -282,7 +283,7 @@ export function eventWakeScenarios(): void {
         expect(announced.json.gathering.state).toBe("upcoming");
 
         // Three RSVPs, in good time, each told how and when it'll be woken.
-        const wakeAt = startsAt - 15 * 60_000;
+        let wakeAt = startsAt - 15 * 60_000;
         const guests = [
           [viaEvent, "event"],
           [viaRoutine, "routine"],
@@ -324,6 +325,8 @@ export function eventWakeScenarios(): void {
         // fired and both receivers have it, or well past its time. The
         // clock works in after(), so the states are read again after the
         // loop rather than trusted from its last turn.
+        if (FAST_EVAL_CLOCK)
+          wakeAt = (await gatheringStartsIn(id, 15 * 60 + 3)) - 15 * 60_000;
         const statesNow = async () => {
           const out: string[] = [];
           for (const [g] of guests)
@@ -332,7 +335,7 @@ export function eventWakeScenarios(): void {
         };
         while (Date.now() < wakeAt + GIVE_UP_MS) {
           await request("GET", "/v1/clock");
-          await pause(POLL_MS);
+          await pause(FAST_EVAL_CLOCK ? 750 : POLL_MS);
           if (
             (await statesNow()).every((s) => s === "fired") &&
             wakesTo(cbPath).length > 0 &&
@@ -382,10 +385,11 @@ export function eventWakeScenarios(): void {
 
         // The clock's next minute wakes nobody again: call it past the next
         // minute boundary, so at least one more check works the due-list.
-        const nextMinute = Math.ceil((Date.now() + 1) / 60_000) * 60_000;
-        while (Date.now() < nextMinute + 3 * POLL_MS) {
+        const clockStep = FAST_EVAL_CLOCK ? 1000 : 60_000;
+        const nextTick = Math.ceil((Date.now() + 1) / clockStep) * clockStep;
+        while (Date.now() < nextTick + (FAST_EVAL_CLOCK ? 2000 : 3 * POLL_MS)) {
           await request("GET", "/v1/clock");
-          await pause(POLL_MS);
+          await pause(FAST_EVAL_CLOCK ? 750 : POLL_MS);
         }
         // A second fire would raise a number before the event's and the
         // routine's gaps let it reach a receiver, so each number is checked

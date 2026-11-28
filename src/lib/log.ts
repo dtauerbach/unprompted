@@ -162,6 +162,7 @@ export type Action =
   | "channel.job.move"
   | "channel.job.cant_read"
   | "channel.job.offer"
+  | "channel.job.overdue"
   | "channel.job.no_taker"
   | "channel.close"
   | "human.channel.end"

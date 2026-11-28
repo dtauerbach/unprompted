@@ -8,6 +8,7 @@ import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/
 import { setFrozen, setPrivateChannelHidden, setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { checkDue, forgetDueMinute } from "@/lib/due-check";
+import { offerJobs } from "@/lib/job-offers";
 import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import { call, register, resetDb } from "./helpers";
 import { resetNextCache } from "./next-cache";
@@ -48,11 +49,24 @@ async function fixture(due: number | null = 10) {
     ).toBe(200);
   }
   // D1 adds the SQL field only. The posting interface is a separate job.
-  const insertJob = async (minutes: number | null, number = 1) => {
+  const insertJob = async (
+    minutes: number | null,
+    number = 1,
+    eligible?: Bot[],
+  ) => {
+    const list = eligible
+      ? await Promise.all(
+          eligible.map(async (who) => {
+            const member = await botId(who);
+            if (!member) throw new Error("missing eligible member");
+            return member;
+          }),
+        )
+      : null;
     const [job] = await db()<{ id: string }[]>`
     INSERT INTO channel_jobs
-      (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, due_minutes)
-    SELECT ${id}, ${number}, 'Write a brief', 'One page', 'One page', 120, b.id, k.id, ${minutes}
+      (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, due_minutes, eligible)
+    SELECT ${id}, ${number}, 'Write a brief', 'One page', 'One page', 120, b.id, k.id, ${minutes}, ${list}::bigint[]
     FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
     WHERE b.handle = 'lea' RETURNING id`;
     if (!job) throw new Error("job not inserted");
@@ -404,7 +418,7 @@ describe("job overdue ladder", () => {
     expect(await wake(f.other)).toBe(before + 1);
   });
 
-  it("wakes the asker first and then the lead when an ask is awaiting review", async () => {
+  it("wakes the asker first without selecting an ineligible review fallback", async () => {
     const f = await fixture(null);
     const ask = await timedAsk(f);
     const params = { id: f.id, number: "2" };
@@ -440,7 +454,26 @@ describe("job overdue ladder", () => {
     expect(await wake(f.other)).toBe(before + 1);
     await ageRung(ask, 1);
     expect(await make(ask, 2)).toEqual([
-      { rung: 2, bot_id: await botId(f.leader), woken: true },
+      { rung: 2, bot_id: null, woken: false },
+    ]);
+  });
+
+  it.each([
+    false,
+    true,
+  ])("uses the named fallback only without a standing offer (%s)", async (offered) => {
+    const f = await fixture(null);
+    const named = await f.insertJob(10, 2, [f.other]);
+    if (offered) await offerJobs({ channel: Number(f.id) });
+    await age(named, 26);
+    expect(await make(named, 1)).toHaveLength(1);
+    await ageRung(named, 1);
+    expect(await make(named, 2)).toEqual([
+      {
+        rung: 2,
+        bot_id: offered ? null : await botId(f.other),
+        woken: !offered,
+      },
     ]);
   });
 
@@ -525,6 +558,12 @@ describe("the clock dispatches bot-only overdue rungs", () => {
     const [used] = await db()<{ count: number }[]>`
       SELECT count FROM rate_limits WHERE bucket = 'channel-wake:all'`;
     expect(used?.count).toBe(1);
+    const [logged] = await db()`
+      SELECT bot_id, detail FROM action_log WHERE action = 'channel.job.overdue'`;
+    expect(logged).toMatchObject({
+      bot_id: await botId(f.holder),
+      detail: { number: 1, rung: 1, woken: true },
+    });
   });
   it("records a no-wake rung at cap without charging or waking a silenced holder", async () => {
     const f = await fixture();
@@ -546,5 +585,11 @@ describe("the clock dispatches bot-only overdue rungs", () => {
       SELECT count FROM rate_limits WHERE bucket = 'channel-wake:all'
         AND window_start = date_trunc('hour', now())`;
     expect(used?.count).toBe(cap);
+    const [logged] = await db()`
+      SELECT bot_id, detail FROM action_log WHERE action = 'channel.job.overdue'`;
+    expect(logged).toMatchObject({
+      bot_id: null,
+      detail: { number: 1, rung: 1, woken: false },
+    });
   });
 });

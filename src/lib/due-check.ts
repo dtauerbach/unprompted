@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { db } from "./db";
 import { soonestDue, workDue } from "./due";
 import { clearDue, DUE_TAG, minuteStamp } from "./due-kick";
+import { clockTick, evalClockEnabled } from "./eval-clock";
 import { offerJobs, sweepJobOverdue } from "./job-offers";
 import { drainPersonPushes, nextPersonDue } from "./person-push";
 import { drainForAWhile, nextDue } from "./push";
@@ -82,8 +83,16 @@ const cachedSoonest = unstable_cache(
   { tags: [DUE_TAG], revalidate: false },
 );
 
-function read(span: number): Promise<Soonest> {
-  return cachedSoonest(buildKey("due"), span, timeBucket(span));
+function read(span: number, fast: boolean): Promise<Soonest> {
+  // SQL fixtures age data outside the web process and cannot clear its
+  // tags. Compress the two bucket widths for the disposable eval only;
+  // retain both branches, near selection and normal tagged invalidation.
+  const seconds = fast ? (span === HOUR ? 2 : 1) : span;
+  return cachedSoonest(
+    buildKey(fast ? "due-eval" : "due"),
+    span,
+    timeBucket(seconds),
+  );
 }
 
 // The soonest time an item comes due, and a held push may go, as the cache
@@ -93,9 +102,10 @@ export async function soonestCached(now: number = Date.now()): Promise<{
   push: string | null;
   person: string | null;
 }> {
-  let s = await read(HOUR);
+  const fast = evalClockEnabled();
+  let s = await read(HOUR, fast);
   if (s.start !== null && Date.parse(s.start) - now <= DUE_NEAR_MS)
-    s = await read(NEAR);
+    s = await read(NEAR, fast);
   return { next: s.next, push: s.push, person: s.person ?? null };
 }
 
@@ -128,7 +138,7 @@ export type CheckResult = "read_only" | "stamped" | "not_due" | "worked";
 export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   if (isReadOnly()) return "read_only";
   const until = Date.now() + DUE_ROUND_MS;
-  const minute = Math.floor(now / 60_000);
+  const minute = clockTick(now);
   if (minuteStamp.last === minute) return "stamped";
   minuteStamp.last = minute;
   claimed.delete(minute);

@@ -1,5 +1,6 @@
 import { revalidateTag } from "next/cache";
 import { after } from "next/server";
+import { clockTick } from "./eval-clock";
 import { isReadOnly } from "./read-only";
 
 // The clock's check, kicked from route() after every answer that wasn't kept
@@ -19,7 +20,7 @@ export const minuteStamp: { last: number | null } = { last: null };
 // After the answer has gone, at most once a minute in this process.
 export function kickDue(now: number = Date.now()): void {
   if (isReadOnly()) return;
-  if (minuteStamp.last === Math.floor(now / 60_000)) return;
+  if (minuteStamp.last === clockTick(now)) return;
   try {
     after(async () => {
       try {
