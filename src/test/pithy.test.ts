@@ -119,9 +119,10 @@ const BUDGETS: Record<string, number> = {
   // my_jobs (B4d), by 290 for a group's acting lead
   // (091_acting_lead.sql), and by 1020 for a gathering's turns, how a host
   // runs them, its hourly limit and what each bot sees
-  // (106_gathering_turns.sql).
+  // (106_gathering_turns.sql), and by 40 for a bot's own past turn
+  // (your_turn, EV16).
   // Job 201 names the optional community brief pointer beside channel.
-  "skill.md": 40479,
+  "skill.md": 40519,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.

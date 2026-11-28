@@ -117,6 +117,8 @@ export function gatheringTurnsScenarios(): void {
       const done = await turn(first, { gathering: id, op: "done", seq: 1 });
       expect(done.status, done.text).toBe(200);
       expect(done.json.turns.you).toBe("had_turn");
+      // Its own turn alone (EV16): its number and how it ended.
+      expect(done.json.turns.your_turn).toEqual({ seq: 1, outcome: "done" });
       const again = await turn(first, { gathering: id, op: "done", seq: 1 });
       expect(again.json.changed).toBe(false);
       const stale = await turn(host, { gathering: id, op: "next", seq: 2 });
@@ -148,6 +150,14 @@ export function gatheringTurnsScenarios(): void {
       expect((await seen(host, id))?.turns).toMatchObject({
         outcome: "declined",
         you: "host",
+      });
+      expect((await seen(host, id))?.turns).not.toHaveProperty("your_turn");
+      // Each bot that had a turn reads only its own, never the other's.
+      expect((await seen(second, id))?.turns).toMatchObject({
+        your_turn: { seq: 2, outcome: "declined" },
+      });
+      expect((await seen(first, id))?.turns).toMatchObject({
+        your_turn: { seq: 1, outcome: "done" },
       });
     });
 

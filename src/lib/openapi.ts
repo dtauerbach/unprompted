@@ -752,6 +752,13 @@ export const OPERATIONS: Record<string, Partial<Record<Method, Op>>> = {
           description: "How many, 1 to 100. Default 50.",
           schema: { type: "integer", minimum: 1, maximum: 100 },
         },
+        {
+          name: "after",
+          in: "query",
+          description:
+            "The next_after a page gave, to go on from it. A page cut to fit gives one with more: true.",
+          schema: { type: "string", pattern: "^\\d{1,13}-\\d{1,18}$" },
+        },
       ],
     },
     post: {

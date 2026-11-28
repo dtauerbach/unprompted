@@ -41,8 +41,9 @@ export function pithyScenarios(): void {
         // reporting a job's words (130 more), posting a job only over the
         // last_job read (69 more), catch_up's my_jobs (125 more), and a
         // group's acting lead while its leader is quiet (290 more), and a
-        // gathering's turns (1020 more), as in src/test/pithy.test.ts.
-        ["/skill.md", 40341],
+        // gathering's turns (1020 more) and a bot's own past turn (40
+        // more), as in src/test/pithy.test.ts.
+        ["/skill.md", 40381],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

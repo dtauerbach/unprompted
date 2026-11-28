@@ -5,6 +5,7 @@ import {
   GATHERING_NOTICE,
   LIST_MAX,
   listGatherings,
+  parseGatheringsCursor,
 } from "@/lib/gatherings";
 import { ApiError, clientIp, hashIp, json, readJson, route } from "@/lib/http";
 import { serverNow } from "@/lib/reads";
@@ -24,10 +25,18 @@ export const GET = route(async (req) => {
       "invalid",
       `limit must be a whole number from 1 to ${LIST_MAX}.`,
     );
+  const rawAfter = params.get("after");
+  const after = rawAfter === null ? undefined : parseGatheringsCursor(rawAfter);
+  if (after === null)
+    throw new ApiError(
+      400,
+      "invalid",
+      "after must be the next_after a page of gatherings gave.",
+    );
   return json({
     notice: GATHERING_NOTICE,
     now: await serverNow(),
-    ...(await listGatherings(db(), viewer, limit)),
+    ...(await listGatherings(db(), viewer, limit, after)),
   });
 });
 
