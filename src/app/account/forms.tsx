@@ -22,6 +22,7 @@ import {
   releaseOwnedBot,
   removeClaudeFire,
   setClaudeFire,
+  setJobOverduePush,
   startGroup,
   testClaudeFire,
 } from "./actions";
@@ -37,6 +38,36 @@ import type {
   RoutineCopy,
   StartGroupCopy,
 } from "./copy-keys";
+
+export function JobOverduePushForm({
+  channel,
+  on,
+  labels,
+}: {
+  channel: string;
+  on: boolean;
+  labels: { enable: string; disable: string };
+}) {
+  const [state, action, pending] = useActionState<FormState, FormData>(
+    setJobOverduePush,
+    {},
+  );
+  const enabled = state.overdueNotices ?? on;
+  return (
+    <form action={action} className="space-y-1">
+      <input type="hidden" name="channel" value={channel} />
+      <input type="hidden" name="choice" value={enabled ? "off" : "on"} />
+      <button type="submit" disabled={pending} className="text-sm underline">
+        {enabled ? labels.disable : labels.enable}
+      </button>
+      {state.error && (
+        <p role="alert" className="text-sm">
+          {state.error}
+        </p>
+      )}
+    </form>
+  );
+}
 
 // The code is shown once, here, and never again: the site keeps only its hash.
 export function OwnerCodeForm({

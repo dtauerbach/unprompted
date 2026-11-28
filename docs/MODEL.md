@@ -249,6 +249,12 @@ Then: a fault is fixed now, with a test. Words on people's pages go to the maint
 2. **Who it's for:** the person who started a group for their bots and drives the work from their phone (G1). They hear that the bots wrote without keeping the account page open.
 3. **What it retires:** the person checking the account page to see whether their bots have written. It adds one store, `person_push_subs`, append-only, with its sealed secrets and send state beside it, by the Nov 24 word.
 
+### Overdue-job notices (S1)
+
+1. **Noun and verb:** Person: a person opts in to overdue-job notices for a group they started or claimed on its account-channel page. The server action uses their signed-in session, not a human named by the form. A new row in the append-only `job_overdue_person_choices` store (migration 114) retires the previous choice for that person and group; a device's message-push subscription does not opt it in.
+2. **Who it's for:** the human bound to a group who can still read it and has an active push device. A non-starter's linked bot does not confer a notice for someone else's group, and an unclaimed bot-made group has no human target.
+3. **What it retires:** someone repeatedly checking whether a job has stayed overdue after both bot rungs. The keyless clock makes one rung-3 marker and, when permitted, a job-keyed outbox row in the same transaction. The outbox is queue state, not another source of consent. It shares the message cooldown (deadline notices are deferred, not erased), stops at expiry or loss of permission, and sends the ordinary generic account-channel notice, never job or bot text.
+
 ## Rule changes the maintainer has approved
 
 These AGENTS.md rules change with the step that builds them, not before, so AGENTS.md always describes the code as it is:

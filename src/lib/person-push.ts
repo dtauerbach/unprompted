@@ -293,8 +293,12 @@ export function personPushAllowed(): boolean {
 export async function nextPersonDue(sql: postgres.Sql): Promise<Date | null> {
   if (isReadOnly() || !personPushAllowed() || !vapidConfig()) return null;
   const [r] = await sql<{ due: Date | null }[]>`
-    SELECT min(pending_since) AS due FROM person_push_state
-     WHERE pending_since IS NOT NULL`;
+    SELECT least(
+      (SELECT min(pending_since) FROM person_push_state),
+      (SELECT min(least(next_at, expires_at)) FROM job_overdue_person_notices
+       WHERE finished_at IS NULL),
+      (SELECT min(due_at) FROM job_overdue_due(now()) WHERE rung = 3)
+    ) AS due`;
   return r?.due ?? null;
 }
 
@@ -314,7 +318,88 @@ type Claimed = {
   prev: string | null;
   sent: boolean;
   mark: string | null;
+  job_id?: string;
+  job_mark?: string;
 };
+
+// Reserve a cooldown slot exactly as a message push does. A job notice
+// waits out that gap rather than being discarded as redundant.
+async function claimJobNotice(
+  sql: postgres.Sql,
+  job: string,
+): Promise<Claimed | null> {
+  return sql.begin(async (tx) => {
+    const [n] = await tx<
+      { human_id: string; channel_id: string; stale: boolean }[]
+    >`
+      SELECT human_id, channel_id,
+        expires_at <= now() OR job_overdue_person_target(job_id) IS DISTINCT FROM human_id AS stale
+      FROM job_overdue_person_notices WHERE job_id = ${job}
+        AND finished_at IS NULL AND least(next_at, expires_at) <= now()
+      FOR UPDATE SKIP LOCKED`;
+    if (!n) return null;
+    if (n.stale) {
+      await tx`UPDATE job_overdue_person_notices SET finished_at = now()
+               WHERE job_id = ${job}`;
+      return null;
+    }
+    await tx`
+      INSERT INTO person_push_state (human_id, channel_id)
+      VALUES (${n.human_id}, ${n.channel_id}) ON CONFLICT DO NOTHING`;
+    const [p] = await tx<{ prev: string | null; resume_at: string | null }[]>`
+      SELECT last_sent_at::text AS prev, CASE
+        WHEN last_sent_at + make_interval(secs => ${PERSON_PUSH_GAP_SECONDS}) > now()
+        THEN (last_sent_at + make_interval(secs => ${PERSON_PUSH_GAP_SECONDS}))::text
+      END AS resume_at
+      FROM person_push_state WHERE human_id = ${n.human_id}
+        AND channel_id = ${n.channel_id} FOR UPDATE`;
+    if (p?.resume_at) {
+      await tx`UPDATE job_overdue_person_notices SET next_at = ${p.resume_at}::text::timestamptz
+               WHERE job_id = ${job}`;
+      return null;
+    }
+    const [reserved] = await tx<{ mark: string }[]>`
+      UPDATE person_push_state SET last_sent_at = clock_timestamp()
+      WHERE human_id = ${n.human_id} AND channel_id = ${n.channel_id}
+      RETURNING last_sent_at::text AS mark`;
+    const [lease] = await tx<{ mark: string }[]>`
+      UPDATE job_overdue_person_notices SET next_at = clock_timestamp() + interval '2 minutes'
+      WHERE job_id = ${job} RETURNING next_at::text AS mark`;
+    if (!reserved || !lease) throw new Error("missing person notice claim");
+    return {
+      human_id: n.human_id,
+      channel_id: n.channel_id,
+      prev: p?.prev ?? null,
+      sent: false,
+      mark: reserved.mark,
+      job_id: job,
+      job_mark: lease.mark,
+    };
+  });
+}
+
+async function finishJobNotice(
+  sql: postgres.Sql,
+  c: Claimed,
+  kind: "sent" | "drop" | "retry",
+): Promise<void> {
+  if (c.job_id === undefined || c.job_mark === undefined) return;
+  const j = c.job_id;
+  const mark = c.job_mark;
+  await sql.begin(async (tx) => {
+    const [touched] = await tx`
+      UPDATE job_overdue_person_notices
+        SET finished_at = CASE WHEN ${kind} = 'retry' THEN NULL ELSE now() END,
+            next_at = CASE WHEN ${kind} = 'retry' THEN now() + interval '1 minute' ELSE next_at END
+      WHERE job_id = ${j} AND finished_at IS NULL
+        AND next_at = ${mark}::text::timestamptz RETURNING 1`;
+    if (!touched || kind === "sent") return;
+    await tx`
+      UPDATE person_push_state SET last_sent_at = ${c.prev}::text::timestamptz
+      WHERE human_id = ${c.human_id} AND channel_id = ${c.channel_id}
+        AND last_sent_at IS NOT DISTINCT FROM ${c.mark}::text::timestamptz`;
+  });
+}
 
 // Puts a claimed mark back as it was before the claim, waiting again, so the
 // next round (or the clock) sends it: for a channel a round ran out of time
@@ -329,6 +414,7 @@ async function putBack(sql: postgres.Sql, c: Claimed): Promise<void> {
 }
 
 async function putBackOne(sql: postgres.Sql, c: Claimed) {
+  if (c.job_id !== undefined) return finishJobNotice(sql, c, "retry");
   await sql`
     UPDATE person_push_state
        SET pending_since = coalesce(pending_since, now()),
@@ -418,6 +504,21 @@ export async function drainPersonPushes(
      WHERE s.human_id = c.human_id AND s.channel_id = c.channel_id
     RETURNING c.human_id, c.channel_id, c.prev::text AS prev, c.sent,
               s.last_sent_at::text AS mark`;
+  const remaining = Math.max(0, (deps.limit ?? 20) - claimed.length);
+  if (remaining > 0) {
+    const jobs = await sql<{ job_id: string }[]>`
+      SELECT job_id FROM job_overdue_person_notices WHERE finished_at IS NULL
+        AND least(next_at, expires_at) <= now()
+      ORDER BY least(next_at, expires_at), job_id LIMIT ${remaining}`;
+    for (const j of jobs) {
+      if (deps.until !== undefined && now() >= deps.until) break;
+      const c = await claimJobNotice(sql, j.job_id).catch((e: unknown) => {
+        console.error(e);
+        return null;
+      });
+      if (c) claimed.push(c);
+    }
+  }
   if (claimed.length === 0) return out;
   // Nothing past the claim may lose what it claimed: a throw (a dropped
   // connection, a copy read that fails) puts the marks back, waiting.
@@ -432,6 +533,7 @@ export async function drainPersonPushes(
     return out;
   }
   let reached = false;
+  let retryable = false;
   for (const [i, c] of claimed.entries()) {
     if (deps.until !== undefined && now() >= deps.until) {
       const back = claimed.slice(i).filter((r) => !r.sent);
@@ -444,6 +546,7 @@ export async function drainPersonPushes(
       continue;
     }
     reached = false;
+    retryable = false;
     try {
       await sendChannel(c);
     } catch (e) {
@@ -453,16 +556,33 @@ export async function drainPersonPushes(
       if (!reached) {
         await putBack(sql, c);
         out.deferred = (out.deferred ?? 0) + 1;
-      }
+      } else if (c.job_id !== undefined) await finishJobNotice(sql, c, "sent");
       continue;
     }
-    if (!reached) await unmark(sql, c);
+    if (c.job_id !== undefined)
+      await finishJobNotice(
+        sql,
+        c,
+        reached ? "sent" : retryable ? "retry" : "drop",
+      );
+    else if (!reached) await unmark(sql, c);
   }
   return out;
 
   // One channel's notice to each of its person's devices, setting reached
   // once one takes it. Its marks are left to the caller.
   async function sendChannel(c: Claimed): Promise<void> {
+    if (c.job_id !== undefined) {
+      const [read] = await sql<{ ok: boolean }[]>`
+        SELECT job_overdue_person_target(n.job_id) IS NOT DISTINCT FROM n.human_id
+               AND n.expires_at > now() AS ok
+        FROM job_overdue_person_notices n WHERE n.job_id = ${c.job_id}
+          AND n.finished_at IS NULL AND n.next_at = ${c.job_mark ?? null}::text::timestamptz`;
+      if (!read?.ok) {
+        out.dropped++;
+        return;
+      }
+    }
     // Only while the person could open what the notice points at: a group
     // a moderator hasn't hidden, with one of their bots in it now and not
     // frozen (src/lib/peek.ts), so a notice never leads to a refusal.
@@ -477,8 +597,16 @@ export async function drainPersonPushes(
     }
     const payload = Buffer.from(
       JSON.stringify({
-        title: copy["account.push.notice_title"].slice(0, NOTICE_TITLE_MAX),
-        body: copy["account.push.notice_body"].slice(0, NOTICE_BODY_MAX),
+        title: copy[
+          c.job_id === undefined
+            ? "account.push.notice_title"
+            : "account.push.job_notice_title"
+        ].slice(0, NOTICE_TITLE_MAX),
+        body: copy[
+          c.job_id === undefined
+            ? "account.push.notice_body"
+            : "account.push.job_notice_body"
+        ].slice(0, NOTICE_BODY_MAX),
         url: `/account/channels/${c.channel_id}`,
       }),
     );
@@ -526,7 +654,10 @@ export async function drainPersonPushes(
       if (ok) {
         out.sent++;
         reached = true;
-      } else out.failed++;
+      } else {
+        out.failed++;
+        if (!gone) retryable = true;
+      }
       // A push service that says the subscription is gone ends it; any
       // other failure is tried again with the next notice, which the gap
       // already spaces out.
