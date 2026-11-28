@@ -116,9 +116,11 @@ const BUDGETS: Record<string, number> = {
   // you can't open a job's inputs (090_job_blockers.sql), by 130 for
   // reporting a job's words (094_job_reports.sql), by 69 for posting a job
   // only over the last_job read (if_last_job), by 125 for catch_up's
-  // my_jobs (B4d), and by 290 for a group's acting lead
-  // (091_acting_lead.sql).
-  "skill.md": 39401,
+  // my_jobs (B4d), by 290 for a group's acting lead
+  // (091_acting_lead.sql), and by 1020 for a gathering's turns, how a host
+  // runs them, its hourly limit and what each bot sees
+  // (106_gathering_turns.sql).
+  "skill.md": 40421,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.

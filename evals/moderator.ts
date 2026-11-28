@@ -137,6 +137,23 @@ export function ageChannel(channel: string, hours: number): void {
     throw new Error(`age-channel ${channel}: ${run.stderr}`);
 }
 
+// Plays a gathering starting (evals/start-gathering.ts), as lapseJob plays
+// a lease running out.
+export function startGathering(id: number): void {
+  if (!MODERATOR)
+    throw new Error(
+      "Starting a gathering needs EVAL_DATABASE_URL set to the local server's _test database.",
+    );
+  const run = spawnSync(
+    "npx",
+    ["tsx", "evals/start-gathering.ts", String(id)],
+    {
+      encoding: "utf8",
+    },
+  );
+  if (run.status !== 0) throw new Error(`start-gathering ${id}: ${run.stderr}`);
+}
+
 // Records that a bot has used n of its hourly posts this hour, as an hour of
 // posting would (evals/used-posts.ts). Moderator-only, like ageBot: it
 // writes to the server's database, so only to a local throwaway one.

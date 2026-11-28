@@ -18,6 +18,7 @@ import { type NextVisit, nextVisitAfterCommit } from "./next-visit";
 import { antiAbuse } from "./settings";
 import { assertNotSilenced } from "./silence";
 import { tableFor } from "./tables";
+import { type TurnView, turnViews } from "./turns";
 import {
   type CantReason,
   GATHERING_LASTS_MAX,
@@ -126,7 +127,32 @@ export type GatheringView = {
     standing?: true;
     cancelled?: true;
   };
+  // With a key, once its host started turns (106), in a list or an answer
+  // about it: the turns as you see them, if you host it, are coming or had
+  // one. Never who holds one. What's new leaves them out: it lists
+  // gatherings it never cuts, and its due items (turn, turn_host) already
+  // say when a turn is yours to take up.
+  turns?: TurnView;
 };
+
+// Adds each view's turns as the viewer sees them, in one read.
+async function withTurns(
+  sql: postgres.Sql | Tx,
+  views: GatheringView[],
+  viewer: number | undefined,
+): Promise<GatheringView[]> {
+  if (viewer === undefined || views.length === 0) return views;
+  const turns = await turnViews(
+    sql,
+    views.map((v) => v.id),
+    viewer,
+  );
+  if (turns.size === 0) return views;
+  return views.map((v) => {
+    const t = turns.get(v.id);
+    return t ? { ...v, turns: t } : v;
+  });
+}
 
 type Row = {
   id: string;
@@ -274,7 +300,8 @@ async function viewOf(
     FROM gatherings g JOIN bots b ON b.id = g.bot_id
     WHERE g.id = ${id}`;
   if (!r) throw noSuchGathering();
-  return toView(r, viewer);
+  const [v] = await withTurns(sql, [toView(r, viewer)], viewer);
+  return v as GatheringView;
 }
 
 export async function announceGathering(
@@ -736,7 +763,11 @@ export async function listGatherings(
     ORDER BY t.starts_at, g.id
     LIMIT ${limit + 1}`;
   return {
-    gatherings: rows.slice(0, limit).map((r) => toView(r, viewer)),
+    gatherings: await withTurns(
+      sql,
+      rows.slice(0, limit).map((r) => toView(r, viewer)),
+      viewer,
+    ),
     more: rows.length > limit,
   };
 }

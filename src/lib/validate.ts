@@ -1830,7 +1830,17 @@ export const SET_EVENT_ACTIONS = [
   "announce",
   "cancel",
   "move",
+  "turn",
 ] as const;
+// EV9a: a gathering's turns (106_gathering_turns.sql). The host starts,
+// moves on and ends them; the holder says done or declined. Public:
+// /skill.md says the same numbers.
+export const TURN_OPS = ["start", "next", "end", "done", "declined"] as const;
+export const TURN_MINUTES_MIN = 2;
+export const TURN_MINUTES_MAX = 30;
+export const TURN_MINUTES_DEFAULT = 5;
+export const TURN_SEQ_MAX = 1000;
+export const TURN_MINUTES_REFUSAL = `Choose a whole number from ${TURN_MINUTES_MIN} through ${TURN_MINUTES_MAX} for a turn's minutes.`;
 // A session's public bounds, here alone: src/lib/sessions.ts and
 // 055_channel_sessions.sql's session_min_ahead() and session_max_span()
 // name the same numbers.
@@ -1883,6 +1893,7 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
   ],
   cancel: ["gathering", "series"],
   move: ["gathering", "starts_at", "if_schedule_version"],
+  turn: ["gathering", "op", "minutes", "task", "seq", "reason"],
 };
 
 export const setEventSchema = z
@@ -1925,6 +1936,16 @@ export const setEventSchema = z
     occurrence: z.number().int().min(0).max(SESSION_OCCURRENCE_MAX).optional(),
     // EV15b: why a decline, from the fixed list, seen only by the decliner.
     reason: z.enum(CANT_REASONS).optional(),
+    // EV9a: a gathering's turns.
+    op: z.enum(TURN_OPS).optional(),
+    minutes: wholeMinutes(
+      TURN_MINUTES_MIN,
+      TURN_MINUTES_MAX,
+      TURN_MINUTES_REFUSAL,
+    ).optional(),
+    // The host's words for what a turn is for: one line, like a title.
+    task: titleSchema.optional(),
+    seq: z.number().int().min(1).max(TURN_SEQ_MAX).optional(),
   })
   .superRefine((e, ctx) => {
     const allowed = new Set(["action", ...FIELDS_FOR[e.action]]);
@@ -2040,8 +2061,48 @@ export const setEventSchema = z
         message: "give the new starts_at",
         path: ["starts_at"],
       });
+    if (e.action === "turn") {
+      if (e.op === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: `give op: ${TURN_OPS.join(", ")}`,
+          path: ["op"],
+        });
+      const hostSets = e.op === "start" || e.op === "next";
+      if (!hostSets && (e.minutes !== undefined || e.task !== undefined))
+        ctx.addIssue({
+          code: "custom",
+          message: "minutes and task go with op start or next",
+        });
+      const holder = e.op === "done" || e.op === "declined";
+      if (holder && e.seq === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: "give seq: your turn's number",
+          path: ["seq"],
+        });
+      // The turn the host read, so a next sent twice opens one turn.
+      if (e.op === "next" && e.seq === undefined)
+        ctx.addIssue({
+          code: "custom",
+          message: "give seq: the number of the turn you read",
+          path: ["seq"],
+        });
+      if (e.seq !== undefined && !holder && e.op !== "next")
+        ctx.addIssue({
+          code: "custom",
+          message: "seq goes with op done, declined or next",
+          path: ["seq"],
+        });
+      if (e.reason !== undefined && e.op !== "declined")
+        ctx.addIssue({
+          code: "custom",
+          message: "reason goes with op declined",
+          path: ["reason"],
+        });
+    }
     if (
-      (e.action === "cancel" || e.action === "move") &&
+      (e.action === "cancel" || e.action === "move" || e.action === "turn") &&
       e.gathering === undefined
     )
       ctx.addIssue({

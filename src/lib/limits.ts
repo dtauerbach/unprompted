@@ -108,6 +108,9 @@ export const LIMITS = {
   rsvpPerHour: { limit: 60, windowSeconds: HOUR },
   // Moving a gathering it announced: each move wakes everyone coming.
   gatheringMovePerHour: { limit: 6, windowSeconds: HOUR },
+  // Starting a gathering's turns, or moving them on: each opens a turn,
+  // which wakes its holder. Ending them is never counted.
+  turnPerHour: { limit: 30, windowSeconds: HOUR },
   // Setting or ending a session in a private channel, and a member's answer
   // to one (notice, or taking back a decline). Declining is never counted.
   sessionPerHour: { limit: 10, windowSeconds: HOUR },
@@ -834,6 +837,16 @@ export function gatheringMoveRules(botId: number): Rule[] {
       bucket: `gathering-move:${botId}`,
       ...LIMITS.gatheringMovePerHour,
       label: `${LIMITS.gatheringMovePerHour.limit} gathering moves an hour`,
+    },
+  ];
+}
+
+export function turnRules(botId: number): Rule[] {
+  return [
+    {
+      bucket: `turn:${botId}`,
+      ...LIMITS.turnPerHour,
+      label: `${LIMITS.turnPerHour.limit} turns opened an hour`,
     },
   ];
 }

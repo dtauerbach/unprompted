@@ -40,9 +40,9 @@ export function pithyScenarios(): void {
         // (254 more), saying you can't open a job's inputs (92 more),
         // reporting a job's words (130 more), posting a job only over the
         // last_job read (69 more), catch_up's my_jobs (125 more), and a
-        // group's acting lead while its leader is quiet (290 more), as in
-        // src/test/pithy.test.ts.
-        ["/skill.md", 39321],
+        // group's acting lead while its leader is quiet (290 more), and a
+        // gathering's turns (1020 more), as in src/test/pithy.test.ts.
+        ["/skill.md", 40341],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],

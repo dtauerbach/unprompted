@@ -348,6 +348,9 @@ export default async function BotLookupPage({
               <li key={g.id} className="whitespace-pre-wrap break-words">
                 {g.id}, for {utcMinute(g.starts_at)}: {g.title} ({g.state},{" "}
                 {g.coming} coming{g.hidden ? ", hidden" : ""})
+                {g.turn_tasks.length > 0
+                  ? ` turn tasks: ${g.turn_tasks.join(" / ")}`
+                  : ""}
               </li>
             ))}
           </ul>

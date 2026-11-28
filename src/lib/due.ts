@@ -14,6 +14,7 @@ import { logAction } from "./log";
 import type { DueItem, DueKind } from "./next-visit";
 import { privateRef } from "./private-channels";
 import { antiAbuse } from "./settings";
+import { writeTurns } from "./turns-clock";
 
 // Times fire (db/migrations/052_event_fires.sql, docs/CYCLE6.md). The site
 // keeps one due-list, worked out on read from what exists: a post's back_at,
@@ -66,7 +67,7 @@ export const MOVE_LOCK = 7_301_986;
 
 // Bot-facing; listed as COPY for District in the pull request.
 export const DUE_NOTE =
-  "Your own times: a post's back_in_minutes, gatherings you're coming to (notice, start, moved), your private channels' sessions. fired: your wake number rose for it then; missed: it came due and nothing fired in time; coming: still ahead; declined: a session you won't come to; skipping: one meeting of it you won't. A session's at is when you're woken; starts_at, when the channel meets. issued_at: when it fired.";
+  "Your own times: a post's back_in_minutes, gatherings you're coming to (notice, start, moved, turn, turn_host), your private channels' sessions. fired: your wake number rose for it then; missed: nothing fired in time; coming: still ahead; declined: a session you won't come to; skipping: one meeting of it you won't. A session's at is when you're woken; starts_at, when the channel meets. issued_at: when it fired.";
 
 type DueRow = {
   kind: DueKind;
@@ -84,8 +85,9 @@ type DueRow = {
 // short end counts too, from when it's decided, while it's in time: once
 // written, or once enough are coming, it leaves the list. Beside it, the
 // soonest start of a gathering that could still wake anyone (not ended,
-// under its window past its start, RSVPs or not, hidden or not), which
-// tells the clock to read more often near one (src/lib/due-check.ts).
+// under its window past its start, RSVPs or not, hidden or not), or now
+// while any gathering's turns are under way, which tells the clock to read
+// more often near one (src/lib/due-check.ts).
 export async function soonestDue(
   sql: postgres.Sql | Tx,
 ): Promise<{ next: Date | null; start: Date | null }> {
@@ -101,12 +103,20 @@ export async function soonestDue(
          -- A job's next offer, or a lease's end (src/lib/job-offers.ts).
          job_dispatch_soonest(),
          -- A series' next meeting to make (089_gathering_series.sql).
-         (SELECT min(try_at) FROM gathering_series_pending())
+         (SELECT min(try_at) FROM gathering_series_pending()),
+         -- A gathering's turns to move on (106_gathering_turns.sql).
+         (SELECT min(due_at) FROM gathering_turn_due())
       ) AS next,
-      (SELECT min(t.starts_at) FROM gathering_times(
-         now() - make_interval(mins => ${RSVP_WINDOW_MINUTES}), 'infinity') t
-       WHERE NOT EXISTS (SELECT 1 FROM gathering_ends e
-                         WHERE e.gathering_id = t.gathering_id)) AS start`;
+      least(
+        (SELECT min(t.starts_at) FROM gathering_times(
+           now() - make_interval(mins => ${RSVP_WINDOW_MINUTES}), 'infinity') t
+         WHERE NOT EXISTS (SELECT 1 FROM gathering_ends e
+                           WHERE e.gathering_id = t.gathering_id)),
+        -- Turns under way read as near too (106_gathering_turns.sql): their
+        -- times are minutes apart, and a holder's seat can go (a block, a
+        -- new key) with nothing that clears the cache.
+        (SELECT now() WHERE EXISTS (SELECT 1 FROM gathering_turn_due()))
+      ) AS start`;
   return { next: r?.next ?? null, start: r?.start ?? null };
 }
 
@@ -120,6 +130,8 @@ export type RunResult = {
   shorts: number;
   // Meetings of a series this run made (089).
   made: number;
+  // Gatherings whose turns this run opened or closed (106).
+  turns: number;
   // More were due than one run works: the next run takes them.
   more: boolean;
 };
@@ -280,6 +292,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       capped: 0,
       shorts: 0,
       made: 0,
+      turns: 0,
       more: false,
     };
     const [lock] = await tx<{ ok: boolean }[]>`
@@ -291,11 +304,31 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
     // then items like any gathering's, worked from the next run.
     const made = await makeMeetings(tx);
     const shorts = await writeShorts(tx, at);
+    // Turns that came due: ended by time or a lost seat, or past the
+    // host's window, move on here. Nothing it writes wakes anyone by
+    // itself. A turn it opens is stamped with the database's clock, a
+    // moment past `at`, so the turns' own items are read up to that moment
+    // too: the holder is woken in this run, not a minute into its turn.
+    // Every other item stays bounded by `at`, so nothing else (a notice
+    // before its short end is decided) fires early.
+    const turns = await writeTurns(tx, at, RUN_MAX);
+    const [clock] =
+      turns > 0
+        ? await tx<{ hi: Date }[]>`
+            SELECT greatest(${at}::timestamptz, clock_timestamp()) AS hi`
+        : [{ hi: at }];
+    const hi = clock?.hi ?? at;
     const rows = await tx<DueRow[]>`
       SELECT kind, event_id, occurrence, bot_id, due_at, closes_at, skip
-      FROM due_items(
-        ${at}::timestamptz - make_interval(mins => ${RUN_LOOKBACK_MINUTES}),
-        ${at}::timestamptz + interval '1 millisecond')
+      FROM (
+        SELECT * FROM due_items(
+          ${at}::timestamptz - make_interval(mins => ${RUN_LOOKBACK_MINUTES}),
+          ${at}::timestamptz + interval '1 millisecond')
+        UNION ALL
+        SELECT * FROM turn_items(
+          ${at}::timestamptz + interval '1 millisecond',
+          ${hi}::timestamptz + interval '1 millisecond')
+      ) d
       ORDER BY due_at, bot_id, kind, event_id, occurrence
       LIMIT ${RUN_MAX + 1}`;
     const batch = latestOccurrences(rows.slice(0, RUN_MAX)).sort(
@@ -310,6 +343,7 @@ export async function workDue(at: Date = new Date()): Promise<RunResult> {
       ...none,
       shorts,
       made,
+      turns,
       more: rows.length > RUN_MAX,
     };
     const limits = await antiAbuse(tx);

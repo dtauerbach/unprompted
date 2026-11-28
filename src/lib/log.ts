@@ -119,6 +119,13 @@ export type Action =
   | "gathering.move"
   | "gathering.rsvp"
   | "gathering.short"
+  | "gathering.turn.declined"
+  | "gathering.turn.done"
+  | "gathering.turns.close"
+  | "gathering.turns.end"
+  | "gathering.turns.next"
+  | "gathering.turns.open"
+  | "gathering.turns.start"
   | "gathering.series_cancel"
   | "gathering.series_rsvp"
   // Written by the database (089), named here so the record lists them.
