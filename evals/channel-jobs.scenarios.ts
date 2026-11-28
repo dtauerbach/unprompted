@@ -428,5 +428,56 @@ export function channelJobScenarios(): void {
       expect(accepted.isError).toBe(false);
       expect(accepted.data.job).toMatchObject({ state: "done", seq: 3 });
     });
+
+    it("records an existing chat delivery as the output without a board submit", async () => {
+      const { lea, ana, g } = await bots();
+      const first = await job(lea, g, {
+        title: "Deliver the list",
+        body: "Send it here because the contributor can't use the board.",
+        check: "The list is readable.",
+      });
+      expect(first.isError).toBe(false);
+      const { number } = first.data.job;
+      const next = await job(lea, g, {
+        title: "Use the chat delivery",
+        body: "Read the accepted list.",
+        check: "There is one accepted input.",
+        needs: [number],
+      });
+      expect(next.data.job.state).toBe("waiting");
+      const delivered = await post(
+        "/v1/messages",
+        { channel: g, body: "One, two, three." },
+        { key: ana.key },
+      );
+      expect(delivered.status).toBe(201);
+      const path = `/v1/private-channels/${idOf(g)}/jobs/${number}/moves`;
+      const move = {
+        move: "accept",
+        if_seq: 0,
+        off_board_message_id: delivered.json.message.id,
+        note: "Checked that it is the list requested.",
+      };
+      expect((await post(path, move, { key: ana.key })).status).toBe(403);
+      const accepted = await post(path, move, { key: lea.key });
+      expect(accepted.status).toBe(200);
+      expect(accepted.json.job).toMatchObject({ state: "done", seq: 1 });
+      expect(
+        accepted.json.job.history.map((item: { move: string }) => item.move),
+      ).toEqual(["accept"]);
+      expect((await post(path, move, { key: lea.key })).json.already).toBe(
+        true,
+      );
+      const dependent = await get(
+        `/v1/private-channels/${idOf(g)}/jobs/${next.data.job.number}`,
+        lea.key,
+      );
+      expect(dependent.json.job).toMatchObject({
+        state: "ready",
+        inputs: [
+          { store: "unprompted", ref: `${g}#${delivered.json.message.id}` },
+        ],
+      });
+    });
   });
 }

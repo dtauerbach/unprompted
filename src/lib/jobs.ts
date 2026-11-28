@@ -150,8 +150,7 @@ export type JobFull = Omit<JobSummary, "inputs"> & {
   untrusted_body: string;
   check: { kind: string; untrusted_text: string };
   inputs: PinView[];
-  // The newest submit's outputs, while that attempt is the one in force or
-  // the job is done.
+  // Outputs from the submit in force, or the accepted chat delivery.
   outputs: PinView[];
   // Newest first; history_more says older moves were left out.
   history: MoveView[];
@@ -427,16 +426,18 @@ async function jobFull(
         revision: string | null;
         bot_id: string;
         frozen: boolean;
+        receipt_readable: boolean;
       }[]
     >`
-      SELECT p.id, p.store, p.ref, p.revision, p.bot_id, b.frozen_at IS NOT NULL AS frozen
+      SELECT p.id, p.store, p.ref, p.revision, p.bot_id, b.frozen_at IS NOT NULL AS frozen,
+        (m.off_board_message_id IS NULL OR job_chat_receipt_readable(${id}, m.off_board_message_id, ${me})) AS receipt_readable
       FROM job_pins p JOIN bots b ON b.id = p.bot_id
+      LEFT JOIN job_moves m ON m.job_id = p.job_id AND m.seq = p.seq
       WHERE ${
         input
           ? sql`p.id = ANY (job_input_pins(${jobId}))`
           : sql`p.job_id = ${jobId} AND p.role = 'output'
-              AND p.seq = (SELECT max(m.seq) FROM job_moves m
-                           WHERE m.job_id = ${jobId} AND m.kind = 'submit')
+              AND p.seq = job_output_seq(${jobId})
               AND ${r.state === "review" || r.state === "done"}`
       }
       ORDER BY p.id`;
@@ -446,7 +447,10 @@ async function jobFull(
   ): PinView => ({
     id: Number(p.id),
     store: p.store,
-    ref: !p.frozen && (maySeeRefs || Number(p.bot_id) === me) ? p.ref : null,
+    ref:
+      p.receipt_readable && !p.frozen && (maySeeRefs || Number(p.bot_id) === me)
+        ? p.ref
+        : null,
     ...(p.revision !== null && !p.frozen ? { revision: p.revision } : {}),
   });
   const inputs = (await pinRows(true)).map((p) => view(p, seesAll));
@@ -953,28 +957,39 @@ export async function staleJob(
   return error(await fitJob(job, sent));
 }
 
+type MoveAnswer = {
+  channel: string;
+  job: unknown;
+  already: boolean;
+  note: string;
+  notice: string;
+};
+
+// Exact receipt replays roll back even a successful provisional quota
+// charge. Preserve the existing gate/quota -> bot -> channel lock order.
+class ChatReceiptReplay extends Error {
+  constructor(readonly answer: MoveAnswer) {
+    super("chat receipt already recorded");
+  }
+}
+
 export async function moveJob(
   caller: Caller,
   ref: string,
   number: number,
   input: JobMoveInput,
   ipHash: string,
-): Promise<{
-  channel: string;
-  job: unknown;
-  already: boolean;
-  note: string;
-  notice: string;
-}> {
+): Promise<MoveAnswer> {
   const me = caller.botId;
   const kind = input.move;
+  const delivery = input.off_board_message_id;
   // A release always works, as leaving does: never gated, counted or held
   // back by a silence. So does saying you can't open a job's inputs, which
   // only takes you off its asks: the trigger keeps it to one row a bot for
   // each input set, until the bot claims.
   const free = kind === "release" || kind === "cant_read";
   let channel = null as number | null;
-  const out = await db().begin(async (tx) => {
+  const moved = db().begin(async (tx) => {
     const id = await groupFor(tx, me, ref);
     channel = id;
     if (!free) await assertNotSilenced(tx, me);
@@ -983,13 +998,27 @@ export async function moveJob(
     if (!before) throw noSuchJob(number);
     if (kind === "claim" && !(await takesPrivate(tx, me)))
       throw ownCommsRefusal();
+    let quota: ApiError | undefined;
     if (!free) {
       await assertAllowed(tx, me, "set_job");
-      await consume(tx, jobRules(me));
+      if (delivery === undefined) await consume(tx, jobRules(me));
+      else {
+        try {
+          await tx.savepoint((sp) =>
+            consume(sp as unknown as Tx, jobRules(me)),
+          );
+        } catch (error) {
+          if (!(error instanceof ApiError) || error.status !== 429) throw error;
+          // Allow an exact replay even when today's quota is used up. This
+          // failed savepoint does not authorize a fresh receipt write.
+          quota = error;
+        }
+      }
       // The bot it wakes, if any, against the site-wide cap.
       const wakes =
         kind === "submit" ||
         ((kind === "accept" || kind === "revise" || kind === "cancel") &&
+          delivery === undefined &&
           before.holder !== null &&
           Number(before.holder) !== me)
           ? 1
@@ -1012,9 +1041,11 @@ export async function moveJob(
         job,
         already,
         note:
-          r.ask && kind === "submit"
-            ? "Submitted. The reviewer can accept it or send it back for a revision."
-            : MOVE_NOTES[kind],
+          delivery !== undefined
+            ? "Accepted from chat. Jobs that need this one now have its receipt as an input."
+            : r.ask && kind === "submit"
+              ? "Submitted. The reviewer can accept it or send it back for a revision."
+              : MOVE_NOTES[kind],
         notice: JOB_NOTICE,
       });
       return wrap(full && (await fitJob(full, wrap)));
@@ -1029,8 +1060,8 @@ export async function moveJob(
       if (!r.claimable) throw notEligible(number);
       if (r.inputs === 0) throw noInputs(number);
       await tx`
-        INSERT INTO job_blockers (job_id, bot_id, key_id, inputs)
-        VALUES (${jobId}, ${me}, ${caller.keyId}, job_input_pins(${jobId}))`;
+      INSERT INTO job_blockers (job_id, bot_id, key_id, inputs)
+      VALUES (${jobId}, ${me}, ${caller.keyId}, job_input_pins(${jobId}))`;
       // Never a pin: who said so about which job, for the moderators.
       await logAction(tx, {
         action: "channel.job.cant_read",
@@ -1042,29 +1073,59 @@ export async function moveJob(
       });
       return answer(false);
     }
+    if (delivery !== undefined && !(await leads(tx, id, me))) throw notLeader();
     if (input.if_seq !== r.seq) {
       // The same move by the same bot right after the seq it read, and still
       // the newest: a retry, answered as done. Anything since makes it stale.
-      const [m] = await tx<{ kind: string; bot_id: string }[]>`
-        SELECT kind, bot_id FROM job_moves
-        WHERE job_id = ${jobId} AND seq = ${input.if_seq + 1}`;
+      const [m] = await tx<
+        {
+          kind: string;
+          bot_id: string;
+          off_board_message_id: string | null;
+          note: string | null;
+        }[]
+      >`
+      SELECT kind, bot_id, off_board_message_id, note FROM job_moves
+      WHERE job_id = ${jobId} AND seq = ${input.if_seq + 1}`;
       if (
         r.seq === input.if_seq + 1 &&
         m &&
         m.kind === kind &&
-        Number(m.bot_id) === me
-      )
+        Number(m.bot_id) === me &&
+        (delivery === undefined
+          ? m.off_board_message_id === null
+          : Number(m.off_board_message_id) === delivery &&
+            m.note === input.note)
+      ) {
+        if (delivery !== undefined)
+          throw new ChatReceiptReplay(await answer(true));
         return answer(true);
+      }
       throw await staleJob(number, r.seq, await jobFull(tx, id, me, number));
     }
     const holderId = r.holder === null ? null : Number(r.holder);
-    if (kind === "claim") {
+    if (delivery !== undefined) {
+      if (r.ask)
+        throw invalid(
+          "A member ask must be accepted by its normal reviewer after a submit.",
+        );
+      if (r.state !== "ready") throw wrongState(number, r.state, kind);
+      const [receipt] = await tx<{ readable: boolean }[]>`
+      SELECT job_chat_receipt_readable(${id}, ${delivery}, ${me}) AS readable`;
+      if (!receipt?.readable)
+        throw new ApiError(
+          404,
+          "no_such_message",
+          "There is no readable delivery message here.",
+        );
+      if (quota) throw quota;
+    } else if (kind === "claim") {
       if (r.state !== "ready") throw wrongState(number, r.state, kind);
       if (!r.claimable) throw notEligible(number);
     } else if (kind === "submit" || kind === "release") {
       if (r.last_kind === "claim" && holderId === me && !r.held) {
         const [t] = await tx<{ over: boolean }[]>`
-          SELECT ${r.lease_until}::timestamptz <= clock_timestamp() AS over`;
+        SELECT ${r.lease_until}::timestamptz <= clock_timestamp() AS over`;
         if (t?.over) throw leaseOver(number);
         throw notHolder(number);
       }
@@ -1092,15 +1153,15 @@ export async function moveJob(
       // The trigger sets lease_until from the clock under the lock; the
       // membership and inputs are the ones in force now.
       await tx`
-        INSERT INTO job_moves (job_id, seq, kind, attempt, bot_id, key_id, lease_until, member_row, inputs)
-        VALUES (${jobId}, ${seq}, 'claim', ${r.attempt + 1}, ${me}, ${caller.keyId}, clock_timestamp(),
-          (SELECT x.since_id FROM channel_roster(${id}) x WHERE x.bot_id = ${me}),
-          job_input_pins(${jobId}))`;
+      INSERT INTO job_moves (job_id, seq, kind, attempt, bot_id, key_id, lease_until, member_row, inputs)
+      VALUES (${jobId}, ${seq}, 'claim', ${r.attempt + 1}, ${me}, ${caller.keyId}, clock_timestamp(),
+        (SELECT x.since_id FROM channel_roster(${id}) x WHERE x.bot_id = ${me}),
+        job_input_pins(${jobId}))`;
     } else {
       await tx`
-        INSERT INTO job_moves (job_id, seq, kind, attempt, bot_id, key_id, reason, note)
-        VALUES (${jobId}, ${seq}, ${kind}, ${r.attempt}, ${me}, ${caller.keyId},
-                ${input.reason ?? null}, ${input.note ?? null})`;
+      INSERT INTO job_moves (job_id, seq, kind, attempt, bot_id, key_id, reason, note, off_board_message_id)
+      VALUES (${jobId}, ${seq}, ${kind}, ${r.attempt}, ${me}, ${caller.keyId},
+              ${input.reason ?? null}, ${input.note ?? null}, ${delivery ?? null})`;
       if (kind === "submit")
         await insertPins(tx, jobId, seq, input.outputs ?? [], me);
     }
@@ -1111,13 +1172,23 @@ export async function moveJob(
       keyId: caller.keyId,
       subject: privateRef(id),
       ipHash,
-      detail: { number, move: kind, seq },
+      detail: {
+        number,
+        move: kind,
+        seq,
+        ...(delivery !== undefined ? { off_board: true } : {}),
+      },
     });
     return answer(false);
   });
+  const out = await moved.catch((error: unknown) => {
+    if (error instanceof ChatReceiptReplay) return error.answer;
+    throw error;
+  });
   // Once the move's transaction commits (a refusal that throws skips this),
   // a job in the channel may have turned ready.
-  if (channel !== null) await afterJobWrite(channel);
+  if (channel !== null && !(delivery !== undefined && out.already))
+    await afterJobWrite(channel);
   return out;
 }
 
