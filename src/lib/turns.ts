@@ -48,7 +48,7 @@ export type TurnView = {
   // instructions. Shown to the holder and the host.
   untrusted_task?: string;
   you: "host" | "holder" | "waiting" | "had_turn";
-  // To the host: how this turn (seq) ended, once it has.
+  // To the host: how this turn ended or will end if it lapsed.
   outcome?: TurnOutcome;
   // To the host, from the second turn on: how the one before it ended.
   previous_outcome?: TurnOutcome;
@@ -81,7 +81,7 @@ type ViewRow = {
   outcome: TurnOutcome | null;
   previous_outcome: TurnOutcome | null;
   ended_at: Date | null;
-  lapsed: boolean;
+  lapse_outcome: "expired" | "lost" | null;
   closed: "host" | "exhausted" | "over" | "limit" | null;
   cut: boolean;
   stopped: boolean;
@@ -111,8 +111,12 @@ export async function turnViews(
        JOIN gathering_turn_ends e2 ON e2.turn_id = t2.id
        WHERE t2.gathering_id = t.gathering_id AND t2.seq = t.seq - 1)
         AS previous_outcome,
-      e.turn_id IS NULL
-        AND (t.deadline <= now() OR NOT gathering_turn_holds(t)) AS lapsed,
+      -- Match gathering_turn_advance and the host end path: expiry
+      -- takes precedence if both causes are already true.
+      CASE WHEN e.turn_id IS NOT NULL THEN NULL
+           WHEN t.deadline <= now() THEN 'expired'
+           WHEN NOT gathering_turn_holds(t) THEN 'lost'
+      END AS lapse_outcome,
       c.why AS closed,
       EXISTS (SELECT 1 FROM gathering_ends x WHERE x.gathering_id = g.id) AS cut,
       gathering_end(g) - now() < make_interval(mins => ${TURN_MIN_MINUTES})
@@ -138,7 +142,7 @@ export async function turnViews(
     // The host and bots coming see the turns; a bot that had its turn and
     // left (or blocked the host) sees no more than any other not coming.
     if (!r.host && !r.coming) continue;
-    const open = r.outcome === null && !r.lapsed;
+    const open = r.outcome === null && r.lapse_outcome === null;
     // A gathering cancelled or ended short ends its turns at once, an open
     // one included; one near its end lets the open turn run out first.
     const closed: TurnClosed | undefined =
@@ -158,6 +162,7 @@ export async function turnViews(
           ? "handoff"
           : "between";
     const holder = r.holder && phase === "open";
+    const outcome = r.outcome ?? (phase === "between" ? r.lapse_outcome : null);
     out.set(Number(r.gathering_id), {
       phase,
       seq: r.seq,
@@ -166,7 +171,7 @@ export async function turnViews(
         ? { untrusted_task: r.task }
         : {}),
       you: r.host ? "host" : holder ? "holder" : r.had ? "had_turn" : "waiting",
-      ...(r.host && r.outcome ? { outcome: r.outcome } : {}),
+      ...(r.host && outcome ? { outcome } : {}),
       ...(r.host && r.previous_outcome
         ? { previous_outcome: r.previous_outcome }
         : {}),

@@ -646,6 +646,67 @@ describe("a gathering's turns, at their edges", () => {
     expect(await holderOf(gid, 2)).toBeUndefined();
   });
 
+  it("shows the host a lost turn before the next turn opens", async () => {
+    const { host, gid, bots } = await room();
+    const [holder] = bots as [Bot];
+    expect((await turn(host, { gathering: gid, op: "start" })).status).toBe(
+      200,
+    );
+    expect((await rsvp(holder, gid, { going: false })).status).toBe(200);
+    expect(await seen(host, gid)).toMatchObject({
+      phase: "between",
+      seq: 1,
+      outcome: "lost",
+    });
+    expect(await endOf(gid, 1)).toBeUndefined();
+  });
+
+  it("shows the host an expired turn when its deadline passes, without storing it", async () => {
+    const { host, gid } = await room();
+    expect(
+      (await turn(host, { gathering: gid, op: "start", minutes: 2 })).status,
+    ).toBe(200);
+    await age(gid, 3);
+    expect(await seen(host, gid)).toMatchObject({
+      phase: "between",
+      seq: 1,
+      outcome: "expired",
+    });
+    expect(await endOf(gid, 1)).toBeUndefined();
+  });
+
+  it("shows no predicted outcome to the holder or another bot coming", async () => {
+    const { host, gid, bots } = await room();
+    const [holder, guest] = bots as [Bot, Bot];
+    expect(
+      (await turn(host, { gathering: gid, op: "start", minutes: 2 })).status,
+    ).toBe(200);
+    await age(gid, 3);
+    expect(await seen(host, gid)).toMatchObject({ outcome: "expired" });
+    for (const viewer of [holder, guest]) {
+      expect(await seen(viewer, gid)).toMatchObject({
+        phase: "between",
+        seq: 1,
+      });
+      expect(await seen(viewer, gid)).not.toHaveProperty("outcome");
+    }
+  });
+
+  it("shows the host an outcome but never an attendee handle", async () => {
+    const { host, gid, bots } = await room();
+    const [holder] = bots as [Bot];
+    expect(
+      (await turn(host, { gathering: gid, op: "start", minutes: 2 })).status,
+    ).toBe(200);
+    expect((await rsvp(holder, gid, { going: false })).status).toBe(200);
+    await age(gid, 3);
+    expect(await seen(host, gid)).toMatchObject({ outcome: "expired" });
+    const response = JSON.stringify((await list(host)).body);
+    for (const bot of bots) expect(response).not.toContain(bot.handle);
+    await workDue();
+    expect((await endOf(gid, 1))?.outcome).toBe("expired");
+  });
+
   it("tells the host how a lost and an expired turn ended, once the next has opened", async () => {
     const { host, gid, bots } = await room();
     const [a, , c] = bots as [Bot, Bot, Bot];
