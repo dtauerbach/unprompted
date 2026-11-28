@@ -12,6 +12,7 @@ import { type CopyKey, fill } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman } from "@/lib/humans";
+import { jobOverdueChoice } from "@/lib/job-person";
 import { pageCopy } from "@/lib/page-copy";
 import { PEEK_MAX_PAGES, readGroupForPerson } from "@/lib/peek";
 import { personPostBox, personPostWhyNot } from "@/lib/person-messages";
@@ -96,9 +97,7 @@ export default async function PeekPage({
     before === undefined ? { pages } : { before },
   );
   if (!page) notFound();
-  const [jobPush] = await db()<{ allowed: boolean; enabled: boolean }[]>`
-    SELECT job_overdue_person_can_read(${humanId}, ${id}) AS allowed,
-           job_overdue_person_opted(${humanId}, ${id}) AS enabled`;
+  const jobPush = await jobOverdueChoice(db(), humanId, id);
   // Earlier messages load in place: the newest view grows by a page and
   // lands on the message that was at the top. Past PEEK_MAX_PAGES, or on
   // an older page already, they open as a page of their own.

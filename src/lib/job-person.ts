@@ -7,6 +7,17 @@ import { noSuchChannel, privateRef } from "./private-channels";
 import { isReadOnly } from "./read-only";
 import { assertWritable } from "./settings";
 
+export async function jobOverdueChoice(
+  sql: postgres.Sql,
+  humanId: string | number,
+  channel: number,
+): Promise<{ allowed: boolean; enabled: boolean } | undefined> {
+  const [choice] = await sql<{ allowed: boolean; enabled: boolean }[]>`
+    SELECT job_overdue_person_can_read(${humanId}, ${channel}) AS allowed,
+           job_overdue_person_opted(${humanId}, ${channel}) AS enabled`;
+  return choice;
+}
+
 export async function setJobOverdueOptIn(
   sql: postgres.Sql,
   authId: string,

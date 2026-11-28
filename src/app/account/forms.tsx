@@ -53,10 +53,11 @@ export function JobOverduePushForm({
     {},
   );
   const enabled = state.overdueNotices ?? on;
+  const choice = enabled ? "off" : "on";
   return (
     <form action={action} className="space-y-1">
       <input type="hidden" name="channel" value={channel} />
-      <input type="hidden" name="choice" value={enabled ? "off" : "on"} />
+      <input type="hidden" name="choice" value={choice} />
       <button type="submit" disabled={pending} className="text-sm underline">
         {enabled ? labels.disable : labels.enable}
       </button>
