@@ -23,8 +23,14 @@ import {
   RUN_MAX,
   workDue,
 } from "@/lib/due";
-import { checkDue, DUE_NEAR_MS, forgetDueMinute } from "@/lib/due-check";
-import { DUE_TAG } from "@/lib/due-kick";
+import {
+  checkDue,
+  DUE_NEAR_MS,
+  forgetDueMinute,
+  soonestCached,
+} from "@/lib/due-check";
+import { clearDue, DUE_TAG } from "@/lib/due-kick";
+import { evalClockEnabled } from "@/lib/eval-clock";
 import { RSVP_NOTES } from "@/lib/gatherings";
 import {
   NEXT_VISIT_FALLBACK_HOURS,
@@ -33,8 +39,19 @@ import {
   nextVisit,
 } from "@/lib/next-visit";
 import { drainForAWhile, useDeliver } from "@/lib/push";
+import { buildKey } from "@/lib/shared-cache";
+import { testDatabaseUrl } from "./global-setup";
 import { call, freshIp, register, resetDb } from "./helpers";
-import { cacheCalls, PINNED_CLOCK, setCacheClock } from "./next-cache";
+import {
+  cacheCalls,
+  cachedKeys,
+  PINNED_CLOCK,
+  setCacheClock,
+} from "./next-cache";
+
+const LOOPBACK_TEST_DB = ["localhost", "127.0.0.1"].includes(
+  new URL(testDatabaseUrl()).hostname,
+);
 
 // Times fire (docs/CYCLE6.md, 6a): a post's back_in_minutes and an RSVP's
 // notice each come due once, and a run of the clock writes one row for it,
@@ -595,6 +612,35 @@ describe("the clock near a gathering's start", () => {
     });
   });
   afterEach(() => useDeliver(null));
+
+  it.runIf(LOOPBACK_TEST_DB)(
+    "keeps far and near tagged-cache branches in fast evals",
+    async () => {
+      const host = await register("host");
+      await gathering(host, 80);
+      const now = Date.now();
+      const near = () => soonestCached(now);
+      const keys = () => cachedKeys().filter((k) => k.includes("due-soonest"));
+
+      vi.stubEnv("UNPROMPTED_EVAL_CLOCK", "1");
+      vi.stubEnv("VERCEL", "");
+      vi.stubEnv("VERCEL_ENV", "");
+      try {
+        expect(evalClockEnabled()).toBe(true);
+        await near();
+        expect(keys()).toHaveLength(2);
+        expect(keys()).toEqual([
+          expect.stringContaining(buildKey("due-eval")),
+          expect.stringContaining(buildKey("due-eval")),
+        ]);
+        expect(await trips(near)).toBe(0);
+        clearDue();
+        expect(await trips(near)).toBeGreaterThan(0);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("reads every five minutes while one starts within 90 minutes, hidden or with no one coming", async () => {
     expect(DUE_NEAR_MS).toBe(90 * MIN);

@@ -106,6 +106,13 @@ Moderators act only through `scripts/admin.ts`, never over HTTP. To play one, th
 EVAL_DATABASE_URL=$DATABASE_URL EVAL_URL=http://localhost:3000 npm run eval
 ```
 
+For the fast local path used by CI, set `UNPROMPTED_EVAL_CLOCK=1` on both the
+server and eval command. The server honors it only off Vercel with a
+loopback `_test` database, and the harness requires a local HTTP server and
+loopback `EVAL_DATABASE_URL` ending in `_test`. The clock can check once per
+second and refresh its tagged cache sooner after test-only fixture writes.
+Normal due rules and the production minute tick are unchanged.
+
 Locally the harness sets `X-Real-IP` to play bots from many addresses. To run again within the hour without a fresh database, clear the rate limits:
 
 ```

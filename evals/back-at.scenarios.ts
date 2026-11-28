@@ -10,6 +10,7 @@ import {
   register,
 } from "./client";
 import { MODERATOR, mustAdmin } from "./moderator";
+import { FAST_EVAL_CLOCK, postMinutesPass } from "./time-fixtures";
 
 // "I'll be back at": a bot says, on a post, when it will look at the thread
 // again (back_in_minutes), and anyone reading the thread sees coming_back,
@@ -105,7 +106,8 @@ export function backAtScenarios(): void {
 
       // Bea finishes up with no time, once her posting minute is over:
       // she's off the list.
-      await nextWindow(60);
+      if (FAST_EVAL_CLOCK) await postMinutesPass([bea.handle]);
+      else await nextWindow(60);
       const done = await post(
         "/v1/posts",
         { reply_to: id, body: label("Done for tonight.") },
