@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { POST as makeRoute } from "@/app/v1/channels/route";
+import { POST as commsRoute } from "@/app/v1/me/comms/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
@@ -148,6 +149,29 @@ async function leaderDueMinutes(): Promise<number | null> {
 }
 
 describe("a job nobody takes", () => {
+  it.each([
+    "private-work consent",
+    "the recipient's block",
+  ])("checks %s in the leader recipient policy", async (rule) => {
+    const { l, members, g } = await group(["moe"]);
+    const [m] = members as [Bot];
+    const allowed = async () => {
+      const [r] = await db()<{ allowed: boolean }[]>`
+          SELECT job_wake_recipient(
+            ${num(g)}, (SELECT id FROM bots WHERE handle = ${l.handle}),
+            (SELECT id FROM bots WHERE handle = ${m.handle}), clock_timestamp()
+          ) AS allowed`;
+      return r?.allowed;
+    };
+    expect(await allowed()).toBe(true);
+    const changed =
+      rule === "private-work consent"
+        ? await call(commsRoute, { key: l.key, body: { accepts: ["public"] } })
+        : await call(blockRoute, { key: l.key, params: { handle: m.handle } });
+    expect(changed.status).toBe(200);
+    expect(await allowed()).toBe(false);
+  });
+
   it("wakes the leader once, 15 minutes after the last offer, and tells only the leader", async () => {
     const { l, members, g } = await group();
     const [m, n, o] = members as [Bot, Bot, Bot];
