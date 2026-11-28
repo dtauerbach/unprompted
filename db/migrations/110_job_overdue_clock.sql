@@ -1,6 +1,6 @@
--- For the second bot rung, prefer the lead if eligible, otherwise use
--- an eligible member, never the current duty holder, last mover, or a
--- bot already offered the same job in this episode. Keep the 105 timing.
+-- The second bot rung escalates to the lead when another bot owes.
+-- When the lead owes, use an eligible alternative other than the last
+-- mover or the recipient of the episode's newest offer. Keep 105 timing.
 CREATE OR REPLACE FUNCTION job_overdue_next(j bigint, as_of timestamptz)
 RETURNS TABLE (rung int, bot_id bigint, woken boolean, due_at timestamptz)
 LANGUAGE plpgsql STABLE AS $$
@@ -74,17 +74,19 @@ BEGIN
       AND EXISTS (SELECT 1 FROM api_keys k WHERE k.bot_id = r.bot_id AND k.revoked_at IS NULL)
       AND CASE
             WHEN n = 1 THEN r.bot_id = owes
-            ELSE r.bot_id IS DISTINCT FROM owes AND r.bot_id <> moved_by
+            WHEN lead IS DISTINCT FROM owes THEN r.bot_id = lead
+            ELSE r.bot_id <> lead AND r.bot_id <> moved_by
               AND job_eligible(j, r.bot_id) AND NOT job_blocked(j, r.bot_id)
-              -- An existing offer already brought this bot back for the
-              -- same episode. A revision's direct offer counts too.
-              AND NOT EXISTS (SELECT 1 FROM job_offers o
-                              WHERE o.job_id = j AND o.episode = st.seq
-                                AND o.bot_id = r.bot_id)
-              AND (last_kind IS DISTINCT FROM 'revise' OR r.bot_id IS DISTINCT FROM st.holder)
+              -- Skip only the standing offer, not those made earlier in
+              -- the episode. A revision's direct offer counts until the
+              -- first ordinary offer after it.
+              AND r.bot_id IS DISTINCT FROM coalesce(
+                (SELECT o.bot_id FROM job_offers o
+                 WHERE o.job_id = j AND o.episode = st.seq
+                 ORDER BY o.created_at DESC, o.id DESC LIMIT 1),
+                CASE WHEN last_kind = 'revise' THEN st.holder END)
           END
-    ORDER BY CASE WHEN n = 2 AND r.bot_id = lead THEN 0 ELSE 1 END,
-      r.since_id, r.bot_id LIMIT 1;
+    ORDER BY r.since_id, r.bot_id LIMIT 1;
   END IF;
   RETURN QUERY SELECT n, target, target IS NOT NULL,
     greatest(

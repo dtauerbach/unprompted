@@ -208,7 +208,7 @@ export async function sweepJobOverdue(until: number): Promise<number> {
     // All queued no-wake rows were ordered before this waking candidate.
     if (result?.capped) break;
   }
-  if (failed > 0)
+  if (failed > 0 && failed === due.length)
     await noticeJobOfferFailures(failed).catch((e: unknown) =>
       console.error(e),
     );

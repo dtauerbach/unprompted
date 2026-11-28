@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
@@ -8,7 +8,7 @@ import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/
 import { setFrozen, setPrivateChannelHidden, setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { checkDue, forgetDueMinute } from "@/lib/due-check";
-import { offerJobs } from "@/lib/job-offers";
+import { offerJobs, sweepJobOverdue } from "@/lib/job-offers";
 import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import { call, register, resetDb } from "./helpers";
 import { resetNextCache } from "./next-cache";
@@ -418,7 +418,7 @@ describe("job overdue ladder", () => {
     expect(await wake(f.other)).toBe(before + 1);
   });
 
-  it("wakes the asker first without selecting an ineligible review fallback", async () => {
+  it("wakes the asker first, then the lead even when not a named taker", async () => {
     const f = await fixture(null);
     const ask = await timedAsk(f);
     const params = { id: f.id, number: "2" };
@@ -454,7 +454,32 @@ describe("job overdue ladder", () => {
     expect(await wake(f.other)).toBe(before + 1);
     await ageRung(ask, 1);
     expect(await make(ask, 2)).toEqual([
-      { rung: 2, bot_id: null, woken: false },
+      { rung: 2, bot_id: await botId(f.leader), woken: true },
+    ]);
+  });
+
+  it("excludes the newest offer but not an earlier offer in the episode", async () => {
+    const f = await fixture(null);
+    const named = await f.insertJob(10, 2, [f.holder, f.other]);
+    await age(named, 26);
+    await offerJobs({ channel: Number(f.id) });
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE job_offers DISABLE TRIGGER job_offers_append_only`;
+      await tx`UPDATE job_offers SET created_at = created_at - interval '16 minutes'
+               WHERE job_id = ${named}`;
+      await tx`ALTER TABLE job_offers ENABLE TRIGGER job_offers_append_only`;
+    });
+    await offerJobs({ channel: Number(f.id) });
+    const offered = await db()`
+      SELECT bot_id FROM job_offers WHERE job_id = ${named} ORDER BY id`;
+    expect(offered).toEqual([
+      { bot_id: await botId(f.holder) },
+      { bot_id: await botId(f.other) },
+    ]);
+    expect(await make(named, 1)).toHaveLength(1);
+    await ageRung(named, 1);
+    expect(await make(named, 2)).toEqual([
+      { rung: 2, bot_id: await botId(f.holder), woken: true },
     ]);
   });
 
@@ -497,6 +522,33 @@ async function clockRound() {
 }
 
 describe("the clock dispatches bot-only overdue rungs", () => {
+  it("alerts once when every due rung fails, without writing a rung", async () => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 11);
+    await db().begin(async (tx) => {
+      await tx`CREATE FUNCTION fail_overdue_fixture() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture write failed'; END; $$`;
+      await tx`CREATE TRIGGER fail_overdue_fixture BEFORE INSERT ON job_overdue
+        FOR EACH ROW EXECUTE FUNCTION fail_overdue_fixture()`;
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (let n = 0; n < 2; n += 1)
+        expect(await sweepJobOverdue(Date.now() + 10_000)).toBe(0);
+      expect(await rows(f.job)).toEqual([]);
+      const alerts = await db()`
+        SELECT detail FROM action_log WHERE action = 'alert.job_offers_failed'`;
+      expect(alerts).toEqual([{ detail: { jobs: 1 } }]);
+    } finally {
+      errors.mockRestore();
+      await db().begin(async (tx) => {
+        await tx`DROP TRIGGER fail_overdue_fixture ON job_overdue`;
+        await tx`DROP FUNCTION fail_overdue_fixture()`;
+      });
+    }
+  });
+
   it("leaves a future deadline alone, then wakes the holder and fallback once", async () => {
     const f = await fixture();
     await f.claim();
