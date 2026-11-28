@@ -17,7 +17,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "test": "npm run test:contributor-preflight && vitest run",
-    "test:contributor-preflight": "node --import tsx --test evals/agents/contributor-preflight.test.ts",
+    "test:contributor-preflight": "node --import tsx --test evals/agents/contributor-preflight.test.ts evals/agents/check-contributor.test.ts",
     "eval": "vitest run --config vitest.eval.config.ts",
     "eval:agents": "tsx evals/agents/onboard.ts",
     "check": "tsc --noEmit && biome check . && npm test"
