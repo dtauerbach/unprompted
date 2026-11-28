@@ -407,53 +407,30 @@ describe("job overdue ladder", () => {
     expect(clock?.matches).toBe(true);
   });
 
-  it("wakes the asker first when a member ask is still ready", async () => {
+  it("rejects a deadline on a member ask at the database boundary", async () => {
     const f = await fixture(null);
-    const ask = await timedAsk(f);
-    await age(ask, 11);
-    const before = await wake(f.other);
-    expect(await make(ask, 1)).toEqual([
-      { rung: 1, bot_id: await botId(f.other), woken: true },
-    ]);
-    expect(await wake(f.other)).toBe(before + 1);
+    await expect(timedAsk(f)).rejects.toMatchObject({
+      code: "23514",
+      constraint_name: "channel_jobs_ask_without_due",
+    });
   });
 
-  it("wakes the asker first, then the lead even when not a named taker", async () => {
+  it("escalates a leader job to the lead even when only its holder may take it", async () => {
     const f = await fixture(null);
-    const ask = await timedAsk(f);
-    const params = { id: f.id, number: "2" };
+    const named = await f.insertJob(10, 2, [f.holder]);
     expect(
       (
         await call(moveRoute, {
           key: f.holder.key,
-          params,
+          params: { id: f.id, number: "2" },
           body: { move: "claim", if_seq: 0 },
         })
       ).status,
     ).toBe(200);
-    expect(
-      (
-        await call(moveRoute, {
-          key: f.holder.key,
-          params,
-          body: {
-            move: "submit",
-            if_seq: 1,
-            outputs: [
-              { store: "github", ref: "fixture/output", revision: "abc" },
-            ],
-          },
-        })
-      ).status,
-    ).toBe(200);
-    await age(ask, 26);
-    const before = await wake(f.other);
-    expect(await make(ask, 1)).toEqual([
-      { rung: 1, bot_id: await botId(f.other), woken: true },
-    ]);
-    expect(await wake(f.other)).toBe(before + 1);
-    await ageRung(ask, 1);
-    expect(await make(ask, 2)).toEqual([
+    await age(named, 26);
+    expect(await make(named, 1)).toHaveLength(1);
+    await ageRung(named, 1);
+    expect(await make(named, 2)).toEqual([
       { rung: 2, bot_id: await botId(f.leader), woken: true },
     ]);
   });

@@ -72,6 +72,39 @@ export function channelJobScenarios(): void {
     });
   });
 
+  describe.runIf(LOCAL && MODERATOR)("leader-only job deadlines", () => {
+    it("round-trips the leader's posted deadline and refuses one on a member ask", async () => {
+      // Keep this fixture in its own group: other board cases use fixed
+      // numbers and should not see its job or any of its wakes.
+      const lead = await register("deadline-lead");
+      const member = await register("deadline-member");
+      await linkByCode(lead, "eval-deadline-lead");
+      const made = await tool(lead, "make_channel", { private: true });
+      expect(made.isError).toBe(false);
+      const g = made.data.channel as string;
+      const inv = await tool(lead, "invite", { to: member.handle, channel: g });
+      expect(inv.isError).toBe(false);
+      const joined = await tool(member, "join", { code: inv.data.invite.code });
+      expect(joined.isError).toBe(false);
+      const path = `/v1/private-channels/${idOf(g)}/jobs`;
+      const body = {
+        title: "Deadline fixture",
+        body: "One short report.",
+        check: "One report is pinned.",
+        due_minutes: 1440,
+      };
+      const denied = await job(member, g, { ...body, eligible: [lead.handle] });
+      expect(denied.isError).toBe(true);
+      expect(denied.data.error.code).toBe("not_leader");
+      const posted = await post(path, body, { key: lead.key, ip: lead.ip });
+      expect(posted.status, posted.text).toBe(201);
+      expect(posted.json.job).toMatchObject({ number: 1, due_minutes: 1440 });
+      const read = await tool(member, "read_channel", { channel: g, job: 1 });
+      expect(read.isError).toBe(false);
+      expect(read.data.job.due_minutes).toBe(1440);
+    });
+  });
+
   describe.runIf(LOCAL && MODERATOR)("a group's job board", () => {
     it("runs a job from posting to accepted: one claim stands, a submit wakes the leader, and the job that needs it reads its outputs", async () => {
       const { lea, ana, bo, g } = await bots();
