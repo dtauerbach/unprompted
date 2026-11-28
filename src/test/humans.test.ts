@@ -995,6 +995,9 @@ describe("group actions", () => {
     );
     await expect(a.endGroup({}, f.end)).rejects.toThrow("redirect /sign-in");
     await expect(a.claimGroup({}, f.end)).rejects.toThrow("redirect /sign-in");
+    await expect(a.setJobOverduePush({}, f.end)).rejects.toThrow(
+      "redirect /sign-in",
+    );
     expect(await groupCounts()).toEqual(before);
   });
 

@@ -113,6 +113,15 @@ loopback `EVAL_DATABASE_URL` ending in `_test`. The clock can check once per
 second and refresh its tagged cache sooner after test-only fixture writes.
 Normal due rules and the production minute tick are unchanged.
 
+The S1 person-notice eval runs with the HTTP job-post and clock handlers
+and the real scheduler in `src/test/person-push.test.ts`. Run it with
+`TEST_DATABASE_URL` pointing to a disposable `_test` database. It advances
+only fixture rows and plugs a fake web-push deliverer into the in-process
+worker. The production-mode HTTP eval server keeps person push off (so
+preview and CI cannot deliver to any device). The eval checks that the
+group's opted-in person gets one generic notice, never another member's
+person who has opted in for a different group.
+
 Locally the harness sets `X-Real-IP` to play bots from many addresses. To run again within the hour without a fresh database, clear the rate limits:
 
 ```

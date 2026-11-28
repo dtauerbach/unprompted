@@ -1,13 +1,19 @@
 import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as makeRoute } from "@/app/v1/channels/route";
+import { GET as clockRoute } from "@/app/v1/clock/route";
 import { POST as inboxRoute } from "@/app/v1/me/inbox/route";
 import { POST as sendRoute } from "@/app/v1/messages/route";
+import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
+import { POST as inviteRoute } from "@/app/v1/private-channels/[id]/invites/route";
+import { POST as moveJobRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/moves/route";
+import { POST as postJobRoute } from "@/app/v1/private-channels/[id]/jobs/route";
 import { setFrozen, setPrivateChannelHidden } from "@/lib/admin";
 import { addAdmin } from "@/lib/admins";
 import { builtInCopy, saveCopy } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { checkDue, forgetDueMinute } from "@/lib/due-check";
+import { setJobOverdueOptIn, sweepJobPersonOverdue } from "@/lib/job-person";
 import { LIMITS } from "@/lib/limits";
 import { postAsPerson } from "@/lib/person-messages";
 import {
@@ -33,6 +39,7 @@ import { wakeSecretsAvailable } from "@/lib/wake-secrets";
 import type { Vapid } from "@/lib/web-push";
 import { browser, browserDecrypt } from "./browser-push";
 import { ageLink, call, register, resetDb } from "./helpers";
+import { resetNextCache } from "./next-cache";
 
 // Push to a person (W1b, 099_person_push.sql, src/lib/person-push.ts): a
 // person turns push on for a browser, and a bot writing in a group they
@@ -148,6 +155,225 @@ afterEach(() => {
   delete process.env.WEB_PUSH_PUBLIC_KEY;
   delete process.env.WEB_PUSH_PRIVATE_KEY;
   delete process.env.WEB_PUSH_SUBJECT;
+});
+
+async function duePersonJob(f: Awaited<ReturnType<typeof own>>) {
+  const posted = await call(postJobRoute, {
+    key: f.lea.key,
+    params: { id: String(f.id) },
+    body: {
+      title: "Private deadline fixture",
+      body: "Bot words stay in the channel.",
+      check: "One deliverable.",
+      due_minutes: 10,
+    },
+  });
+  expect(posted.status).toBe(201);
+  const [job] = await db()<{ id: string }[]>`
+    SELECT id FROM channel_jobs WHERE channel_id = ${f.id}`;
+  if (!job) throw new Error("missing fixture job");
+  await db().begin(async (tx) => {
+    await tx`ALTER TABLE channel_jobs DISABLE TRIGGER channel_jobs_append_only`;
+    await tx`UPDATE channel_jobs SET created_at = now() - interval '46 minutes' WHERE id = ${job.id}`;
+    await tx`ALTER TABLE channel_jobs ENABLE TRIGGER channel_jobs_append_only`;
+  });
+  await db()`SELECT * FROM job_overdue_make(${job.id}, 1)`;
+  await agePersonRung(job.id, 1);
+  await db()`SELECT * FROM job_overdue_make(${job.id}, 2)`;
+  return job.id;
+}
+
+async function agePersonRung(job: string, rung: number) {
+  await db().begin(async (tx) => {
+    await tx`ALTER TABLE job_overdue DISABLE TRIGGER job_overdue_append_only`;
+    await tx`UPDATE job_overdue SET at = now() - interval '16 minutes'
+             WHERE job_id = ${job} AND rung = ${rung}`;
+    await tx`ALTER TABLE job_overdue ENABLE TRIGGER job_overdue_append_only`;
+  });
+}
+
+const personRound = () => sweepJobPersonOverdue(Date.now() + 10_000);
+
+describe("the overdue job person rung", () => {
+  it("does not queue early and queues one generic notice under concurrent clocks", async () => {
+    const f = await own();
+    const d = device();
+    await subscribePerson(db(), "google-p", d.sub, null);
+    await setJobOverdueOptIn(db(), "google-p", f.id, true, null);
+    const j = await duePersonJob(f);
+    await personRound();
+    expect(
+      await db()`SELECT 1 FROM job_overdue WHERE job_id = ${j} AND rung = 3`,
+    ).toEqual([]);
+    await agePersonRung(j, 2);
+    const before =
+      await db()`SELECT bot_id, count FROM wake_counters ORDER BY bot_id`;
+    await Promise.all([personRound(), personRound()]);
+    expect(
+      await db()`SELECT bot_id, woken FROM job_overdue WHERE job_id = ${j} AND rung = 3`,
+    ).toEqual([{ bot_id: null, woken: false }]);
+    expect(
+      await db()`SELECT bot_id, count FROM wake_counters ORDER BY bot_id`,
+    ).toEqual(before);
+    expect(
+      await db()`SELECT detail FROM action_log WHERE action = 'channel.job.overdue' AND detail->>'rung' = '3'`,
+    ).toMatchObject([{ detail: { rung: 3, queued: true } }]);
+    expect((await drain()).sent).toBe(1);
+    expect((await drain()).sent).toBe(0);
+    const [p] = sent;
+    if (!p) throw new Error("missing stubbed delivery");
+    const payload = JSON.parse(
+      browserDecrypt(p.body, d.ua.priv, d.ua.auth).toString("utf8"),
+    );
+    expect(payload).toMatchObject({ url: `/account/channels/${f.id}` });
+    expect(JSON.stringify(payload)).not.toMatch(
+      /Private deadline fixture|Bot words/,
+    );
+  });
+
+  it("does not treat message-only opt-in as consent to job notices", async () => {
+    const f = await own();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    const j = await duePersonJob(f);
+    await agePersonRung(j, 2);
+    await personRound();
+    expect((await drain()).sent).toBe(0);
+    expect(
+      await db()`SELECT detail FROM action_log WHERE action = 'channel.job.overdue' AND detail->>'rung' = '3'`,
+    ).toMatchObject([{ detail: { rung: 3, queued: false } }]);
+  });
+
+  it("drops an already queued job notice after consent is revoked", async () => {
+    const f = await own();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await setJobOverdueOptIn(db(), "google-p", f.id, true, null);
+    const j = await duePersonJob(f);
+    await agePersonRung(j, 2);
+    await personRound();
+    await setJobOverdueOptIn(db(), "google-p", f.id, false, null);
+    expect((await drain()).sent).toBe(0);
+    expect(await nextPersonDue(db())).toBeNull();
+  });
+
+  it("drops a queued notice if the job is canceled before delivery", async () => {
+    const f = await own();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await setJobOverdueOptIn(db(), "google-p", f.id, true, null);
+    const j = await duePersonJob(f);
+    await agePersonRung(j, 2);
+    await personRound();
+    const canceled = await call(moveJobRoute, {
+      key: f.lea.key,
+      params: { id: String(f.id), number: "1" },
+      body: { move: "cancel", if_seq: 0 },
+    });
+    expect(canceled.status).toBe(200);
+    expect((await drain()).sent).toBe(0);
+    expect(await nextPersonDue(db())).toBeNull();
+  });
+
+  it("preserves a queued deadline notice through the message cooldown", async () => {
+    const f = await own();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await setJobOverdueOptIn(db(), "google-p", f.id, true, null);
+    const j = await duePersonJob(f);
+    await agePersonRung(j, 2);
+    await personRound();
+    await db()`INSERT INTO person_push_state (human_id, channel_id, last_sent_at)
+      VALUES (${f.human}, ${f.id}, now())`;
+    expect((await drain()).sent).toBe(0);
+    expect((await nextPersonDue(db()))?.getTime()).toBeGreaterThan(
+      Date.now() + 9 * 60_000,
+    );
+    await db()`UPDATE person_push_state SET last_sent_at = now() - interval '11 minutes'
+      WHERE human_id = ${f.human} AND channel_id = ${f.id}`;
+    await db()`UPDATE job_overdue_person_notices SET next_at = now() WHERE job_id = ${j}`;
+    expect((await drain()).sent).toBe(1);
+  });
+
+  it("leaves a temporary delivery failure pending without writing another rung", async () => {
+    const f = await own();
+    await subscribePerson(db(), "google-p", device().sub, null);
+    await setJobOverdueOptIn(db(), "google-p", f.id, true, null);
+    const j = await duePersonJob(f);
+    await agePersonRung(j, 2);
+    await personRound();
+    answer = () => ({ status: 503 });
+    expect((await drain()).sent).toBe(0);
+    expect(await nextPersonDue(db())).not.toBeNull();
+    answer = () => ({ status: 201 });
+    await db()`UPDATE job_overdue_person_notices SET next_at = now() WHERE job_id = ${j}`;
+    expect((await drain()).sent).toBe(1);
+    await personRound();
+    expect(
+      await db()`SELECT 1 FROM job_overdue WHERE job_id = ${j} AND rung = 3`,
+    ).toHaveLength(1);
+  });
+
+  it("runs the public clock and delivers only to the human of this group", async () => {
+    const f = await own();
+    const qBot = await bot("q-bot");
+    const qFriend = await bot("q-friend");
+    await link("google-q", qBot, qFriend);
+    const qGroup = await startChannel(
+      db(),
+      "google-q",
+      ["q-bot", "q-friend"],
+      "q-bot",
+      null,
+    );
+    const pDevice = device();
+    const qDevice = device();
+    await subscribePerson(db(), "google-p", pDevice.sub, null);
+    await subscribePerson(db(), "google-q", qDevice.sub, null);
+    await setJobOverdueOptIn(db(), "google-p", f.id, true, null);
+    await setJobOverdueOptIn(
+      db(),
+      "google-q",
+      Number(qGroup.channel.replace("private:", "")),
+      true,
+      null,
+    );
+    const inv = await call(inviteRoute, {
+      key: f.lea.key,
+      params: { id: String(f.id) },
+      body: { for: qBot.handle },
+    });
+    expect(inv.status).toBe(201);
+    expect(
+      (
+        await call(redeemRoute, {
+          key: qBot.key,
+          body: { code: inv.body.invite.code },
+        })
+      ).status,
+    ).toBe(200);
+    const j = await duePersonJob(f);
+    await agePersonRung(j, 2);
+    usePersonDeliver(deliver);
+    resetNextCache();
+    forgetDueMinute();
+    expect((await call(clockRoute, { path: "/v1/clock" })).status).toBe(200);
+    if (sent.length === 0) await checkDue();
+    expect(sent.map((s) => s.url)).toEqual([pDevice.sub.endpoint]);
+    resetNextCache();
+    forgetDueMinute();
+    await checkDue();
+    expect(sent).toHaveLength(1);
+  });
+
+  it("refuses opt-in under the kill switch and still records opt-out", async () => {
+    const f = await own();
+    await setJobOverdueOptIn(db(), "google-p", f.id, true, null);
+    process.env.UNPROMPTED_READ_ONLY = "1";
+    await setJobOverdueOptIn(db(), "google-p", f.id, false, null);
+    await expect(
+      setJobOverdueOptIn(db(), "google-p", f.id, true, null),
+    ).rejects.toMatchObject({ code: "read_only" });
+    expect(
+      await db()`SELECT enabled FROM job_overdue_person_choices ORDER BY id`,
+    ).toEqual([{ enabled: true }, { enabled: false }]);
+  });
 });
 
 describe("which addresses push can go to", () => {

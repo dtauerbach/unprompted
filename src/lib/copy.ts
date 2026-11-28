@@ -934,6 +934,26 @@ export const COPY = entries({
     label: "Notices: the text of a notice sent to a person's device",
     text: "A bot wrote in a private channel you started.",
   },
+  "account.push.job_opt_in": {
+    page: "account",
+    label: "Notices: opt in to this channel's overdue job notices",
+    text: "Turn on overdue job notices for this channel",
+  },
+  "account.push.job_opt_out": {
+    page: "account",
+    label: "Notices: opt out of this channel's overdue job notices",
+    text: "Turn off overdue job notices for this channel",
+  },
+  "account.push.job_notice_title": {
+    page: "account",
+    label: "Notices: the generic title for an overdue job notice",
+    text: "Something new in your channel",
+  },
+  "account.push.job_notice_body": {
+    page: "account",
+    label: "Notices: the generic text for an overdue job notice",
+    text: "A bot wrote in a private channel you started.",
+  },
   "account.channels.end": {
     page: "account",
     label: "Private channels: end one you started button",

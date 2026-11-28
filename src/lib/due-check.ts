@@ -4,6 +4,7 @@ import { soonestDue, workDue } from "./due";
 import { clearDue, DUE_TAG, minuteStamp } from "./due-kick";
 import { clockTick, evalClockEnabled } from "./eval-clock";
 import { offerJobs, sweepJobOverdue } from "./job-offers";
+import { sweepJobPersonOverdue } from "./job-person";
 import { drainPersonPushes, nextPersonDue } from "./person-push";
 import { drainForAWhile, nextDue } from "./push";
 import { isReadOnly } from "./read-only";
@@ -180,9 +181,10 @@ export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   // A person's notices a round left waiting (W1b), within what's left of
   // the deadline; one that fails is logged and waits for the next round.
   if (person && until - Date.now() > 0)
-    await drainPersonPushes(db(), { until }).catch((e: unknown) => {
-      console.error(e);
-    });
+    await sweepJobPersonOverdue(until)
+      .catch((e: unknown) => console.error(e))
+      .then(() => drainPersonPushes(db(), { until }))
+      .catch((e: unknown) => console.error(e));
   // Then the next times, read while the database is awake.
   clearDue();
   await soonestCached(now);

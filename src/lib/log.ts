@@ -61,6 +61,7 @@ export type Action =
   | "human.bot.claude_fire_test"
   | "human.push.subscribe"
   | "human.push.unsubscribe"
+  | "human.job_overdue_push.set"
   | "person_push.sent"
   | "person_push.ended"
   | "bot.connect"

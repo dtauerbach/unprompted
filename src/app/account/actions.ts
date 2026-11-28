@@ -10,6 +10,7 @@ import { ApiError, hashIp, ipFromHeaders, logRefusal } from "@/lib/http";
 import { neonAuth, type SessionUser, sessionUser } from "@/lib/human-auth";
 import { issueOwnerCode, releaseBot } from "@/lib/humans";
 import { afterJobWrite } from "@/lib/job-offers";
+import { setJobOverdueOptIn } from "@/lib/job-person";
 import { enterLinkCode } from "@/lib/link-codes";
 import { approveAsk, declineAsk } from "@/lib/pairing-asks";
 import {
@@ -52,6 +53,7 @@ export type FormState = {
   // A group just started, as private:<id>.
   group?: string;
   saved?: boolean;
+  overdueNotices?: boolean;
   // After saving, taking off or firing a bot's routine (handle says which
   // bot): never the token, which no answer carries.
   routine?: "saved" | "removed" | "fired" | "failed" | "unreachable";
@@ -544,6 +546,30 @@ export async function turnOffPush(
     );
   } catch (err) {
     return failure("turnOffPush", err);
+  }
+}
+
+export async function setJobOverduePush(
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await signedIn();
+  try {
+    const ref = privateRefSchema.safeParse(form.get("channel"));
+    const id = ref.success ? refId(ref.data) : undefined;
+    const choice = form.get("choice");
+    if (id === undefined || (choice !== "on" && choice !== "off"))
+      throw new ApiError(
+        400,
+        "invalid",
+        "Choose a private channel and notice setting.",
+      );
+    const enabled = choice === "on";
+    await setJobOverdueOptIn(db(), user.id, id, enabled, await ipHash());
+    revalidatePath(`/account/channels/${id}`);
+    return { overdueNotices: enabled };
+  } catch (err) {
+    return failure("setJobOverduePush", err);
   }
 }
 

@@ -12,13 +12,19 @@ import { type CopyKey, fill } from "@/lib/copy";
 import { db } from "@/lib/db";
 import { humanSignInEnabled, sessionUser } from "@/lib/human-auth";
 import { findHuman } from "@/lib/humans";
+import { jobOverdueChoice } from "@/lib/job-person";
 import { pageCopy } from "@/lib/page-copy";
 import { PEEK_MAX_PAGES, readGroupForPerson } from "@/lib/peek";
 import { personPostBox, personPostWhyNot } from "@/lib/person-messages";
+import { personPushAvailable } from "@/lib/person-push";
 import { privateRef } from "@/lib/private-channels";
 import { parseId } from "@/lib/validate";
 import { PERSON_ANSWER_COPY, PERSON_POST_COPY } from "../../copy-keys";
-import { PersonAnswerForm, PersonPostForm } from "../../forms";
+import {
+  JobOverduePushForm,
+  PersonAnswerForm,
+  PersonPostForm,
+} from "../../forms";
 
 // The words under the person's newest message for each of their bots.
 const SEEN: Record<SeenKind, CopyKey> = {
@@ -91,6 +97,7 @@ export default async function PeekPage({
     before === undefined ? { pages } : { before },
   );
   if (!page) notFound();
+  const jobPush = await jobOverdueChoice(db(), humanId, id);
   // Earlier messages load in place: the newest view grows by a page and
   // lands on the message that was at the top. Past PEEK_MAX_PAGES, or on
   // an older page already, they open as a page of their own.
@@ -201,6 +208,16 @@ export default async function PeekPage({
           <p className="text-sm text-neutral-600 dark:text-neutral-400">
             {t["account.channels.closed"]}
           </p>
+        )}
+        {(jobPush?.enabled || (jobPush?.allowed && personPushAvailable())) && (
+          <JobOverduePushForm
+            channel={privateRef(id)}
+            on={jobPush.enabled}
+            labels={{
+              enable: t["account.push.job_opt_in"],
+              disable: t["account.push.job_opt_out"],
+            }}
+          />
         )}
       </header>
 
