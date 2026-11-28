@@ -7,7 +7,10 @@ import { POST as inviteRoute } from "@/app/v1/private-channels/[id]/invites/rout
 import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/moves/route";
 import { setFrozen, setPrivateChannelHidden, setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { checkDue, forgetDueMinute } from "@/lib/due-check";
+import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import { call, register, resetDb } from "./helpers";
+import { resetNextCache } from "./next-cache";
 
 beforeEach(resetDb);
 
@@ -449,5 +452,99 @@ describe("job overdue ladder", () => {
       await db()`
       SELECT job_id FROM job_overdue_due(clock_timestamp(), ${f.id})`,
     ).toEqual([]);
+  });
+});
+
+// Keep the real clock path under test while simulating a new minute/cache
+// boundary between checks, without sleeping or invoking a real push.
+async function clockRound() {
+  resetNextCache();
+  forgetDueMinute();
+  return checkDue();
+}
+
+describe("the clock dispatches bot-only overdue rungs", () => {
+  it("leaves a future deadline alone, then wakes the holder and fallback once", async () => {
+    const f = await fixture();
+    await f.claim();
+    const holderBefore = await wake(f.holder);
+    const leadBefore = await wake(f.leader);
+    await clockRound();
+    expect(await rows(f.job)).toEqual([]);
+
+    await age(f.job, 26);
+    await clockRound();
+    await clockRound();
+    expect(await rows(f.job)).toEqual([
+      { rung: 1, bot_id: await botId(f.holder), woken: true },
+    ]);
+    expect(await wake(f.holder)).toBe(holderBefore + 1);
+    expect(await wake(f.leader)).toBe(leadBefore);
+
+    await ageRung(f.job, 1);
+    await clockRound();
+    await clockRound();
+    expect(await rows(f.job)).toEqual([
+      { rung: 1, bot_id: await botId(f.holder), woken: true },
+      { rung: 2, bot_id: await botId(f.leader), woken: true },
+    ]);
+    expect(await wake(f.holder)).toBe(holderBefore + 1);
+    expect(await wake(f.leader)).toBe(leadBefore + 1);
+  });
+
+  it("does not keep the clock due or consume a matured third rung", async () => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 41);
+    expect(await make(f.job, 1)).toHaveLength(1);
+    await ageRung(f.job, 1);
+    expect(await make(f.job, 2)).toHaveLength(1);
+    await ageRung(f.job, 2);
+    expect(await clockRound()).toBe("not_due");
+    expect((await rows(f.job)).map((x) => x.rung)).toEqual([1, 2]);
+  });
+  it("leaves a capped wake pending and charges exactly one use on retry", async () => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 11);
+    const before = await wake(f.holder);
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES ('channel-wake:all', date_trunc('hour', now()),
+              ${ANTI_ABUSE_DEFAULTS.channel_wake_global})
+      ON CONFLICT (bucket, window_start) DO UPDATE SET count = EXCLUDED.count`;
+    await clockRound();
+    expect(await rows(f.job)).toEqual([]);
+    expect(await wake(f.holder)).toBe(before);
+
+    await db()`DELETE FROM rate_limits WHERE bucket = 'channel-wake:all'`;
+    await clockRound();
+    await clockRound();
+    expect(await rows(f.job)).toHaveLength(1);
+    expect(await wake(f.holder)).toBe(before + 1);
+    const [used] = await db()<{ count: number }[]>`
+      SELECT count FROM rate_limits WHERE bucket = 'channel-wake:all'`;
+    expect(used?.count).toBe(1);
+  });
+  it("records a no-wake rung at cap without charging or waking a silenced holder", async () => {
+    const f = await fixture();
+    await f.claim();
+    await setSilenced(db(), f.holder.handle, 2, "test");
+    await age(f.job, 11);
+    const before = await wake(f.holder);
+    const cap = ANTI_ABUSE_DEFAULTS.channel_wake_global;
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES ('channel-wake:all', date_trunc('hour', now()), ${cap})
+      ON CONFLICT (bucket, window_start) DO UPDATE SET count = EXCLUDED.count`;
+    await clockRound();
+    expect(await rows(f.job)).toEqual([
+      { rung: 1, bot_id: null, woken: false },
+    ]);
+    expect(await wake(f.holder)).toBe(before);
+    const [used] = await db()<{ count: number }[]>`
+      SELECT count FROM rate_limits WHERE bucket = 'channel-wake:all'
+        AND window_start = date_trunc('hour', now())`;
+    expect(used?.count).toBe(cap);
   });
 });

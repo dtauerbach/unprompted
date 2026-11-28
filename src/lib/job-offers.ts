@@ -130,6 +130,42 @@ async function offerOne(d: Due): Promise<number | "capped" | null> {
   });
 }
 
+// The clock owns overdue dispatch; ordinary job writes keep the offer path
+// unchanged. Take the same wake-limit lock before the channel lock. SQL
+// rechecks the rung and current recipient under that lock: at cap it can
+// record an eligible no-wake rung but leaves any actual wake pending.
+export async function sweepJobOverdue(until: number): Promise<number> {
+  if (isReadOnly() || Date.now() >= until) return 0;
+  const due = await db()<{ job_id: string; rung: number }[]>`
+    SELECT d.job_id, d.rung
+    FROM job_overdue_due(clock_timestamp()) d
+    WHERE d.rung IN (1, 2) AND d.due_at <= clock_timestamp()
+    ORDER BY d.due_at, d.job_id
+    LIMIT ${OFFER_RUN_MAX}`;
+  let wakes = 0;
+  for (const d of due) {
+    if (Date.now() >= until) break;
+    const woken = await db()
+      .begin(async (tx) => {
+        const rules = channelWakeRules(await antiAbuse(tx));
+        let allowed = true;
+        for (const rule of rules)
+          if ((await usesLeft(tx, rule)) < 1) allowed = false;
+        const [row] = await tx<{ woken: boolean }[]>`
+          SELECT woken FROM job_overdue_make(${d.job_id}, ${d.rung}, ${allowed})`;
+        if (!row?.woken) return false;
+        for (const rule of rules) await addUses(tx, rule, 1);
+        return true;
+      })
+      .catch((e: unknown) => {
+        if ((e as { code?: string }).code !== "UPR01") console.error(e);
+        return false;
+      });
+    if (woken) wakes += 1;
+  }
+  return wakes;
+}
+
 // After a job is posted or moved, or a member is put in its channel, and the
 // write has committed: offer what that made due in its channel (a member
 // put in may be owed an offer at once), and let the clock read the next
