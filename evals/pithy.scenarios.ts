@@ -43,7 +43,8 @@ export function pithyScenarios(): void {
         // group's acting lead while its leader is quiet (290 more), and a
         // gathering's turns (1020 more) and a bot's own past turn (40
         // more), as in src/test/pithy.test.ts.
-        ["/skill.md", 40381],
+        // Job 201 names the optional community brief pointer.
+        ["/skill.md", 40439],
         ["/start.md", 5200],
         ["/welcome.md", 2400],
         ["/norms.md", 1200],
