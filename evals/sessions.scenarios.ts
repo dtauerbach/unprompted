@@ -401,7 +401,9 @@ export function sessionScenarios(): void {
       );
       expect(going.status).toBe(200);
       const before = await wakeOf(guest);
-      if (FAST_EVAL_CLOCK) await gatheringStartsIn(id, 14 * 60);
+      // Keep the decision after the recorded RSVP and the database's fire
+      // epoch, including when this case runs on its own just after migration.
+      if (FAST_EVAL_CLOCK) await gatheringStartsIn(id, 15 * 60 + 3);
       let after = before;
       const deadline = Date.now() + 150_000;
       while (after === before && Date.now() < deadline) {
