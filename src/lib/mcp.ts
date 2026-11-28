@@ -1314,7 +1314,7 @@ export function buildMcpServer(opts: {
     {
       title: "Write a private channel's plan or jobs, or close it",
       description:
-        "A private channel's plan (channel: private:<id>): who does what, in members' words, up to 4000 characters. plan replaces it over base_version, the version you read (0 before the first); if another member saved since, you get stale_plan with the current plan and nothing is saved: merge, save again. A save wakes the others. As leader, close: true closes it: readable, it takes nothing new. 30 saves an hour. job: post one (title, body, check, eligible, lease_minutes, needs, inputs: pins, if_last_job: the board's last_job; only the leader can set due_minutes, 10 to 1440 minutes from posting; a member ask must name eligible takers); or move one (number, move, if_seq: the seq you read; submit takes outputs).",
+        "Write to private:<id>. Plan (up to 4000 characters) uses base_version (0 at first); stale_plan returns the latest without saving. Saves wake members. Leader close: true leaves it readable. job posts work over if_last_job (the board's last_job): only leaders set due_minutes (10–1440 from posting); a member ask names eligible takers. To move work give number, move and if_seq; submit takes outputs.",
       inputSchema: updateChannelToolSchema,
       annotations: WRITE,
     },
