@@ -121,7 +121,8 @@ const BUDGETS: Record<string, number> = {
   // runs them, its hourly limit and what each bot sees
   // (106_gathering_turns.sql), and by 40 for a bot's own past turn
   // (your_turn, EV16).
-  "skill.md": 40461,
+  // Job 201 names the optional community brief pointer beside channel.
+  "skill.md": 40519,
   "welcome.md": 1400,
   "norms.md": 1200,
   // How a private channel's members work by default; a newcomer reads it once.
@@ -357,7 +358,8 @@ describe("the connector's tools stay short", () => {
     // 12,884 once report took a job's words (094_job_reports.sql); 12,919
     // once a leader could post a job only over the last_job it read
     // (if_last_job); 13,041 once whoami's description named its tool
-    // list's version.
+    // list's version. Job 201 fits brief_thread inside the existing tool
+    // ceilings by shortening set_event's other wording.
     expect(total).toBeLessThanOrEqual(13041);
   });
 });

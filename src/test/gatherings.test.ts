@@ -17,8 +17,10 @@ import { POST as revokeRoute } from "@/app/v1/me/keys/revoke/route";
 import { POST as rotateRoute } from "@/app/v1/me/keys/rotate/route";
 import { POST as pushRoute } from "@/app/v1/me/push/route";
 import { POST as wakeUrlRoute } from "@/app/v1/me/wake/url/route";
+import { POST as postRoute } from "@/app/v1/posts/route";
 import {
   banBot,
+  hidePost,
   setAntiAbuse,
   setFrozen,
   setGates,
@@ -28,6 +30,7 @@ import {
   unbanBot,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { workDue } from "@/lib/due";
 import { DUE_TAG } from "@/lib/due-kick";
 import { ACTIONS, DEFAULT_RULES } from "@/lib/gates";
 import {
@@ -180,6 +183,135 @@ async function backdated(
 // The label of a refusal: its message without the "try again" seconds.
 const label = (message: string) =>
   message.replace(/Try again in \d+ seconds\./, "");
+
+async function briefPost(host: Bot, channel: string, replyTo?: number) {
+  const res = await call(postRoute, {
+    key: host.key,
+    body:
+      replyTo === undefined
+        ? { channel, title: "Hack-day brief", body: "Bring one small project." }
+        : { reply_to: replyTo, body: "A reply is not a brief." },
+  });
+  expect(res.status, JSON.stringify(res.body)).toBe(201);
+  return res.body.post.id as number;
+}
+
+describe("a gathering’s brief thread", () => {
+  it("names a visible first post in its community in the response and reads", async () => {
+    const host = await trusted("host");
+    const reader = await register("reader");
+    const brief_thread = await briefPost(host, "research");
+    const posted = await party(host, { channel: "research", brief_thread });
+    expect(posted.status, JSON.stringify(posted.body)).toBe(201);
+    expect(posted.body.gathering).toMatchObject({
+      channel: "research",
+      brief_thread,
+    });
+    const id = posted.body.gathering.id;
+    const [log] = await db()`
+      SELECT detail FROM action_log WHERE action = 'gathering.announce' AND subject = ${`gathering:${id}`}`;
+    expect(log?.detail).toMatchObject({ brief_thread });
+    for (const view of [await list(), await digest(reader)]) {
+      expect(
+        view.body.gatherings.find((g: { id: number }) => g.id === id),
+      ).toMatchObject({ brief_thread });
+    }
+  });
+
+  it("drops a hidden brief from later reads without removing the gathering", async () => {
+    const host = await trusted("host");
+    const brief_thread = await briefPost(host, "research");
+    expect(
+      (await party(host, { channel: "research", brief_thread })).status,
+    ).toBe(201);
+    await hidePost(db(), brief_thread, "Test brief moderation");
+    const after = (await list()).body.gatherings;
+    expect(after).toHaveLength(1);
+    expect(after[0]).toMatchObject({ channel: "research" });
+    expect(after[0]).not.toHaveProperty("brief_thread");
+  });
+
+  it("does not let a brief point to a reply, another community, or a hidden post", async () => {
+    const host = await trusted("host");
+    const brief_thread = await briefPost(host, "research");
+    const reply = await briefPost(host, "research", brief_thread);
+    const hidden = await briefPost(await trusted("brief-writer"), "research");
+    await hidePost(db(), hidden, "Test hidden fixture");
+    const before = await counts();
+    for (const [channel, thread] of [
+      ["writing", brief_thread],
+      ["research", reply],
+      ["research", hidden],
+      ["research", 99999999],
+    ] as const) {
+      const result = await party(host, { channel, brief_thread: thread });
+      expect(result.body.error.code).toBe("no_such_post");
+      expect(result.status).toBe(404);
+    }
+    expect(await counts()).toEqual(before);
+  });
+
+  it("keeps one visible brief across a recurring gathering", async () => {
+    const host = await trusted("host");
+    const brief_thread = await briefPost(host, "research");
+    const made = await party(host, {
+      channel: "research",
+      brief_thread,
+      repeat: "daily",
+      times: 2,
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const meetings = (await list()).body.gatherings;
+    expect(meetings).toHaveLength(2);
+    for (const meeting of meetings)
+      expect(meeting.brief_thread).toBe(brief_thread);
+    await hidePost(db(), brief_thread, "Test series brief moderation");
+    for (const meeting of (await list()).body.gatherings)
+      expect(meeting).not.toHaveProperty("brief_thread");
+  });
+
+  it("inherits the brief on a later series meeting made by the clock", async () => {
+    const host = await trusted("host");
+    const brief_thread = await briefPost(host, "research");
+    const made = await party(host, {
+      channel: "research",
+      brief_thread,
+      repeat: "weekly",
+      times: 2,
+    });
+    expect(made.status).toBe(201);
+    const sid = made.body.gathering.series.id;
+    expect((await list()).body.gatherings).toHaveLength(1);
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE gathering_series DISABLE TRIGGER gathering_series_append_only`;
+      await tx`UPDATE gathering_series SET starts_at = starts_at - interval '2 hours', created_at = created_at - interval '2 hours' WHERE id = ${sid}`;
+      await tx`ALTER TABLE gathering_series ENABLE TRIGGER gathering_series_append_only`;
+    });
+    expect((await workDue()).made).toBe(1);
+    const listed = (await list()).body.gatherings;
+    const later = listed.find(
+      (g: { series?: { meeting: number } }) => g.series?.meeting === 2,
+    );
+    expect(later).toMatchObject({ brief_thread });
+  });
+
+  it("backs the same-community rule in the announcement insert", async () => {
+    const host = await trusted("host");
+    const brief_thread = await briefPost(host, "research");
+    const key = await keyOf(host.handle);
+    await expect(db()`
+      INSERT INTO gatherings (bot_id, key_id, title, starts_at, channel_id, brief_thread_id)
+      SELECT b.id, ${key}, 'A gathering', now() + interval '1 hour', c.id, ${brief_thread}
+      FROM bots b, channels c WHERE b.handle = ${host.handle} AND c.slug = 'writing'
+    `).rejects.toMatchObject({ code: "UPG05" });
+  });
+
+  it("requires a community when naming a brief thread", async () => {
+    const host = await trusted("host");
+    const brief_thread = await briefPost(host, "research");
+    expect((await party(host, { brief_thread })).status).toBe(400);
+  });
+});
 
 describe("announcing", () => {
   it("is shut by default to unclaimed and new bots, names only public reasons, and writes nothing", async () => {
@@ -1377,15 +1509,19 @@ describe("the routes and tools", () => {
     });
     expect(refused.isError).toBe(true);
     expect(refused.data.error.code).toBe("not_yet");
+    const brief_thread = await briefPost(host, "research");
     const made = await tool(host.key, "set_event", {
       action: "announce",
       title: "Mafia, seven seats",
+      channel: "research",
+      brief_thread,
       starts_at: ahead(60),
       needs: 7,
     });
     expect(made.isError).toBe(false);
     const id = made.data.gathering.id as number;
     expect(made.data.gathering.untrusted_title).toBe("Mafia, seven seats");
+    expect(made.data.gathering.brief_thread).toBe(brief_thread);
     const r = await tool(guest.key, "rsvp", {
       gathering: id,
       going: true,

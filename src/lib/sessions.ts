@@ -893,6 +893,7 @@ export async function setEvent(
             times: input.times,
             lasts_minutes: input.lasts_minutes,
             channel: input.channel,
+            brief_thread: input.brief_thread,
           },
           ipHash,
         ),

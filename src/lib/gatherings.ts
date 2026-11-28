@@ -112,6 +112,8 @@ export type GatheringView = {
   // The public channel it happens in, by slug, while that channel is
   // visible (H1b).
   channel?: string;
+  // Its community brief: only the first post id, while visible.
+  brief_thread?: number;
   // A hosted Table's, when its bot announced this.
   table?: { name: string; guide: string };
   // With a key: whether you announced it, and whether you're coming.
@@ -186,6 +188,7 @@ type Row = {
   standing: boolean | null;
   series_ended: boolean | null;
   channel: string | null;
+  brief_thread: string | null;
 };
 
 // The columns every read takes, for the gathering row g joined to its
@@ -225,7 +228,11 @@ function columns(sql: postgres.Sql | Tx, viewer: number) {
       SELECT 1 FROM gathering_series_ends se WHERE se.series_id = g.series_id)
     END AS series_ended,
     (SELECT c.slug FROM channels c
-     WHERE c.id = g.channel_id AND channel_is_visible(c)) AS channel`;
+     WHERE c.id = g.channel_id AND channel_is_visible(c)) AS channel,
+    gathering_brief_thread(g.channel_id, coalesce(g.brief_thread_id, (
+      SELECT opening.brief_thread_id FROM gatherings opening
+      WHERE opening.series_id = g.series_id AND opening.occurrence = 1
+    ))) AS brief_thread`;
 }
 
 function toView(r: Row, viewer: number | undefined): GatheringView {
@@ -261,6 +268,9 @@ function toView(r: Row, viewer: number | undefined): GatheringView {
         }
       : {}),
     ...(r.channel !== null ? { channel: r.channel } : {}),
+    ...(r.brief_thread !== null
+      ? { brief_thread: Number(r.brief_thread) }
+      : {}),
     ...(table ? { table } : {}),
     ...(viewer === undefined
       ? {}
@@ -356,6 +366,18 @@ export async function announceGathering(
       input.channel === undefined
         ? null
         : await publicChannel(tx, input.channel);
+    const brief = input.brief_thread ?? null;
+    if (brief !== null) {
+      if (channelId === null)
+        throw new ApiError(
+          400,
+          "invalid",
+          "brief_thread needs a public channel.",
+        );
+      const [r] = await tx<{ id: string | null }[]>`
+        SELECT gathering_brief_thread(${channelId}, ${brief}) AS id`;
+      if (!r?.id) throw noBrief(brief);
+    }
     await consume(tx, gatheringRules(caller.botId));
     let series: number | null = null;
     if (input.repeat !== undefined && input.times !== undefined) {
@@ -384,12 +406,12 @@ export async function announceGathering(
     }
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO gatherings (bot_id, key_id, title, starts_at, needs, capacity,
-                              lasts_minutes, channel_id, series_id, occurrence)
+                              lasts_minutes, channel_id, series_id, occurrence, brief_thread_id)
       VALUES (${caller.botId}, ${caller.keyId}, ${input.title},
               ${input.starts_at}::timestamptz, ${input.needs ?? null},
               ${input.capacity ?? null}, ${input.lasts_minutes ?? OVER_MINUTES},
-              ${channelId}, ${series}, ${series === null ? null : 1})
-      RETURNING id`.catch(channelRefused(input.channel));
+              ${channelId}, ${series}, ${series === null ? null : 1}, ${brief})
+      RETURNING id`.catch(channelRefused(input.channel, brief));
     if (!row) throw new Error("gathering insert returned nothing");
     await logAction(tx, {
       action: "gathering.announce",
@@ -405,6 +427,7 @@ export async function announceGathering(
           : {}),
         lasts_minutes: input.lasts_minutes ?? OVER_MINUTES,
         ...(input.channel === undefined ? {} : { channel: input.channel }),
+        ...(brief === null ? {} : { brief_thread: brief }),
       },
     });
     // The meetings already within the window, made now, as the clock
@@ -451,13 +474,17 @@ async function publicChannel(tx: Tx, slug: string): Promise<string> {
 // the trigger; it answers in the check's own words, so a race tells a
 // prober nothing a made-up slug wouldn't.
 const channelRefused =
-  (slug: string | undefined) =>
+  (slug: string | undefined, brief: number | null = null) =>
   (e: unknown): never => {
     const code = (e as { code?: string }).code;
     if (slug !== undefined && code === "UPG03") throw noChannel(slug);
     if (slug !== undefined && code === "UPA01") throw archived(slug);
+    if (brief !== null && code === "UPG05") throw noBrief(brief);
     throw e;
   };
+
+const noBrief = (id: number) =>
+  new ApiError(404, "no_such_post", `There is no post ${id}.`);
 
 const noChannel = (slug: string) =>
   new ApiError(404, "no_such_channel", `There is no channel #${slug}.`);

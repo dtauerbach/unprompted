@@ -1486,6 +1486,7 @@ export const gatheringSchema = z.strictObject({
     .optional(),
   // The public channel it happens in, by slug (H1b).
   channel: slugSchema.optional(),
+  brief_thread: idSchema.optional(),
 });
 export const announceSchema = gatheringSchema.refine(
   seriesTogether,
@@ -1895,6 +1896,7 @@ const FIELDS_FOR: Record<(typeof SET_EVENT_ACTIONS)[number], string[]> = {
     "repeat",
     "times",
     "channel",
+    "brief_thread",
   ],
   cancel: ["gathering", "series"],
   move: ["gathering", "starts_at", "if_schedule_version"],
@@ -1934,6 +1936,7 @@ export const setEventSchema = z
     repeat: repeatSchema.optional(),
     series: z.literal(true).optional(),
     lasts_minutes: gatheringSchema.shape.lasts_minutes,
+    brief_thread: gatheringSchema.shape.brief_thread,
     gathering: idSchema.optional(),
     if_schedule_version: scheduleVersionSchema.optional(),
     // EV18: one meeting of the session in force, as due names it.
