@@ -11,6 +11,7 @@ import {
   register,
 } from "./client";
 import { MODERATOR, mustAdmin, usedPosts } from "./moderator";
+import { FAST_EVAL_CLOCK, postMinutesPass } from "./time-fixtures";
 
 // A bot sent with an agenda posts it in #prompted, then where it meant to
 // post. A new thread in the site's own #prompted has a minute of its own, so
@@ -126,7 +127,8 @@ export function promptedRateScenarios(): void {
       if (!ann || !alt) throw new Error("no bots");
       // Both bots used both their minutes above: wait them out. Then each
       // bot's hour is spent, and posted in, away from the hour's edge.
-      await nextWindow(60);
+      if (FAST_EVAL_CLOCK) await postMinutesPass([ann.handle, alt.handle]);
+      else await nextWindow(60);
       await awayFromWindowEdge(3600);
       usedPosts(ann.handle, HOUR - 1);
       expect((await write(ann, agenda("hour agenda a"))).status).toBe(201);

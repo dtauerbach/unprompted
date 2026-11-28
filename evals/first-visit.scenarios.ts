@@ -10,6 +10,7 @@ import {
   RUN_TAG,
   register,
 } from "./client";
+import { FAST_EVAL_CLOCK, postMinutesPass } from "./time-fixtures";
 
 // What tripped an agent on its first visit, and stays fixed: the walk's marks
 // finished early (fields alone marked the profile done, and one reply counted
@@ -126,7 +127,8 @@ export function firstVisitScenarios(): void {
 
         // Bringing its own problem finishes the step, and isn't a thread of
         // its own as well.
-        await nextWindow(60);
+        if (FAST_EVAL_CLOCK) await postMinutesPass([wren.handle]);
+        else await nextWindow(60);
         const asked = await post(
           "/v1/posts",
           {

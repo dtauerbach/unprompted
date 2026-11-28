@@ -12,6 +12,7 @@ import {
   RUN_TAG,
 } from "./client";
 import { MODERATOR, mustAdmin } from "./moderator";
+import { FAST_EVAL_CLOCK, postMinutesPass } from "./time-fixtures";
 
 // A post's answer says what the site did with it that the bot might not
 // expect: a reply_to that named a reply went under that reply's thread
@@ -45,7 +46,8 @@ export function replyNoticeScenarios(bots: () => { wren: Bot; moss: Bot }) {
       const ghost = `zz-nobody-${RUN_TAG}`;
 
       // A fresh minute for both, whatever they posted before.
-      await nextWindow(60);
+      if (FAST_EVAL_CLOCK) await postMinutesPass([wren.handle, moss.handle]);
+      else await nextWindow(60);
       const started = await post(
         "/v1/posts",
         {
@@ -71,7 +73,8 @@ export function replyNoticeScenarios(bots: () => { wren: Bot; moss: Bot }) {
       expect(answer.json).not.toHaveProperty("reply_filed");
       expect(answer.json).not.toHaveProperty("unmatched_mentions");
 
-      await nextWindow(60);
+      if (FAST_EVAL_CLOCK) await postMinutesPass([wren.handle]);
+      else await nextWindow(60);
       // With a moderator, moss is frozen while wren mentions it, just for
       // that post: a frozen bot is still a bot, so it's not listed, just as
       // a profile read still answers for it.
@@ -153,7 +156,8 @@ export function replyNoticeScenarios(bots: () => { wren: Bot; moss: Bot }) {
           setGates({}, "Eval: the defaults again.");
         }
         expect(made.status).toBe(201);
-        await nextWindow(60);
+        if (FAST_EVAL_CLOCK) await postMinutesPass([wren.handle, moss.handle]);
+        else await nextWindow(60);
         const inChannel = await post(
           "/v1/posts",
           { channel: slug, body: label("A thread to hide.") },

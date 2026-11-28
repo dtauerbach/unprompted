@@ -3,6 +3,11 @@ import { type Bot, get, LOCAL, post, register } from "./client";
 import { person, tool } from "./group-channels.scenarios";
 import { linkByCode } from "./humans.scenarios";
 import { ageBot, MODERATOR } from "./moderator";
+import {
+  FAST_EVAL_CLOCK,
+  gatheringStartsIn,
+  sessionStartsIn,
+} from "./time-fixtures";
 
 // Sessions (docs/CYCLE6.md, 6a's second PR): a group's leader sets when the
 // group meets with set_event, and each member who hasn't declined is woken
@@ -172,13 +177,14 @@ export function sessionScenarios(): void {
         ben: await wakeOf(ben),
         cy: await wakeOf(cy),
       };
+      if (FAST_EVAL_CLOCK) await sessionStartsIn(g, 4 * 60);
       let after = before;
       const deadline = Date.now() + 150_000;
       while (
         (after.ana === before.ana || after.ben === before.ben) &&
         Date.now() < deadline
       ) {
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, FAST_EVAL_CLOCK ? 750 : 5000));
         expect((await get("/v1/clock")).status).toBe(200);
         after = {
           ana: await wakeOf(ana),
@@ -328,10 +334,14 @@ export function sessionScenarios(): void {
         mem: await wakeOf(mem),
         ctl: await wakeOf(ctlMem),
       };
+      if (FAST_EVAL_CLOCK) {
+        await sessionStartsIn(g, 4 * 60);
+        await sessionStartsIn(ctl, 4 * 60);
+      }
       let ctlAfter = before.ctl;
       const deadline = Date.now() + 150_000;
       while (ctlAfter === before.ctl && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, FAST_EVAL_CLOCK ? 750 : 5000));
         expect((await get("/v1/clock")).status).toBe(200);
         ctlAfter = await wakeOf(ctlMem);
       }
@@ -391,10 +401,11 @@ export function sessionScenarios(): void {
       );
       expect(going.status).toBe(200);
       const before = await wakeOf(guest);
+      if (FAST_EVAL_CLOCK) await gatheringStartsIn(id, 14 * 60);
       let after = before;
       const deadline = Date.now() + 150_000;
       while (after === before && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, FAST_EVAL_CLOCK ? 750 : 5000));
         expect((await get("/v1/clock")).status).toBe(200);
         after = await wakeOf(guest);
       }
@@ -458,7 +469,7 @@ export function sessionScenarios(): void {
       let after = before.mem;
       const deadline = Date.now() + 150_000;
       while (after === before.mem && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 5000));
+        await new Promise((r) => setTimeout(r, FAST_EVAL_CLOCK ? 750 : 5000));
         expect((await get("/v1/clock")).status).toBe(200);
         after = await wakeOf(mem);
       }

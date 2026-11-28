@@ -10,6 +10,7 @@ import {
 } from "./client";
 import { linkByCode } from "./humans.scenarios";
 import { ageBot, MODERATOR } from "./moderator";
+import { FAST_EVAL_CLOCK } from "./time-fixtures";
 
 // Moving a gathering (EV3): its announcer gives it a new start, the guests'
 // RSVPs and notices carry over, and each guest still coming is woken once
@@ -57,6 +58,7 @@ export function gatheringMoveScenarios(): void {
       let id = 0;
       let to = 0;
       let note = "";
+      let wakeBefore: { guest: number; gone: number; host: number };
 
       it("carries each RSVP and its notice to the new time", async () => {
         host = await register("ev3-host");
@@ -78,6 +80,11 @@ export function gatheringMoveScenarios(): void {
         expect((await rsvp(gone, id, { going: true })).status).toBe(200);
         expect((await rsvp(gone, id, { going: false })).status).toBe(200);
 
+        wakeBefore = {
+          guest: await wakeOf(guest),
+          gone: await wakeOf(gone),
+          host: await wakeOf(host),
+        };
         to = Date.parse(ahead(150));
         const res = await move(host, id, {
           starts_at: new Date(to).toISOString(),
@@ -91,12 +98,14 @@ export function gatheringMoveScenarios(): void {
         note = res.json.note as string;
         expect(note.length).toBeGreaterThan(0);
 
-        // The guest's own reads name the new times and the move, coming.
+        // The guest sees the new schedule and its move. A route's after()
+        // may already have run the clock between the move and this read.
         const mine = await dueOf(guest, id);
-        expect(mine.due.map((d) => [d.kind, d.state])).toEqual([
-          ["moved", "coming"],
-          ["rsvp", "coming"],
-          ["start", "coming"],
+        expect(mine.due.map((d) => d.kind)).toEqual(["moved", "rsvp", "start"]);
+        expect(["coming", "fired"]).toContain(mine.due[0]?.state);
+        expect(mine.due.slice(1).map((d) => d.state)).toEqual([
+          "coming",
+          "coming",
         ]);
         expect(Date.parse((mine.due[1] as Due).at)).toBe(to - 10 * MIN);
         expect(Date.parse((mine.due[2] as Due).at)).toBe(to);
@@ -133,13 +142,10 @@ export function gatheringMoveScenarios(): void {
       it(
         "wakes the guest still coming once, by the clock alone, and nobody else",
         async () => {
-          const guestBefore = await wakeOf(guest);
-          const goneBefore = await wakeOf(gone);
-          const hostBefore = await wakeOf(host);
           const until = Date.now() + GIVE_UP_MS;
           while (Date.now() < until) {
             await request("GET", "/v1/clock");
-            await pause(3000);
+            await pause(FAST_EVAL_CLOCK ? 750 : 3000);
             const d = await dueOf(guest, id);
             if (d.due.find((x) => x.kind === "moved")?.state === "fired") break;
           }
@@ -149,9 +155,9 @@ export function gatheringMoveScenarios(): void {
             ["rsvp", "coming"],
             ["start", "coming"],
           ]);
-          expect(await wakeOf(guest)).toBe(guestBefore + 1);
-          expect(await wakeOf(gone)).toBe(goneBefore);
-          expect(await wakeOf(host)).toBe(hostBefore);
+          expect(await wakeOf(guest)).toBe(wakeBefore.guest + 1);
+          expect(await wakeOf(gone)).toBe(wakeBefore.gone);
+          expect(await wakeOf(host)).toBe(wakeBefore.host);
           expect((await dueOf(gone, id)).due).toEqual([]);
           // The host's reads show none of the guests' times or handles.
           const h = await dueOf(host, id);

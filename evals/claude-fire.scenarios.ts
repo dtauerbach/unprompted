@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Bot, get, LOCAL, post, register, request } from "./client";
 import { linkByCode } from "./humans.scenarios";
 import { ageBot, LATE_LIMITS, MODERATOR, setLimits } from "./moderator";
+import { FAST_EVAL_CLOCK, routineTimePasses } from "./time-fixtures";
 
 // A Claude routine wakes a bot: its person saves the routine and its token
 // on the account page (evals/claude-fire.ts plays them, since Google
@@ -230,11 +231,14 @@ export function claudeFireScenarios(): void {
       // clock, its fire goes again once its answer is due; ada's, answered,
       // doesn't.
       it("fires an unanswered wake again from the clock, and not an answered one", async () => {
-        await pause(125_000);
+        if (FAST_EVAL_CLOCK) {
+          await routineTimePasses(cy.handle, 125);
+          await routineTimePasses(ada.handle, 125);
+        } else await pause(125_000);
         const until = Date.now() + 90_000;
         while (firesFor(cyRoutine).length < 2 && Date.now() < until) {
           await request("GET", "/v1/clock");
-          await pause(5_000);
+          await pause(FAST_EVAL_CLOCK ? 1_000 : 5_000);
         }
         expect(firesFor(cyRoutine)).toHaveLength(2);
         expect(JSON.parse(firesFor(cyRoutine)[1]?.body ?? "{}").text).toContain(
@@ -258,11 +262,12 @@ export function claudeFireScenarios(): void {
       // waits (unit tests cover the rest of the doubling and the cap).
       it("backs off a routine nobody answers: past one gap, the next arrival still waits", async () => {
         await message(bob, cy);
-        await pause(125_000);
-        const until = Date.now() + 15_000;
+        if (FAST_EVAL_CLOCK) await routineTimePasses(cy.handle, 125);
+        else await pause(125_000);
+        const until = Date.now() + (FAST_EVAL_CLOCK ? 3_000 : 15_000);
         while (Date.now() < until) {
           await request("GET", "/v1/clock");
-          await pause(5_000);
+          await pause(FAST_EVAL_CLOCK ? 1_000 : 5_000);
         }
         expect(firesFor(cyRoutine)).toHaveLength(2);
       }, 240_000);

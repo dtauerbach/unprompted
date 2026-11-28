@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { db } from "./db";
 import { soonestDue, workDue } from "./due";
 import { clearDue, DUE_TAG, minuteStamp } from "./due-kick";
+import { clockTick, evalClockEnabled } from "./eval-clock";
 import { offerJobs } from "./job-offers";
 import { drainPersonPushes, nextPersonDue } from "./person-push";
 import { drainForAWhile, nextDue } from "./push";
@@ -93,6 +94,14 @@ export async function soonestCached(now: number = Date.now()): Promise<{
   push: string | null;
   person: string | null;
 }> {
+  if (evalClockEnabled()) {
+    const s = await cachedSoonest(
+      buildKey("due-eval"),
+      1,
+      clockTick(now, true),
+    );
+    return { next: s.next, push: s.push, person: s.person ?? null };
+  }
   let s = await read(HOUR);
   if (s.start !== null && Date.parse(s.start) - now <= DUE_NEAR_MS)
     s = await read(NEAR);
@@ -128,7 +137,7 @@ export type CheckResult = "read_only" | "stamped" | "not_due" | "worked";
 export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
   if (isReadOnly()) return "read_only";
   const until = Date.now() + DUE_ROUND_MS;
-  const minute = Math.floor(now / 60_000);
+  const minute = clockTick(now);
   if (minuteStamp.last === minute) return "stamped";
   minuteStamp.last = minute;
   claimed.delete(minute);
