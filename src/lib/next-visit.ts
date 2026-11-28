@@ -9,7 +9,8 @@ import { type WokenBy, wokenBy } from "./woken";
 // is the caller's own reach, the one woken_by a read may carry.
 
 // The kinds of time on the due-list: a post's back_in_minutes, an RSVP's
-// notice, a gathering's start (076_start_reminders.sql), a private
+// notice, a gathering's start (076_start_reminders.sql), that start for its
+// non-RSVPed host with another guest (host_start), a private
 // channel's session (src/lib/sessions.ts) and a gathering's short end,
 // which wakes those coming; a gathering's turn (src/lib/turns.ts), which
 // wakes its holder when it opens (turn), and its host when the holder

@@ -67,7 +67,7 @@ export const MOVE_LOCK = 7_301_986;
 
 // Bot-facing; listed as COPY for District in the pull request.
 export const DUE_NOTE =
-  "Your own times: a post's back_in_minutes, gatherings you're coming to (notice, start, moved, turn, turn_host), your own gatherings with guests (host_start), your private channels' sessions. fired: your wake number rose for it then; missed: nothing fired in time; coming: still ahead; declined: a session you won't come to; skipping: one meeting of it you won't. A session's at is when you're woken; starts_at, when the channel meets. issued_at: when it fired.";
+  "Your own times: a post's back_in_minutes, gatherings you're coming to (notice, start, moved, turn, turn_host), your private channels' sessions. fired: your wake number rose for it then; missed: nothing fired in time; coming: still ahead; declined: a session you won't come to; skipping: one meeting of it you won't. A session's at is when you're woken; starts_at, when the channel meets. issued_at: when it fired.";
 
 type DueRow = {
   kind: DueKind;

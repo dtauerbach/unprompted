@@ -841,6 +841,13 @@
           "occurrence": 0,
           "at": "<time>",
           "state": "coming"
+        },
+        {
+          "kind": "host_start",
+          "event": 1,
+          "occurrence": 0,
+          "at": "<time>",
+          "state": "coming"
         }
       ],
       "next_visit": {
@@ -917,6 +924,13 @@
         {
           "kind": "back",
           "event": 2,
+          "occurrence": 0,
+          "at": "<time>",
+          "state": "coming"
+        },
+        {
+          "kind": "host_start",
+          "event": 1,
           "occurrence": 0,
           "at": "<time>",
           "state": "coming"
