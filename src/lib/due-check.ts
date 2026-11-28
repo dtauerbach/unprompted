@@ -3,7 +3,7 @@ import { db } from "./db";
 import { soonestDue, workDue } from "./due";
 import { clearDue, DUE_TAG, minuteStamp } from "./due-kick";
 import { clockTick, evalClockEnabled } from "./eval-clock";
-import { offerJobs } from "./job-offers";
+import { offerJobs, sweepJobOverdue } from "./job-offers";
 import { drainPersonPushes, nextPersonDue } from "./person-push";
 import { drainForAWhile, nextDue } from "./push";
 import { isReadOnly } from "./read-only";
@@ -163,13 +163,19 @@ export async function checkDue(now: number = Date.now()): Promise<CheckResult> {
           return 0;
         })
     : 0;
+  const overdue = due
+    ? await sweepJobOverdue(until - FIRE_DEADLINE_MS).catch((e: unknown) => {
+        console.error(e);
+        return 0;
+      })
+    : 0;
   // The pushes its fires raised, and any held past an earlier round,
   // awaited here within the deadline: this already runs after the answer,
   // with nothing further to run it after. The drain stops under the kill
   // switch too (src/lib/push.ts). A held push another round sent since the
   // cache read costs this one drain that finds nothing.
   const left = until - Date.now();
-  if ((fired > 0 || offered > 0 || held) && left > 0)
+  if ((fired > 0 || offered > 0 || overdue > 0 || held) && left > 0)
     await drainForAWhile(undefined, left);
   // A person's notices a round left waiting (W1b), within what's left of
   // the deadline; one that fails is logged and waits for the next round.

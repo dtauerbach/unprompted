@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as blockRoute } from "@/app/v1/bots/[handle]/block/route";
 import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
@@ -7,7 +7,11 @@ import { POST as inviteRoute } from "@/app/v1/private-channels/[id]/invites/rout
 import { POST as moveRoute } from "@/app/v1/private-channels/[id]/jobs/[number]/moves/route";
 import { setFrozen, setPrivateChannelHidden, setSilenced } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { checkDue, forgetDueMinute } from "@/lib/due-check";
+import { offerJobs, sweepJobOverdue } from "@/lib/job-offers";
+import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import { call, register, resetDb } from "./helpers";
+import { resetNextCache } from "./next-cache";
 
 beforeEach(resetDb);
 
@@ -45,11 +49,24 @@ async function fixture(due: number | null = 10) {
     ).toBe(200);
   }
   // D1 adds the SQL field only. The posting interface is a separate job.
-  const insertJob = async (minutes: number | null, number = 1) => {
+  const insertJob = async (
+    minutes: number | null,
+    number = 1,
+    eligible?: Bot[],
+  ) => {
+    const list = eligible
+      ? await Promise.all(
+          eligible.map(async (who) => {
+            const member = await botId(who);
+            if (!member) throw new Error("missing eligible member");
+            return member;
+          }),
+        )
+      : null;
     const [job] = await db()<{ id: string }[]>`
     INSERT INTO channel_jobs
-      (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, due_minutes)
-    SELECT ${id}, ${number}, 'Write a brief', 'One page', 'One page', 120, b.id, k.id, ${minutes}
+      (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, due_minutes, eligible)
+    SELECT ${id}, ${number}, 'Write a brief', 'One page', 'One page', 120, b.id, k.id, ${minutes}, ${list}::bigint[]
     FROM bots b JOIN api_keys k ON k.bot_id = b.id AND k.revoked_at IS NULL
     WHERE b.handle = 'lea' RETURNING id`;
     if (!job) throw new Error("job not inserted");
@@ -401,7 +418,7 @@ describe("job overdue ladder", () => {
     expect(await wake(f.other)).toBe(before + 1);
   });
 
-  it("wakes the asker first and then the lead when an ask is awaiting review", async () => {
+  it("wakes the asker first, then the lead even when not a named taker", async () => {
     const f = await fixture(null);
     const ask = await timedAsk(f);
     const params = { id: f.id, number: "2" };
@@ -441,6 +458,50 @@ describe("job overdue ladder", () => {
     ]);
   });
 
+  it("excludes the newest offer but not an earlier offer in the episode", async () => {
+    const f = await fixture(null);
+    const named = await f.insertJob(10, 2, [f.holder, f.other]);
+    await age(named, 26);
+    await offerJobs({ channel: Number(f.id) });
+    await db().begin(async (tx) => {
+      await tx`ALTER TABLE job_offers DISABLE TRIGGER job_offers_append_only`;
+      await tx`UPDATE job_offers SET created_at = created_at - interval '16 minutes'
+               WHERE job_id = ${named}`;
+      await tx`ALTER TABLE job_offers ENABLE TRIGGER job_offers_append_only`;
+    });
+    await offerJobs({ channel: Number(f.id) });
+    const offered = await db()`
+      SELECT bot_id FROM job_offers WHERE job_id = ${named} ORDER BY id`;
+    expect(offered).toEqual([
+      { bot_id: await botId(f.holder) },
+      { bot_id: await botId(f.other) },
+    ]);
+    expect(await make(named, 1)).toHaveLength(1);
+    await ageRung(named, 1);
+    expect(await make(named, 2)).toEqual([
+      { rung: 2, bot_id: await botId(f.holder), woken: true },
+    ]);
+  });
+
+  it.each([
+    false,
+    true,
+  ])("uses the named fallback only without a standing offer (%s)", async (offered) => {
+    const f = await fixture(null);
+    const named = await f.insertJob(10, 2, [f.other]);
+    if (offered) await offerJobs({ channel: Number(f.id) });
+    await age(named, 26);
+    expect(await make(named, 1)).toHaveLength(1);
+    await ageRung(named, 1);
+    expect(await make(named, 2)).toEqual([
+      {
+        rung: 2,
+        bot_id: offered ? null : await botId(f.other),
+        woken: !offered,
+      },
+    ]);
+  });
+
   it("leaves an existing job with no due time out of the dispatch scan", async () => {
     const f = await fixture(null);
     await f.claim();
@@ -449,5 +510,138 @@ describe("job overdue ladder", () => {
       await db()`
       SELECT job_id FROM job_overdue_due(clock_timestamp(), ${f.id})`,
     ).toEqual([]);
+  });
+});
+
+// Keep the real clock path under test while simulating a new minute/cache
+// boundary between checks, without sleeping or invoking a real push.
+async function clockRound() {
+  resetNextCache();
+  forgetDueMinute();
+  return checkDue();
+}
+
+describe("the clock dispatches bot-only overdue rungs", () => {
+  it("alerts once when every due rung fails, without writing a rung", async () => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 11);
+    await db().begin(async (tx) => {
+      await tx`CREATE FUNCTION fail_overdue_fixture() RETURNS trigger
+        LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture write failed'; END; $$`;
+      await tx`CREATE TRIGGER fail_overdue_fixture BEFORE INSERT ON job_overdue
+        FOR EACH ROW EXECUTE FUNCTION fail_overdue_fixture()`;
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (let n = 0; n < 2; n += 1)
+        expect(await sweepJobOverdue(Date.now() + 10_000)).toBe(0);
+      expect(await rows(f.job)).toEqual([]);
+      const alerts = await db()`
+        SELECT detail FROM action_log WHERE action = 'alert.job_offers_failed'`;
+      expect(alerts).toEqual([{ detail: { jobs: 1 } }]);
+    } finally {
+      errors.mockRestore();
+      await db().begin(async (tx) => {
+        await tx`DROP TRIGGER fail_overdue_fixture ON job_overdue`;
+        await tx`DROP FUNCTION fail_overdue_fixture()`;
+      });
+    }
+  });
+
+  it("leaves a future deadline alone, then wakes the holder and fallback once", async () => {
+    const f = await fixture();
+    await f.claim();
+    const holderBefore = await wake(f.holder);
+    const leadBefore = await wake(f.leader);
+    await clockRound();
+    expect(await rows(f.job)).toEqual([]);
+
+    await age(f.job, 26);
+    await clockRound();
+    await clockRound();
+    expect(await rows(f.job)).toEqual([
+      { rung: 1, bot_id: await botId(f.holder), woken: true },
+    ]);
+    expect(await wake(f.holder)).toBe(holderBefore + 1);
+    expect(await wake(f.leader)).toBe(leadBefore);
+
+    await ageRung(f.job, 1);
+    await clockRound();
+    await clockRound();
+    expect(await rows(f.job)).toEqual([
+      { rung: 1, bot_id: await botId(f.holder), woken: true },
+      { rung: 2, bot_id: await botId(f.leader), woken: true },
+    ]);
+    expect(await wake(f.holder)).toBe(holderBefore + 1);
+    expect(await wake(f.leader)).toBe(leadBefore + 1);
+  });
+
+  it("does not keep the clock due or consume a matured third rung", async () => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 41);
+    expect(await make(f.job, 1)).toHaveLength(1);
+    await ageRung(f.job, 1);
+    expect(await make(f.job, 2)).toHaveLength(1);
+    await ageRung(f.job, 2);
+    expect(await clockRound()).toBe("not_due");
+    expect((await rows(f.job)).map((x) => x.rung)).toEqual([1, 2]);
+  });
+  it("leaves a capped wake pending and charges exactly one use on retry", async () => {
+    const f = await fixture();
+    await f.claim();
+    await age(f.job, 11);
+    const before = await wake(f.holder);
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES ('channel-wake:all', date_trunc('hour', now()),
+              ${ANTI_ABUSE_DEFAULTS.channel_wake_global})
+      ON CONFLICT (bucket, window_start) DO UPDATE SET count = EXCLUDED.count`;
+    await clockRound();
+    expect(await rows(f.job)).toEqual([]);
+    expect(await wake(f.holder)).toBe(before);
+
+    await db()`DELETE FROM rate_limits WHERE bucket = 'channel-wake:all'`;
+    await clockRound();
+    await clockRound();
+    expect(await rows(f.job)).toHaveLength(1);
+    expect(await wake(f.holder)).toBe(before + 1);
+    const [used] = await db()<{ count: number }[]>`
+      SELECT count FROM rate_limits WHERE bucket = 'channel-wake:all'`;
+    expect(used?.count).toBe(1);
+    const [logged] = await db()`
+      SELECT bot_id, detail FROM action_log WHERE action = 'channel.job.overdue'`;
+    expect(logged).toMatchObject({
+      bot_id: await botId(f.holder),
+      detail: { number: 1, rung: 1, woken: true },
+    });
+  });
+  it("records a no-wake rung at cap without charging or waking a silenced holder", async () => {
+    const f = await fixture();
+    await f.claim();
+    await setSilenced(db(), f.holder.handle, 2, "test");
+    await age(f.job, 11);
+    const before = await wake(f.holder);
+    const cap = ANTI_ABUSE_DEFAULTS.channel_wake_global;
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES ('channel-wake:all', date_trunc('hour', now()), ${cap})
+      ON CONFLICT (bucket, window_start) DO UPDATE SET count = EXCLUDED.count`;
+    await clockRound();
+    expect(await rows(f.job)).toEqual([
+      { rung: 1, bot_id: null, woken: false },
+    ]);
+    expect(await wake(f.holder)).toBe(before);
+    const [used] = await db()<{ count: number }[]>`
+      SELECT count FROM rate_limits WHERE bucket = 'channel-wake:all'
+        AND window_start = date_trunc('hour', now())`;
+    expect(used?.count).toBe(cap);
+    const [logged] = await db()`
+      SELECT bot_id, detail FROM action_log WHERE action = 'channel.job.overdue'`;
+    expect(logged).toMatchObject({
+      bot_id: null,
+      detail: { number: 1, rung: 1, woken: false },
+    });
   });
 });
