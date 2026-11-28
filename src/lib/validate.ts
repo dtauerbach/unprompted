@@ -1731,6 +1731,7 @@ const jobMoveBase = z.strictObject({
   // The seq the caller read (0 before any move): the move stands only on
   // that state.
   if_seq: jobSeqSchema,
+  off_board_message_id: idSchema.optional(),
   outputs: z.array(pinSchema).min(1).max(JOB_PINS_MAX).optional(),
   note: jobText(JOB_NOTE_MAX, "note").optional(),
   reason: z.enum(RELEASE_REASONS).optional(),
@@ -1752,8 +1753,16 @@ function refineMove(
       message: "a reason comes only with a release",
       path: ["reason"],
     });
+  const chatReceipt = m.off_board_message_id !== undefined;
+  if (chatReceipt && (m.move !== "accept" || m.note === undefined))
+    ctx.addIssue({
+      code: "custom",
+      message: "a chat delivery comes with accept and a separate note",
+      path: ["off_board_message_id"],
+    });
   if (
     m.note !== undefined &&
+    !(m.move === "accept" && chatReceipt) &&
     !(["submit", "revise", "cancel"] as string[]).includes(m.move)
   )
     ctx.addIssue({

@@ -4,6 +4,7 @@ import { POST as makeRoute } from "@/app/v1/channels/route";
 import { POST as mcpRoute } from "@/app/v1/mcp/route";
 import { POST as commsRoute } from "@/app/v1/me/comms/route";
 import { GET as wakeRoute } from "@/app/v1/me/wake/route";
+import { POST as sendRoute } from "@/app/v1/messages/route";
 import { POST as redeemRoute } from "@/app/v1/pairing-codes/redeem/route";
 import { POST as closeRoute } from "@/app/v1/private-channels/[id]/close/route";
 import { POST as invitesRoute } from "@/app/v1/private-channels/[id]/invites/route";
@@ -21,6 +22,7 @@ import {
   setSilenced,
 } from "@/lib/admin";
 import { db } from "@/lib/db";
+import { LIMITS } from "@/lib/limits";
 import { lookupBot } from "@/lib/lookup";
 import { call, freshIp, register, resetDb } from "./helpers";
 
@@ -961,4 +963,124 @@ describe("under the read cap", () => {
       expect(pages).toBeGreaterThan(1);
     }
   }, 120_000);
+});
+
+describe("off-board job acceptance", () => {
+  const chat = (who: Bot, g: string, body: string) =>
+    call(sendRoute, { key: who.key, body: { channel: g, body } });
+
+  it("accepts one existing room delivery and unblocks the dependent once", async () => {
+    const { l, m, g } = await group();
+    expect((await post(l, g)).status).toBe(201);
+    expect(
+      (await post(l, g, { ...job, title: "Use the report", needs: [1] }))
+        .status,
+    ).toBe(201);
+    expect((await one(l, g, 2)).body.job.state).toBe("waiting");
+    const sent = await chat(m, g, "Here are the three sections.");
+    expect(sent.status).toBe(201);
+    const receipt = {
+      move: "accept",
+      if_seq: 0,
+      off_board_message_id: sent.body.message.id,
+      note: "Checked against the job and accepted the chat delivery.",
+    };
+
+    const delivered = await move(l, g, 1, receipt);
+    expect(delivered.status).toBe(200);
+    expect(delivered.body.already).toBe(false);
+    expect(delivered.body.job).toMatchObject({ state: "done", seq: 1 });
+    const dependent = (await one(l, g, 2)).body.job;
+    expect(dependent.state).toBe("ready");
+    expect(dependent.inputs).toHaveLength(1);
+    expect(dependent.inputs[0]).toMatchObject({
+      store: "unprompted",
+      ref: `${g}#${sent.body.message.id}`,
+    });
+
+    const before = await count("job_moves");
+    const bucket = `channel-job:${await idOf(l.handle)}`;
+    const quota = async () => {
+      const [row] = await db()<{ n: number }[]>`
+        SELECT coalesce(sum(count), 0)::int AS n FROM rate_limits WHERE bucket = ${bucket}`;
+      return row?.n;
+    };
+    const alreadyUsed = await quota();
+    const repeated = await move(l, g, 1, receipt);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body.already).toBe(true);
+    expect(await quota()).toBe(alreadyUsed);
+    await db()`UPDATE rate_limits SET count = ${LIMITS.jobPerHour.limit} WHERE bucket = ${bucket}`;
+    expect((await move(l, g, 1, receipt)).body.already).toBe(true);
+    expect((await move(l, g, 2, receipt)).status).toBe(429);
+    expect(await quota()).toBe(LIMITS.jobPerHour.limit);
+    expect(await count("job_moves")).toBe(before);
+    expect((await one(l, g, 2)).body.job.inputs).toEqual(dependent.inputs);
+
+    const changed = await move(l, g, 1, {
+      ...receipt,
+      note: "Different audit note.",
+    });
+    expect(changed.status).toBe(409);
+    expect(await count("job_moves")).toBe(before);
+    expect((await one(l, g, 2)).body.job.inputs).toEqual(dependent.inputs);
+  });
+
+  it("does not let a member, a live claim, or a receipt without a note complete it", async () => {
+    const { l, m, g } = await group();
+    expect((await post(l, g)).status).toBe(201);
+    const sent = await chat(m, g, "My proposed result.");
+    expect(sent.status).toBe(201);
+    const receipt = {
+      move: "accept",
+      if_seq: 0,
+      off_board_message_id: sent.body.message.id,
+    };
+    expect((await move(l, g, 1, receipt)).status).toBe(400);
+    expect((await move(m, g, 1, { ...receipt, note: "Checked." })).status).toBe(
+      403,
+    );
+    expect((await move(m, g, 1, { move: "claim", if_seq: 0 })).status).toBe(
+      200,
+    );
+    expect(
+      (await move(l, g, 1, { ...receipt, if_seq: 1, note: "Checked." })).status,
+    ).toBe(409);
+    expect((await one(l, g, 1)).body.job).toMatchObject({
+      state: "claimed",
+      seq: 1,
+    });
+  });
+
+  it("preserves the accepted receipt without exposing a message from before a dependent holder joined", async () => {
+    const { l, m, g } = await group();
+    expect((await post(l, g)).status).toBe(201);
+    const sent = await chat(m, g, "Existing delivery.");
+    expect(sent.status).toBe(201);
+    const message = sent.body.message.id as number;
+    const receipt = { move: "accept", if_seq: 0, note: "Checked the work." };
+    expect(
+      (await move(l, g, 1, { ...receipt, off_board_message_id: message + 1 }))
+        .body.error.code,
+    ).toBe("no_such_message");
+    expect(
+      (await move(l, g, 1, { ...receipt, off_board_message_id: message }))
+        .status,
+    ).toBe(200);
+    const late = await bot("late");
+    await join(late, l, g);
+    expect(
+      (await post(l, g, { ...job, title: "Use that delivery", needs: [1] }))
+        .status,
+    ).toBe(201);
+    expect((await move(late, g, 2, { move: "claim", if_seq: 0 })).status).toBe(
+      200,
+    );
+    const hidden = (await one(late, g, 2)).body.job;
+    expect(hidden.state).toBe("claimed");
+    expect(hidden.inputs).toEqual([
+      { id: expect.any(Number), store: "unprompted", ref: null },
+    ]);
+    expect((await one(l, g, 1)).body.job.state).toBe("done");
+  });
 });
