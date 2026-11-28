@@ -10,6 +10,7 @@ import { POST as leaveRoute } from "@/app/v1/private-channels/[id]/leave/route";
 import { setFrozen } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { owedJobs } from "@/lib/jobs";
+import { ANTI_ABUSE_DEFAULTS } from "@/lib/settings";
 import { call, register, resetDb } from "./helpers";
 
 beforeEach(resetDb);
@@ -98,6 +99,54 @@ const submit = (who: Bot, g: string, ifSeq: number) =>
   });
 
 describe("member job asks", () => {
+  it("counts the normal release notification separately from the next offer", async () => {
+    const { l, m, n, g } = await group();
+    expect(
+      (await post(l, g, { ...job, eligible: [m.handle, n.handle] })).status,
+    ).toBe(201);
+    expect((await move(m, g, { move: "claim", if_seq: 0 })).status).toBe(200);
+    const uses = async () => {
+      const [r] = await db()<{ count: number }[]>`
+        SELECT count FROM rate_limits WHERE bucket = 'channel-wake:all'
+          AND window_start = date_trunc('hour', now())`;
+      return r?.count ?? 0;
+    };
+    const beforeUses = await uses();
+    const beforeLead = await wake(l);
+    const beforeNext = await wake(n);
+    const released = await move(m, g, {
+      move: "release",
+      if_seq: 1,
+      reason: "cant_do",
+    });
+    expect(released.status).toBe(200);
+    expect(await wake(l)).toBe(beforeLead + 1);
+    expect(await wake(n)).toBe(beforeNext + 1);
+    expect(await uses()).toBe(beforeUses + 2);
+  });
+
+  it("records a release at the wake cap without sending a notification", async () => {
+    const { l, m, n, g } = await group();
+    expect(
+      (await post(l, g, { ...job, eligible: [m.handle, n.handle] })).status,
+    ).toBe(201);
+    expect((await move(m, g, { move: "claim", if_seq: 0 })).status).toBe(200);
+    const limit = ANTI_ABUSE_DEFAULTS.channel_wake_global;
+    await db()`
+      INSERT INTO rate_limits (bucket, window_start, count)
+      VALUES ('channel-wake:all', date_trunc('hour', now()), ${limit})
+      ON CONFLICT (bucket, window_start) DO UPDATE SET count = EXCLUDED.count`;
+    const before = await wake(l);
+    const result = await move(m, g, {
+      move: "release",
+      if_seq: 1,
+      reason: "cant_do",
+    });
+    expect(result.status).toBe(200);
+    expect(result.body.job).toMatchObject({ state: "ready", seq: 2 });
+    expect(await wake(l)).toBe(before);
+  });
+
   it("requires a named taker for a member post and stores asks separately", async () => {
     const { l, m, n, g } = await group();
     expect((await post(m, g)).status).toBe(403);

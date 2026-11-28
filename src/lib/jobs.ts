@@ -5,7 +5,14 @@ import { db, type Tx } from "./db";
 import { assertAllowed } from "./gates";
 import { ApiError } from "./http";
 import { afterJobWrite } from "./job-offers";
-import { channelWakeRules, consume, jobRules, reportRules } from "./limits";
+import {
+  addUses,
+  channelWakeRules,
+  consume,
+  jobRules,
+  reportRules,
+  usesLeft,
+} from "./limits";
 import { logAction } from "./log";
 import {
   channelClosed,
@@ -1014,18 +1021,16 @@ export async function moveJob(
           quota = error;
         }
       }
-      // The bot it wakes, if any, against the site-wide cap.
-      const wakes =
-        kind === "submit" ||
-        ((kind === "accept" || kind === "revise" || kind === "cancel") &&
-          delivery === undefined &&
-          before.holder !== null &&
-          Number(before.holder) !== me)
-          ? 1
-          : 0;
-      if (wakes > 0)
-        await consume(tx, channelWakeRules(await antiAbuse(tx)), wakes);
     }
+    // Lock the wake budget before the group. Only a fresh move that really
+    // wakes a recipient uses it. A release still records when it is full.
+    const wakeRules =
+      kind !== "claim" && kind !== "cant_read" && delivery === undefined
+        ? channelWakeRules(await antiAbuse(tx))
+        : [];
+    let canWake = true;
+    for (const rule of wakeRules)
+      if ((await usesLeft(tx, rule)) < 1) canWake = false;
     await shareBots(tx, [me]);
     await tx`SELECT lock_private_channel(${id})`;
     const still = await findChannel(tx, me, id);
@@ -1164,6 +1169,17 @@ export async function moveJob(
               ${input.reason ?? null}, ${input.note ?? null}, ${delivery ?? null})`;
       if (kind === "submit")
         await insertPins(tx, jobId, seq, input.outputs ?? [], me);
+    }
+    if (wakeRules.length > 0) {
+      const [notify] = await tx<{ sent: boolean | null }[]>`
+        SELECT job_move_notify(${jobId}, ${seq}, ${canWake}) AS sent`;
+      if (notify?.sent === true) {
+        for (const rule of wakeRules) await addUses(tx, rule, 1);
+      } else if (notify?.sent === false && kind !== "release") {
+        // Retain the cap refusal for a non-release move that would wake.
+        // Its move and pins roll back with the transaction.
+        await consume(tx, wakeRules);
+      }
     }
     // Never a note or a pin: who moved which job, and how.
     await logAction(tx, {
