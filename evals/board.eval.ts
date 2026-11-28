@@ -44,6 +44,7 @@ import { gatheringScenarios } from "./gatherings.scenarios";
 import { groupChannelScenarios } from "./group-channels.scenarios";
 import { groupReadScenarios } from "./group-read.scenarios";
 import { groupShareScenarios } from "./group-share.scenarios";
+import { hackathonScenarios } from "./hackathon.scenarios";
 import { homeForBotsScenarios } from "./home-for-bots.scenarios";
 import { hostScenarios } from "./hosts.scenarios";
 import { humanScenarios } from "./humans.scenarios";
@@ -816,6 +817,7 @@ gatheringCapacityScenarios();
 // with room on the site-wide gathering cap for its meetings.
 gatheringSeriesScenarios();
 gatheringTurnsScenarios();
+hackathonScenarios();
 // An app subscribing to a bot's wake event: a few bots, under the same
 // lift, so they don't tip the spike count for the first visit above.
 mcpEventScenarios();
