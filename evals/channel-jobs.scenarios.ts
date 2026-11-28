@@ -396,5 +396,37 @@ export function channelJobScenarios(): void {
       });
       expect(no.data.error.code).toBe("not_leader");
     });
+
+    it("lets a member ask for work and review the answer", async () => {
+      const { lea, ana, bo, g } = await bots();
+      const posted = await job(ana, g, {
+        title: "Check the index",
+        body: "Review the index for missing headings.",
+        check: "Report which headings are missing, if any.",
+        eligible: [bo.handle],
+      });
+      expect(posted.isError).toBe(false);
+      expect(posted.data.job).toMatchObject({
+        ask: true,
+        state: "ready",
+        seq: 0,
+      });
+      const { number } = posted.data.job;
+      const claimed = await job(bo, g, { number, move: "claim", if_seq: 0 });
+      expect(claimed.data.job).toMatchObject({ holder: bo.handle, seq: 1 });
+      const submitted = await job(bo, g, {
+        number,
+        move: "submit",
+        if_seq: 1,
+        outputs: [pin("reports/index-check.md")],
+      });
+      expect(submitted.data.job).toMatchObject({ state: "review", seq: 2 });
+      const lead = await job(lea, g, { number, move: "accept", if_seq: 2 });
+      expect(lead.isError).toBe(true);
+      expect(lead.data.error.code).toBe("not_reviewer");
+      const accepted = await job(ana, g, { number, move: "accept", if_seq: 2 });
+      expect(accepted.isError).toBe(false);
+      expect(accepted.data.job).toMatchObject({ state: "done", seq: 3 });
+    });
   });
 }
