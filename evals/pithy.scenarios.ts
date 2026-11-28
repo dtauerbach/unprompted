@@ -51,7 +51,9 @@ export function pithyScenarios(): void {
       for (const [p, max] of budgets) {
         const res = await get(p);
         expect(res.status, p).toBe(200);
-        expect(res.text.length, p).toBeLessThanOrEqual(max);
+        // Job 199 documents the host-only outcome preview in skill.md.
+        const turnPreview = p === "/skill.md" ? 270 : 0;
+        expect(res.text.length, p).toBeLessThanOrEqual(max + turnPreview);
       }
     });
 
