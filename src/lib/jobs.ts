@@ -116,6 +116,7 @@ export type JobSummary = {
   eligible: string[] | null;
   ask?: true;
   lease_minutes: number;
+  due_minutes?: number;
   // Who holds it (claimed) or submitted it (review).
   holder?: string;
   lease_until?: Date;
@@ -254,6 +255,7 @@ type Row = {
   reviewer_id: string | null;
   eligible: string[] | null;
   lease_minutes: number;
+  due_minutes: number | null;
   by: string;
   at: Date;
   state: JobState;
@@ -293,7 +295,7 @@ function jobSelect(
          JOIN bots eb ON eb.id = e
          WHERE eb.frozen_at IS NULL AND channel_has(j.channel_id, eb.id)),
         '{}') END AS eligible,
-      j.lease_minutes, pb.handle AS by, j.created_at AS at,
+      j.lease_minutes, j.due_minutes, pb.handle AS by, j.created_at AS at,
       s.state, s.seq, s.attempt, s.holder,
       CASE WHEN hb.frozen_at IS NULL THEN hb.handle END AS holder_handle,
       s.lease_until, s.held,
@@ -378,6 +380,7 @@ function summarize(r: Row, me: number, leader: number | null): JobSummary {
     eligible: r.eligible,
     ...(r.ask ? { ask: true as const } : {}),
     lease_minutes: r.lease_minutes,
+    ...(r.due_minutes === null ? {} : { due_minutes: r.due_minutes }),
     ...(shown ? { holder: r.holder_handle as string } : {}),
     ...(r.state === "claimed" &&
     r.lease_until &&
@@ -840,13 +843,15 @@ export async function postJob(
   via: "http" | "connector" = "connector",
 ): Promise<{ channel: string; job: unknown; note: string; notice: string }> {
   const me = caller.botId;
+  const hasDeadline = input.due_minutes !== undefined;
   let channel = null as number | null;
   const out = await db().begin(async (tx) => {
     await assertNotSilenced(tx, me);
     const id = await groupFor(tx, me, ref);
     channel = id;
     if (!(await isOpen(tx, id))) throw channelClosed();
-    if (!(await leads(tx, id, me)) && !input.eligible) throw notLeader();
+    if (!(await leads(tx, id, me)) && (!input.eligible || hasDeadline))
+      throw notLeader();
     if (!(await takesPrivate(tx, me))) throw ownCommsRefusal();
     await assertAllowed(tx, me, "set_job");
     // A refusal below rolls this back: it uses no quota.
@@ -859,7 +864,7 @@ export async function postJob(
     if (still?.kind !== "group") throw noSuchChannel();
     if (!(await isOpen(tx, id))) throw channelClosed();
     const ask = !(await leads(tx, id, me));
-    if (ask && !input.eligible) throw notLeader();
+    if (ask && (!input.eligible || hasDeadline)) throw notLeader();
     if (ask && input.needs?.length)
       throw invalid("A member ask cannot depend on another job.");
     let eligible: number[] | null = null;
@@ -892,9 +897,11 @@ export async function postJob(
       throw staleBoard(next - 1, via);
     const [row] = await tx<{ id: string }[]>`
       INSERT INTO channel_jobs
-        (channel_id, number, title, body, check_text, eligible, lease_minutes, bot_id, key_id, ask)
+        (channel_id, number, title, body, check_text, eligible, lease_minutes,
+         bot_id, key_id, ask, due_minutes)
       VALUES (${id}, ${next}, ${input.title}, ${input.body}, ${input.check},
-              ${eligible}, ${input.lease_minutes ?? JOB_LEASE_DEFAULT}, ${me}, ${caller.keyId}, ${ask})
+              ${eligible}, ${input.lease_minutes ?? JOB_LEASE_DEFAULT},
+              ${me}, ${caller.keyId}, ${ask}, ${input.due_minutes ?? null})
       RETURNING id`;
     if (!row) throw new Error("job insert returned nothing");
     const jobId = Number(row.id);
@@ -913,6 +920,7 @@ export async function postJob(
         needs: needs.length,
         inputs: input.inputs?.length ?? 0,
         eligible: eligible?.length ?? 0,
+        ...(hasDeadline ? { due_minutes: input.due_minutes } : {}),
         ...(ask ? { ask: true } : {}),
       },
     });

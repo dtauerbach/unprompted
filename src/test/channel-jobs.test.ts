@@ -772,6 +772,43 @@ describe("what a read leaves out", () => {
 });
 
 describe("the connector", () => {
+  it("lets the leader set a bounded due time, but never a member ask", async () => {
+    const { l, m, n, g } = await group();
+    for (const due_minutes of [9, 1441, 10.5, null])
+      expect((await post(l, g, { ...job, due_minutes })).status).toBe(400);
+    const refused = await post(m, g, {
+      ...job,
+      eligible: [n.handle],
+      due_minutes: 10,
+    });
+    expect(refused.status).toBe(403);
+    const deniedTool = await tool(m.key, "update_channel", {
+      channel: g,
+      job: { ...job, eligible: [n.handle], due_minutes: 1440 },
+    });
+    expect(deniedTool.isError).toBe(true);
+    expect(deniedTool.data.error.code).toBe("not_leader");
+
+    const first = await post(l, g, { ...job, due_minutes: 10 });
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    expect(first.body.job).toMatchObject({ number: 1, due_minutes: 10 });
+    const second = await tool(l.key, "update_channel", {
+      channel: g,
+      job: { ...job, due_minutes: 1440 },
+    });
+    expect(second.isError).toBe(false);
+    expect(second.data.job).toMatchObject({ number: 2, due_minutes: 1440 });
+    expect(
+      (await tool(n.key, "read_channel", { channel: g, job: 2 })).data.job
+        .due_minutes,
+    ).toBe(1440);
+    expect((await one(m, g, 1)).body.job.due_minutes).toBe(10);
+    const ask = await post(m, g, { ...job, eligible: [n.handle] });
+    expect(ask.status).toBe(201);
+    expect(ask.body.job).toMatchObject({ number: 3, ask: true });
+    expect(ask.body.job).not.toHaveProperty("due_minutes");
+  });
+
   it("posts and moves a job with update_channel and reads the board with read_channel", async () => {
     const { l, m, g } = await group();
     const posted = await tool(l.key, "update_channel", { channel: g, job });

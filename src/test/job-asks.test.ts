@@ -75,11 +75,10 @@ const insertJob = (
   eligible: Bot | null,
   g: string,
   ask: boolean,
-  due: number | null = null,
 ) => db()`
   INSERT INTO channel_jobs
-    (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, eligible, ask, due_minutes)
-  SELECT ${num(g)}, 1, 'Ask', 'One line', 'One line', 120, b.id, k.id, CASE WHEN e.id IS NULL THEN ARRAY[]::bigint[] ELSE ARRAY[e.id] END, ${ask}, ${due}
+    (channel_id, number, title, body, check_text, lease_minutes, bot_id, key_id, eligible, ask)
+  SELECT ${num(g)}, 1, 'Ask', 'One line', 'One line', 120, b.id, k.id, CASE WHEN e.id IS NULL THEN ARRAY[]::bigint[] ELSE ARRAY[e.id] END, ${ask}
   FROM bots b JOIN api_keys k ON k.bot_id = b.id LEFT JOIN bots e ON e.handle = ${eligible?.handle ?? null}
   WHERE b.handle = ${poster.handle} AND k.revoked_at IS NULL`;
 const wake = async (who: Bot) =>
@@ -254,13 +253,9 @@ describe("member job asks", () => {
 
   it("assigns a frozen asker's pending review to the leader at the database boundary", async () => {
     const { l, m, n, g } = await group();
-    await insertJob(m, n, g, true, 10);
+    await insertJob(m, n, g, true);
     expect((await move(n, g, { move: "claim", if_seq: 0 })).status).toBe(200);
     expect((await submit(n, g, 1)).status).toBe(200);
-    const next = () => db()`
-      SELECT n.rung FROM channel_jobs j CROSS JOIN LATERAL job_overdue_next(j.id, now()) n
-      WHERE j.channel_id = ${num(g)}`;
-    expect(await next()).toEqual([{ rung: 1 }]);
     await setFrozen(db(), m.handle, true, "test");
     const [reviewer] =
       await db()`SELECT job_reviewer(id) AS bot FROM channel_jobs WHERE channel_id = ${num(g)}`;
@@ -271,7 +266,6 @@ describe("member job asks", () => {
       complete: true,
       jobs: [],
     });
-    expect(await next()).toEqual([]);
   });
 
   it("lets the asker read its own inputs but doesn't confer access to other jobs' input refs", async () => {

@@ -1646,6 +1646,8 @@ export const JOB_NOTE_MAX = 1000;
 export const JOB_LEASE_DEFAULT = 60;
 export const JOB_LEASE_MIN = 10;
 export const JOB_LEASE_MAX = 240;
+export const JOB_DUE_MIN = 10;
+export const JOB_DUE_MAX = 1440;
 export const JOB_PIN_REF_MAX = 300;
 export const JOB_PIN_REVISION_MAX = 100;
 export const JOB_MOVES = [
@@ -1717,6 +1719,7 @@ export const jobSchema = z.strictObject({
     .min(JOB_LEASE_MIN)
     .max(JOB_LEASE_MAX)
     .optional(),
+  due_minutes: z.number().int().min(JOB_DUE_MIN).max(JOB_DUE_MAX).optional(),
   needs: z.array(jobNumberSchema).min(1).max(JOB_NEEDS_MAX).optional(),
   inputs: z.array(pinSchema).min(1).max(JOB_PINS_MAX).optional(),
   // The board's last_job the leader read (0 on an empty board): the job is
